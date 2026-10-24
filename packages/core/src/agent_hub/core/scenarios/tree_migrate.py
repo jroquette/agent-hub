@@ -28,15 +28,19 @@ What a tree cannot hold is refused (``MigrationError``), naming each node and wh
 single last node), a node that breaks those dependency rules (the graph is not
 series-parallel), and a ``when`` no If gives: on a node that opens a list, two that are no
 condition and its complement, and the conditions of nested Ifs joined on one node, which are
-not split. Reading stops at the first block whose shape breaks; a node's own keys are all
-checked. It also stops at the first If, Together or Repeat that would nest past ``MAX_DEPTH``,
-reading nothing inside it, so the work and the problems stay bounded whatever the graph holds.
-The mapping found is translated back and compared node for node, so a tree that would not load
-(past another cap), or would give another graph, is refused too.
+not split. A node's own keys are all checked. A graph past ``MAX_TREE_NODES`` (a Repeat's steps
+included) is not read; else reading stops at the first block whose shape breaks (a node whose
+edges or rule are not its place's included), and at the first If, Together or Repeat that would
+nest past ``MAX_DEPTH``, reading nothing inside it. A block refuses its first ``MAX_NAMED``
+entries in full and the rest in one problem, and a problem names ``MAX_NAMED`` nodes at most,
+so the work and the problems stay bounded whatever the graph holds. The mapping found is
+translated back and compared, node for node and key for key of the header, so a tree that would
+not load (past another cap), or would give another graph, is refused too; so is one whose
+written text (``read_back``) would read back as another graph.
 """
 
 import contextlib
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Final, NamedTuple
 
@@ -46,6 +50,7 @@ from agent_hub.core.scenarios.tree_document import MAX_CONDITION_ATOMS, MAX_COND
 from agent_hub.core.scenarios.tree_translate import (
     JOIN_RULE,
     MAX_DEPTH,
+    MAX_TREE_NODES,
     complement,
     condition_text,
     stage_slug,
@@ -53,12 +58,12 @@ from agent_hub.core.scenarios.tree_translate import (
 )
 from agent_hub.core.workflows.conditions import ConditionParseError, parse_condition
 from agent_hub.core.workflows.document import (
-    SCENARIO_NODE_TYPES,
     Loc,
     WorkflowDocument,
     WorkflowLoadError,
     WorkflowProblem,
     is_tree,
+    kind_problems,
     parse_workflow,
 )
 from agent_hub.core.workflows.nodes import (
@@ -73,6 +78,8 @@ from agent_hub.core.workflows.nodes import (
 from agent_hub.core.workflows.substitution import echo
 
 ALL_SUCCESS: Final = "all_success"
+# The nodes one problem names, and the entries of a block refused one problem each, at most.
+MAX_NAMED: Final = 10
 ALREADY_A_TREE: Final = "version: it is already written as blocks (version 2)"
 _NOT_A_SCENARIO: Final = "kind: only a scenario has a tree format"
 _RETURNS: Final = (
@@ -104,6 +111,7 @@ _JOIN_WITHOUT_IF: Final = (
     " If (or after a Together a path of which ends with one)"
 )
 _CYCLE: Final = "depends on a node that depends on it: the graph has a cycle"
+_SAME: Final = "has the same problem as the node before it"
 # The keys of a node a block writes by its place, not by itself.
 _PLACED: Final = frozenset({"id", "type", "depends_on", "when", "trigger_rule", "nodes"})
 
@@ -119,6 +127,28 @@ class MigrationProblem(NamedTuple):
         return self.message if self.node is None else f"node {echo(self.node)}: {self.message}"
 
 
+class _Says(NamedTuple):
+    """How a tree found is refused when it is not the graph: it does not load, a header key
+    has another value, a node is another."""
+
+    load: str
+    value: str
+    node: str
+
+
+_TRANSLATED: Final = _Says(
+    "as a block it would not load",
+    "as blocks it would translate to another value",
+    "as a block it would translate to another node",
+)
+_READ_BACK: Final = _Says(
+    "as written it would not load",
+    "as written it would read back as another value: the YAML text does not keep it as it is",
+    "as written it would read back as another node: the YAML text does not keep one of its"
+    " values as it is",
+)
+
+
 class MigrationError(AgentHubError):
     """A graph scenario that cannot be written as a tree; ``problems`` names each node."""
 
@@ -127,17 +157,25 @@ class MigrationError(AgentHubError):
         super().__init__("; ".join(str(problem) for problem in self.problems))
 
 
-def migrate_graph(scenario: WorkflowDocument | object) -> dict[str, JsonValue]:
+def migrate_graph(
+    scenario: WorkflowDocument | object,
+    *,
+    read_back: Callable[[dict[str, JsonValue]], object] | None = None,
+) -> dict[str, JsonValue]:
     """The tree that translates to the graph of ``scenario`` (a document, or the mapping a
-    loader read: a ``WorkflowLoadError`` when it does not load); raises ``MigrationError``
-    naming each node a tree cannot hold."""
+    loader read: a ``WorkflowLoadError`` when it does not load, as ``parse_workflow`` gives);
+    raises ``MigrationError`` naming each node a tree cannot hold. ``read_back``, when given,
+    is the mapping the tree's written text loads back to (an error it raises goes through);
+    that mapping must translate to the same graph too."""
     if not isinstance(scenario, WorkflowDocument):
         if is_tree(scenario):
             raise MigrationError([MigrationProblem(None, ALREADY_A_TREE)])
         scenario = parse_workflow(scenario)
+    elif problems := list(kind_problems(scenario)):
+        raise WorkflowLoadError(problems)
     if scenario.kind != "scenario":
         raise MigrationError([MigrationProblem(None, _NOT_A_SCENARIO)])
-    return _Migrator(scenario).migrate()
+    return _Migrator(scenario).migrate(read_back)
 
 
 def stage_name(scenario: str) -> str:
@@ -246,8 +284,9 @@ class _StopError(Exception):
     """A block whose shape breaks: its problems are recorded, the graph is read no further."""
 
 
-class _TooDeepError(_StopError):
-    """A container past ``MAX_DEPTH``: whatever else the graph holds, it is read no further."""
+class _StandingError(_StopError):
+    """A stop whose problem stands though a Together tried around it is dropped: a node whose
+    edges or rule are not its place's, or a container past ``MAX_DEPTH``."""
 
 
 @dataclass
@@ -266,20 +305,52 @@ class _Migrator:
         }
         self.slug = stage_slug(stage_name(self.document.name))
 
-    def migrate(self) -> dict[str, JsonValue]:
+    def migrate(
+        self, read_back: Callable[[dict[str, JsonValue]], object] | None
+    ) -> dict[str, JsonValue]:
         self._own_keys()
         steps: list[JsonValue] = []
-        with contextlib.suppress(_StopError):
-            top = self.top
-            steps = self._read(top, set(top.nodes), within=_STAGE_STEPS, before=(), join=False)[0]
+        if self._fits():
+            with contextlib.suppress(_StopError):
+                top = self.top
+                read = self._read(top, set(top.nodes), within=_STAGE_STEPS, before=(), join=False)
+                steps = read[0]
         if self.problems:
             raise MigrationError(self.problems)
         tree = self._tree(steps)
-        self._check(tree)
+        self._check(tree, _TRANSLATED)
+        if read_back is not None:
+            self._check(read_back(tree), _READ_BACK)
         return tree
 
     def _refuse(self, node: str | None, message: str) -> None:
         self.problems.append(MigrationProblem(node, message))
+
+    def _refuse_each(self, nodes: Sequence[str], message: Callable[[str], str]) -> None:
+        """Refuses each of ``nodes`` for one reason (``message`` gives it for a node): the first
+        ``MAX_NAMED`` in full, those after them in one problem, on the first of them."""
+        for node_id in nodes[:MAX_NAMED]:
+            self._refuse(node_id, message(node_id))
+        rest = nodes[MAX_NAMED:]
+        if rest:
+            same, after = _SAME, len(rest) - 1
+            if after == 1:
+                same += ", as does 1 more node after it"
+            elif after:
+                same += f", as do {after:,} more nodes after it"
+            self._refuse(rest[0], same)
+
+    def _fits(self) -> bool:
+        """Whether the graph's nodes, a Repeat's steps included, fit in a tree; else refuses
+        the graph, which is not read."""
+        count = len(self.top.nodes) + sum(len(body.nodes) for body in self.bodies.values())
+        if count > MAX_TREE_NODES:
+            message = (
+                f"nodes: the graph holds {count:,} nodes, a Repeat's steps included, and a tree"
+                f" holds at most {MAX_TREE_NODES}"
+            )
+            self._refuse(None, message)
+        return count <= MAX_TREE_NODES
 
     def _own_keys(self) -> None:
         """Every key a tree has no place for, on the document and on each node."""
@@ -292,8 +363,6 @@ class _Migrator:
                 self._node_keys(level, node)
 
     def _node_keys(self, level: _Level, node: Node) -> None:
-        if node.type not in SCENARIO_NODE_TYPES:
-            self._refuse(node.id, f"has type {node.type}: no block of a tree is one")
         if node.trigger_rule not in (ALL_SUCCESS, JOIN_RULE):
             level.rule_refused.add(node.id)
             message = (
@@ -319,22 +388,26 @@ class _Migrator:
         """The steps of the list ``within``, read from ``members``, its first block after
         ``before`` (taking the join rule when ``join``); and its last block."""
         remaining = set(members)
+        # Each node's dependencies still to read; those with none are the next block's entries.
+        waiting = {n: len(remaining.intersection(level.nodes[n].depends_on)) for n in remaining}
+        ready = {node_id for node_id, count in waiting.items() if not count}
         steps: list[JsonValue] = []
         last = _Block({}, frozenset(), before, branching=join)
         while remaining:
-            entries = level.ordered(
-                node_id
-                for node_id in remaining
-                if not remaining.intersection(level.nodes[node_id].depends_on)
-            )
-            if not entries:
-                for node_id in level.ordered(remaining):
-                    self._refuse(node_id, _CYCLE)
+            if not ready:
+                self._refuse_each(level.ordered(remaining), lambda _: _CYCLE)
                 raise _StopError
             at = within.at(len(steps), last.exits, join=last.branching)
+            entries = level.ordered(ready)
             last = self._block(level, remaining, entries=entries, at=at, opening=not steps)
             steps.append(last.step)
             remaining -= last.nodes
+            ready -= last.nodes
+            for node_id in last.nodes:
+                for dependent in level.dependents[node_id] & remaining:
+                    waiting[dependent] -= 1
+                    if not waiting[dependent]:
+                        ready.add(dependent)
         return steps, last
 
     def _block(
@@ -376,7 +449,9 @@ class _Migrator:
         return _Block(step, frozenset({node_id}), (node_id,))
 
     def _placed(self, level: _Level, node: Node, at: _Place) -> None:
-        """Refuses ``node`` where its edges or its rule are not those its place gives."""
+        """Refuses ``node`` where its edges or its rule are not those its place gives, and
+        stops the reading there."""
+        mark = len(self.problems)
         if set(node.depends_on) != set(at.before):
             where = (
                 f"a block there depends on the ends of the block before it, {_names(at.before)}"
@@ -398,6 +473,8 @@ class _Migrator:
                 self._refuse(node.id, message)
             else:
                 self._refuse(node.id, _JOIN_WITHOUT_IF)
+        if len(self.problems) > mark:
+            raise _StandingError
 
     def _if_alone(
         self,
@@ -413,8 +490,7 @@ class _Migrator:
         entries lead to, before the nodes that also follow the block before it."""
         problem = _OPENS if opening else _if_problem(when)
         if problem is not None:
-            for entry in entries:
-                self._refuse(entry, problem)
+            self._refuse_each(entries, lambda _: problem)
             raise _StopError
         before = set(at.before)
         others = [
@@ -445,12 +521,13 @@ class _Migrator:
             return self._if_else(level, groups, condition=condition, at=at, held=held)
         paths = _paths(level, groups)
         if len(paths) > 1:
-            # Read as a Together, which may not hold; then what it read is undone. A container
-            # past the nesting cap ends the reading all the same, so that refusal stands.
+            # Read as a Together, which may not hold; then what it read is undone. A node out of
+            # its place, or a container past the nesting cap, ends the reading all the same, so
+            # that refusal stands.
             mark, taken, keys = len(self.problems), set(level.taken), dict(self.keys)
             try:
                 return self._together(level, paths, at=at, held=held)
-            except _TooDeepError:
+            except _StandingError:
                 raise
             except _StopError:
                 del self.problems[mark:]
@@ -466,9 +543,8 @@ class _Migrator:
         if branches:
             # The entries of a group holding both texts: there the two branches meet.
             meet = {n for group in groups if _text_of(level, group) is None for n in group.entries}
-            for entry in entries:
-                if entry in meet:
-                    self._refuse(entry, _BRANCHES_MEET)
+            meeting = [entry for entry in entries if entry in meet]
+            self._refuse_each(meeting, lambda _: _BRANCHES_MEET)
         elif len(texts) == 2:  # noqa: PLR2004 -- a condition and another
             first, second = texts
             first_entry = next(entry for entry in entries if level.when(entry) == first)
@@ -484,9 +560,9 @@ class _Migrator:
                 )
                 self._refuse(second_entry, message)
         else:
-            for entry in entries:
-                others = _names(other for other in entries if other != entry)
-                self._refuse(entry, _STARTS_TOGETHER.format(others=others))
+            self._refuse_each(
+                entries, lambda entry: _STARTS_TOGETHER.format(others=_others(entry, entries))
+            )
 
     def _if_else(
         self, level: _Level, groups: list[_Group], *, condition: str, at: _Place, held: set[str]
@@ -515,9 +591,9 @@ class _Migrator:
         none."""
         if len(groups) < 2:  # noqa: PLR2004 -- a Together holds two paths at least
             entries = groups[0].entries
-            for entry in entries:
-                others = _names(other for other in entries if other != entry)
-                self._refuse(entry, _PATHS_MEET.format(others=others))
+            self._refuse_each(
+                entries, lambda entry: _PATHS_MEET.format(others=_others(entry, entries))
+            )
             raise _StopError
         paths: list[JsonValue] = []
         exits: list[str] = []
@@ -543,8 +619,8 @@ class _Migrator:
         node ``keys`` holds there, as translating the tree would; nothing inside it is read."""
         if at.depth >= MAX_DEPTH:
             problem = WorkflowProblem((*at.key, kind), f"containers nest at most {MAX_DEPTH} deep")
-            self.problems.append(self._located(problem))
-            raise _TooDeepError
+            self.problems.append(self._located(problem, _TRANSLATED.load))
+            raise _StandingError
 
     def _derived(self, address: str) -> str:
         return f"{self.slug}--{address.replace('.', '-')}"
@@ -567,23 +643,31 @@ class _Migrator:
         tree["stages"] = [{"name": stage_name(document.name), "steps": steps}]
         return tree
 
-    def _check(self, tree: dict[str, JsonValue]) -> None:
-        """Refuses ``tree`` when it does not load or translates to another graph."""
+    def _check(self, tree: object, says: _Says) -> None:
+        """Refuses ``tree`` when it does not load or translates to another graph: a header key
+        with another value, or another node."""
         try:
             translated = translate_tree(tree).document
         except WorkflowLoadError as error:
-            raise MigrationError([self._located(problem) for problem in error.problems]) from None
+            located = [self._located(problem, says.load) for problem in error.problems]
+            raise MigrationError(located) from None
+        header = {"nodes", "version"}
+        given_header = self.document.model_dump(mode="json", exclude=header)
+        found_header = translated.model_dump(mode="json", exclude=header)
+        for key, value in given_header.items():
+            if found_header.get(key) != value:
+                self._refuse(None, f"{key}: {says.value}")
         given = {node.id: _shape(node) for node in self.document.nodes}
         found = {node.id: _shape(node) for node in translated.nodes}
         ids = [*given, *(node_id for node_id in found if node_id not in given)]
         changed = [node_id for node_id in ids if given.get(node_id) != found.get(node_id)]
-        if changed:
-            message = "as a block it would translate to another node"
-            raise MigrationError([MigrationProblem(node_id, message) for node_id in changed])
+        self._refuse_each(changed, lambda _: says.node)
+        if self.problems:
+            raise MigrationError(self.problems)
 
-    def _located(self, problem: WorkflowProblem) -> MigrationProblem:
+    def _located(self, problem: WorkflowProblem, says: str) -> MigrationProblem:
         """A load problem of the tree found, on the node of the block it is at."""
-        message = f"as a block it would not load: {problem.key}: {problem.message}"
+        message = f"{says}: {problem.key}: {problem.message}"
         held = [key for key in self.keys if problem.loc[: len(key)] == key]
         if not held:
             return MigrationProblem(None, message)
@@ -593,6 +677,7 @@ class _Migrator:
 def _groups(entries: list[str], reached: Mapping[str, set[str]], held: set[str]) -> list[_Group]:
     """The entries whose nodes in ``held`` meet, grouped (in entry order), with those nodes."""
     parent = {entry: entry for entry in entries}
+    index = {entry: position for position, entry in enumerate(entries)}
 
     def root(entry: str) -> str:
         while parent[entry] != entry:
@@ -606,8 +691,8 @@ def _groups(entries: list[str], reached: Mapping[str, set[str]], held: set[str])
             if node_id in owner:
                 first, second = root(owner[node_id]), root(entry)
                 if first != second:
-                    parent[max(first, second, key=entries.index)] = min(
-                        first, second, key=entries.index
+                    parent[max(first, second, key=index.__getitem__)] = min(
+                        first, second, key=index.__getitem__
                     )
             else:
                 owner[node_id] = entry
@@ -708,8 +793,17 @@ def _else_of(text: str) -> str | None:
 
 
 def _names(ids: Iterable[str]) -> str:
-    shown = [echo(node_id) for node_id in ids]
-    return ", ".join(shown) if shown else "nothing"
+    """``ids`` quoted, the first ``MAX_NAMED`` of them, then how many more."""
+    listed = list(ids)
+    shown = ", ".join(echo(node_id) for node_id in listed[:MAX_NAMED])
+    if len(listed) > MAX_NAMED:
+        return f"{shown} and {len(listed) - MAX_NAMED:,} more"
+    return shown or "nothing"
+
+
+def _others(entry: str, entries: Sequence[str]) -> str:
+    """The entries but ``entry``, named."""
+    return _names(other for other in entries if other != entry)
 
 
 def _step(node: Node, *, derived: str, body: list[JsonValue]) -> dict[str, JsonValue]:
@@ -737,7 +831,7 @@ def _step(node: Node, *, derived: str, body: list[JsonValue]) -> dict[str, JsonV
         step = {"wait": spec}
         given = {key: value for key, value in given.items() if key == "description"}
     else:
-        # A type no block is: ``_node_keys`` refused it, so this step is never written.
+        # A type no block is: ``kind_problems`` refused it, so this step is never written.
         step = {}
     if node.id != derived:
         step["id"] = node.id
