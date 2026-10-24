@@ -35,12 +35,15 @@ class VersionOrigin(StrEnum):
 
 
 class UnitKind(StrEnum):
-    """What a unit is: a skill's folder, an agent's file, a hook file or a hub workflow file."""
+    """What a unit is: a skill's folder, an agent's file, a hook file, a hub workflow file, a
+    scenario file, or an action's document or script (the scenario builder's saves)."""
 
     SKILL = "skill"
     AGENT = "agent"
     HOOK = "hook"
     WORKFLOW = "workflow"
+    SCENARIO = "scenario"
+    ACTION = "action"
 
 
 class _Frozen(BaseModel):

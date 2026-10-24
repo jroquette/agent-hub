@@ -41,6 +41,7 @@ Every screen carries its phase. A screen tagged P3 or P4 is not shown in the sid
 
 /scenarios                          Scenarios                                        P2
     ?q=   (filter, replace)
+├ /scenarios/new                    New scenario (request → Claude in Discuss)       P2 (AGH-521)
 └ /scenarios/:project/:name         Scenario detail                                  P2 (plan, start)
     ?env=   (pre-fills the environment; the plan never runs on load)
   └ /scenarios/:project/:name/runs/:runId   Scenario run                             P2 (answer, findings)
@@ -69,6 +70,7 @@ Every screen carries its phase. A screen tagged P3 or P4 is not shown in the sid
     ?doc=spec|plan|research|eval&ac=:acId
 
 /tickets?project=&q=&kind=          Tickets list (AGH-426, specs/20-tickets.md)      P2 read-only · Start ticket
+/tickets/:project/:issue            Ticket page (AGH-521, specs/20-tickets.md)       P2 read-only
 /environments                       Environments: project picker (AGH-417)           P2
 └ /projects/:project/environments   Environments (specs/23-environments.md)          P2 + ADR 0040 writes
   ├ …/environments/new              Add environment (step by step)                   P2 + ADR 0040 writes
@@ -163,6 +165,16 @@ otherwise, this list wins:
   place (`?needs=all`), as the Portfolio does; a Needs you list with nowhere to go shows no "more" line.
 - **AC-426.1** (AGH-426, [20-tickets.md](20-tickets.md)) **Work** lists Tickets (`list-todo`, no badge) right after
   Features: the single-ticket work outside features.
+- **AC-521.4.1** (AGH-521, wins over AC-273.20, AGH-364 and AC-426.1 on order) The sidebar lists, in order:
+  Portfolio (no caption); **Work**, everything about the work in the codebase: Features (the needs-you badge),
+  Tickets, Scenarios, Sessions (the live badge), Workflow runs (once a workflow has run) and Environments;
+  **Knowledge**, what the project knows: Brain, Learnings (the to-triage badge) and Toolkit; and the Hub foot
+  (Health, Hub config, Settings). There is no Activity and no Setup group: the playground tried them and folded
+  Sessions and Workflow runs back into Work, Environments into Work and Toolkit into Knowledge.
+- **AC-521.7.1** (AGH-521) The project pickers (Environments, Brain, Toolkit, Hub config) never show the red Doctor
+  errors badge on a project card: a hub with warnings shows a neutral "Setup tips" hint, one with errors "Setup
+  needs a fix", each with a tooltip that says the page still works and Health has the detail; a healthy hub shows
+  nothing. The Portfolio keeps the doctor badge (`ProjectCardHead`'s `healthDisplay`).
 
 
 Groups appear in this order with `caption` style group labels in `text-subtle`. The selected item uses `accent-soft` ground, `accent` icon and a 2px `accent` left bar; hover uses `surface-hover`. Each item is a 32px (`size.control`) row; collapsed, each becomes a 40×40 icon button with a `Tooltip` showing the label and its shortcut.
@@ -477,6 +489,8 @@ the chat's own keys are in [agent-sessions.md](../../agent-sessions.md#chat-beha
 | `j` / `k`, `↓` / `↑` | Move between the table's ticket rows (the table body is one tab stop; epic rows are skipped) |
 | `Enter` / `o` | Open the focused row's ticket panel (`?ticket=<id>`) |
 | `Esc` | Close the ticket panel; focus returns to what opened it |
+| `f` | Show the ticket flow full window (`?flow=full`) or leave it; in it, `Esc` closes the ticket panel first, then exits (AGH-521) |
+| `←` `→` `↑` `↓` | On the flow canvas (one tab stop), move along the edges between ticket cards (AGH-521) |
 
 ### Learnings triage (P3)
 

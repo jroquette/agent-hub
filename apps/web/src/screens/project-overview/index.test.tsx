@@ -395,7 +395,7 @@ describe("ProjectOverviewScreen", () => {
     // ACME-1511 belongs to a feature.
     expect(tickets.queryByText("ACME-1511")).not.toBeInTheDocument();
     await user.click(tickets.getByText("ACME-7"));
-    expect(router.state.location.pathname).toBe(`/sessions/${anId(3)}`);
+    expect(router.state.location.pathname).toBe("/tickets/agent-hub/ACME-7");
   });
 
   it("AC-273.16 folds setup and health away for engineers, with findings, repos and the hub", async () => {

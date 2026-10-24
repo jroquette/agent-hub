@@ -47,6 +47,10 @@ _SKILL_SUFFIX: Final = f"/{SKILL_FILE}"
 _UNIT_DEPTHS: Final = {CLAUDE_FOLDER: 3, "plugin": 4}
 _HOOK_SETTINGS: Final = frozenset({SETTINGS_PATH, PROJECT_SETTINGS_PATH})
 _WORKFLOW_SEGMENTS: Final = 3
+# A scenario file, ``scenarios/<pack>/<name>.yaml``, is shaped as a hub workflow's.
+HUB_SCENARIOS_FOLDER: Final = "scenarios"
+# An action's document or script, ``actions/<pack>/…``.
+HUB_ACTIONS_UNIT_FOLDER: Final = "actions"
 _WORKFLOW_SUFFIXES: Final = (".yaml", ".json")
 _REFUSED: Final = "Path is not a unit of its kind"
 _BAD_CHARACTER: Final = re.compile(r"[\\\x00-\x1f\x7f]")
@@ -132,10 +136,14 @@ def unit_parts(unit_path: str, kind: UnitKind) -> tuple[str, ...]:
     folder ``.claude/skills/<n>`` or ``plugin/<p>/skills/<n>``, an agent file ``.claude/agents/
     <n>.md`` or ``plugin/<p>/agents/<n>.md``, a hook file (``.claude/settings.json``,
     ``.claude/settings.project.json``, ``plugin/<p>/hooks/hooks.json``), a workflow file
-    ``workflows/<pack>/<n>.yaml`` or ``.json``. Never ``settings.local.json``; never touches the
-    disk."""
+    ``workflows/<pack>/<n>.yaml`` or ``.json``, a scenario file ``scenarios/<pack>/<n>.yaml``.
+    Never ``settings.local.json``; never touches the disk."""
     if kind is UnitKind.WORKFLOW:
         return _workflow_parts(unit_path)
+    if kind is UnitKind.SCENARIO:
+        return _workflow_parts(unit_path, folder=HUB_SCENARIOS_FOLDER)
+    if kind is UnitKind.ACTION:
+        return _action_parts(unit_path)
     checked = f"{unit_path}/{SKILL_FILE}" if kind is UnitKind.SKILL else unit_path
     segments = skill_relative(checked).parts
     if kind is UnitKind.SKILL:
@@ -151,11 +159,29 @@ def unit_parts(unit_path: str, kind: UnitKind) -> tuple[str, ...]:
     return segments
 
 
-def _workflow_parts(unit_path: str) -> tuple[str, ...]:
+def _action_parts(unit_path: str) -> tuple[str, ...]:
+    """An action's document ``actions/<pack>/<n>.yaml`` or its script
+    ``actions/<pack>/scripts/<file>`` (``.py`` or ``.sh``)."""
+    segments = tuple(unit_path.split("/"))
+    plain = all(segment and not segment.startswith(".") for segment in segments) and not (
+        _BAD_CHARACTER.search(unit_path)
+    )
+    document = len(segments) == _WORKFLOW_SEGMENTS and segments[-1].endswith(".yaml")
+    script = (
+        len(segments) == _WORKFLOW_SEGMENTS + 1
+        and segments[2] == "scripts"
+        and segments[-1].endswith((".py", ".sh"))
+    )
+    if not (plain and segments[0] == HUB_ACTIONS_UNIT_FOLDER and (document or script)):
+        raise SkillPathError(_REFUSED)
+    return segments
+
+
+def _workflow_parts(unit_path: str, *, folder: str = HUB_WORKFLOWS_FOLDER) -> tuple[str, ...]:
     segments = tuple(unit_path.split("/"))
     shaped = (
         len(segments) == _WORKFLOW_SEGMENTS
-        and segments[0] == HUB_WORKFLOWS_FOLDER
+        and segments[0] == folder
         and segments[-1].endswith(_WORKFLOW_SUFFIXES)
         and all(segment and not segment.startswith(".") for segment in segments)
         and not _BAD_CHARACTER.search(unit_path)

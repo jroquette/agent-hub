@@ -24,6 +24,11 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
 }
+.ah-side-panel[data-layout="inline"] {
+  min-height: 0;
+  height: 100%;
+  background: var(--surface);
+}
 .ah-side-panel-head {
   display: flex;
   align-items: flex-start;

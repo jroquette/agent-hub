@@ -555,3 +555,24 @@ One issue to a PR, implemented and reviewed in rounds until the check and both r
   input") and its shape.
 - **AC-427.11** Given the workflow page with rounds, a condition and an open prompt, when checked with axe, then it
   has no serious or critical violation.
+
+## Workflow graph canvas (AGH-521)
+
+The owner validated this in the playground (snapshot `20261023T210306Z`); where the section above says otherwise, this
+wins. The shared canvas parts live in `components/Canvas` (grid, zoom toolbar with fit and layout switch, minimap,
+arrowheads) with `lib/usePanZoom` and `lib/canvasView`; the ticket flow ([17-features.md](17-features.md)) reuses them.
+
+- **AC-521.10.1 Graph first.** Given a workflow page, then it opens on a pan and zoom graph: steps as cards with their
+  kind, rounds groups as frames holding their own steps, curved edges with arrowheads, zoom, fit and a minimap; the
+  chosen step opens in a docked panel with what it waits for, what it leads to and what it does. Steps and Document
+  are views beside the graph. Run detail draws the same canvas with each step's state.
+- **AC-521.10.2 Top to bottom.** Given the graph, then it is laid out in topological order, each layer a centred row
+  with the arrows pointing down; an edge that skips layers runs in a lane of its own beside the rows it passes
+  (shortest first). The left-to-right wrapped rows are one click away in the canvas toolbar.
+- **AC-521.10.3 Readable when it opens.** Given the first view, then the graph is fitted when it reads at 85% or more
+  with its rounds frames open; otherwise the frames close and the graph is fitted if it then reads at 85% or more,
+  else it opens at 100% from the top. It is placed only once the boxes belong to the current shape.
+- **AC-521.10.4 Keyboard and small screens.** Given a focused rounds frame, then Right opens it and Left closes it; a
+  step inside a round says it starts or ends the round; the minimap takes the world's shape; under 1280 px the wheel
+  scrolls the page instead of zooming, and the inspector never clips.
+

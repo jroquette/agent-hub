@@ -314,6 +314,27 @@ def test_loads_tightened_access_when_local_names_committed_environment() -> None
     assert config.environments["staging"].access == "read"
 
 
+def test_loads_values_when_local_names_committed_environment() -> None:
+    config = check_local_document(
+        {"environments": {"staging": {"values": {"_why": "mine", "user_name": "jane"}}}}
+    )
+
+    assert isinstance(config, LocalConfig)
+    staging = config.environments["staging"]
+    assert (staging.access, staging.values) == (None, {"user_name": "jane"})
+
+
+def test_rejects_local_value_when_secret_shaped() -> None:
+    secret = "AK" + "IA" + "B" * 16  # assembled, so the repo holds no secret-shaped text
+    document = {"environments": {"staging": {"values": {"aws_account_id": secret}}}}
+
+    (problem,) = problems_of(document)
+
+    assert problem.path == "environments.staging.values.aws_account_id"
+    assert "AWS access key" in problem.message
+    assert secret not in problem.message
+
+
 def test_loads_local_guard_when_blocked_lists_given() -> None:
     document = builders.a_local_environments_document()
     document["guard"]["blocked_words_env"] = ["DEMO_TARGET", "DEMO_*"]

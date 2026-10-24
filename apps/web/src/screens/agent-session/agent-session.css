@@ -3376,16 +3376,32 @@ button.as-bg-head {
   flex: 1 1 auto;
   min-width: 0;
 }
+/* The reading column is centred on the whole layout, rail included, not on what the rail leaves:
+   resizing or folding the rail never moves the chat. Where the room runs out, it hugs the rail. */
+.as-chat-layout:has(> .as-rail-folded) {
+  --as-chat-rail-w: 48px;
+}
+.as-chat-layout .as-column {
+  margin-left: max(
+    0px,
+    (100% - var(--chat-column) - 2 * var(--as-gutter) - var(--as-chat-rail-w, 260px)) / 2
+  );
+  margin-right: auto;
+}
 .as-rail {
   flex: none;
   display: flex;
   flex-direction: column;
-  width: 260px;
+  width: var(--as-rail-w, 260px);
   height: 100%;
   min-height: 0;
   overflow: hidden;
   /* Between the app's frame (bg) and the chat (surface): the columns step in by tone, not lines. */
   background: var(--surface-sunken);
+}
+/* The rail's right edge: the drawer's grip, on the layout beside the rail. */
+.as-rail-handle {
+  left: calc(var(--as-rail-w, 260px) - 4px);
 }
 .as-rail-head {
   display: flex;

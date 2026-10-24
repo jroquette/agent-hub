@@ -1,29 +1,17 @@
 import "./SidePanel.css";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef } from "react";
 import type { ReactNode, RefObject } from "react";
 
 import { IconButton } from "./core";
+import { useMediaQuery } from "../lib/useMediaQuery";
 import { usePanelDismiss } from "./usePanelDismiss";
 
 /** Where side panels dock instead of overlaying the page (`31-responsive.md`, Wide). */
 const WIDE = "(min-width: 1600px)";
 
 function useWide(): boolean {
-  const query = () => typeof window.matchMedia === "function" && window.matchMedia(WIDE).matches;
-  const [wide, setWide] = useState(query);
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return undefined;
-    const list = window.matchMedia(WIDE);
-    const onChange = () => {
-      setWide(list.matches);
-    };
-    list.addEventListener("change", onChange);
-    return () => {
-      list.removeEventListener("change", onChange);
-    };
-  }, []);
-  return wide;
+  return useMediaQuery(WIDE);
 }
 
 /**
@@ -41,6 +29,8 @@ export function SidePanel({
   children,
   footer,
   initialFocus,
+  layout = "auto",
+  focusOnOpen = true,
 }: {
   title: ReactNode;
   /** The X's name ("Close ticket AGH-7"). */
@@ -54,16 +44,22 @@ export function SidePanel({
   footer?: ReactNode;
   /** A selector, inside the panel, of the control focused on open instead of the heading. */
   initialFocus?: string | undefined;
+  /** "inline": in the parent's flow (a column of an editor), never over the page. */
+  layout?: "auto" | "inline";
+  /** False when a mouse click opened it beside what it edits: focus stays where it was. */
+  focusOnOpen?: boolean;
 }) {
   const headingId = useId();
   const heading = useRef<HTMLHeadingElement>(null);
   const panel = useRef<HTMLElement>(null);
   const wide = useWide();
   const opening = useRef(initialFocus);
+  const focusing = useRef(focusOnOpen);
   // Opening focuses the heading (or the `initialFocus` control); closing, by any path (Esc, the X,
   // a Close button inside), gives focus back to the opener as it is at close (a panel switched in
   // place, or a toggled view, updates it), unless the reader already moved it elsewhere on the page.
   useEffect(() => {
+    if (!focusing.current) return;
     const chosen = opening.current
       ? panel.current?.querySelector<HTMLElement>(opening.current)
       : null;
@@ -76,7 +72,7 @@ export function SidePanel({
       ref={panel}
       className="ah-side-panel"
       aria-labelledby={headingId}
-      data-layout={wide ? "docked" : "overlay"}
+      data-layout={layout === "inline" ? "inline" : wide ? "docked" : "overlay"}
     >
       <div className="ah-side-panel-head">
         <h2 id={headingId} ref={heading} tabIndex={-1} className="ah-h3">

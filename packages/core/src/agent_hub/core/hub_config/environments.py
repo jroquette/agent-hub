@@ -148,6 +148,40 @@ class Credentials(ConfigObject):
     )
 
 
+def comment_keyed_map(schema: dict[str, Any]) -> None:
+    """Move the key pattern pydantic exports as ``patternProperties`` to ``propertyNames`` and
+    give the values ``additionalProperties``, so ``patternProperties`` holds only the comment
+    keys, which may hold anything (a ``_`` key matches the name pattern too)."""
+    ((key_pattern, value_schema),) = schema.pop("patternProperties").items()
+    schema["propertyNames"] = {**schema.get("propertyNames", {}), "pattern": key_pattern}
+    schema["additionalProperties"] = value_schema
+    schema.update(COMMENT_KEYS_SCHEMA)
+
+
+# An environment's values: facts of the place (an account id, a user name) that fill a
+# scenario's inputs of the same name (docs/design/environments.md § Values). Never a secret.
+MAX_VALUES: Final = 32
+MAX_VALUE_CHARS: Final = 200
+# A scenario input's name (``workflows/substitution.py``'s grammar, bounded as launch bounds it).
+VALUE_NAME_PATTERN: Final = r"^[a-z][a-z0-9_]{0,63}$"
+ValueName = Annotated[str, Field(pattern=VALUE_NAME_PATTERN)]
+ValueText = Annotated[
+    str,
+    Field(min_length=1, max_length=MAX_VALUE_CHARS, pattern=ENVIRONMENT_TEXT_PATTERN),
+    NoSecret,
+]
+EnvironmentValues = Annotated[
+    dict[ValueName, ValueText],
+    Field(max_length=MAX_VALUES),
+    BeforeValidator(drop_map_comment_keys),
+    Field(json_schema_extra=comment_keyed_map),
+]
+VALUES_DESCRIPTION: Final = (
+    "Values that fill a scenario's inputs of the same name when it runs here, before the"
+    " input's default: at most 32, each at most 200 characters; never a secret."
+)
+
+
 class Environment(ConfigObject):
     """A place the agent may reach, and what it may do there."""
 
@@ -159,6 +193,7 @@ class Environment(ConfigObject):
     credentials: Credentials | None = absent_by_default(
         description="Names of the credentials to use; never a value."
     )
+    values: EnvironmentValues = Field(default_factory=dict, description=VALUES_DESCRIPTION)
 
 
 class Endpoint(ConfigObject):
@@ -184,16 +219,6 @@ class Endpoint(ConfigObject):
     credentials: Credentials | None = absent_by_default(
         description="Names of the credentials to use here; never a value."
     )
-
-
-def comment_keyed_map(schema: dict[str, Any]) -> None:
-    """Move the key pattern pydantic exports as ``patternProperties`` to ``propertyNames`` and
-    give the values ``additionalProperties``, so ``patternProperties`` holds only the comment
-    keys, which may hold anything (a ``_`` key matches the name pattern too)."""
-    ((key_pattern, value_schema),) = schema.pop("patternProperties").items()
-    schema["propertyNames"] = {**schema.get("propertyNames", {}), "pattern": key_pattern}
-    schema["additionalProperties"] = value_schema
-    schema.update(COMMENT_KEYS_SCHEMA)
 
 
 # A map keyed by name whose ``_`` keys are comments, as in every fixed-key object; the schema

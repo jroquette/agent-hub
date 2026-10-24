@@ -14,7 +14,11 @@ from agent_hub.core.features.feature_record import FeatureRecordFile
 from agent_hub.core.features.feature_reviews import approved_tickets, review_records
 from agent_hub.core.features.feature_status import RecordHead
 from agent_hub.core.features.ticket_planning import ticket_board
+from agent_hub.core.hub_config.local_config import LocalConfig, check_local_document
+from agent_hub.core.scenarios.run_record import fold_records, record_lines
 from agent_hub.core.testing.transcript_lines import TRANSCRIPT_MODEL
+from agent_hub.generator.action_discovery import discover_actions
+from agent_hub.generator.scenario_discovery import discover_scenarios
 from scripts.seed_demo import (
     ASK_SESSION,
     BACKFILL_SESSION,
@@ -25,6 +29,9 @@ from scripts.seed_demo import (
     INBOX_NOTE,
     ISSUE,
     LIVE_SESSION,
+    ORDER_SCENARIO,
+    SCENARIO_ENV,
+    SERVICE_SCENARIO,
     STUCK_SESSION,
     ComposeTarget,
     LocalTarget,
@@ -35,6 +42,8 @@ from scripts.seed_demo import (
     demo_transcript,
     hub_files,
     main,
+    scenario_files,
+    scenario_runs,
     store_chat,
 )
 
@@ -196,6 +205,14 @@ def test_loads_every_screen_input_when_run_against_target(
     assert transcript[2].startswith(f"/data/demo/transcripts/{BACKFILL_SESSION}-")
     for command in (runs, transcript):
         assert command[-4:] == ["--project", DEMO_PROJECT, "--db", "/data/agent-hub.db"]
+    scenario_events = target.commands[3]
+    assert scenario_events == ["collect", "/data/demo/runs/scenario-runs.jsonl"] + [
+        "--db",
+        "/data/agent-hub.db",
+    ]
+    assert scenario_events[1] in target.files
+    assert f"{hub}/scenarios/demo/{ORDER_SCENARIO}.yaml" in target.files
+    assert f"{hub}/hub.local.json" in target.files
     [(chat_arguments, chat)] = target.python_runs
     assert chat_arguments[0] == "-c"
     assert chat_arguments[-1] == "/data/agent-hub.db"
@@ -272,7 +289,7 @@ def test_keeps_going_when_hub_exists_and_is_registered(capsys: pytest.CaptureFix
     code = main(["--url", URL], target=target, transport=httpx.MockTransport(server))
 
     assert code == 0
-    assert len(target.commands) == 3
+    assert len(target.commands) == 4
 
 
 def test_makes_demo_hub_git_checkout_when_seeded(capsys: pytest.CaptureFixture[str]) -> None:
@@ -416,3 +433,48 @@ def test_runs_hub_in_service_when_compose_target_runs_command() -> None:
         "--runs",
         "/data/demo/x.jsonl",
     ]
+
+
+def test_ends_runs_passed_failed_and_one_running_when_scenario_runs_built() -> None:
+    events, records = scenario_runs()
+
+    statuses = {run: fold_records(lines).status for run, lines in records.items()}
+    assert set(statuses.values()) == {"done", "failed", None}
+    scenarios = {fold_records(lines).scenario for lines in records.values()}
+    assert scenarios == {SERVICE_SCENARIO, ORDER_SCENARIO}
+    assert {fold_records(lines).environment for lines in records.values()} == {SCENARIO_ENV}
+    ends = [event for event in events if event["type"] == "run.end"]
+    assert sorted(event["payload"]["status"] for event in ends) == ["done", "failed"]
+    assert {event["workflow"] for event in events} == {
+        f"scenario:{SERVICE_SCENARIO}",
+        f"scenario:{ORDER_SCENARIO}",
+    }
+
+
+def test_loads_scenarios_actions_and_environment_when_scenario_files_written(
+    tmp_path: Path,
+) -> None:
+    hub = tmp_path / "demo-hub"
+    for path, text in scenario_files(PurePosixPath(hub)).items():
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text(text, encoding="utf-8")
+
+    scenarios = discover_scenarios(hub)
+    actions = discover_actions(hub)
+
+    assert scenarios.problems == ()
+    assert [entry.name for entry in scenarios.workflows] == [ORDER_SCENARIO]
+    assert actions.problems == ()
+    assert sorted(entry.document.name for entry in actions.actions) == [
+        "demo-create-order",
+        "demo-order-status",
+    ]
+    local = check_local_document(json.loads((hub / "hub.local.json").read_text("utf-8")))
+    assert isinstance(local, LocalConfig)
+    for run in hub.glob(".agent-runs/workflows/*/records.jsonl"):
+        assert record_lines(run.read_bytes())
+
+
+def test_gives_same_scenario_events_when_seeded_again() -> None:
+    # hub collect refuses a known event key with other content: a rerun must repeat them.
+    assert scenario_runs() == scenario_runs()

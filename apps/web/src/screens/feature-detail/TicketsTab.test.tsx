@@ -290,14 +290,15 @@ describe("TicketsTab", () => {
     expect(screen.getByRole("heading", { name: "Ticket flow" })).toBeInTheDocument();
   });
 
-  it("shows each ticket's step bar and step line on its card and its row (views)", async () => {
+  it("shows each ticket's step bar on its card and on its row (views)", async () => {
     const data = aFeatureTickets();
     const flowing = data.tickets.map((t) => ({ ...t, flow: aTicketFlow() }));
     show({ ...data, tickets: flowing }, { path: "/" });
 
-    const card = screen.getByRole("listitem", { name: /^AGH-202 · / });
-    expect(within(card).getByRole("img", { name: /^Ticket steps: Review\. / })).toBeInTheDocument();
-    expect(card).toHaveTextContent("Review · 4/7");
+    const card = screen.getByRole("listitem", { name: /^AGH-202 · .*Review · 4\/7/ });
+    expect(
+      within(card).getByRole("img", { name: /^Ticket steps: Review\. Context: not recorded; / }),
+    ).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Table" }));
 
@@ -524,6 +525,48 @@ describe("TicketsTab", () => {
     ).toBe(true);
   });
 
+  it("shows each card's newest session in any state, linked, with the earlier count (flow)", async () => {
+    show(aFeatureTickets(), {
+      path: "/",
+      routes: {
+        "/api/v1/sessions": (request: Request) =>
+          new URL(request.url).searchParams.get("issue") === "AGH-201"
+            ? aPage([
+                aSession({ id: "sess-2", status: "ended", outcome: "done" }),
+                aSession({ id: "sess-1", status: "ended", outcome: "done" }),
+              ])
+            : aPage([]),
+      },
+    });
+
+    const card = screen.getByRole("listitem", { name: /^AGH-201 · / });
+    const link = await within(card).findByRole("link", { name: /^Newest session: Done/ });
+    expect(link).toHaveAttribute("href", "/sessions/sess-2");
+    expect(within(card).getByText("+1")).toHaveAttribute(
+      "title",
+      "1 earlier session: in the ticket panel",
+    );
+  });
+
+  it("expands the flow to a full window and Escape brings it back (flow)", async () => {
+    show(aFeatureTickets(), { path: "/" });
+
+    const expand = screen.getByRole("button", { name: "Expand the flow (f)" });
+    await userEvent.click(expand);
+
+    const dialog = screen.getByRole("dialog", { name: "Ticket flow, full window" });
+    const exit = within(dialog).getByRole("button", { name: "Exit full window (f)" });
+    expect(exit).toHaveFocus();
+    expect(within(dialog).getByRole("button", { name: /^Exit full window$/ })).toBeInTheDocument();
+
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Ticket flow, full window" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Expand the flow (f)" })).toHaveFocus();
+
+    await userEvent.keyboard("f");
+    expect(screen.getByRole("dialog", { name: "Ticket flow, full window" })).toBeInTheDocument();
+  });
+
   it("shows a skeleton while loading (states)", () => {
     const { container } = show(undefined);
 
@@ -611,17 +654,17 @@ describe("TicketsTab", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps the step bar out of the tab order: one tab stop per card (keys)", () => {
+  it("makes the flow one Tab stop: only the current card's title is in the tab order (keys)", () => {
     const data = aFeatureTickets();
     show(
       { ...data, tickets: data.tickets.map((t) => ({ ...t, flow: aTicketFlow() })) },
       { path: "/" },
     );
 
-    const card = screen.getByRole("listitem", { name: /^AGH-202 · / });
-    const bar = within(card).getByRole("img", { name: /^Ticket steps/ });
-    expect(bar.closest("[tabindex]")).toBeNull();
-    expect(bar.querySelector("[tabindex], a, button")).toBeNull();
+    const flow = screen.getByRole("group", { name: "Ticket flow" });
+    const titles = [...flow.querySelectorAll<HTMLElement>("[data-ticket-open]")];
+    expect(titles.filter((a) => a.tabIndex === 0)).toHaveLength(1);
+    expect(titles.filter((a) => a.tabIndex === -1)).toHaveLength(titles.length - 1);
   });
 
   it("explains the epic's empty Stage cell in a focusable tooltip (names)", () => {

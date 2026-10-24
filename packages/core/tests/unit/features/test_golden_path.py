@@ -471,7 +471,7 @@ def test_marks_acceptance_unrecorded_when_build_done_without_whole_feature_eval(
     assert path.phase == "acceptance"
 
 
-def test_marks_acceptance_partial_when_after_gate_and_ticket_evals_cover_some() -> None:
+def test_keeps_acceptance_pending_when_after_gate_and_ticket_evals_cover_some() -> None:
     path = golden_path(
         _inputs(
             rows=_owner_case_rows(), acs=_acs(36, passing=3), coverage=EvalGate(evals=1, covered=3)
@@ -479,7 +479,7 @@ def test_marks_acceptance_partial_when_after_gate_and_ticket_evals_cover_some() 
     )
 
     assert path.phase == "build"
-    assert _states(path)["acceptance"] == "partial"
+    assert _states(path)["acceptance"] == "pending"
     assert _step(path, "acceptance").meta == "Ticket evals cover 3 of 36 ACs"
     assert _step(path, "acceptance").reason == "Build is not done"
 
@@ -593,7 +593,7 @@ def test_folds_owner_case_when_one_ticket_done() -> None:
         "plan": "done",
         "tickets": "done",
         "build": "current",
-        "acceptance": "partial",
+        "acceptance": "pending",
         "shipped": "pending",
     }
     assert _step(path, "build").meta == "1 of 17 merged · 16 in progress"

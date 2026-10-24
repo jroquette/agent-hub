@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useState } from "react";
 
 import {
   AppLink,
@@ -16,10 +16,24 @@ import { useTicketLookup } from "../features/queries";
 import { agentSessionHref } from "../sessions-list/control";
 import { useAgentSessions, type AgentSession, type Session } from "../sessions-list/queries";
 import { issueOf } from "../tickets/model";
+import { useListWidth, useWidth } from "./DrawerResize";
 import { AGENT_STATUS } from "./SessionStatus";
 
 /** Whether the rail is folded to its strip, kept in this browser. */
 export const RAIL_KEY = "ah.chat.rail";
+/** The rail's width, kept in this browser. */
+export const RAIL_WIDTH_KEY = "ah.chat.rail.width";
+export const RAIL_MIN = 200;
+const RAIL_MAX = 560;
+/** The chat keeps at least this much beside a rail the user widened. */
+const RAIL_CHAT_MIN = 480;
+
+/** The widest the rail may be on a layout `layoutWidth` wide (not measured yet: its own cap). */
+export function railMax(layoutWidth: number): number {
+  if (layoutWidth <= 0) return RAIL_MAX;
+  return Math.max(RAIL_MIN, Math.min(RAIL_MAX, layoutWidth - RAIL_CHAT_MIN));
+}
+
 /** How many ended sessions "Recent" lists. */
 const RECENT = 20;
 /** How many observed sessions are read for their tickets, newest first. */
@@ -187,6 +201,26 @@ export function SessionRail({ current }: { current: string }) {
   const tickets = useTicketLookup(scope);
   const [open, setOpen] = useState(() => readStored(RAIL_KEY) !== "closed");
   const [filter, setFilter] = useState("");
+  const [layout, setLayout] = useState<HTMLElement | null>(null);
+  const resize = useListWidth(useWidth(layout), {
+    storageKey: RAIL_WIDTH_KEY,
+    min: RAIL_MIN,
+    defaultWidth: 260,
+    max: railMax,
+    cssVar: "--as-rail-w",
+    label: "Resize the sessions list",
+    className: "as-rail-handle",
+  });
+  // The chat centres its column on the whole layout, rail included, so it must know how wide the
+  // rail is: widening the rail then never moves the chat.
+  const railWidth = (resize.style as Record<string, string | undefined>)["--as-rail-w"] ?? null;
+  useLayoutEffect(() => {
+    if (!layout) return;
+    layout.style.setProperty("--as-chat-rail-w", railWidth);
+    return () => {
+      layout.style.removeProperty("--as-chat-rail-w");
+    };
+  }, [layout, railWidth]);
   const items = sessions.data?.items;
   const tagsOf = useMemo(
     () => railTagsOf(observed.data?.items ?? [], tickets),
@@ -223,65 +257,74 @@ export function SessionRail({ current }: { current: string }) {
   }
 
   return (
-    <nav className="as-rail" aria-label="Sessions">
-      <div className="as-rail-head">
-        <b className="as-rail-title">Sessions</b>
-        <span className="ah-grow" />
-        <AppLink href="/sessions" className="ah-btn ah-btn-ghost ah-btn-sm" title="All sessions">
-          All
-        </AppLink>
-        <IconButton icon="panel-left" label="Hide sessions" size="sm" onClick={toggle} />
-      </div>
-      <label className="as-rail-filter">
-        <Icon name="search" size="sm" />
-        <span className="ah-sr">Filter sessions</span>
-        <input
-          type="search"
-          className="ah-input"
-          value={filter}
-          placeholder="Filter"
-          onChange={(event) => {
-            setFilter(event.target.value);
-          }}
-          onKeyDown={(event) => {
-            if (event.key !== "Escape" || filter === "") return;
-            event.preventDefault();
-            setFilter("");
-          }}
-        />
-      </label>
-      <div className="as-rail-scroll">
-        {sessions.isPending && (
-          <div style={{ padding: 8 }}>
-            <Skeleton lines={6} />
-          </div>
-        )}
-        {sessions.isError && <p className="as-rail-empty">Sessions are not available here.</p>}
-        {sessions.isSuccess && groups.length === 0 && (
-          <p className="as-rail-empty">
-            {filter ? "No session matches." : "No other session yet."}
-          </p>
-        )}
-        {groups.map((group) => (
-          <section key={group.id} aria-labelledby={`as-rail-${group.id}`}>
-            <h2 id={`as-rail-${group.id}`} className="as-rail-group">
-              {group.label}
-              <span className="ah-num"> {group.sessions.length}</span>
-            </h2>
-            <ul className="as-rail-list">
-              {group.sessions.map((session) => (
-                <RailRow
-                  key={session.id}
-                  session={session}
-                  tags={tagsOf(session)}
-                  current={session.id === current}
-                  showProject={scope === null}
-                />
-              ))}
-            </ul>
-          </section>
-        ))}
-      </div>
-    </nav>
+    <>
+      <nav className="as-rail" aria-label="Sessions" style={resize.style}>
+        <div className="as-rail-head">
+          <b className="as-rail-title">Sessions</b>
+          <span className="ah-grow" />
+          <AppLink href="/sessions" className="ah-btn ah-btn-ghost ah-btn-sm" title="All sessions">
+            All
+          </AppLink>
+          <IconButton icon="panel-left" label="Hide sessions" size="sm" onClick={toggle} />
+        </div>
+        <label className="as-rail-filter">
+          <Icon name="search" size="sm" />
+          <span className="ah-sr">Filter sessions</span>
+          <input
+            type="search"
+            className="ah-input"
+            value={filter}
+            placeholder="Filter"
+            onChange={(event) => {
+              setFilter(event.target.value);
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape" || filter === "") return;
+              event.preventDefault();
+              setFilter("");
+            }}
+          />
+        </label>
+        <div className="as-rail-scroll">
+          {sessions.isPending && (
+            <div style={{ padding: 8 }}>
+              <Skeleton lines={6} />
+            </div>
+          )}
+          {sessions.isError && <p className="as-rail-empty">Sessions are not available here.</p>}
+          {sessions.isSuccess && groups.length === 0 && (
+            <p className="as-rail-empty">
+              {filter ? "No session matches." : "No other session yet."}
+            </p>
+          )}
+          {groups.map((group) => (
+            <section key={group.id} aria-labelledby={`as-rail-${group.id}`}>
+              <h2 id={`as-rail-${group.id}`} className="as-rail-group">
+                {group.label}
+                <span className="ah-num"> {group.sessions.length}</span>
+              </h2>
+              <ul className="as-rail-list">
+                {group.sessions.map((session) => (
+                  <RailRow
+                    key={session.id}
+                    session={session}
+                    tags={tagsOf(session)}
+                    current={session.id === current}
+                    showProject={scope === null}
+                  />
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+      </nav>
+      <div
+        {...resize.handle}
+        ref={(handle: HTMLDivElement | null) => {
+          setLayout(handle?.parentElement ?? null);
+        }}
+        style={resize.style}
+      />
+    </>
   );
 }

@@ -414,6 +414,23 @@ const HEALTH_BADGE = {
   error: { status: "failed", label: "Doctor errors" },
 } as const;
 
+/**
+ * The calm form of health, for screens about something else (Environments, Brain, Toolkit, Hub
+ * config): a neutral hint that the setup check has something to suggest, never an alarm.
+ */
+const HEALTH_HINT = {
+  warning: {
+    label: "Setup tips",
+    detail:
+      "The setup check (hub doctor) has a few suggestions for this hub's files. Nothing here is affected; open Health to see them.",
+  },
+  error: {
+    label: "Setup needs a fix",
+    detail:
+      "The setup check (hub doctor) found something to fix in this hub's files. You can keep using this page; open Health to see what to change.",
+  },
+} as const;
+
 /** One figure of a project card: a label above, the value below, an optional note under it. */
 export function CardStat({
   label,
@@ -459,13 +476,17 @@ export function ProjectCardHead({
   nameHref,
   nameId,
   trailing,
+  healthDisplay = "status",
 }: {
   p: ProjectCardHeadData;
   nameHref?: string | undefined;
   nameId?: string | undefined;
   trailing?: ReactNode;
+  /** `status`: the doctor badge (Portfolio). `hint`: a neutral setup hint, only when there is one. */
+  healthDisplay?: "status" | "hint" | undefined;
 }) {
   const health = p.health ? HEALTH_BADGE[p.health] : null;
+  const hint = p.health && p.health !== "ok" ? HEALTH_HINT[p.health] : null;
   return (
     <div className="ah-pcard-head">
       <div className="ah-stack" style={{ gap: 2, minWidth: 0 }}>
@@ -499,15 +520,26 @@ export function ProjectCardHead({
           Sync pending
         </span>
       )}
-      <Tooltip label={p.healthLabel}>
-        <span role="img" aria-label={p.healthLabel}>
-          {health ? (
-            <StatusBadge status={health.status} label={health.label} />
-          ) : (
-            <StatusBadge status="idle" label="Not checked" quiet />
-          )}
-        </span>
-      </Tooltip>
+      {healthDisplay === "status" ? (
+        <Tooltip label={p.healthLabel}>
+          <span role="img" aria-label={p.healthLabel}>
+            {health ? (
+              <StatusBadge status={health.status} label={health.label} />
+            ) : (
+              <StatusBadge status="idle" label="Not checked" quiet />
+            )}
+          </span>
+        </Tooltip>
+      ) : (
+        hint && (
+          <Tooltip label={hint.detail}>
+            <span className="ah-badge ah-badge-idle" role="img" aria-label={hint.detail}>
+              <Icon name="stethoscope" />
+              {hint.label}
+            </span>
+          </Tooltip>
+        )
+      )}
       {trailing}
     </div>
   );
@@ -988,7 +1020,9 @@ const DOT_STYLE: Partial<Record<GoldenStepState, CSSProperties>> = {
  * line. Every step's meta, progress and reason are in its tooltip and its accessible description.
  * It draws any list of steps with their `labels` (a ticket's seven, two-level-flows AC-1.10);
  * with `detail`, it runs vertically, every step says its meta and its button discloses its
- * detail, the `open` one shown.
+ * detail, the `open` one shown. With `detailPlacement="below"` the open step's detail is drawn
+ * once, after the list, in a region every step button controls; horizontal, each step is then
+ * only its dot and its name (its state stays in the tooltip and the button's name).
  */
 export function GoldenPathStepper<N extends string = FeaturePhase>({
   steps,
@@ -998,6 +1032,8 @@ export function GoldenPathStepper<N extends string = FeaturePhase>({
   selectLabel,
   open,
   detail,
+  orientation,
+  detailPlacement = "inside",
 }: {
   steps: readonly StepperStep<N>[];
   labels?: Readonly<Record<N, string>> | undefined;
@@ -1010,18 +1046,29 @@ export function GoldenPathStepper<N extends string = FeaturePhase>({
   open?: N | null | undefined;
   /** What a step discloses under it; given, each step's button says whether it is expanded. */
   detail?: ((step: StepperStep<N>) => ReactNode) | undefined;
+  /** Vertical by default when `detail` is given, else the horizontal path. */
+  orientation?: "vertical" | "horizontal" | undefined;
+  /** Where the open step's `detail` is drawn: under its own step, or once after the list. */
+  detailPlacement?: "inside" | "below" | undefined;
 }) {
   const baseId = useId();
   const shown = shownGoldenSteps(steps, labels);
   const focus = shown.find((s) => s.state !== "done" && s.state !== "skipped")?.name;
-  const vertical = detail !== undefined;
+  const direction = orientation ?? (detail !== undefined ? "vertical" : undefined);
+  const vertical = direction === "vertical";
+  const below = detail !== undefined && detailPlacement === "below";
+  // Across the panel with its detail below: each step is its dot and its name only.
+  const bare = below && !vertical;
+  const detailId = `${baseId}-detail`;
+  const openStep = below ? shown.find((s) => s.name === open) : undefined;
   const name = (step: N) => (labels as Readonly<Record<string, string>>)[step] ?? step;
-  return (
+  const list = (
     <ol
       className="ah-golden"
       style={{ listStyle: "none", margin: 0, padding: 0 }}
       aria-label={label}
-      data-orientation={vertical ? "vertical" : undefined}
+      data-orientation={direction}
+      data-detail={below ? "below" : undefined}
     >
       {shown.map((step) => {
         const icon = GOLDEN_STATE_ICON[step.state];
@@ -1043,6 +1090,8 @@ export function GoldenPathStepper<N extends string = FeaturePhase>({
                   aria-label={selectLabel?.(step.name) ?? `Open ${name(step.name)}`}
                   aria-describedby={descId}
                   aria-expanded={expanded}
+                  aria-controls={below ? detailId : undefined}
+                  data-step={below ? step.name : undefined}
                   onClick={() => {
                     onSelect(step.name);
                   }}
@@ -1059,24 +1108,36 @@ export function GoldenPathStepper<N extends string = FeaturePhase>({
             <span id={descId} hidden>
               {summary}
             </span>
-            <span className="ah-golden-meta" style={{ fontSize: 11, fontWeight: 500 }}>
-              {GOLDEN_STATE_TEXT[step.state]}
-            </span>
-            {meta && (
+            {!bare && (
+              <span className="ah-golden-meta" style={{ fontSize: 11, fontWeight: 500 }}>
+                {GOLDEN_STATE_TEXT[step.state]}
+              </span>
+            )}
+            {!bare && meta && (
               <span className="ah-golden-meta" style={{ fontSize: 11 }}>
                 {meta}
               </span>
             )}
-            {step.signal && (
+            {!bare && step.signal && (
               <span className="ah-golden-meta ah-golden-signal" style={{ fontSize: 11 }}>
                 <Icon name="hand" size="sm" style={{ color: "var(--waiting)" }} /> {step.signal}
               </span>
             )}
-            {expanded && detail && <div className="ah-golden-detail">{detail(step)}</div>}
+            {expanded && detail && !below && <div className="ah-golden-detail">{detail(step)}</div>}
           </li>
         );
       })}
     </ol>
+  );
+  if (!below) return list;
+  return (
+    <>
+      {list}
+      {/* Always drawn, so every button's aria-controls names an element, even with none open. */}
+      <div id={detailId} className="ah-golden-detail ah-golden-below">
+        {openStep && detail(openStep)}
+      </div>
+    </>
   );
 }
 

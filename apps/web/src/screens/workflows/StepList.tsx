@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Link, useSearchParams } from "react-router";
 
 import { CodeBlock, CopyButton, Icon } from "../../components";
 import type { WorkflowNode } from "./queries";
@@ -40,7 +41,8 @@ function kindLabel(node: Doc): string {
   return `${(one[0] ?? "").toUpperCase()}${one.slice(1)}`;
 }
 
-function What({ node, id }: { node: Doc; id: string }): ReactNode {
+/** What a step does: an agent's prompt, a command, an approval's question, a sub-workflow. */
+export function StepWhat({ node, id }: { node: Doc; id: string }): ReactNode {
   const type = String(node.type);
   const kind = stepKind(type);
   if (kind === "agent") {
@@ -136,7 +138,7 @@ function Step({
           {description && (
             <>
               <span aria-hidden>·</span>
-              <span className="ah-mono">{id}</span>
+              <GraphLink id={`${prefix}${id}`} bare={id} />
             </>
           )}
           {after.length > 0 && (
@@ -162,7 +164,7 @@ function Step({
             <Icon name="rotate-ccw" /> Starts afresh each round
           </span>
         )}
-        <What node={node} id={id} />
+        <StepWhat node={node} id={id} />
         {children}
       </div>
     </li>
@@ -175,40 +177,62 @@ function waitsFor(node: Doc, previous: string | undefined): string[] {
   return deps.length === 1 && deps[0] === previous ? [] : deps;
 }
 
-function Rounds({ group, prefix }: { group: Doc; prefix: string }) {
-  const body = docNodes(group.nodes);
+/** A rounds group's rule: when it stops, what happens after the last round, what agents remember. */
+export function RoundsRule({ group }: { group: Doc }) {
   const max = String(group.max_iterations);
   const untilWhen = text(group.until_when);
   const untilBash = Array.isArray(group.until_bash) ? group.until_bash.map(String).join(" ") : null;
   return (
-    <div className="wf-rounds">
-      <div className="wf-rounds-rule">
-        <span className="wf-step-cond">
-          <Icon name="flag" />
-          {untilWhen ? (
-            <>
-              <span className="wf-step-cond-label">Stops when</span> <code>{untilWhen}</code>
-            </>
-          ) : untilBash ? (
-            <>
-              <span className="wf-step-cond-label">Stops when</span> <code>{untilBash}</code>{" "}
-              <span>passes.</span>
-            </>
-          ) : (
-            <span>Runs all {max} rounds.</span>
-          )}
-        </span>
-        {(untilWhen !== null || untilBash !== null) && (
-          <span className="wf-step-note">
-            If round {max} ends without stopping, this step fails.
-          </span>
+    <div className="wf-rounds-rule">
+      <span className="wf-step-cond">
+        <Icon name="flag" />
+        {untilWhen ? (
+          <>
+            <span className="wf-step-cond-label">Stops when</span> <code>{untilWhen}</code>
+          </>
+        ) : untilBash ? (
+          <>
+            <span className="wf-step-cond-label">Stops when</span> <code>{untilBash}</code>{" "}
+            <span>passes.</span>
+          </>
+        ) : (
+          <span>Runs all {max} rounds.</span>
         )}
-        <span className="wf-step-note">
-          {group.fresh_context === true
-            ? "Each round starts the agents afresh."
-            : "The agents remember the previous round."}
-        </span>
-      </div>
+      </span>
+      {(untilWhen !== null || untilBash !== null) && (
+        <span className="wf-step-note">If round {max} ends without stopping, this step fails.</span>
+      )}
+      <span className="wf-step-note">
+        {group.fresh_context === true
+          ? "Each round starts the agents afresh."
+          : "The agents remember the previous round."}
+      </span>
+    </div>
+  );
+}
+
+/** A step's id in the Steps view, as a link to the same step in the graph. */
+function GraphLink({ id, bare }: { id: string; bare: string }) {
+  const [params] = useSearchParams();
+  const next = new URLSearchParams(params);
+  next.set("view", "graph");
+  next.set("node", id);
+  return (
+    <Link
+      to={{ search: next.toString() }}
+      className="ah-mono"
+      aria-label={`Show ${bare} in the graph`}
+    >
+      {bare}
+    </Link>
+  );
+}
+
+function Rounds({ group, prefix }: { group: Doc; prefix: string }) {
+  const body = docNodes(group.nodes);
+  return (
+    <div className="wf-rounds">
+      <RoundsRule group={group} />
       <ol aria-label={`Steps of ${String(group.id)}`} className="wf-steps">
         {body.map((node, index) => (
           <Step

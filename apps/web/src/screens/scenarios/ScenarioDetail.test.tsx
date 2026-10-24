@@ -7,7 +7,10 @@ import {
   aDraftRow,
   aPage,
   aProblem,
+  aRun,
   aScenarioDetail,
+  aScenarioRunDetail,
+  FakeEventSource,
   aScenarioPlan,
   aScenarioPlanRow,
   aScenarioRunRef,
@@ -33,7 +36,8 @@ const routes: ApiRoutes = {
   "/api/v1/workflow-runs": aPage([]),
 };
 
-function renderDetail(extra: ApiRoutes = {}, path = PATH) {
+// The page opens on the builder (Build); these tests read its Run mode.
+function renderDetail(extra: ApiRoutes = {}, path = `${PATH}?mode=run`) {
   return renderWithApi(<ScenarioDetailScreen />, {
     routes: { ...routes, ...extra },
     path,
@@ -56,7 +60,7 @@ afterEach(() => {
 
 describe("ScenarioDetailScreen (scenarios detail)", () => {
   it("scenarios detail plans for a chosen environment (deny; needs acceptance with the commit line)", async () => {
-    const { requests } = renderDetail({ [PLAN]: denied }, `${PATH}?env=personal`);
+    const { requests } = renderDetail({ [PLAN]: denied }, `${PATH}?mode=run&env=personal`);
 
     await screen.findByRole("heading", { name: "order-lifecycle" });
     // The plan never runs on load, even with ?env=.
@@ -66,7 +70,7 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
     await user.type(screen.getByLabelText("external_ref (required)"), "T-1");
     await user.click(screen.getByRole("button", { name: "Plan in personal" }));
 
-    const table = await screen.findByRole("table", { name: "Plan of order-lifecycle in personal" });
+    const render = await screen.findByRole("article", { name: "Step 3: render-pdf" });
     const sent = requests.find((request) => request.method === "POST");
     expect(await sent?.clone().json()).toEqual({
       environment: "personal",
@@ -74,27 +78,32 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
     });
     expect(screen.getByText("personal · access write", { selector: "b" })).toBeInTheDocument();
     expect(screen.getByText("3 steps: 1 read, 2 write")).toBeInTheDocument();
-    expect(within(table).getAllByText("Allow")).toHaveLength(2);
-    expect(within(table).getByText("Denied")).toBeInTheDocument();
-    expect(within(table).getByText("Draft action: commit it to run.")).toBeInTheDocument();
-    expect(within(table).getByText("Draft: needs acceptance")).toBeInTheDocument();
-    expect(within(table).getByText(aDraftRow().accept_command ?? "")).toBeInTheDocument();
+    // The plan lays over the step cards: each one says its decision in personal.
+    const fetch = screen.getByRole("article", { name: "Step 1: fetch-order" });
+    expect(within(fetch).getByText(/Runs without asking in personal/)).toBeInTheDocument();
+    expect(within(fetch).getByText("Sends FETCH_ORDERS for T-1")).toBeInTheDocument();
     expect(
-      within(table).getByRole("button", {
+      within(render).getByText(
+        "Denied in personal: draft action: commit it to run. The scenario run cannot start.",
+      ),
+    ).toBeInTheDocument();
+    expect(within(render).getByText("Draft: needs acceptance")).toBeInTheDocument();
+    expect(within(render).getByText(aDraftRow().accept_command ?? "")).toBeInTheDocument();
+    expect(
+      within(render).getByRole("button", {
         name: "Copy the commit command for orders/render-invoice-pdf",
       }),
     ).toBeInTheDocument();
-    expect(within(table).getByText("<$CTX.order_id from order-on-hold>")).toHaveAttribute(
+    expect(within(render).getByText("<$CTX.order_id from order-on-hold>")).toHaveAttribute(
       "title",
       "Known at run time: captured by step order-on-hold",
     );
-    expect(within(table).getByText("Runs with values known at run time")).toBeInTheDocument();
-    expect(within(table).getByText(/\(every 10 s, up to 5 min\)/)).toBeInTheDocument();
+    expect(within(render).getByText("runs with values known at run time.")).toBeInTheDocument();
     expect(screen.getByText("Cannot start: render-pdf is denied in personal.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start scenario run" })).toBeDisabled();
   });
 
-  it("scenarios detail starts a scenario run after its confirm and opens it once listed", async () => {
+  it("scenarios detail starts a scenario run after its confirm and stays to follow it once listed", async () => {
     let started = false;
     const { requests, router } = renderDetail({
       [PLAN]: aScenarioPlan({
@@ -123,12 +132,15 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
     expect(within(dialog).getByRole("button", { name: "Back to plan" })).toHaveFocus();
     await user.click(within(dialog).getByRole("button", { name: "Start scenario run" }));
 
-    await waitFor(
-      () => {
-        expect(router.state.location.pathname).toBe(`${PATH}/runs/${SCENARIO_RUN}`);
-      },
-      { timeout: 5000 },
-    );
+    // Once listed, the dialog closes and the page stays: its scenario runs list it.
+    const runs = screen.getByRole("region", { name: "Scenario runs" });
+    expect(
+      await within(runs).findByRole("link", { name: SCENARIO_RUN }, { timeout: 5000 }),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+    expect(router.state.location.pathname).toBe(PATH);
     const start = requests.find(
       (request) => request.method === "POST" && request.url.endsWith("/runs"),
     );
@@ -225,18 +237,87 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
     ).toBeInTheDocument();
   });
 
-  it("scenarios detail lists the steps step by step and its scenario runs", async () => {
+  it("scenarios detail reads each step in words before any plan, with its action and stops", async () => {
     renderDetail({ [DETAIL]: aScenarioDetail({ runs: [aScenarioRunRef({ status: "done" })] }) });
 
-    const steps = await screen.findByRole("region", { name: "Step by step" });
-    expect(steps).toHaveTextContent("fetch-orderAction send-queue-message");
-    expect(steps).toHaveTextContent("order-on-holdExpect get-order-by-ref · after fetch-order");
+    const steps = await screen.findByRole("list", { name: "Steps of order-lifecycle" });
+    const fetch = within(steps).getByRole("article", { name: "Step 1: fetch-order" });
+    expect(
+      within(fetch).getByText("Send one message to the orders queue, once."),
+    ).toBeInTheDocument();
+    expect(
+      within(fetch).getByTitle("actions/orders/scripts/send_queue_message.py"),
+    ).toBeInTheDocument();
+    expect(within(fetch).getByText(/It changes data: it asks you first/)).toBeInTheDocument();
+    expect(
+      within(fetch).getByText(/pauses and a read-only agent investigates/),
+    ).toBeInTheDocument();
+    const held = within(steps).getByRole("article", { name: "Step 2: order-on-hold" });
+    expect(within(held).getByText("Expect")).toBeInTheDocument();
+    expect(within(steps).getByText("after fetch-order")).toBeInTheDocument();
+    expect(screen.getByText("3 steps · writes in 2 steps · 1 input")).toBeInTheDocument();
     const runs = screen.getByRole("region", { name: "Scenario runs" });
     expect(within(runs).getByRole("link", { name: SCENARIO_RUN })).toHaveAttribute(
       "href",
       `${PATH}/runs/${SCENARIO_RUN}`,
     );
-    expect(within(runs).getByText("personal · interactive")).toBeInTheDocument();
+    expect(within(runs).getByText("personal")).toBeInTheDocument();
+  });
+
+  it("scenarios detail words an expect's wait and changes its stop with the mode", async () => {
+    const user = userEvent.setup();
+    renderDetail({
+      [DETAIL]: aScenarioDetail({
+        steps: [
+          {
+            id: "service-up",
+            type: "expect",
+            action: "get-order-by-ref",
+            depends_on: [],
+            with: { external_ref: "$INPUTS.external_ref" },
+            every: "10s",
+            timeout: "2m",
+            until_when: "$self.output.status == 200",
+          },
+        ],
+      }),
+    });
+
+    const card = await screen.findByRole("article", { name: "Step 1: service-up" });
+    expect(
+      within(card).getByText(
+        "Waits until status is 200: checks every 10 s, for up to 2 min (at most 12 checks).",
+      ),
+    ).toBeInTheDocument();
+    expect(within(card).getByText("input external_ref")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Regression" }));
+    expect(
+      within(card).getByText(
+        "If its condition (status is 200) still does not hold after 2 min, the scenario run fails here (Regression).",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("scenarios detail opens an action's panel with its script and shows the scenario file", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    const fetch = await screen.findByRole("article", { name: "Step 1: fetch-order" });
+    await user.click(within(fetch).getByRole("button", { name: "Open action send-queue-message" }));
+    const panel = await screen.findByRole("complementary", { name: "Action send-queue-message" });
+    expect(within(panel).getByText("print('{}')")).toBeInTheDocument();
+    expect(
+      within(panel).getByRole("table", { name: "Inputs of send-queue-message" }),
+    ).toBeInTheDocument();
+    await user.click(
+      within(panel).getByRole("button", { name: "Close action send-queue-message" }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Document" }));
+    expect(
+      screen.getByLabelText("Text of scenarios/orders/order-lifecycle.yaml"),
+    ).toHaveTextContent("kind: scenario");
+    expect(screen.getByRole("button", { name: "Edit with Claude" })).toBeInTheDocument();
   });
 
   describe("states", () => {
@@ -260,7 +341,9 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
     it("scenarios detail states: no scenario runs yet", async () => {
       renderDetail();
 
-      expect(await screen.findByText("No scenario runs yet.")).toBeInTheDocument();
+      expect(
+        await screen.findByText("No scenario runs yet. Plan, then start one above."),
+      ).toBeInTheDocument();
       expect(
         screen.getByText("Plan the scenario to see what each step will do in an environment."),
       ).toBeInTheDocument();
@@ -306,7 +389,7 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
   it("scenarios detail has no serious a11y violation with a plan shown (a11y)", async () => {
     const { container } = renderDetail({ [PLAN]: denied });
     await planIn("personal");
-    await screen.findByRole("table", { name: "Plan of order-lifecycle in personal" });
+    await screen.findByText("Cannot start: render-pdf is denied in personal.");
 
     expect(await seriousViolations(container)).toEqual([]);
   });
@@ -361,28 +444,16 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
     expect(screen.getByText("Starting a scenario run needs a desktop screen.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Start scenario run" })).toBeNull();
   });
-  it("scenarios detail puts a draft's commit line in a full-width row under its step", async () => {
+  it("scenarios detail puts a draft's commit line in its step's card", async () => {
     renderDetail({ [PLAN]: denied });
     await planIn("personal");
 
-    const table = await screen.findByRole("table", { name: "Plan of order-lifecycle in personal" });
-    const header = within(table)
-      .getAllByRole("columnheader")
-      .map((th) => th.textContent);
-    expect(header).toEqual(["Step", "Action", "Effect", "Service → endpoint", "Policy"]);
-    const stepRow = within(table).getByText("render-pdf").closest("tr");
-    expect(stepRow).toHaveTextContent("Denied");
-    const draftRow = within(table).getByText("Draft: needs acceptance").closest("tr");
-    expect(draftRow).not.toBe(stepRow);
-    expect(draftRow?.querySelector("td")).toHaveAttribute("colspan", "5");
-    const command = within(table).getByText(aDraftRow().accept_command ?? "");
+    const render = await screen.findByRole("article", { name: "Step 3: render-pdf" });
+    await within(render).findByText("Draft: needs acceptance");
+    const command = within(render).getByText(aDraftRow().accept_command ?? "");
     expect(command).toHaveStyle({ whiteSpace: "pre-wrap" });
-    expect(
-      within(draftRow as HTMLElement).getByRole("button", {
-        name: "Copy the commit command for orders/render-invoice-pdf",
-      }),
-    ).toBeInTheDocument();
-    expect(table).toHaveClass("sc-plan");
+    const fetch = screen.getByRole("article", { name: "Step 1: fetch-order" });
+    expect(within(fetch).queryByText("Draft: needs acceptance")).not.toBeInTheDocument();
   });
 
   it("scenarios detail shows a plan's input problems at their fields", async () => {
@@ -402,12 +473,7 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
     });
   });
 
-  it("scenarios detail words a poll's pace and names the environment in the slow-plan command", async () => {
-    const { unmount } = renderDetail({ [PLAN]: aScenarioPlan() });
-    await planIn("personal");
-    expect(await screen.findByText(/\(every 10 s, up to 5 min\)/)).toBeInTheDocument();
-    unmount();
-
+  it("scenarios detail names the environment in the slow-plan command", async () => {
     renderDetail({ [PLAN]: aProblem({ status: 502, title: "Bad gateway" }) });
     await planIn("qa");
     expect(
@@ -449,18 +515,67 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
     );
   });
 
-  it("scenarios detail stacks the steps and the scenario runs below 1600 px", async () => {
+  it("scenarios detail follows a running scenario run: banner with cancel and each step's status", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const step = (key: string, status: "ok" | "running") => ({
+      attempt: 1,
+      ended_at: status === "ok" ? "2026-10-23T10:01:00Z" : null,
+      key,
+      max_attempts: 1,
+      reason: null,
+      session_ids: [],
+      started_at: "2026-10-23T10:00:00Z",
+      status,
+    });
+    renderDetail({
+      [DETAIL]: aScenarioDetail({ runs: [aScenarioRunRef({ status: "running" })] }),
+      [`/api/v1/workflow-runs/${SCENARIO_RUN}`]: aRun({
+        id: SCENARIO_RUN,
+        kind: "scenario",
+        workflow: "scenario:order-lifecycle",
+        content_hash: "sha256:5f0c2e1d",
+        revision: 1,
+        status: "running",
+        steps: [step("fetch-order", "ok"), step("order-on-hold", "running")],
+      }),
+      [`/api/v1/scenario-runs/${SCENARIO_RUN}`]: aScenarioRunDetail({
+        polls: [1, 2, 3].map((poll) => ({
+          node: "order-on-hold",
+          attempt: 1,
+          poll,
+          held: false,
+          at: null,
+        })),
+      }),
+    });
+
+    expect(await screen.findByText(/is running in personal/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Open scenario run/ })).toHaveAttribute(
+      "href",
+      `${PATH}/runs/${SCENARIO_RUN}`,
+    );
+    expect(screen.getByRole("button", { name: /Cancel scenario run/ })).toBeInTheDocument();
+    const fetch = screen.getByRole("article", { name: "Step 1: fetch-order" });
+    expect(within(fetch).getByText("Done")).toBeInTheDocument();
+    const held = screen.getByRole("article", { name: "Step 2: order-on-hold" });
+    expect(await within(held).findByText(/Running · check 3/)).toBeInTheDocument();
+    const render = screen.getByRole("article", { name: "Step 3: render-pdf" });
+    expect(within(render).getByText("Not started")).toBeInTheDocument();
+  });
+
+  it("scenarios detail puts the run panel beside the steps", async () => {
     renderDetail();
 
-    const steps = await screen.findByRole("region", { name: "Step by step" });
-    expect(steps.parentElement).toHaveStyle({ gridTemplateColumns: "minmax(0, 1fr)" });
+    const panel = await screen.findByRole("complementary", { name: "Run order-lifecycle" });
+    expect(panel).toHaveClass("sc-run-panel");
+    expect(within(panel).getByRole("region", { name: "Run it" })).toBeInTheDocument();
+    expect(within(panel).getByRole("region", { name: "Scenario runs" })).toBeInTheDocument();
   });
   it("scenarios detail breaks long ids only after a slash or a dash", async () => {
-    renderDetail({ [PLAN]: denied });
-    await planIn("personal");
+    renderDetail();
 
-    const table = await screen.findByRole("table", { name: "Plan of order-lifecycle in personal" });
-    const action = within(table).getByText("orders/render-invoice-pdf", { selector: ".ah-small" });
-    expect(action.querySelectorAll("wbr").length).toBe(3);
+    const render = await screen.findByRole("article", { name: "Step 3: render-pdf" });
+    const action = within(render).getByText("render-invoice-pdf", { selector: ".ah-mono" });
+    expect(action.querySelectorAll("wbr").length).toBe(2);
   });
 });

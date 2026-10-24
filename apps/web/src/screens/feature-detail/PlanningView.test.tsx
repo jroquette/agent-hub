@@ -1,9 +1,18 @@
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import { aFeatureTickets, aTicketFlow, aTicketPlan, aTicketRow } from "../../testing/builders";
-import { PlanningView, splitTitle, ticketAnchor } from "./PlanningView";
+import {
+  PlanningView,
+  READINESS_ICON,
+  ReadinessText,
+  readinessIcon,
+  splitTitle,
+  ticketAnchor,
+} from "./PlanningView";
 
 const rows = ["T1", "T2", "T3", "T4", "T5"].map((ref) =>
   aTicketRow({ ref, key: ref, id: null, title: `Ticket ${ref}`, url: null }),
@@ -70,7 +79,7 @@ describe("PlanningView", () => {
     expect(card).toHaveTextContent("1/2 child tickets done");
     expect(card).toHaveTextContent("1 in progress");
     expect(card).toHaveTextContent("1/2 ACs passing");
-    const flow = screen.getByRole("list", { name: "Ticket flow" });
+    const flow = screen.getByRole("group", { name: "Ticket flow" });
     expect(within(flow).queryByRole("listitem", { name: /ACME-1 ·/ })).not.toBeInTheDocument();
     expect(screen.getByRole("list", { name: "Tickets by readiness" })).not.toHaveTextContent(
       "epic",
@@ -81,9 +90,7 @@ describe("PlanningView", () => {
     render(<PlanningView tickets={rows} planning={plan} />);
 
     expect(screen.getByRole("heading", { name: "Ticket flow" })).toBeInTheDocument();
-    const steps = within(screen.getByRole("list", { name: "Ticket flow" }))
-      .getAllByRole("listitem")
-      .filter((li) => li.tagName === "SECTION");
+    const steps = within(screen.getByRole("group", { name: "Ticket flow" })).getAllByRole("region");
     expect(steps.map((s) => s.getAttribute("aria-label"))).toEqual([
       "Group 1 · in parallel",
       "Group 2 · after group 1",
@@ -147,9 +154,7 @@ describe("PlanningView", () => {
       />,
     );
 
-    const steps = within(screen.getByRole("list", { name: "Ticket flow" }))
-      .getAllByRole("listitem")
-      .filter((li) => li.tagName === "SECTION");
+    const steps = within(screen.getByRole("group", { name: "Ticket flow" })).getAllByRole("region");
     expect(steps.map((s) => s.getAttribute("aria-label"))).toEqual([
       "Group 1 · done",
       "Group 2 · after group 1",
@@ -226,9 +231,25 @@ describe("PlanningView", () => {
     const outside = screen.getByText("Blocked from outside this feature:").closest("[role=status]");
     expect(outside).toHaveTextContent("Upgrade the runtime · In Progress (not done)");
     expect(outside).toHaveTextContent("ACME-8 · status unknown");
-    expect(outside).toHaveTextContent("ACME-7 · Done elsewhere · done");
+    // A done blocker holds nothing back, so the banner leaves it out.
+    expect(outside).not.toHaveTextContent("ACME-7");
     expect(within(outside as HTMLElement).getAllByRole("link")).toHaveLength(1);
     expect(screen.getByText(/more than 50 relations/)).toBeInTheDocument();
+  });
+
+  it("shows no outside-blocker banner when every blocker outside is done (planning)", () => {
+    render(
+      <PlanningView
+        tickets={rows}
+        planning={aTicketPlan({
+          external_blockers: [
+            { id: "ACME-7", title: "Done elsewhere", state: null, url: null, done: true },
+          ],
+        })}
+      />,
+    );
+
+    expect(screen.queryByText("Blocked from outside this feature:")).toBeNull();
   });
 
   it("says when there is no ticket to show (flow states)", () => {
@@ -440,5 +461,258 @@ describe("PlanningView", () => {
     );
 
     expect(await seriousViolations(container)).toEqual([]);
+  });
+
+  describe("on the canvas", () => {
+    // T3 waits on T1 and T2; T5 waits on T3 and T4.
+    const linked = rows.map((row) => {
+      if (row.ref === "T3") {
+        return {
+          ...row,
+          blocked_by: [
+            { ref: "T1", source: "both" as const },
+            { ref: "T2", source: "both" as const },
+          ],
+        };
+      }
+      if (row.ref === "T5") {
+        return {
+          ...row,
+          blocked_by: [
+            { ref: "T3", source: "both" as const },
+            { ref: "T4", source: "both" as const },
+          ],
+        };
+      }
+      return row;
+    });
+
+    it("AC-TF.1 lights the chosen ticket's whole chain above the cards and fades the rest", () => {
+      const { container } = render(<PlanningView tickets={linked} planning={plan} chosen="T3" />);
+
+      const edge = (id: string) => container.querySelector(`.ah-flow-edges [data-edge="${id}"]`);
+      for (const id of ["T1→T3", "T2→T3", "T3→T5"]) expect(edge(id)).toHaveAttribute("data-hot");
+      expect(edge("T4→T5")).toHaveAttribute("data-dim");
+      expect(container.querySelectorAll(".ah-flow-edges-top path:not(.ah-flow-halo)")).toHaveLength(
+        3,
+      );
+      expect(screen.getByRole("listitem", { name: "T3 · Ticket T3" })).toHaveAttribute(
+        "aria-current",
+        "true",
+      );
+      expect(screen.getByRole("listitem", { name: "T5 · Ticket T5" })).toHaveAttribute(
+        "data-chain",
+        "true",
+      );
+      expect(screen.getByRole("listitem", { name: "T4 · Ticket T4" })).not.toHaveAttribute(
+        "data-chain",
+      );
+    });
+
+    it("draws no edge into or inside Held back, whose cards name what they wait on", () => {
+      const cycle = [
+        ...rows.slice(0, 2),
+        aTicketRow({
+          ref: "C1",
+          key: "C1",
+          id: null,
+          title: "Cycle one",
+          url: null,
+          readiness: "in_cycle",
+          blocked_by: [
+            { ref: "C2", source: "plan" },
+            { ref: "T1", source: "plan" },
+          ],
+          waiting_on: ["C2"],
+        }),
+        aTicketRow({
+          ref: "C2",
+          key: "C2",
+          id: null,
+          title: "Cycle two",
+          url: null,
+          readiness: "in_cycle",
+          blocked_by: [{ ref: "C1", source: "plan" }],
+          waiting_on: ["C1"],
+        }),
+      ];
+      const { container } = render(
+        <PlanningView
+          tickets={cycle}
+          planning={aTicketPlan({
+            layers: [["T1", "T2"]],
+            can_start: ["T1", "T2"],
+            order: ["T1", "T2"],
+            waiting: [],
+            critical_path: [],
+            cycles: [["C1", "C2"]],
+          })}
+        />,
+      );
+
+      expect(screen.getByRole("region", { name: /^Held back/ })).toBeInTheDocument();
+      expect(container.querySelectorAll("[data-edge]")).toHaveLength(0);
+      expect(screen.getByRole("listitem", { name: "C1 · Cycle one" })).toHaveTextContent(
+        "Waiting: cycle with C2",
+      );
+    });
+
+    it("AC-TF.3 is one Tab stop whose arrows follow the edges and the columns", async () => {
+      const user = userEvent.setup();
+      render(
+        <MemoryRouter>
+          <PlanningView tickets={linked} planning={plan} onOpenTicket={() => undefined} />
+        </MemoryRouter>,
+      );
+
+      const title = (ref: string) =>
+        document.querySelector<HTMLElement>(`[data-node-id="${ref}"] [data-ticket-open]`);
+      expect(title("T1")?.tabIndex).toBe(0);
+      expect(title("T2")?.tabIndex).toBe(-1);
+      title("T1")?.focus();
+      await user.keyboard("{ArrowRight}");
+      expect(title("T3")).toHaveFocus();
+      await user.keyboard("{ArrowRight}");
+      expect(title("T5")).toHaveFocus();
+      await user.keyboard("{ArrowLeft}");
+      expect(title("T3")).toHaveFocus();
+      await user.keyboard("{ArrowLeft}");
+      await user.keyboard("{ArrowDown}");
+      expect(title("T2")).toHaveFocus();
+      expect(title("T2")?.tabIndex).toBe(0);
+      await user.keyboard("k");
+      expect(title("T1")).toHaveFocus();
+    });
+
+    it("routes every edge as orthogonal lines with rounded corners, never a curve", () => {
+      const { container } = render(<PlanningView tickets={linked} planning={plan} />);
+
+      // T4 is in group 1 and T5 in group 3: it runs in a channel; T3 → T5 goes by T3's trunk.
+      expect(container.querySelector('[data-edge="T4→T5"]')?.getAttribute("d")).toContain(" Q ");
+      for (const path of container.querySelectorAll(".ah-flow-edges path[data-edge]")) {
+        expect(path.getAttribute("d")).not.toContain(" C ");
+      }
+    });
+
+    it("lights only the line a blocker link names, and marks its blocker", async () => {
+      const user = userEvent.setup();
+      const waiting = linked.map((row) =>
+        row.ref === "T5"
+          ? { ...row, readiness: "waiting" as const, waiting_on: ["T3", "T4"] }
+          : row,
+      );
+      const { container } = render(<PlanningView tickets={waiting} planning={plan} />);
+
+      const card = screen.getByRole("listitem", { name: "T5 · Ticket T5" });
+      const link = card.querySelector<HTMLElement>('a[href="#ticket-T3"]');
+      expect(link).not.toBeNull();
+      if (link) await user.hover(link);
+      const edge = (id: string) => container.querySelector(`.ah-flow-edges [data-edge="${id}"]`);
+      expect(edge("T3→T5")).toHaveAttribute("data-hot");
+      expect(edge("T4→T5")).toHaveAttribute("data-dim");
+      expect(screen.getByRole("listitem", { name: "T3 · Ticket T3" })).toHaveAttribute(
+        "data-chain",
+        "true",
+      );
+    });
+
+    it("draws every edge as an outline, so a routed edge never paints a filled shape", () => {
+      const { container } = render(<PlanningView tickets={linked} planning={plan} />);
+
+      const paths = container.querySelectorAll(".ah-flow-edges path[data-edge]");
+      expect(paths.length).toBeGreaterThan(0);
+      for (const path of paths) expect(path.getAttribute("fill")).toBe("none");
+    });
+
+    it("AC-TF.3 keeps other cards' links and buttons out of the tab order", () => {
+      render(
+        <MemoryRouter>
+          <PlanningView
+            tickets={linked}
+            planning={plan}
+            onOpenTicket={() => undefined}
+            ticketAction={(row) => <button type="button">Start {row.ref}</button>}
+          />
+        </MemoryRouter>,
+      );
+
+      expect(screen.getByRole("button", { name: "Start T1" })).not.toHaveAttribute("tabindex");
+      expect(screen.getByRole("button", { name: "Start T2" })).toHaveAttribute("tabindex", "-1");
+    });
+
+    it("AC-TF.2 zooms from the toolbar and keeps the legend in the canvas", async () => {
+      const user = userEvent.setup();
+      render(<PlanningView tickets={linked} planning={plan} />);
+
+      const controls = screen.getByRole("toolbar", { name: "Graph view" });
+      await user.click(within(controls).getByRole("button", { name: "Zoom in (+)" }));
+      expect(
+        within(controls).getByRole("button", { name: "Reset zoom to 100%" }),
+      ).toHaveTextContent("120%");
+      expect(screen.getByText("How to read").closest(".ah-canvas")).not.toBeNull();
+    });
+
+    it("has no serious axe violation with a ticket chosen (a11y)", async () => {
+      const { container } = render(
+        <MemoryRouter>
+          <PlanningView
+            tickets={linked}
+            planning={plan}
+            chosen="T3"
+            onOpenTicket={() => undefined}
+          />
+        </MemoryRouter>,
+      );
+
+      expect(await seriousViolations(container)).toEqual([]);
+    });
+  });
+});
+
+describe("readinessIcon", () => {
+  const blocker = aTicketRow({
+    ref: "T2",
+    key: "T2",
+    id: "AGH-2",
+    readiness: "in_progress",
+    waiting_on: [],
+    blocked_by: [],
+    pr_url: "https://github.com/acme/demo-api/pull/12",
+  });
+  const stacked = aTicketRow({
+    ref: "T3",
+    key: "T3",
+    id: "AGH-3",
+    readiness: "waiting",
+    blocked_by: [{ ref: "T2", source: "plan" }],
+    waiting_on: ["T2"],
+  });
+
+  it("gives a reviewed ticket in progress the double check, a stacked one the branch", () => {
+    const reviewed = aTicketRow({ ref: "T4", readiness: "in_progress", reviewed: true });
+
+    expect(readinessIcon(reviewed, [reviewed])?.icon).toBe("check-check");
+    expect(readinessIcon(stacked, [blocker, stacked])?.icon).toBe("git-branch");
+  });
+
+  it("gives every other readiness its own icon, and none to the states the badge says", () => {
+    for (const readiness of ["can_start", "in_progress", "waiting", "in_cycle"] as const) {
+      const row = aTicketRow({ ref: "T9", readiness, waiting_on: [], blocked_by: [] });
+      expect(readinessIcon(row, [row])).toEqual(READINESS_ICON[readiness]);
+    }
+    const done = aTicketRow({ ref: "T9", readiness: "done" });
+    expect(readinessIcon(done, [done])).toBeUndefined();
+  });
+
+  it("leads the readiness words with the icon only when asked, keeping the old markup", () => {
+    const row = aTicketRow({ ref: "T9", readiness: "can_start", waiting_on: [], blocked_by: [] });
+
+    const plain = render(<ReadinessText row={row} rows={[row]} external={[]} />);
+    expect(plain.container.querySelector(".ah-readiness-line")).toBeNull();
+    expect(plain.container.querySelector("svg")).toBeNull();
+    plain.unmount();
+
+    const led = render(<ReadinessText row={row} rows={[row]} external={[]} withIcon />);
+    expect(led.container.querySelector(".ah-readiness-line svg")).not.toBeNull();
   });
 });

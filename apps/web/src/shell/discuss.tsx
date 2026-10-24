@@ -75,6 +75,19 @@ interface DiscussState {
   addReference: (reference: DiscussReference) => void;
   removeReference: (id: string) => void;
   clearReferences: () => void;
+  /** A message a screen asks to send on its target (a builder's "describe it to Claude"). */
+  outbox: Outbound | null;
+  /** Opens the panel and sends `text` on the current target: it starts the conversation, or goes
+   * into the open one. Only ever called from a person's click. */
+  ask: (text: string) => void;
+  /** Claims the outbox message: true only for the first caller of an id, which sends it. */
+  takeOutbox: (id: number) => boolean;
+}
+
+export interface Outbound {
+  id: number;
+  key: string;
+  text: string;
 }
 
 const DiscussContext = createContext<DiscussState>({
@@ -87,6 +100,9 @@ const DiscussContext = createContext<DiscussState>({
   addReference: () => undefined,
   removeReference: () => undefined,
   clearReferences: () => undefined,
+  outbox: null,
+  ask: () => undefined,
+  takeOutbox: () => false,
 });
 
 const OPEN_KEY = "ah.discuss.open";
@@ -133,6 +149,9 @@ export function DiscussProvider({ children }: { children: ReactNode }) {
     [target],
   );
   const references = target && pointed?.key === target.key ? pointed.items : NO_REFERENCES;
+  const [outbox, setOutbox] = useState<Outbound | null>(null);
+  // Claimed at once, before any state update lands: a message is sent once, by one place.
+  const [claimed] = useState(() => new Set<number>());
   const value = useMemo<DiscussState>(
     () => ({
       target,
@@ -154,8 +173,20 @@ export function DiscussProvider({ children }: { children: ReactNode }) {
       clearReferences: () => {
         setPointed(null);
       },
+      outbox: target && outbox?.key === target.key ? outbox : null,
+      ask: (text) => {
+        if (!target) return;
+        setOutbox({ id: Date.now(), key: target.key, text });
+        if (!open) choose(true);
+      },
+      takeOutbox: (id) => {
+        if (claimed.has(id)) return false;
+        claimed.add(id);
+        setOutbox((current) => (current?.id === id ? null : current));
+        return true;
+      },
     }),
-    [target, open, choose, references],
+    [target, open, choose, references, outbox, claimed],
   );
   return <DiscussContext.Provider value={value}>{children}</DiscussContext.Provider>;
 }

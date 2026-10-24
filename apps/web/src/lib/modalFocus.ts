@@ -56,7 +56,10 @@ export function useModalFocus(
         return;
       }
       if (event.key !== "Tab") return;
-      const items = [...node.querySelectorAll<HTMLElement>(MODAL_FOCUSABLE)];
+      // A control taken out of the tab order (a roving list's other items) is never Tab's end.
+      const items = [...node.querySelectorAll<HTMLElement>(MODAL_FOCUSABLE)].filter(
+        (el) => el.tabIndex >= 0,
+      );
       const head = items[0];
       const tail = items[items.length - 1];
       if (!head || !tail) {

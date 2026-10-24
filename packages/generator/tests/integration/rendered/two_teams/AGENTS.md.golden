@@ -60,7 +60,7 @@ is a hub bug: log it in `brain/_inbox/`.
 5. This hub is private. Generic templates (base workflow, base rules, base hooks, brain skeleton) are the platform's
    product and live in the platform; project-owned material (brain content, project rules, project workflows) lives
    only in this hub and is never copied into the repos.
-6. Text for people (chat, PR bodies and replies, tracker comments, handoffs, summaries, brain notes) follows the
+6. Text for people (chat, PRs, tracker comments, code comments, handoffs, summaries, brain notes) follows the
    `plain-language` skill, in the reader's language; versioned text uses the hub's. Text for agents keeps full detail.
 
 ## Brain rules

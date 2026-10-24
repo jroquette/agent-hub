@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode, type RefObject } from "react";
-import { useSearchParams } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 
 import {
   AppLink,
@@ -25,14 +25,16 @@ import {
   type ScenarioSummary,
 } from "./queries";
 
+export { NewScenarioScreen } from "./NewScenario";
 export { ScenarioDetailScreen } from "./ScenarioDetail";
 export { ScenarioRunScreen } from "./ScenarioRun";
 
 /* Scenarios (AGH-350 T13, spec 23 screen 1): the hubs' scenarios, how their last scenario run
- * ended, which wait for you, and which files do not load. Nothing here writes. */
+ * ended, which wait for you, and which files do not load. "New scenario" opens the guided form
+ * where Claude writes one; nothing on this page writes. */
 
 const EMPTY_BODY =
-  "Scenarios are YAML files in the hub's scenarios/<pack>/ folder, and the actions they call are in actions/<pack>/. Add one, then check that it loads from a terminal:";
+  "Scenarios are YAML files in the hub's scenarios/<pack>/ folder, and the actions they call are in actions/<pack>/. Describe one and Claude writes it, or add one by hand and check that it loads from a terminal:";
 
 function countLine(items: readonly ScenarioSummary[], waiting: number): string {
   const packs = new Set(items.map((item) => `${item.project}/${item.pack}`)).size;
@@ -203,6 +205,10 @@ function Loading() {
 export function ScenariosScreen() {
   const [scope] = useScope();
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
+  const newScenario = () => {
+    void navigate("/scenarios/new");
+  };
   const query = params.get("q") ?? "";
   const scenarios = useScenarios(scope);
   const { rows, waitingRuns } = useWaitingRows(scope);
@@ -249,6 +255,11 @@ export function ScenariosScreen() {
           icon="clipboard-list"
           title={scope === null ? "No scenarios yet." : `No scenarios in ${scope} yet.`}
           command="./hub scenario list"
+          action={
+            <Button variant="primary" size="sm" icon="plus" onClick={newScenario}>
+              New scenario
+            </Button>
+          }
         >
           {EMPTY_BODY}
         </EmptyState>
@@ -302,6 +313,9 @@ export function ScenariosScreen() {
       <div className="ah-stack" style={{ gap: 4 }}>
         <div className="ah-row" style={{ gap: 12 }}>
           <h1 className="ah-h1">Scenarios</h1>
+          <Button variant="primary" size="sm" icon="plus" onClick={newScenario}>
+            New scenario
+          </Button>
           <span className="ah-grow" />
           <StaleStamp />
         </div>

@@ -17,7 +17,7 @@ import pytest
 from scripts.playground_export import ROOT, WEB_DIR, demo_web, run_playwright
 from scripts.seed_demo import CHAT_SESSION
 
-# The browser compares 20 full screens one after the other: run alone (make test-e2e).
+# The browser compares every full screen one after the other: run alone (make test-e2e).
 pytestmark = pytest.mark.serial
 
 BASELINES = WEB_DIR / "e2e" / "visual" / "baselines"
@@ -46,6 +46,6 @@ def test_matches_baselines_when_demo_screens_rendered(tmp_path: Path) -> None:
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
     # Every baseline is a test, and every test ran.
-    assert len(baselines) == 20, baselines
+    assert len(baselines) == 27, baselines
     assert re.search(rf"\b{len(baselines)} passed\b", output), output
     assert "skipped" not in output, output

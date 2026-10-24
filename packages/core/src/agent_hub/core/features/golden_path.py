@@ -17,8 +17,9 @@ The fold: steps hold in turn until the first that does not, the gate; it is ``cu
 ``unknown`` when its evidence cannot be read, ``unrecorded`` when its record was never written)
 and the ``phase``. No step after the gate is ``done``: one whose own condition holds is
 ``blocked`` naming the gate, one with recorded evidence for part of the feature (created or
-merged tickets, ticket evals covering some ACs, a design written) is ``partial``, one that cannot
-be read is ``unknown``, the rest ``pending``. Without Linear (the plan fallback), ticket states
+merged tickets, a design written) is ``partial``, one that cannot be read is ``unknown``, the
+rest ``pending`` (Acceptance stays ``pending`` while ticket evals cover some ACs: they belong to
+Build). Without Linear (the plan fallback), ticket states
 are unknown: Build and Shipped are ``unknown``, done only when every ticket's outcome is recorded.
 """
 
@@ -377,7 +378,7 @@ def _acceptance(facts: _Facts) -> _Own:
         meta=f"Ticket evals cover {covered} of {total} ACs" if total else None,
         reason="no whole-feature eval yet",
         progress=StepProgress(done=covered, total=total) if total else None,
-        started=covered > 0,
+        # Ticket evals are part of Build: Acceptance is not reached before its own eval.
         unrecorded=True,
     )
 

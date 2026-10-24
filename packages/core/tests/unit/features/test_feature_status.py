@@ -483,7 +483,7 @@ def test_never_marks_acceptance_done_when_ship_covers_part() -> None:
         "plan": "done",
         "tickets": "done",
         "build": "current",
-        "acceptance": "partial",
+        "acceptance": "pending",
         "shipped": "pending",
     }
     assert _meta(path, "build") == "1 of 17 merged · 16 in progress"

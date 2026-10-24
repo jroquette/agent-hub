@@ -1,6 +1,6 @@
 /* The Features list: what is moving (with a warning on the rows that need the owner) and what shipped. */
 import type { components } from "../../api/schema";
-import { GOLDEN_STEP_LABEL, ownerWaitStep, type IconName } from "../../components";
+import { ownerWaitStep, type IconName } from "../../components";
 import { phaseIndex } from "./parts";
 
 type Feature = components["schemas"]["FeatureView"];
@@ -20,7 +20,7 @@ export const GROUPS: readonly {
     id: "progress",
     title: "In progress",
     summary: "in progress",
-    hint: "What needs you first, then furthest along and most ACs passing",
+    hint: "Features that need you come first, then the ones a session is working on, then the ones furthest along",
     empty: "No feature in progress.",
   },
   {
@@ -34,10 +34,31 @@ export const GROUPS: readonly {
 
 /** A verdict in words, for a row's line: the codes stay in the eval. */
 export const VERDICT_WORDS: Record<NonNullable<Feature["verdict"]>, string> = {
-  SHIP: "evaluator says ship",
-  "SHIP-WITH-OWNER-STEPS": "evaluator says ship after your steps",
-  "NO-SHIP": "evaluator says no ship",
+  SHIP: "Ready to ship",
+  "SHIP-WITH-OWNER-STEPS": "Ready to ship after your manual checks",
+  "NO-SHIP": "Not ready to ship",
 };
+
+/** What happens next at each step, in plain words, for a row whose step has nothing else to say. */
+const NEXT_AT: Record<Feature["phase"], string> = {
+  spec: "Next: write the spec",
+  ux_design: "Next: design the screens",
+  research: "Next: research the code",
+  plan: "Next: write the plan",
+  tickets: "Next: create the tickets",
+  build: "Building",
+  acceptance: "Next: evaluate the whole feature",
+  shipped: "Shipped",
+};
+
+/** "3 of 10 tickets merged": the step's count in words, where it has one worth saying. */
+function progressWords(phase: Feature["phase"], done: number, total: number): string | null {
+  const n = `${String(done)} of ${String(total)}`;
+  if (phase === "build") return `${n} tickets merged`;
+  if (phase === "tickets") return `${n} tickets created`;
+  if (phase === "ux_design") return `${n} designs approved`;
+  return null;
+}
 
 export type Tone = "blocked" | "failed" | "waiting" | "done";
 
@@ -55,6 +76,10 @@ export interface Reason {
   line: string;
   /** The row's link query after `doc=` (a tab, or the ticket panel at a change request). */
   doc: string | null;
+  /** How many sessions work on the feature right now (live, not subagents): the row's live dot. */
+  working: number;
+  /** The row's line as it would read with no session working, for its tooltip and screen-reader name. */
+  plainLine: string;
 }
 
 /** The kinds of warning, in the order they lead In progress. */
@@ -82,13 +107,8 @@ export interface SessionWait {
  * one wins over an idle one, then the most recent.
  */
 export function sessionWaitOf(f: Feature, tiles: readonly LiveTile[]): SessionWait | null {
-  const ids = new Set(f.issues.map((i) => issueId(i).toUpperCase()));
-  const ofFeature = (t: LiveTile) => {
-    const issue = (t.label?.issue ?? t.issue ?? "").toUpperCase();
-    return (issue !== "" && ids.has(issue)) || (t.label?.title ?? "").includes(f.slug);
-  };
-  const waits = tiles
-    .filter((t) => (t.group === "waiting" || t.group === "idle") && !t.is_subagent && ofFeature(t))
+  const waits = tilesOf(f, tiles)
+    .filter((t) => t.group === "waiting" || t.group === "idle")
     .sort(
       (a, b) =>
         Number(b.group === "waiting") - Number(a.group === "waiting") ||
@@ -98,7 +118,34 @@ export function sessionWaitOf(f: Feature, tiles: readonly LiveTile[]): SessionWa
   return tile ? { tile, group: tile.group === "waiting" ? "waiting" : "idle" } : null;
 }
 
-function sessionReason(wait: SessionWait): Reason {
+/** The main-session tiles (not subagents) whose issue is one of the feature's, or whose title names it. */
+function tilesOf(f: Feature, tiles: readonly LiveTile[]): LiveTile[] {
+  const ids = new Set(f.issues.map((i) => issueId(i).toUpperCase()));
+  return tiles.filter((t) => {
+    if (t.is_subagent) return false;
+    const issue = (t.label?.issue ?? t.issue ?? "").toUpperCase();
+    return (issue !== "" && ids.has(issue)) || (t.label?.title ?? "").includes(f.slug);
+  });
+}
+
+/** The sessions working on the feature right now (`live`), the most recent first. */
+export function sessionsWorkingOn(f: Feature, tiles: readonly LiveTile[]): LiveTile[] {
+  return tilesOf(f, tiles)
+    .filter((t) => t.group === "live")
+    .sort((a, b) => b.last_activity_at.localeCompare(a.last_activity_at));
+}
+
+/** "A session is working · Edited groups.ts", "2 sessions are working · …". */
+export function workingLine(working: readonly LiveTile[]): string {
+  const [latest] = working;
+  const head =
+    working.length === 1
+      ? "A session is working"
+      : `${String(working.length)} sessions are working`;
+  return latest?.last_action ? `${head} · ${latest.last_action}` : head;
+}
+
+function sessionReason(wait: SessionWait): BaseReason {
   const { tile } = wait;
   if (wait.group === "waiting") {
     const why = tile.waiting_reason ?? "a permission prompt";
@@ -167,7 +214,24 @@ function shortReason(reason: string): string | null {
   return isLinearGap(reason) ? null : reason.replace(/[.;]\s*open the \w+ tab\.?$/i, "");
 }
 
-export function reasonOf(f: Feature, wait: SessionWait | null = null): Reason {
+type BaseReason = Omit<Reason, "working" | "plainLine">;
+
+/**
+ * Why the row sits where it does. A session working on the feature puts the live dot on the row and,
+ * when nothing needs you, says so on the line; a warning that needs you keeps its line.
+ */
+export function reasonOf(
+  f: Feature,
+  wait: SessionWait | null = null,
+  working: readonly LiveTile[] = [],
+): Reason {
+  const base = baseReasonOf(f, wait);
+  const plain = { ...base, working: working.length, plainLine: base.line };
+  if (!working.length || base.needs !== null || base.group === "shipped") return plain;
+  return { ...plain, line: workingLine(working) };
+}
+
+function baseReasonOf(f: Feature, wait: SessionWait | null): BaseReason {
   if (wait && f.phase !== "shipped") return sessionReason(wait);
   if (f.problem) {
     return {
@@ -237,13 +301,20 @@ export function reasonOf(f: Feature, wait: SessionWait | null = null): Reason {
     };
   }
   const step = f.golden_path.steps.find((s) => s.name === f.phase);
-  // The Golden path column shows where the step sits; the line says only what happens in it.
-  const parts = [GOLDEN_STEP_LABEL[f.phase]];
-  // Build's meta says when Linear was not read: the page says it once, not every row.
-  const meta = step?.meta && !isLinearGap(step.meta) ? step.meta : null;
-  if (meta) parts.push(meta);
-  const why = step?.reason && step.state !== "done" ? shortReason(step.reason) : null;
-  if (why) parts.push(why);
+  // The Stage column names the step; the line says what comes next there, in plain words.
+  const parts: string[] = [];
+  if (step?.state === "blocked" && step.reason && !isLinearGap(step.reason)) {
+    parts.push(`Blocked: ${shortReason(step.reason) ?? step.reason}`);
+  } else if (step?.state === "stale") {
+    parts.push("Needs a new evaluation");
+  } else {
+    parts.push(NEXT_AT[f.phase]);
+    const p = step?.progress;
+    // An unknown step's count was not read: the notice above the list says so once.
+    const known = p && p.total > 0 && step.state !== "unknown";
+    const count = known ? progressWords(f.phase, p.done, p.total) : null;
+    if (count) parts.push(count);
+  }
   if (f.verdict) parts.push(VERDICT_WORDS[f.verdict]);
   return {
     group: "progress",
@@ -265,9 +336,14 @@ function acRatio(f: Feature): number {
   return a && a.total > 0 ? (a.passing + a.owner_steps) / a.total : 0;
 }
 
-const needsRank = (r: Reason) => (r.needs ? NEEDS_ORDER.indexOf(r.needs) : NEEDS_ORDER.length);
+/** The sort's ranks: the warnings in their order, with a session working right after the session warnings. */
+const RANK_ORDER = ["session", "your-turn", "working", ...NEEDS_ORDER.slice(2)] as const;
+function needsRank(r: Reason): number {
+  const key = r.needs ?? (r.working > 0 && r.group === "progress" ? "working" : null);
+  return key ? RANK_ORDER.indexOf(key) : RANK_ORDER.length;
+}
 
-/** Orders rows inside one group: the ones that need you first, then furthest along, most done, then by name. */
+/** Orders rows inside one group: the ones that need you first, then the ones a session works on, then furthest along, most done, then by name. */
 export function byGroupOrder(
   a: Feature,
   b: Feature,

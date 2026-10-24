@@ -62,6 +62,7 @@ describe("ShortcutSheet (tickets)", () => {
 
     expect(group("Tickets")).toEqual([
       "Flow / table: v",
+      "Flow full window: f",
       "Next / previous row: j k ↓ ↑",
       "Open the ticket panel: ↵ o",
       "Close the ticket panel: Esc",

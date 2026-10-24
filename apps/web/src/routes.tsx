@@ -7,6 +7,7 @@ import { BrainPickerScreen, BrainScreen } from "./screens/brain";
 import { FeatureDetailScreen } from "./screens/feature-detail";
 import { FeaturesScreen } from "./screens/features";
 import { NewFeatureScreen } from "./screens/features/NewFeature";
+import { TicketDetailScreen } from "./screens/ticket-detail";
 import { TicketsScreen } from "./screens/tickets";
 import { HealthScreen } from "./screens/health";
 import { DiscoverScreen } from "./screens/environments/DiscoverPage";
@@ -23,7 +24,12 @@ import { PortfolioScreen } from "./screens/portfolio";
 import { ProjectOverviewScreen } from "./screens/project-overview";
 import { RunDetailScreen } from "./screens/run-detail";
 import { RunsListScreen } from "./screens/runs-list";
-import { ScenarioDetailScreen, ScenarioRunScreen, ScenariosScreen } from "./screens/scenarios";
+import {
+  NewScenarioScreen,
+  ScenarioDetailScreen,
+  ScenarioRunScreen,
+  ScenariosScreen,
+} from "./screens/scenarios";
 import { SessionDetailScreen } from "./screens/session-detail";
 import { SessionsListScreen } from "./screens/sessions-list";
 import { liveRedirectTarget } from "./screens/sessions-list/liveRedirect";
@@ -101,6 +107,7 @@ export const appRoutes: RouteObject[] = [
           { path: "runs/:runId", element: <RunDetailScreen /> },
           // Scenarios carry their project (AM-17): names are unique per project only.
           { path: "scenarios", element: <ScenariosScreen /> },
+          { path: "scenarios/new", element: <NewScenarioScreen /> },
           { path: "scenarios/:project/:name", element: <ScenarioDetailScreen /> },
           { path: "scenarios/:project/:name/runs/:runId", element: <ScenarioRunScreen /> },
           { path: "knowledge", element: <Navigate to="/knowledge/learnings" replace /> },
@@ -114,6 +121,7 @@ export const appRoutes: RouteObject[] = [
           { path: "features/new", element: <NewFeatureScreen /> },
           { path: "features/:project/:slug", element: <FeatureDetailScreen /> },
           { path: "tickets", element: <TicketsScreen /> },
+          { path: "tickets/:project/:issue", element: <TicketDetailScreen /> },
           // Older links: Workflows moved into the Toolkit.
           { path: "workflows", element: <WorkflowsScreen /> },
           { path: "workflows/new", element: <NewWorkflowScreen /> },

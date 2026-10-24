@@ -196,16 +196,29 @@ describe("StartTicket", () => {
     expect(view.router.state.location.pathname).toBe("/");
   });
 
-  it("asks /feature to work this one ticket from its workspace step, with its context", () => {
+  it("runs /implement on a ticket free to start, so its context and preflight are recorded", () => {
     const prompt = ticketPrompt("agent-hub", "claims", { ...ready, id: "AGH-2" }, [done, ready]);
 
-    expect(prompt.split("\n")[0]).toBe("/feature AGH-2");
+    expect(prompt.split("\n")[0]).toBe("/implement AGH-2");
     expect(prompt).toContain("Ticket: AGH-2 · feat(api): add the claim endpoint");
     expect(prompt).toContain("`brain/features/claims/`");
-    expect(prompt).toContain("Repo: api.");
-    expect(prompt).toContain("AC-1.1, AC-1.2");
     expect(prompt).toContain("Its blockers are done: AGH-1.");
-    expect(prompt).toContain("begin at step 5 (Workspace), for this ticket only");
+    expect(prompt).toContain("Work on no other ticket.");
+    // The implement workflow does the steps: the prompt never sends the session in-line.
+    expect(prompt).not.toMatch(/(^|\s)\/feature\b/);
+    expect(prompt).not.toContain("step 6");
+  });
+
+  it("keeps a stacked ticket on /feature's in-line steps, which can build on a branch", () => {
+    const prompt = ticketPrompt("agent-hub", "claims", { ...stacked, id: "AGH-3" }, [
+      done,
+      inReview,
+      stacked,
+    ]);
+
+    expect(prompt.split("\n")[0]).toBe("/feature AGH-3");
+    expect(prompt).toContain("from step 6 (Implement), for this ticket only");
+    expect(prompt).toContain("For the workspace (the start of step 6)");
   });
 
   it("starts a session in the hub folder and opens its chat", async () => {
@@ -246,7 +259,7 @@ describe("StartTicket", () => {
       unknown
     >;
     expect(body).toMatchObject({ project: "agent-hub", mode: "acceptEdits", fork: false });
-    expect(String(body.prompt)).toMatch(/^\/feature AGH-2\n/);
+    expect(String(body.prompt)).toMatch(/^\/implement AGH-2\n/);
   });
 
   it("links the ticket's open session on its card instead of Start (sessions)", async () => {
@@ -278,7 +291,7 @@ describe("StartTicket", () => {
       },
     );
 
-    const link = await card().findByRole("link", { name: /^Newest session: Waiting, started / });
+    const link = await card().findByRole("link", { name: /^Session running: Waiting, started / });
     expect(link).toHaveAttribute("href", "/sessions/sess-2");
     expect(card().queryByRole("button", { name: "Start AGH-2" })).toBe(null);
   });

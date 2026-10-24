@@ -1,6 +1,6 @@
 import "../features/features.css";
 
-import { useMemo, useRef } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 
 import {
@@ -16,6 +16,8 @@ import { useApi } from "../../lib/api";
 import { fmtAgo, fmtMoney } from "../../lib/format";
 import { useScope } from "../../lib/scope";
 import { useRowKeys } from "../../lib/useRowKeys";
+import { ticketHref } from "../ticket-detail";
+import { SessionLink } from "../feature-detail/TicketsTab";
 import { useTicketLookup } from "../features/queries";
 import { StartTicketControl } from "./StartTicket";
 import { GROUPS, KINDS, matchesQuery, ticketsOf, type GroupId, type TicketRow } from "./model";
@@ -58,7 +60,12 @@ export function TicketItem({
   now: number;
   onOpen: (href: string) => void;
 }) {
-  const href = `/sessions/${encodeURIComponent(row.latest.id)}`;
+  const href = ticketHref(row.project, row.issue);
+  const [expanded, setExpanded] = useState(false);
+  const sessionsId = useId();
+  const featureHref = row.feature
+    ? `/features/${encodeURIComponent(row.feature.project)}/${encodeURIComponent(row.feature.slug)}?doc=tickets&ticket=${encodeURIComponent(row.issue)}`
+    : null;
   const look = GROUP_LOOK[row.group];
   const line = lineOf(row, now);
   const tags = [...(showProject ? [row.project] : []), ...row.repos];
@@ -98,6 +105,19 @@ export function TicketItem({
           </Link>
           {row.title && <span className="ft-row-slug">{row.title}</span>}
           <span className="ft-row-tag">{kind}</span>
+          {row.feature && featureHref && (
+            <Link
+              to={featureHref}
+              className="ft-row-tag"
+              tabIndex={-1}
+              title={`Open ${row.issue} in the feature ${row.feature.slug}`}
+              onClick={(event) => {
+                event.stopPropagation();
+              }}
+            >
+              {row.feature.slug}
+            </Link>
+          )}
           {tags.map((tag) => (
             <span key={tag} className="ft-row-tag">
               {tag}
@@ -111,15 +131,57 @@ export function TicketItem({
         >
           {line}
         </div>
+        {expanded && (
+          // The sessions are reached by pointer here; the keyboard opens the newest from the row.
+          // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
+          <div
+            id={sessionsId}
+            className="tk-sessions"
+            onClick={(event) => {
+              event.stopPropagation();
+            }}
+          >
+            {row.sessionList.map((session) => (
+              <div key={session.id} className="tk-session">
+                <SessionLink session={session} />
+                <span className="ah-small ah-muted tk-session-what">
+                  {[
+                    session.label?.title,
+                    (session.label?.workflows ?? []).join(" → ") || null,
+                    session.cost_usd != null ? fmtMoney(session.cost_usd) : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
-      <div className="ft-row-meta">
+      <div className="ft-row-meta tk-row-meta">
+        <button
+          type="button"
+          className="ah-btn ah-btn-ghost ah-btn-sm tk-sessions-toggle"
+          aria-expanded={expanded}
+          aria-controls={expanded ? sessionsId : undefined}
+          onClick={(event) => {
+            event.stopPropagation();
+            setExpanded((open) => !open);
+          }}
+          onKeyDown={(event) => {
+            event.stopPropagation();
+          }}
+        >
+          {row.sessions} session{row.sessions === 1 ? "" : "s"}
+          <Icon name={expanded ? "chevron-down" : "chevron-right"} size="sm" />
+        </button>
         <span className="ah-small ah-muted ah-mono">{fmtMoney(row.costUsd)}</span>
       </div>
     </li>
   );
 }
 
-/** Tickets list: the single-ticket work (/fix, /refactor, /upgrade, …) the sessions did, by ticket. */
+/** Tickets list: every ticket the sessions worked on (/fix, /refactor, a feature's tickets, …), by ticket. */
 export function TicketsScreen() {
   const [scope] = useScope();
   const sessions = useApi(
@@ -139,10 +201,7 @@ export function TicketsScreen() {
   const screenRef = useRef<HTMLDivElement>(null);
   useRowKeys(screenRef);
 
-  const all = useMemo(
-    () => ticketsOf(sessions.data?.items ?? [], new Set(lookup.keys())),
-    [sessions.data, lookup],
-  );
+  const all = useMemo(() => ticketsOf(sessions.data?.items ?? [], lookup), [sessions.data, lookup]);
   const q = params.get("q") ?? "";
   const kinds = listOf(params.get("kind"));
   const rows = all.filter(
@@ -179,7 +238,7 @@ export function TicketsScreen() {
               </span>
             ))}
             <DerivedLabel
-              how={`Grouped by tracker issue from the newest ${String(SESSIONS_READ)} sessions: the issue their first prompt (/fix ACME-12), branch or worktree names. Tickets of a feature show under Features.`}
+              how={`Grouped by tracker issue from the newest ${String(SESSIONS_READ)} sessions: the issue their first prompt (/fix ACME-12), branch or worktree names. A feature's ticket names its feature.`}
             >
               derived
             </DerivedLabel>
@@ -196,7 +255,7 @@ export function TicketsScreen() {
       ) : sessions.isSuccess && all.length === 0 ? (
         <div className="ah-card">
           <EmptyState icon="list-todo" title="No ticket work yet." command="/fix AGH-112">
-            A ticket shows here once a session works on it outside a feature: start one with{" "}
+            A ticket shows here once a session works on it: start one with{" "}
             <span className="ah-mono">/fix</span>, <span className="ah-mono">/refactor</span>,{" "}
             <span className="ah-mono">/upgrade</span> or <span className="ah-mono">/incident</span>{" "}
             and the issue id, or on a branch named after the issue.

@@ -1,16 +1,18 @@
 """One action call's plan: the inputs it gets and each ``service`` input's endpoint
 (docs/design/scenarios.md § Actions and the script contract).
 
-A given value must be one of the action's inputs and fit its type; a missing input takes its
-default, and a required one without a value is refused. A ``service`` value names a service of
-``repos[].services`` (``<service>``, or ``<repo>/<service>`` when two repos have one of that
-name) and is resolved to that service's endpoint in the bound environment, or refused naming the
-service and the environment. Messages name inputs and services, never a given value. A
-``pending`` input (a scenario step's value known only at run time) is neither checked nor
-resolved: the plan then leaves it out.
+A given value must be one of the action's inputs and fit its type. An input the step leaves out
+takes the run's value of the same name (a scenario input: a value of the run, such as the account
+it works in, set once and the same for every step, so one run cannot drift between accounts); an
+input with neither takes its default, and a required one without a value is refused. A
+``service`` value names a service of ``repos[].services`` (``<service>``, or ``<repo>/<service>``
+when two repos have one of that name) and is resolved to that service's endpoint in the bound
+environment, or refused naming the service and the environment. Messages name inputs and
+services, never a given value. A ``pending`` input (a scenario step's value known only at run
+time) is neither checked nor resolved: the plan then leaves it out.
 """
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 
 from pydantic import BaseModel, ConfigDict
 
@@ -22,6 +24,19 @@ from agent_hub.core.hub_config.effective_environments import (
 from agent_hub.core.hub_config.environments import Endpoint
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.scenarios.action_document import ActionDocument
+
+
+def with_run_values(
+    declared: Iterable[str], given: Mapping[str, JsonValue], run: Mapping[str, JsonValue]
+) -> dict[str, JsonValue]:
+    """A step's inputs with the run's values for the declared inputs it leaves out: each input of
+    the action named like a scenario input, with no ``with`` value, takes that input's value. A
+    value the step gives always wins, and a run value that is None (an optional scenario input
+    with no default) is no value: the action's own default still applies."""
+    taken = {
+        name: run[name] for name in declared if name not in given and run.get(name) is not None
+    }
+    return taken | dict(given)
 
 
 class ActionCallError(AgentHubError):

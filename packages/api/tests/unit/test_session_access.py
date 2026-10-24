@@ -128,3 +128,21 @@ def test_serves_item_version_read_when_in_container_without_cookie() -> None:
     response = _client(sessions_off=True).get(RESTORE.removesuffix("/v-1/restore"))
 
     assert response.json() == {"served": True}
+
+
+# The scenario builder's writes (AGH-521): the cookie, and read-only in the container.
+BUILDER_WRITES = (
+    ("PUT", "/api/v1/scenarios/demo/walk"),
+    ("POST", "/api/v1/scenarios/demo/walk/proposal/dismiss"),
+    ("POST", "/api/v1/projects/demo/actions"),
+    ("PUT", "/api/v1/projects/demo/actions/demo/send"),
+)
+
+
+@pytest.mark.parametrize(("method", "path"), BUILDER_WRITES)
+def test_refuses_builder_write_when_no_cookie_or_in_container(method: str, path: str) -> None:
+    unsigned = _client(sessions_off=False).request(method, path, json={})
+    contained = _client(sessions_off=True, signed_in=True).request(method, path, json={})
+
+    assert unsigned.status_code == 401
+    assert (contained.status_code, contained.json()["code"]) == (409, "hub_read_only")

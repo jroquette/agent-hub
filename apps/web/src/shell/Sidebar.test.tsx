@@ -14,36 +14,6 @@ function renderSidebar(path = "/", props: Partial<Parameters<typeof Sidebar>[0]>
 }
 
 describe("Sidebar", () => {
-  // Widened by Scenarios (AGH-350 E-12, E-15): it pins the old list, so it must now fail.
-  // prettier-ignore
-  it.fails("AC-273.20, AC-426.1: lists the destinations in Work, Knowledge and the Hub footer", () => {
-    renderSidebar();
-
-    const nav = screen.getByRole("navigation", { name: "Main" });
-    const names = within(nav)
-      .getAllByRole("link")
-      .map((link) => link.textContent);
-    expect(names).toEqual([
-      "Portfolio",
-      "Sessions",
-      "Workflow runs",
-      "Features",
-      "Tickets",
-      "Environments",
-      "Learnings",
-      "Brain",
-      "Toolkit",
-      "Health",
-      "Hub config",
-      "Settings",
-    ]);
-    for (const group of ["Work", "Knowledge"]) {
-      expect(within(nav).getByText(group)).toBeInTheDocument();
-    }
-    expect(within(nav).queryByText("Live sessions")).not.toBeInTheDocument();
-    expect(within(nav).getByRole("link", { name: "Tickets" })).toHaveAttribute("href", "/tickets");
-  });
-
   it("hides Workflow runs until a workflow has run, and lists no Workflows", () => {
     renderSidebar("/", { showRuns: false });
 
@@ -115,14 +85,14 @@ describe("Sidebar", () => {
     expect(brain).toHaveAttribute("aria-current", "page");
   });
 
-  it("shows Skills right after Brain for the project in scope (nav, AC-164.13)", () => {
+  it("shows Toolkit right after Learnings for the project in scope (nav, AC-164.13)", () => {
     renderSidebar("/sessions?scope=agent-hub");
 
     const nav = screen.getByRole("navigation", { name: "Main" });
     const names = within(nav)
       .getAllByRole("link")
       .map((link) => link.textContent);
-    expect(names.indexOf("Toolkit")).toBe(names.indexOf("Brain") + 1);
+    expect(names.indexOf("Toolkit")).toBe(names.indexOf("Learnings") + 1);
     expect(screen.getByRole("link", { name: "Toolkit" })).toHaveAttribute(
       "href",
       "/projects/agent-hub/skills",
@@ -240,7 +210,7 @@ describe("Sidebar", () => {
     expect(onShortcuts).toHaveBeenCalledOnce();
   });
 
-  it("AC-350.29: shows Scenarios right after Workflow runs", () => {
+  it("groups the destinations into Work, Knowledge and the Hub footer", () => {
     renderSidebar();
 
     const nav = screen.getByRole("navigation", { name: "Main" });
@@ -249,14 +219,14 @@ describe("Sidebar", () => {
       .map((link) => link.textContent);
     expect(names).toEqual([
       "Portfolio",
-      "Sessions",
-      "Workflow runs",
-      "Scenarios",
       "Features",
       "Tickets",
+      "Scenarios",
+      "Sessions",
+      "Workflow runs",
       "Environments",
-      "Learnings",
       "Brain",
+      "Learnings",
       "Toolkit",
       "Health",
       "Hub config",

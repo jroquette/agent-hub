@@ -201,7 +201,9 @@ describe("FeaturesScreen", () => {
     open();
 
     await screen.findByRole("link", { name: "tracker-team-cap" });
-    expect(rowOf("tracker-team-cap")).toHaveTextContent("Plan · plan.md");
+    const row = rowOf("tracker-team-cap");
+    expect(row.querySelector(".ft-stage")).toHaveTextContent(/^Plan\s*step 4 of 8$/);
+    expect(row.querySelector(".ft-row-line")).toHaveTextContent(/^Next: write the plan$/);
   });
 
   it("shows five shipped features until asked for more (shipped)", async () => {
@@ -271,9 +273,9 @@ describe("FeaturesScreen", () => {
     open({ "/api/v1/features": aPage([unread]) });
 
     await screen.findByRole("link", { name: "unread" });
-    expect(rowOf("unread").querySelector(".ft-row-line")).toHaveTextContent(/^Build$/);
+    expect(rowOf("unread").querySelector(".ft-row-line")).toHaveTextContent(/^Building$/);
     expect(screen.getByRole("note")).toHaveTextContent(
-      "Ticket status is not read from Linear on this list, so Build shows as unknown, and so does Shipped once Acceptance is done.",
+      "This list doesn't load ticket status from Linear, so some features can't show how many tickets are merged. Open a feature to see its tickets.",
     );
   });
 
@@ -333,44 +335,20 @@ describe("FeaturesScreen", () => {
 
     await screen.findByRole("link", { name: "layered-memory" });
     const row = rowOf("layered-memory");
-    expect(within(row).getByText("21/21").parentElement).toHaveTextContent("21/21 · 1 owner step");
+    expect(within(row).getByText("21 of 21").parentElement).toHaveTextContent(
+      "21 of 21 · 1 owner step",
+    );
     const owner = row.querySelector('[data-segment="owner"]');
     expect(owner).toHaveAttribute("data-hatched", "true");
     expect(
       within(row).getByRole("img", {
-        name: "20 passing by command · 1 owner step · 0 not passing yet",
+        name: "20 pass their check · 1 owner step (checked by you) · 0 not passing yet",
       }),
     ).toBeInTheDocument();
-    expect(row).toHaveTextContent("evaluator says ship after your steps");
+    expect(row).toHaveTextContent("Ready to ship after your manual checks");
   });
 
-  it("draws the server's golden path with each state's text and reason (golden)", async () => {
-    open();
-
-    await screen.findByRole("link", { name: "tracker-team-cap" });
-    const row = rowOf("tracker-team-cap");
-    const bar = within(row).getByRole("img", { name: /^Golden path: Plan\./ });
-    const name = bar.getAttribute("aria-label") ?? "";
-    expect(name).toContain("Build: unknown (Linear not connected)");
-    expect(name).toContain(
-      "Acceptance: partial · Ticket evals cover 2 of 9 ACs (Plan is not done)",
-    );
-    expect(name).toContain("Shipped: blocked (Plan is not done)");
-    expect(
-      [...bar.querySelectorAll("[data-state]")].map((s) => s.getAttribute("data-state")),
-    ).toEqual([
-      "done",
-      "skipped",
-      "skipped",
-      "current",
-      "pending",
-      "unknown",
-      "partial",
-      "blocked",
-    ]);
-  });
-
-  it("draws the eight feature steps on each row's bar, labelled 'Build · 6/8', and 'Shipped' alone once shipped (AC-1.12)", async () => {
+  it("names the stage a row is at with its position of eight, and 'Shipped' alone once shipped (AC-1.12)", async () => {
     const shipped = aFeature({
       slug: "shipped-one",
       phase: "shipped",
@@ -383,14 +361,10 @@ describe("FeaturesScreen", () => {
     open({ "/api/v1/features": aPage([shipped, ...features]) });
 
     await screen.findByRole("link", { name: "control-plane" });
-    const bar = within(rowOf("control-plane")).getByRole("img", { name: /^Golden path: Build\./ });
-    expect(bar.querySelectorAll("[data-state]")).toHaveLength(8);
-    expect(bar.getAttribute("aria-label")).toMatch(
-      /Spec: .*; UX design: .*; Research: .*; Plan: .*; Tickets: .*; Build: .*; Acceptance: .*; Shipped: /,
+    expect(rowOf("control-plane").querySelector(".ft-stage")).toHaveTextContent(
+      /^Build\s*step 6 of 8$/,
     );
-    expect(bar.parentElement).toHaveTextContent(/^Build · 6\/8$/);
-    const done = within(rowOf("shipped-one")).getByRole("img", { name: /^Golden path: Shipped\./ });
-    expect(done.parentElement).toHaveTextContent(/^Shipped$/);
+    expect(rowOf("shipped-one").querySelector(".ft-stage")).toHaveTextContent(/^Shipped$/);
   });
 
   it("offers the eight feature steps in the Step filter (AC-1.12)", async () => {
@@ -481,7 +455,7 @@ describe("FeaturesScreen", () => {
 
     await screen.findByRole("link", { name: "broken-record" });
     const row = rowOf("broken-record");
-    expect(within(row).queryByRole("img", { name: /passing by command/ })).not.toBeInTheDocument();
+    expect(within(row).queryByRole("img", { name: /pass their check/ })).not.toBeInTheDocument();
     expect(within(row).getByText("tradeSentinel")).toBeInTheDocument();
     expect(within(row).getByText("loki-trader")).toBeInTheDocument();
   });
@@ -577,6 +551,21 @@ describe("FeaturesScreen", () => {
 
       expect(screen.getByText(/Stale · as of/)).toBeInTheDocument();
     });
+
+    it("shows no session working on a feature while the collector is offline (AC-521.8.6)", async () => {
+      const busy = aLiveTile({
+        id: "s-busy",
+        group: "live",
+        issue: "AGH-49",
+        last_action: "Edited eval.md",
+      });
+      open({ "/api/v1/live-sessions": aPage([busy]) }, false);
+
+      const row = await waitFor(() => rowOf("layered-memory"));
+      expect(row).not.toHaveTextContent("A session is working");
+      expect(row.querySelector(".ft-row-lead .ah-pulse")).toBeNull();
+      expect(document.querySelector('.ft-summary [data-group="working"]')).toBeNull();
+    });
   });
 
   it("rereads the records every 30 s while open (refresh)", async () => {
@@ -671,8 +660,9 @@ describe("FeaturesScreen", () => {
     expect(screen.queryByRole("button", { name: /^Evaluated/ })).not.toBeInTheDocument();
     expect(slugsIn(groupOf(/^In progress · 6$/))).toContain("evaluated-one");
     expect(rowOf("evaluated-one")).not.toHaveAttribute("data-tone");
-    expect(rowOf("evaluated-one")).toHaveTextContent("Build · 1 of 3 merged · 1 in progress");
-    expect(rowOf("evaluated-one")).toHaveTextContent("evaluator says ship");
+    expect(rowOf("evaluated-one").querySelector(".ft-row-line")).toHaveTextContent(
+      /^Building · 1 of 3 tickets merged · Ready to ship$/,
+    );
     expect(container.querySelector(".ft-summary")).toHaveTextContent(
       /^2 need you\s*6 in progress\s*0 shipped/,
     );
@@ -713,7 +703,12 @@ describe("FeaturesScreen", () => {
       label: aSessionLabel({ issue: null, title: "control-plane plan" }),
       last_action: "Edited plan.md",
     });
-    const busy = aLiveTile({ id: "s-busy", group: "live", issue: "AGH-49" });
+    const busy = aLiveTile({
+      id: "s-busy",
+      group: "live",
+      issue: "AGH-49",
+      last_action: "Edited eval.md",
+    });
     const { router } = open({
       "/api/v1/live-sessions": aPage([permission, yourTurn, busy]),
     });
@@ -722,8 +717,8 @@ describe("FeaturesScreen", () => {
       expect(slugsIn(groupOf(/^In progress · 4$/))).toEqual([
         "tracker-team-cap",
         "control-plane",
-        "broken-record",
         "layered-memory",
+        "broken-record",
       ]);
     });
     expect(rowOf("tracker-team-cap")).toHaveTextContent(
@@ -731,6 +726,14 @@ describe("FeaturesScreen", () => {
     );
     expect(rowOf("control-plane")).toHaveTextContent("Your turn in a session · Edited plan.md");
     expect(rowOf("layered-memory")).not.toHaveAttribute("data-tone");
+    expect(rowOf("layered-memory")).toHaveTextContent("A session is working · Edited eval.md");
+    expect(rowOf("layered-memory").querySelector(".ft-row-lead .ah-pulse")).not.toBeNull();
+    expect(rowOf("layered-memory")).toHaveAccessibleName(
+      /^layered-memory\. A session is working · Edited eval\.md\. Next: evaluate the whole feature/,
+    );
+    expect(document.querySelector('.ft-summary [data-group="working"]')).toHaveTextContent(
+      "1 working now",
+    );
     expect(groupOf(/^In progress · 4$/)).toHaveTextContent(
       "1 session waits on you · 1 your turn in a session",
     );
@@ -759,7 +762,7 @@ describe("FeaturesScreen", () => {
       "owner-held",
     ]);
     expect(groupOf(/^In progress · 6$/)).toHaveTextContent(
-      "What needs you first, then furthest along and most ACs passing · 1 waits on your steps · 1 no ship · 1 record cannot be read",
+      "Features that need you come first, then the ones a session is working on, then the ones furthest along · 1 waits on your steps · 1 no ship · 1 record cannot be read",
     );
     expect(document.querySelector('.ft-summary [data-group="needs"]')).toHaveTextContent(
       "3 need you",

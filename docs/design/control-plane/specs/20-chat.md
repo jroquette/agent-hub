@@ -261,6 +261,12 @@ rail answers "which other session needs me, and how do I get there in one click?
 - **Groups:** Waiting for you, Open, Recent (the 20 newest ended), each with its count.
 - **Filter:** a small filled capsule with the composer's focus halo; Escape clears it.
 - **Fold:** "Hide sessions" / "Show sessions", kept in `ah.chat.rail`.
+- **Width (AC-521.5.1, AGH-521):** the rail resizes from its right edge (a separator, "Resize the sessions list"),
+  by drag or the arrow keys, between 200 px and the smaller of 560 px and what leaves the chat its room; the width is
+  kept in `ah.chat.rail.width` and Home resets it to 260 px. The drawer resize hook (`DrawerResize`) serves both the
+  rail and the side columns.
+- **Chat stays still (AC-521.5.2):** the rail tells the layout its width (`--as-chat-rail-w`), so the chat column,
+  centred on the whole layout, never moves while the rail resizes; folded, the strip's own width takes over.
 - **Columns:** the app sidebar (on `bg`), the rail (`surface-sunken`) and the chat (`surface`) step in by tone, not
   borders; the sidebar's and the rail's rows are soft `radius-xl` rows with a filled current item.
 - **Scroll:** the chat layout clips its overflow, so only the transcript and the rail's list scroll, never the page.

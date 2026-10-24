@@ -154,6 +154,25 @@ describe("ScenariosScreen (scenarios list)", () => {
     expect(screen.queryByRole("region", { name: "Waiting for you" })).toBeNull();
   });
 
+  it("scenarios list opens New scenario from its header and from its empty state", async () => {
+    const user = userEvent.setup();
+    const listed = renderList();
+    await user.click(await screen.findByRole("button", { name: "New scenario" }));
+    expect(listed.router.state.location.pathname).toBe("/scenarios/new");
+    listed.unmount();
+
+    const empty = renderList({
+      "/api/v1/scenarios": aScenarioCatalog({ items: [], problems: [] }),
+      "/api/v1/approvals": aPage([]),
+    });
+    await screen.findByText("No scenarios yet.");
+    const [header, inEmptyState] = screen.getAllByRole("button", { name: "New scenario" });
+    expect(header).toBeInTheDocument();
+    if (!inEmptyState) throw new Error("the empty state offers no New scenario");
+    await user.click(inEmptyState);
+    expect(empty.router.state.location.pathname).toBe("/scenarios/new");
+  });
+
   it("scenarios list names the project in scope when it holds none", async () => {
     renderList(
       {

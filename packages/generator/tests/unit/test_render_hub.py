@@ -3173,9 +3173,10 @@ def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubCon
 # AGH-319: re-pinned when Cross-repo rules gained rule 6 (plain-language) and two lines
 # were shortened.
 # AGH-392: re-pinned when the managed-file list gained `.mcp.json`.
-DEMO_AGENTS_SHA256 = "5f129e52d02472f57a1bab5195ba044648281f4d8c810cab385519693d8c6aa5"
+# Re-pinned when rule 6 named code comments as text for people.
+DEMO_AGENTS_SHA256 = "c35b1c5a01d89aa69e99c7a747f88b1931f166eceb09c81d59dfe9e8ae4bc8b8"
 ALL_MODULES_SHA256 = {
-    "AGENTS.md": "47dcde7d8ed2be1bb3446bb8537136ef0d19f47a39925c44ce527ddd936c7c68",
+    "AGENTS.md": "8c79692a617d78e36de487bf51174e7b7aa500205888548eced23b5721e444a3",
     ".claude-plugin/marketplace.json": (
         "f7324911e70a0f3255274721636821a9b65a5716f04c5f6e3e470e74dc7b8ac7"
     ),
@@ -5393,7 +5394,8 @@ def test_ignores_local_file_when_gitignore_rendered(demo_config: HubConfig) -> N
 # before the templates named a tier; a hub without `models`, or with empty or default ones, keeps
 # them.
 # AGH-139 changed the reviewers' and the evaluator's text: their sha256 are those of the new text,
-# which every config below still renders byte for byte.
+# which every config below still renders byte for byte. The quality reviewer's was re-pinned when it
+# gained the Comments check.
 AGENTS_FOLDER = "plugin/hub-workflow/agents"
 AGENT_FILES_SHA256 = {
     f"{AGENTS_FOLDER}/architect.md": (
@@ -5406,7 +5408,7 @@ AGENT_FILES_SHA256 = {
         "9c80e0c912359f9b59b78482f444f475be8756b648c83d91b32f3a352eb45c12"
     ),
     f"{AGENTS_FOLDER}/quality-reviewer.md": (
-        "06346ed2d9948f63b1a2b5ac850ef73e698326316e8cabe95de39dba9f1fb2ae"
+        "3847f076fcc122041375afccbc8fa87caf9345d3368939e314682f61c0fe33bb"
     ),
     f"{AGENTS_FOLDER}/requirements-analyst.md": (
         "a89674148648b6e5d17365d6e0d997e9a921c7d9f54a47fd99b63494aecc3353"

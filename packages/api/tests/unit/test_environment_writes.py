@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 from agent_hub.api.environment_writes import EnvironmentEdit, write_environment_edit
 from agent_hub.core.hubs.hub_registry import HubInvalidError
@@ -497,6 +497,80 @@ def test_refuses_local_change_when_not_access_of_team_environment(
         _edit(hub, op="set_environment", scope="local", name="staging", **change)
 
     assert raised.value.problems[0].message == (
-        "hub.json declares staging; hub.local.json may only tighten its access"
+        "hub.json declares staging; hub.local.json may only tighten its access or set values"
     )
     assert not (hub / "hub.local.json").exists()
+
+
+def test_sets_and_removes_values_when_environment_edits_name_them(tmp_path: Path) -> None:
+    hub = _hub(tmp_path, environments={"staging": {"access": "ask"}})
+
+    _edit(
+        hub,
+        op="add_environment",
+        scope="team",
+        name="sandbox",
+        access="write",
+        values={"user_name": " team-user ", "region": " "},
+    )
+    added = _read(hub / "hub.json")["environments"]["sandbox"]
+    _edit(
+        hub,
+        op="set_environment",
+        scope="team",
+        name="sandbox",
+        values={"user_name": "", "account_id": "123456789012"},
+    )
+
+    assert added == {"access": "write", "values": {"user_name": "team-user"}}
+    assert _read(hub / "hub.json")["environments"]["sandbox"] == {
+        "access": "write",
+        "values": {"account_id": "123456789012"},
+    }
+
+
+def test_writes_own_values_over_team_environment_when_scope_is_local(tmp_path: Path) -> None:
+    hub = _hub(tmp_path, environments={"staging": {"access": "ask", "values": {"user_name": "ci"}}})
+
+    _edit(hub, op="set_environment", scope="local", name="staging", values={"user_name": "jane"})
+    written = _read(hub / "hub.local.json")
+    _edit(hub, op="set_environment", scope="local", name="staging", values={"user_name": ""})
+
+    assert written == {"environments": {"staging": {"values": {"user_name": "jane"}}}}
+    # Emptied, the developer's setting goes, and with it the file that held only it.
+    assert not (hub / "hub.local.json").exists()
+    assert _read(hub / "hub.json")["environments"]["staging"]["values"] == {"user_name": "ci"}
+
+
+@pytest.mark.parametrize("name", ["Bad-Name", "_token", "1st"])
+def test_refuses_value_name_when_not_an_input_name(tmp_path: Path, name: str) -> None:
+    # A "_" name is a comment key in the file, which the secret check never reads.
+    hub = _hub(tmp_path, environments={"staging": {"access": "ask"}})
+    before = (hub / "hub.json").read_bytes()
+    secret_shaped = "ey" + "J" + "a" * 15 + "." + "b" * 15
+
+    with pytest.raises(ValidationError):
+        _edit(hub, op="set_environment", scope="team", name="staging", values={name: secret_shaped})
+
+    assert (hub / "hub.json").read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("values", "pointer"),
+    [
+        ({"token": "ey" + "J" + "a" * 15 + "." + "b" * 15}, "environments.staging.values.token"),
+    ],
+    ids=["secret_shaped"],
+)
+def test_refuses_value_when_file_check_fails(
+    tmp_path: Path, values: dict[str, str], pointer: str
+) -> None:
+    hub = _hub(tmp_path, environments={"staging": {"access": "ask"}})
+    before = (hub / "hub.json").read_bytes()
+
+    with pytest.raises(HubInvalidError) as raised:
+        _edit(hub, op="set_environment", scope="team", name="staging", values=values)
+
+    assert raised.value.problems[0].pointer.startswith(pointer)
+    assert "eyJ" not in raised.value.problems[0].message
+    assert (hub / "hub.json").read_bytes() == before

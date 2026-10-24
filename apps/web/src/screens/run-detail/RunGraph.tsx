@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 
-import { AppLink, Banner, Skeleton, StatusBadge, Time } from "../../components";
+import { AppLink, Banner, Icon, Skeleton, StatusBadge, Time } from "../../components";
 import { fmtDuration } from "../../lib/format";
 import {
   durationSeconds,
@@ -106,6 +106,30 @@ function NodeFacts({ node, now }: { node: RunNode; now: number }) {
   );
 }
 
+/** How to read the run graph: the states, and what an arrow means. */
+function RunLegend() {
+  return (
+    <details className="ah-flow-legend">
+      <summary>
+        <Icon name="info" size="sm" />
+        How to read
+      </summary>
+      <div className="ah-flow-legend-body" aria-label="Legend">
+        {(["running", "failed", "ok", "skipped", "pending"] as const).map((state) => (
+          <span key={state}>
+            <StatusBadge status={STATE_LOOK[state].status} label={STATE_LOOK[state].label} quiet />
+          </span>
+        ))}
+        <span>
+          <StatusBadge status="waiting" label="Waiting for a decision" quiet />
+        </span>
+        <span>Arrows point to the step that waits.</span>
+        <span>Drag to move · ⌘ or Ctrl + scroll to zoom · Shift + scroll moves sideways.</span>
+      </div>
+    </details>
+  );
+}
+
 /** An engine run's graph (plan 6.4): the declared nodes with the run's state on each. */
 export function RunGraph({ run, now }: { run: WorkflowRun; now: number }) {
   const node = useNodeParam();
@@ -114,8 +138,39 @@ export function RunGraph({ run, now }: { run: WorkflowRun; now: number }) {
   const declared = workflow.isSuccess ? workflow.data.layers : null;
   // The clock re-renders a live run each second; the layers change only with its steps.
   const layers = useMemo(() => runLayers(run, declared), [run, declared]);
-  if (workflow.isPending) return <Skeleton height={160} />;
-  const selected = layers.flat().find((n) => n.id === node.nodeId) ?? null;
+  // Every node by id, a group's own steps (`<group>__<id>`) too, for their states.
+  const byId = useMemo(() => {
+    const map = new Map<string, RunNode>();
+    for (const n of layers.flat()) {
+      map.set(n.id, n);
+      for (const body of n.body) {
+        map.set(body.key, {
+          id: body.key,
+          type: body.kind ?? "step",
+          depends_on: [],
+          step: body,
+          body: [],
+        });
+      }
+    }
+    return map;
+  }, [layers]);
+  const stateOf = (id: string): string | undefined => {
+    const n = byId.get(id);
+    if (gateOf(gates, id)) return "waiting";
+    return n ? nodeState(n) : "pending";
+  };
+  const firstToSee = useMemo(() => {
+    const all = [...byId.values()];
+    return (
+      all.find((n) => gateOf(gates, n.id)) ??
+      all.find((n) => nodeState(n) === "failed") ??
+      all.find((n) => nodeState(n) === "running")
+    )?.id;
+    // The first view is placed once: the gates at load are enough.
+  }, [byId, gates]);
+  if (workflow.isPending) return <Skeleton height={420} />;
+  const selected = node.nodeId ? (byId.get(node.nodeId) ?? null) : null;
   const selectedGate = selected ? gateOf(gates, selected.id) : undefined;
   const revision = workflow.data?.revision;
   return (
@@ -131,31 +186,35 @@ export function RunGraph({ run, now }: { run: WorkflowRun; now: number }) {
           This run used r{run.revision}; the graph shows the current r{revision}.
         </Banner>
       )}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: selected ? "minmax(0, 1fr) 320px" : "minmax(0, 1fr)",
-          gap: 16,
-          alignItems: "start",
-        }}
-      >
-        <WorkflowGraph
-          label="Run graph"
-          layers={layers}
-          selected={selected?.id ?? null}
-          onSelect={node.open}
-          state={nodeState}
-          detail={(graphNode) =>
-            gateOf(gates, graphNode.id) ? "Waiting for a decision" : nodeSummary(graphNode)
+      <WorkflowGraph
+        label="Run graph"
+        className="ah-canvas-run"
+        wheel="page"
+        layers={layers}
+        document={workflow.data?.document}
+        selected={selected?.id ?? null}
+        onSelect={node.open}
+        onClose={node.close}
+        focusFirst={firstToSee ?? null}
+        state={stateOf}
+        overlay={<RunLegend />}
+        detail={(id) => {
+          if (gateOf(gates, id)) {
+            return <StatusBadge status="waiting" label="Waiting for a decision" quiet />;
           }
-        />
-        {selected && (
-          <NodePanel id={selected.id} focusOnOpen={node.openedByUser} onClose={node.close}>
-            {selectedGate && <NodeGate gate={selectedGate} />}
-            <NodeFacts node={selected} now={now} />
-          </NodePanel>
-        )}
-      </div>
+          const n = byId.get(id);
+          const look = STATE_LOOK[n ? nodeState(n) : "pending"];
+          return <StatusBadge status={look.status} label={n ? nodeSummary(n) : look.label} quiet />;
+        }}
+        panel={
+          selected ? (
+            <NodePanel id={selected.id} focusOnOpen={node.openedByUser} onClose={node.close}>
+              {selectedGate && <NodeGate gate={selectedGate} />}
+              <NodeFacts node={selected} now={now} />
+            </NodePanel>
+          ) : undefined
+        }
+      />
     </div>
   );
 }

@@ -13,12 +13,12 @@ import {
   EmptyState,
   FacetMenu,
   FilterChip,
+  GOLDEN_STATE_TEXT,
   Icon,
   Kbd,
   Popover,
   ProblemError,
   Skeleton,
-  StepBar,
   Tooltip,
   goldenStepSummary,
   shownGoldenSteps,
@@ -38,12 +38,13 @@ import {
   missesLinear,
   reasonOf,
   sessionWaitOf,
+  sessionsWorkingOn,
   type GroupId,
   type Reason,
 } from "./groups";
 import { FeatureNameField, RenameButton, useFeatureNames } from "./names";
 import { AcBar, PHASES } from "./parts";
-import { useFeatures, useLiveSessions } from "./queries";
+import { useFeatures, useLiveSessions, useWarmTickets } from "./queries";
 
 export { issueId } from "./groups";
 
@@ -229,9 +230,15 @@ function rowLabel(
       ? `ACs ${String(f.acs.passing + f.acs.owner_steps)} of ${String(f.acs.total)}`
       : null;
   const issues = f.issues.length ? `issues ${f.issues.map(issueId).join(", ")}` : null;
+  const more =
+    reason.working > 0 && reason.line === reason.plainLine
+      ? `${String(reason.working)} more session${reason.working === 1 ? "" : "s"} working`
+      : null;
   return [
     name ? `${name} (${f.slug})` : f.slug,
     reason.line,
+    reason.line === reason.plainLine ? null : reason.plainLine,
+    more,
     goldenPathLabel(f.phase, steps),
     acs,
     `verdict ${f.verdict ?? "none"}`,
@@ -249,6 +256,48 @@ function goldenPathLabel(phase: Feature["phase"], steps: readonly GoldenStep[]):
   return step
     ? `${where}, step ${String(at + 1)} of ${String(steps.length)}, ${goldenStepSummary(step)}`
     : where;
+}
+
+/** The colour of the dot before the stage's name; the state is also said in words. */
+const STAGE_DOT: Partial<Record<GoldenStep["state"], string>> = {
+  done: "var(--done)",
+  partial: "var(--done)",
+  current: "var(--live)",
+  waiting: "var(--waiting)",
+  blocked: "var(--blocked)",
+  stale: "var(--idle)",
+};
+
+/**
+ * The step the feature is at, in words ("Build", "step 6 of 8"), with its state when it is not
+ * simply in progress or unknown (the notice above the list says why ticket status is unknown).
+ * Every step is on the feature's page.
+ */
+function StageCell({ phase, steps }: { phase: Feature["phase"]; steps: readonly GoldenStep[] }) {
+  const at = steps.findIndex((s) => s.name === phase);
+  const step = steps[at];
+  const shipped = phase === "shipped" && step?.state === "done";
+  const state =
+    step && !shipped && step.state !== "current" && step.state !== "unknown"
+      ? GOLDEN_STATE_TEXT[step.state]
+      : null;
+  return (
+    <span className="ft-stage" aria-hidden="true">
+      <span className="ft-stage-name">
+        <span
+          className="ft-stage-dot"
+          style={{ background: (step && STAGE_DOT[step.state]) ?? "var(--text-subtle)" }}
+        />
+        {GOLDEN_STEP_LABEL[phase]}
+      </span>
+      {!shipped && at >= 0 && (
+        <span className="ft-stage-of">
+          step {at + 1} of {steps.length}
+          {state && ` · ${state.toLowerCase()}`}
+        </span>
+      )}
+    </span>
+  );
 }
 
 function FeatureRow({
@@ -292,7 +341,11 @@ function FeatureRow({
         aria-hidden="true"
         style={reason.tone ? { color: TONE_COLOR[reason.tone] } : undefined}
       >
-        {reason.icon && <Icon name={reason.icon} size="sm" />}
+        {reason.icon ? (
+          <Icon name={reason.icon} size="sm" />
+        ) : (
+          reason.working > 0 && <span className="ah-dot ah-pulse ft-row-live" />
+        )}
       </span>
       <div className="ft-row-main">
         <div className="ft-row-head">
@@ -338,7 +391,9 @@ function FeatureRow({
         <div
           id={lineId}
           className="ft-row-line"
-          title={reason.line}
+          title={
+            reason.line === reason.plainLine ? reason.line : `${reason.line} · ${reason.plainLine}`
+          }
           style={
             reason.needs !== null && reason.tone ? { color: TONE_COLOR[reason.tone] } : undefined
           }
@@ -350,12 +405,7 @@ function FeatureRow({
         <span className="ft-col-issues">
           <IssuesCell issues={f.issues} />
         </span>
-        <StepBar
-          name="Golden path"
-          label={GOLDEN_STEP_LABEL[f.golden_path.phase]}
-          current={steps.findIndex((s) => s.name === f.golden_path.phase)}
-          steps={steps.map((s) => ({ state: s.state, summary: goldenStepSummary(s) }))}
-        />
+        <StageCell phase={f.golden_path.phase} steps={steps} />
         <AcCell f={f} />
       </div>
     </li>
@@ -411,14 +461,18 @@ function ColumnHeads({ withHints }: { withHints: boolean }) {
       <span aria-hidden="true" />
       <span>Feature</span>
       <div className="ft-cols-meta">
-        {head("Issues", "The tracker issues of the feature.", "ft-col-issues")}
         {head(
-          "Golden path",
-          `One segment per step: ${Object.values(GOLDEN_STEP_LABEL).join(" → ")}. Derived from the record files, the tickets' status read from Linear, and the eval records.`,
+          "Tickets",
+          "The feature's tickets in the tracker. Click +N to see them all.",
+          "ft-col-issues",
         )}
         {head(
-          "ACs",
-          "Acceptance criteria passing, of the total. Owner steps are counted and hatched in amber.",
+          "Stage",
+          `The step the feature is at, of eight: ${Object.values(GOLDEN_STEP_LABEL).join(" → ")}. Open the feature to see each one.`,
+        )}
+        {head(
+          "Criteria met",
+          "Acceptance criteria that pass, of all the feature's criteria. Amber stripes are checks you do by hand.",
         )}
       </div>
     </div>
@@ -531,12 +585,15 @@ function Group({
 export function FeaturesScreen() {
   const [scope] = useScope();
   const features = useFeatures(scope);
+  useWarmTickets(features.data?.items);
   const tiles = useLiveSessions(scope).data?.items ?? [];
-  const reasonFor = (f: Feature) => reasonOf(f, sessionWaitOf(f, tiles));
   const nameOf = useFeatureNames();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const { state, asOf } = useCollectorState();
+  // "Working now" is only said while the collector is connected: a stale tile would claim work that stopped.
+  const working = (f: Feature) => (state === "connected" ? sessionsWorkingOn(f, tiles) : []);
+  const reasonFor = (f: Feature) => reasonOf(f, sessionWaitOf(f, tiles), working(f));
   const { tz } = usePreferences();
   const [collapsed, toggle] = useCollapsed();
   const screenRef = useRef<HTMLDivElement>(null);
@@ -616,6 +673,7 @@ export function FeaturesScreen() {
   const projects = new Set(all.map((f) => f.project));
   const verdicts = listOf(params.get("verdict"));
   const onOpen = (href: string) => void navigate(href);
+  const workingNow = all.filter((f) => reasonFor(f).working > 0).length;
   // The first open card with rows explains the columns; the others only name them.
   const firstCard = GROUPS.find(
     (g) => !collapsed.has(g.id) && (byGroup.get(g.id)?.length ?? 0) > 0,
@@ -642,6 +700,12 @@ export function FeaturesScreen() {
             <span data-group="needs">
               <b>{all.filter((f) => reasonFor(f).needs !== null).length}</b> need you
             </span>
+            {workingNow > 0 && (
+              <span data-group="working">
+                <span className="ah-dot ah-pulse ft-row-live" aria-hidden="true" />
+                <b>{workingNow}</b> working now
+              </span>
+            )}
             {GROUPS.map((g) => {
               const n = all.filter((f) => reasonFor(f).group === g.id).length;
               return (
@@ -764,9 +828,8 @@ export function FeaturesScreen() {
                 <p className="ft-notice" role="note">
                   <Icon name="info" size="sm" />
                   <span>
-                    Ticket status is not read from Linear on this list, so Build shows as unknown,
-                    and so does Shipped once Acceptance is done. A feature&apos;s Tickets tab reads
-                    it.
+                    This list doesn&apos;t load ticket status from Linear, so some features
+                    can&apos;t show how many tickets are merged. Open a feature to see its tickets.
                   </span>
                 </p>
               )}

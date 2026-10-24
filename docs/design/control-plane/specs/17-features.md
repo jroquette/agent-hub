@@ -166,6 +166,11 @@ otherwise, this list wins. Each item is an acceptance criterion.
   review, not merged" below) instead of "Waiting on X", and it offers the same Start (default, not primary), which
   first confirms the risk in a dialog, then starts a session that creates the worktree from X's pull request branch
   and opens a pull request stacked on it.
+- **AC-521.2.1 Start runs /implement** (AGH-521, supersedes AC-268.21's skill). Given a created ticket free to start,
+  then Start's session opens with `/implement <ticket>`, so the `implement` workflow writes the ticket's context brief
+  and preflight and its Context and Preflight steps are recorded; the prompt never sends the session through
+  `/feature`'s in-line steps. A stacked ticket (AC-268.22) keeps `/feature <ticket>` from step 6 (Implement), since the
+  `implement` workflow cannot start a worktree from a blocker's branch.
 
 ---
 
@@ -566,6 +571,75 @@ this list wins. Records and refusals: [feature-records.md](../../feature-records
   its slug follows its name as a tag label ("Feature label <slug>", mono, tag icon; on hover: set when the feature was
   created, unique and never changes, a rename changes only its name), not a link on its own page; the chip that ties a
   session to its feature uses the same tag icon and hover text, plus "Open its panel."
+
+## Departures (AGH-521, the playground's v0.23.0 work)
+
+Built after the owner validated these in the playground (snapshot `20261023T210306Z`); where the sections above say
+otherwise, this list wins.
+
+**Features list (delivery 8)**
+
+- **AC-521.8.1 Stage in words.** Given a feature row, then its Stage column shows the golden path step's name, a state
+  dot and "step N of 8" instead of the segment bar; the columns read Tickets, Stage and Criteria met; the tips at the
+  top of the card open downwards so the card never clips them.
+- **AC-521.8.2 Criteria as "N of M".** Given the criteria bar on the Features list and on the feature page, then it
+  says "3 of 13" in words, and its tip says what passes and what the owner checks by hand.
+- **AC-521.8.3 What comes next.** Given a feature row, then the line under its name says what comes next in plain
+  words ("Next: write the spec", "Building · 1 of 10 tickets merged", "Ready to ship after your manual checks")
+  instead of the record's raw reasons; the group hint and the Linear notice are reworded to match.
+- **AC-521.8.4 Label beside every title.** Given a feature row, named or not, then its label (AC-425.7) follows the
+  title, so an unnamed feature shows its slug as both.
+- **AC-521.8.5 Shipped features leave In progress.** Given a feature whose golden path waits on Linear's ticket states,
+  when the Features list opens, then it reads that feature's tickets once (warming the Linear snapshot) and rereads
+  the list, so a feature whose tickets are all done moves to Shipped.
+- **AC-521.8.6 Working now.** Given a live main session matched to a feature and the collector connected, then the
+  row's lead column shows the live dot, its line says "A session is working · <last action>", the row sorts right
+  after the session warnings in In progress, and the summary line counts "N working now". Nothing shows while the
+  collector is offline.
+
+**Feature page header and the ticket panel (delivery 9)**
+
+- **AC-521.9.1 Cleaner golden path.** Given the feature page's golden path, then a skipped UX design step is left out,
+  no line runs past the last step, and Acceptance stays "not reached" (pending) while Build is in progress, even when
+  ticket evals already cover some ACs.
+- **AC-521.9.2 Cost in the header.** Given a feature whose sessions are priced, then the header drops the AC bar and
+  shows what the feature's sessions cost so far (`FeatureDetail.cost`, API.md "Feature detail"), with how many
+  sessions it counts and how many are unpriced.
+- **AC-521.9.3 Shared parts for the panel.** `GoldenPathStepper` can run across with the open step's detail once below
+  it; `AcList` gains a rows layout, `SessionLink` a row variant, `TicketSessions` a shown count, and `ReadinessText`
+  can lead with its icon. Their existing callers keep their markup.
+- **AC-521.9.4 Ticket panel around its current step.** Given a ticket's panel, then its head shows the id over the full
+  title and one facts row; whatever waits on the owner or holds the ticket sits in one callout; the seven steps run
+  across with the open step's evidence in a card under them (vertical in a panel under 400 px); ACs, dependencies
+  and sessions are listed as rows with their state in words.
+
+**Ticket flow canvas (delivery 10)**
+
+- **AC-521.10.5 Flow on the canvas.** Given the Tickets tab's flow, then the groups are columns of compact cards on the
+  shared canvas (`components/Canvas`), so no group is cut off; readiness reads as an icon and words, not a coloured
+  border; the ticket whose panel is open lights its whole chain and fades the rest; Held back and Done draw no edges;
+  the legend sits in the canvas; the minimap colours tickets by readiness.
+- **AC-521.10.6 One Tab stop.** Given the flow, then it is one Tab stop whose arrow keys follow the edges; only the
+  current card's links and buttons are in the tab order; a focused title lights its edges, hover fades the rest, and
+  each title says what its ticket holds back.
+- **AC-521.10.7 Cards.** Given a card, then it shows, in this order, its id and Linear status, its title, its step bar,
+  its newest AI session in any state as a link (with how many earlier ones the panel lists) or Start, its readiness
+  or signal, the AC meter and the PR, then the assignee and what it comes after; cards are 288 px wide and far zoom
+  keeps the id, the title and the session's badge.
+- **AC-521.10.8 Lines.** Given the edges, then they leave and land at the card's id row; a blocker's lines share one
+  trunk in the gutter and branch off with a dot; a line that skips a group runs in a channel under the groups it
+  passes, never behind a card; verticals keep 12 px apart; cards sit under their blockers; paths are outlines (no
+  fill); settled lines go faint, a done blocker's line is solid green, a blocker link lights its one line, and far
+  zoom keeps strokes at screen width.
+- **AC-521.10.9 Room for the flow.** Given the flow, then the canvas fills the room left below it (at least 420 px,
+  most of the window), opens fitted and centred clear of the legend and the zoom toolbar, and refits as the cards
+  settle until the user pans or zooms. Above it, the view switch and the Linear source line share one row, the flow's
+  header is one line (its intro opens How to read), the outside-blocker banner lists only blockers not done, and the
+  epic is a one-line strip whose explanation is a keyboard-reachable tooltip.
+- **AC-521.10.10 Full window.** Given the zoom toolbar's expand button or the key `f`, then the flow and its ticket
+  panel show as a modal layer over the app, kept in `?flow=full` so a reload keeps it; focus moves to Exit, Tab stays
+  inside (skipping controls taken out of the tab order), Escape closes the ticket panel first and then exits, and
+  focus returns to what opened it.
 
 ## Screen 1: Features list
 

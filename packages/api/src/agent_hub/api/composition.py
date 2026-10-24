@@ -422,6 +422,7 @@ def _item_writes(  # noqa: PLR0913 - the shared write step's ports, all keyword-
             versions, toolkit_units=hubs, workflow_units=workflows, step=step
         ),
         publish=PublishDraft(step, writer=writer, reader=reader, toolkit_units=hubs, catalog=hubs),
+        step=step,
     )
 
 

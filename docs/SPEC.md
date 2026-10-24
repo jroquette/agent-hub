@@ -272,8 +272,8 @@ today), and the CLI's model and the hooks' stdlib reader accept it in the same c
 | Developer identity: `project.author_name`, `author_email`, `branch_prefix` | Become optional. Effective value: the gitignored `hub.local.json`, else `hub.json`, else the hub repo's `git config user.name`/`user.email`; the prefix, when no file sets it, is the effective email's local part plus `/` (ADR 0016) | Set per developer, by `hub setup` in `hub.local.json`; `hub worktree`, `hub run` and `hub start` refuse without a prefix | AGH-65 |
 
 `hub.local.json` may hold only those identity keys, `tracker.transport`, the developer's own `environments` and their
-endpoints on `hub.json`'s repos (`repos: [{dir, services}]`), a stricter `access` on a committed environment (`write` →
-`ask` → `read`) and the three `guard.blocked_words*` lists; any other key is an error, and nothing in it can relax a
+endpoints on `hub.json`'s repos (`repos: [{dir, services}]`), a stricter `access` and their own `values` on a committed
+environment (`write` → `ask` → `read`; values win per key) and the three `guard.blocked_words*` lists; any other key is an error, and nothing in it can relax a
 guard: it adds blocked words, never removes them, and only tightens access. Commits are authored by the developer running the session, and cloud setup writes `HUB_AUTHOR_NAME`/`HUB_AUTHOR_EMAIL`
 repo-local, never global, only when `hub.json` holds no author.
 
@@ -424,6 +424,10 @@ instruction" for actions and for the deterministic nodes of a workflow that decl
   values of 4 characters or more are redacted from the action's output (shorter ones cannot be told apart from
   ordinary output), and no value appears in an event, record or plan. Declared credential names are
   removed from every agent session, and the guard denies agents any read of a declared env file.
+- **Environment values:** an environment may declare `values` (at most 32 input names, `[a-z][a-z0-9_]*`, to short
+  texts that are never secrets), in `hub.json` or, per key over the team's, in `hub.local.json`. A scenario planned or
+  started there fills each declared input it is not given with the value of that name, typed as the input declares,
+  before the input's default: given input > environment value > default ([design/scenarios.md](design/scenarios.md)).
 - **Modes:** `hub scenario run --mode regression` starts no agent and fails on the first divergence; `interactive`
   (the default) pauses, and hub web starts one read-only investigation session that may read the hub, run read
   actions, write draft actions and propose findings and workaround options, each with its plan. The developer picks
@@ -437,7 +441,16 @@ instruction" for actions and for the deterministic nodes of a workflow that decl
   scenario `demo-service-up` that uses it, each file only where absent. They are the project's files: `hub sync`
   never adds them and `hub.lock` does not list them, so a hub without `scenarios/`, `actions/` and `environments`
   renders and syncs as before.
-- **In `hub web`** (Scenarios, in the sidebar's Work group after Workflow runs): the list with each scenario's last
+- **Blocks and debugging** ([ADR 0049](adr/0049-scenario-blocks-and-run-control.md), AGH-507, proposed, not built
+  yet; the builder AGH-521 shipped edits `version: 1` files, see the ADR's delivery notes): a scenario may be
+  written as `version: 2`, named stages of ordered blocks (Do, Wait until, You, Wait, Include; Repeat, If/else, At the
+  same time), which core translates to the node graph at load, so the policy, gates and records are unchanged; hub
+  web's builder edits that file block for block, and Save of an unchanged file writes nothing. A scenario run may pause
+  at breakpoints (block addresses kept with the run, never in the file), run one block at a time (Step) or to the next
+  breakpoint (Continue), and show its inputs, captures and each finished block's inputs and output while paused. A
+  pause never answers an ask, edits a value or rewinds; debugging is refused on a production environment. `hub
+  scenario migrate` converts graph scenarios; `hub doctor` warns on the graph format until it is removed.
+- **In `hub web`** (Scenarios, in the sidebar's Work group after Tickets): the list with each scenario's last
   scenario run, a scenario's steps and its plan for a chosen environment, and a scenario run's page with its timeline
   and, while paused, the investigation chat, the options with their plans and the pick; a policy ask is answered on
   that page ([screen spec 23](design/control-plane/specs/23-scenarios.md), Layer 2 § Scenarios).
@@ -1094,6 +1107,9 @@ Continuity between sessions comes from the brain and the summaries, not from rer
   never see the declared names, and the guard denies them the file.
 - When a scenario run diverges, an agent may investigate read-only and propose; a person picks every write. Local only
   in v1.
+- Scenarios are authored as ordered stages of blocks (`version: 2`), translated to the graph at load; a scenario run
+  can be debugged (breakpoints, Step, Continue, inspect) off production only (2026-10-23, AGH-507,
+  [ADR 0049](adr/0049-scenario-blocks-and-run-control.md), proposed).
 
 **Open questions**
 

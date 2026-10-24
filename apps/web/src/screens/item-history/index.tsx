@@ -33,6 +33,8 @@ const UNIT_ITEMS: Record<ItemVersionPage["unit_kind"], string> = {
   agent: "agents",
   hook: "hooks",
   workflow: "workflows",
+  scenario: "scenarios",
+  action: "actions",
 };
 
 function targetName(target: HistoryTarget): string {

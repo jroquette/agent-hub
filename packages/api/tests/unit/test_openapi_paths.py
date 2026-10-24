@@ -334,8 +334,16 @@ def test_lists_discovery_paths_when_document_built(api_settings: ApiSettings) ->
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
 
-# The nine route-method pairs the scenarios add (AGH-350 plan T12, AC-350.30).
+# The nine route-method pairs the scenarios add (AGH-350 plan T12, AC-350.30), and the scenario
+# builder's three (validate, the action library, save).
 SCENARIO_SPEC_PATHS = {
+    ("post", "/api/v1/projects/{project}/scenarios/validate"),
+    ("get", "/api/v1/projects/{project}/actions"),
+    ("put", "/api/v1/scenarios/{project}/{name}"),
+    ("get", "/api/v1/scenarios/{project}/{name}/proposal"),
+    ("post", "/api/v1/scenarios/{project}/{name}/proposal/dismiss"),
+    ("post", "/api/v1/projects/{project}/actions"),
+    ("put", "/api/v1/projects/{project}/actions/{pack}/{name}"),
     ("get", "/api/v1/scenarios"),
     ("get", "/api/v1/scenarios/{project}/{name}"),
     ("post", "/api/v1/scenarios/{project}/{name}/plan"),

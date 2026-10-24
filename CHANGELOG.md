@@ -20,6 +20,23 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `origin/<default branch>`; a mode whose plugin is missing is skipped and named. When a run fails, a read-only agent
   names the likely cause, and the counts, the cause and the failure tails go to `brain/_inbox/flaky-<test slug>.md`,
   one note per test; no code change and no tracker write.
+- A ticket page, `/tickets/<project>/<issue>`, shows the commits, files and pull requests a ticket's sessions changed,
+  each session with what it did, and for a feature's ticket the feature's records; the Tickets list now also keeps a
+  feature's tickets, tagged Feature (AGH-521).
+- A New scenario button on the Scenarios list and in its empty state opens `/scenarios/new`, a guided form (what to
+  check, environment, pack, name) that hands Claude the request and the scenario format in the Discuss panel, then
+  watches the catalog for the new scenario, as New workflow does; "Create it blank and build with blocks" saves a
+  one-step scenario and opens it in the builder (AGH-521).
+- The scenario page has a builder: a numbered step list with a Blocks tab to build by hand, Variables and Actions
+  tabs, the environment in view, and a step editor with Settings and Script tabs; values read as name, value and what
+  it is, shared values move into the environment, JSON values are edited as fields or JSON, Claude can propose steps
+  to review, and unsaved work is kept. Its API validates, saves as a recorded version, reads Claude's proposal and
+  writes draft actions (AGH-521).
+- Scenario run values and environment values: an action input a step leaves out takes the scenario run's input of that
+  name, and a run input not given takes the environment's non-secret value of that name (`values` in `hub.json` or
+  `hub.local.json`, set with `hub env add|set --value NAME=VALUE` and `--unset-value`) before its default (AGH-521).
+- ADR 0049 (proposed): scenarios as ordered stages of blocks (`version: 2`) translated to the graph at load, and a
+  debugger as engine run control, with its reference fixtures; not built yet (AGH-508, AGH-521).
 
 ### Changed
 
@@ -27,6 +44,45 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   problem" with a signal anyone can check (a command `post-merge-verify` can run, a `/retro` number by a date, or no
   new bug of a kind for N weeks). `/triage` drafts it, and the Definition of Ready lists it. `./hub run` still checks
   the headings only. A hub gets it with `hub sync` after it bumps `platform.version` (AGH-451).
+- The hub's agents keep code comments short and plain: the `plain-language` skill gains a Code comments section with an
+  example and a rule to prefer the common word to an internal name, the rendered `AGENTS.md` rule 6 counts code
+  comments as text for people, and the `quality-reviewer` flags comments that restate the code, narrate the change or
+  name a ticket. A hub gets it with `hub sync` after it bumps `platform.version` (AGH-521).
+- The sidebar has two groups: Work (Features, Tickets, Scenarios, Sessions, Workflow runs, Environments) and Knowledge
+  (Brain, Learnings, Toolkit) (AGH-521).
+- The sessions rail beside the chat resizes from its right edge (drag or arrow keys, kept in this browser, Home resets
+  it), and the chat column stays still while it does (AGH-521).
+- The Environments, Brain, Toolkit and Hub config project pickers show a calm setup hint (Setup tips, Setup needs a
+  fix) instead of the red Doctor errors badge, and nothing for a healthy hub; the Portfolio keeps the badge (AGH-521).
+- The Features list says each feature's stage in words (step name and "step N of 8"), its criteria as "N of M", what
+  comes next in plain words, its label beside every title, and the features a live session is working on now at the
+  top of In progress; it warms the Linear snapshot so a feature whose tickets are done leaves In progress (AGH-521).
+- The feature page's header shows what the feature's sessions cost so far (`cost` on `GET
+  /api/v1/features/{project}/{slug}`) instead of the AC bar, its golden path leaves out a skipped UX design step and
+  keeps Acceptance not reached while Build is in progress, and the ticket panel is laid out around its current step:
+  the steps across, the open step's evidence under them, one callout for what waits, and ACs, dependencies and
+  sessions as rows (AGH-521).
+- A workflow opens as a pan and zoom graph, top to bottom in topological order, with rounds as frames, a docked step
+  panel, zoom, fit and a minimap; run detail uses the same canvas. The feature's ticket flow moves onto that canvas:
+  cards with the AI session, step bar, ACs and assignee, one trunk per blocker, one Tab stop with arrow keys along the
+  edges, and a full window view (`f`) (AGH-521).
+- The scenario page reads as a storyline of steps beside a run panel, with each step's action, values and stops in
+  words, the actions' scripts and the scenario file one click away, and it follows a running scenario run live, with
+  Cancel; `GET /api/v1/scenarios/{project}/{name}` adds each step's keys, the file and the actions it calls (AGH-521).
+- `make demo` also seeds scenarios: two synthetic actions whose scripts reach nothing, the scenario
+  `demo-order-roundtrip` beside the `demo-service-up` example `hub init` writes, a `local` environment with a value,
+  and three scenario runs (passed, failed, running) (AGH-521).
+
+### Fixed
+
+- Start on a ticket free to start runs `/implement`, so its Context and Preflight steps are recorded; a stacked ticket
+  stays on `/feature`'s in-line steps (AGH-521).
+- An AskUserQuestion question or answer longer than 200 characters can be answered from hub web: the key and the
+  answer take up to 8192 characters and the Other field up to 4096 (AGH-521).
+- Skipping a question, or denying a tool use without a message, no longer breaks the session: the deny carries a
+  default message for the request's kind, since Claude's API refuses an empty error tool result (AGH-521).
+- The review's diff colours each hunk on its own, so a string or comment left open in one hunk no longer colours the
+  next (AGH-521).
 
 ## [0.23.0] - 2026-10-23
 

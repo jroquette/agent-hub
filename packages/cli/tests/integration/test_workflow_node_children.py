@@ -92,7 +92,8 @@ def test_kills_running_children_when_the_run_is_interrupted(tmp_path: Path) -> N
     worker = threading.Thread(target=attempt)
     worker.start()
     deadline = time.monotonic() + 5
-    while not pidfile.exists() and time.monotonic() < deadline:
+    # The child writes its pid after the file appears: wait for the number, not the file.
+    while not (pidfile.exists() and pidfile.read_text().strip()) and time.monotonic() < deadline:
         time.sleep(0.05)
 
     runner.stop_children()

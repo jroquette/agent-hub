@@ -181,7 +181,7 @@
     "AGENTS.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "312fd9fbbc2a1e7312fa8ca5744df930bedc59e58a5a508817401dfd2abe8a1c"
+      "sha256": "7a46265ccde380e2a177a570db0bf5b40841ad6c5df9476dc25a5ecf12bd1ed5"
     },
     "AGENTS.project.md": {
       "ownership": "seeded"
@@ -254,7 +254,7 @@
     "hub.schema.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "36e634aa05d9043bf3e75de920eaf724837c867f4f9e1321982b7f970f59a2c4"
+      "sha256": "2998aee49547225f84f58ab447d0fd5a05b71f9a7abe3642c4b0adf806a39f94"
     },
     "plugin/demo/.claude-plugin/plugin.json": {
       "ownership": "seeded"
@@ -306,7 +306,7 @@
     "plugin/hub-workflow/agents/quality-reviewer.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "06346ed2d9948f63b1a2b5ac850ef73e698326316e8cabe95de39dba9f1fb2ae"
+      "sha256": "3847f076fcc122041375afccbc8fa87caf9345d3368939e314682f61c0fe33bb"
     },
     "plugin/hub-workflow/agents/requirements-analyst.md": {
       "executable": false,
@@ -491,7 +491,7 @@
     "plugin/hub-workflow/skills/plain-language/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "be9a1cdcffb759374fba0f1ee0af80cd9e95421ad031f1833726c52e8127946d"
+      "sha256": "115dcd336c44d0599bb3fc8a3c3108b0efd62fa0cd9750ebe2ee19701b1f3b1d"
     },
     "plugin/hub-workflow/skills/premortem/SKILL.md": {
       "executable": false,
