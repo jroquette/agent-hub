@@ -136,6 +136,7 @@ BUILDER_WRITES = (
     ("POST", "/api/v1/scenarios/demo/walk/proposal/dismiss"),
     ("POST", "/api/v1/projects/demo/actions"),
     ("PUT", "/api/v1/projects/demo/actions/demo/send"),
+    ("POST", "/api/v1/scenarios/demo/walk/migrate"),
 )
 
 
@@ -146,3 +147,45 @@ def test_refuses_builder_write_when_no_cookie_or_in_container(method: str, path:
 
     assert unsigned.status_code == 401
     assert (contained.status_code, contained.json()["code"]) == (409, "hub_read_only")
+
+
+# A scenario run's values (ADR 0049): the launch cookie and this server's pages only, and
+# off in the container, where no cookie exists; the run view itself stays open.
+VALUES = "/api/v1/scenario-runs/walk-1/values"
+
+
+@pytest.mark.parametrize(
+    ("headers", "signed_in", "status"),
+    [
+        ({}, False, 401),
+        ({"origin": "http://127.0.0.1:7421"}, True, 403),
+        ({"sec-fetch-site": "same-site"}, True, 403),
+    ],
+)
+def test_refuses_values_read_when_no_cookie_or_not_own_page(
+    headers: dict[str, str], *, signed_in: bool, status: int
+) -> None:
+    response = _client(sessions_off=False, signed_in=signed_in).get(VALUES, headers=headers)
+
+    assert response.status_code == status
+    assert "served" not in response.json()
+
+
+def test_serves_values_read_when_cookie_matches_and_origin_own() -> None:
+    client = _client(sessions_off=False, signed_in=True)
+
+    served = client.get(
+        VALUES, headers={"origin": f"http://{HOST}", "sec-fetch-site": "same-origin"}
+    )
+    view = _client(sessions_off=False).get(VALUES.removesuffix("/values"))
+
+    assert served.json() == {"served": True}
+    assert view.json() == {"served": True}
+
+
+@pytest.mark.parametrize("signed_in", [False, True])
+def test_turns_values_read_off_when_in_container(*, signed_in: bool) -> None:
+    response = _client(sessions_off=True, signed_in=signed_in).get(VALUES)
+
+    assert response.status_code == 404
+    assert response.json()["type"] == "urn:agent-hub:problem:run-control-off"

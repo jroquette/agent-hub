@@ -1431,6 +1431,119 @@
         ],
         "type": "string"
       },
+      "BlockAddress": {
+        "maxLength": 64,
+        "pattern": "^[1-9][0-9]*(\\.((then|else|p[1-9][0-9]*)\\.)?[1-9][0-9]*)*$",
+        "type": "string"
+      },
+      "BlockAddresses": {
+        "items": {
+          "$ref": "#/components/schemas/BlockAddress"
+        },
+        "maxItems": 512,
+        "type": "array"
+      },
+      "BlockValues": {
+        "additionalProperties": false,
+        "description": "A finished node of a paused run: the address of the block that holds it (``None`` in a\nversion-1 run), its last end's status and output, the inputs its last action call rendered\n(``with``) and, for a Wait until, its polls and the last poll's output.",
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "attempt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt"
+          },
+          "last_poll": {
+            "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue-Output"
+          },
+          "node": {
+            "title": "Node",
+            "type": "string"
+          },
+          "output": {
+            "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue-Output"
+          },
+          "polls": {
+            "title": "Polls",
+            "type": "integer"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "with": {
+            "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue-Output"
+          }
+        },
+        "required": [
+          "address",
+          "node",
+          "attempt",
+          "status",
+          "with",
+          "output",
+          "polls",
+          "last_poll"
+        ],
+        "title": "BlockValues",
+        "type": "object"
+      },
+      "BlockView": {
+        "additionalProperties": false,
+        "description": "A block of a scenario written as blocks: its address, kind (``stage``, ``do``, ``if``,\n...), label and the nodes it starts with, each id as a run records it.",
+        "properties": {
+          "address": {
+            "title": "Address",
+            "type": "string"
+          },
+          "entry_nodes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Entry Nodes",
+            "type": "array"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "address",
+          "kind",
+          "label",
+          "entry_nodes"
+        ],
+        "title": "BlockView",
+        "type": "object"
+      },
       "BrainEntry": {
         "additionalProperties": false,
         "description": "One ``.md`` note of the tree and its size in bytes.",
@@ -1545,6 +1658,43 @@
           "entries"
         ],
         "title": "BrainTree",
+        "type": "object"
+      },
+      "Breakpoints": {
+        "additionalProperties": false,
+        "description": "The breakpoints written, in the pinned tree's declaration order.",
+        "properties": {
+          "blocks": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Blocks",
+            "type": "array"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "blocks"
+        ],
+        "title": "Breakpoints",
+        "type": "object"
+      },
+      "BreakpointsRequest": {
+        "additionalProperties": false,
+        "description": "A run's breakpoints, replaced whole: block addresses of its pinned tree (none clears\nthem).",
+        "properties": {
+          "blocks": {
+            "$ref": "#/components/schemas/BlockAddresses"
+          }
+        },
+        "required": [
+          "blocks"
+        ],
+        "title": "BreakpointsRequest",
         "type": "object"
       },
       "BuilderProblem": {
@@ -2510,6 +2660,48 @@
           }
         },
         "title": "Credentials",
+        "type": "object"
+      },
+      "DebugPauseEntry": {
+        "additionalProperties": false,
+        "description": "The debug pause a run is in: the block it paused before, that block's node, why\n(``breakpoint`` or ``step``), its number in the run and when.",
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "block": {
+            "title": "Block",
+            "type": "string"
+          },
+          "node": {
+            "title": "Node",
+            "type": "string"
+          },
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "block",
+          "node",
+          "reason",
+          "number",
+          "at"
+        ],
+        "title": "DebugPauseEntry",
         "type": "object"
       },
       "DecisionEntry": {
@@ -7168,6 +7360,57 @@
         "title": "MessageFile",
         "type": "object"
       },
+      "MigrateRequest": {
+        "additionalProperties": false,
+        "description": "A migrate: ``check`` writes nothing; ``base_content_hash``, when sent, is the content\nhash of the file the builder last read, which the file must still hold.",
+        "properties": {
+          "base_content_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Content Hash"
+          },
+          "check": {
+            "default": false,
+            "title": "Check",
+            "type": "boolean"
+          }
+        },
+        "title": "MigrateRequest",
+        "type": "object"
+      },
+      "MigrationProblemView": {
+        "additionalProperties": false,
+        "description": "A node a tree cannot hold, and why (``node`` None for the document or its file).",
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "node": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node"
+          }
+        },
+        "required": [
+          "node",
+          "message"
+        ],
+        "title": "MigrationProblemView",
+        "type": "object"
+      },
       "MissingService": {
         "additionalProperties": false,
         "description": "A service Claude saw a sign of but could not place: no address it could read.",
@@ -10713,7 +10956,9 @@
           "start",
           "cancel",
           "resume",
-          "abandon"
+          "abandon",
+          "step",
+          "continue"
         ],
         "type": "string"
       },
@@ -11317,7 +11562,7 @@
       },
       "ScenarioDetail": {
         "additionalProperties": false,
-        "description": "A scenario's steps, its scenario runs, newest first, and the environments it can be\nplanned in (empty when ``hub.local.json`` or ``hub.json`` cannot be read), with its file\n(hub-relative ``path`` and raw ``document_text``) and the actions its steps call.",
+        "description": "A scenario's steps, its scenario runs, newest first, and the environments it can be\nplanned in (empty when ``hub.local.json`` or ``hub.json`` cannot be read), with its file\n(hub-relative ``path`` and raw ``document_text``) and the actions its steps call; its\nformat's ``version`` and, written as blocks (2), its ``blocks`` in declaration order.",
         "properties": {
           "actions": {
             "default": [],
@@ -11325,6 +11570,14 @@
               "$ref": "#/components/schemas/ScenarioActionView"
             },
             "title": "Actions",
+            "type": "array"
+          },
+          "blocks": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/BlockView"
+            },
+            "title": "Blocks",
             "type": "array"
           },
           "content_hash": {
@@ -11444,6 +11697,11 @@
             },
             "title": "Steps",
             "type": "array"
+          },
+          "version": {
+            "default": 1,
+            "title": "Version",
+            "type": "integer"
           }
         },
         "required": [
@@ -11489,6 +11747,58 @@
           "production"
         ],
         "title": "ScenarioEnvironment",
+        "type": "object"
+      },
+      "ScenarioMigration": {
+        "additionalProperties": false,
+        "description": "What a migrate did: the file, whether it was written, the tree's canonical text (None\nwhen it cannot be migrated), the file's content hash after the call, and the problems.",
+        "properties": {
+          "content_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Hash"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "problems": {
+            "items": {
+              "$ref": "#/components/schemas/MigrationProblemView"
+            },
+            "title": "Problems",
+            "type": "array"
+          },
+          "written": {
+            "title": "Written",
+            "type": "boolean"
+          },
+          "yaml": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Yaml"
+          }
+        },
+        "required": [
+          "path",
+          "written",
+          "yaml",
+          "content_hash",
+          "problems"
+        ],
+        "title": "ScenarioMigration",
         "type": "object"
       },
       "ScenarioMode": {
@@ -11714,7 +12024,7 @@
       },
       "ScenarioRunDetail": {
         "additionalProperties": false,
-        "description": "A scenario run as its record holds it. ``status`` is its end's, ``None`` while it has\nnone; ``open_investigation`` is the number of the investigation waiting for an answer.",
+        "description": "A scenario run as its record holds it. ``status`` is its end's, ``None`` while it has\nnone; ``open_investigation`` is the number of the investigation waiting for an answer;\n``debug`` the debug pause it is in, ``breakpoints`` the block addresses last set and\n``stepping`` whether its last debug command was a Step.",
         "properties": {
           "actions": {
             "default": [],
@@ -11724,12 +12034,30 @@
             "title": "Actions",
             "type": "array"
           },
+          "breakpoints": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Breakpoints",
+            "type": "array"
+          },
           "captures": {
             "items": {
               "$ref": "#/components/schemas/CaptureEntry"
             },
             "title": "Captures",
             "type": "array"
+          },
+          "debug": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DebugPauseEntry"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "decisions": {
             "items": {
@@ -11854,6 +12182,11 @@
             ],
             "title": "Status"
           },
+          "stepping": {
+            "default": false,
+            "title": "Stepping",
+            "type": "boolean"
+          },
           "timeline": {
             "items": {
               "$ref": "#/components/schemas/TimelineEntry"
@@ -11947,10 +12280,44 @@
         "title": "ScenarioRunRef",
         "type": "object"
       },
+      "ScenarioRunValues": {
+        "additionalProperties": false,
+        "description": "What a paused run shows to inspect, from its record: its effective inputs (environment\nvalues included) and each finished node, in the order they first ended.",
+        "properties": {
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/BlockValues"
+            },
+            "title": "Blocks",
+            "type": "array"
+          },
+          "inputs": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue-Output"
+            },
+            "title": "Inputs",
+            "type": "object"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "inputs",
+          "blocks"
+        ],
+        "title": "ScenarioRunValues",
+        "type": "object"
+      },
       "ScenarioStartRequest": {
         "additionalProperties": false,
-        "description": "The body of a start: a plan's, and the mode (``interactive`` by default).",
+        "description": "The body of a start: a plan's, the mode (``interactive`` by default) and the\nbreakpoints, block addresses of the tree the run pins (``--break``).",
         "properties": {
+          "breakpoints": {
+            "$ref": "#/components/schemas/BlockAddresses"
+          },
           "environment": {
             "maxLength": 40,
             "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
@@ -22088,7 +22455,7 @@
     },
     "/api/v1/scenario-runs/{run_id}": {
       "get": {
-        "description": "A scenario run as its record holds it: timeline, polls, captures, decisions, findings,\ninvestigations, the latest proposal's options and the workarounds.",
+        "description": "A scenario run as its record holds it: timeline, polls, captures, decisions, findings,\ninvestigations, the latest proposal's options, the workarounds and its debug pause.",
         "operationId": "get_scenario_run_api_v1_scenario_runs__run_id__get",
         "parameters": [
           {
@@ -22199,6 +22566,124 @@
           }
         },
         "summary": "Answer Investigation",
+        "tags": [
+          "scenarios"
+        ]
+      }
+    },
+    "/api/v1/scenario-runs/{run_id}/breakpoints": {
+      "put": {
+        "description": "Replace a run's breakpoints, blocks of its pinned tree (none clears them); a run that\nruns takes them at its next block. Refused on production, but for clearing them.",
+        "operationId": "put_breakpoints_api_v1_scenario_runs__run_id__breakpoints_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BreakpointsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Breakpoints"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Put Breakpoints",
+        "tags": [
+          "scenarios"
+        ]
+      }
+    },
+    "/api/v1/scenario-runs/{run_id}/continue": {
+      "post": {
+        "description": "Run a run in a debug pause to its next breakpoint, or its end.",
+        "operationId": "continue_run_api_v1_scenario_runs__run_id__continue_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Continue Run",
         "tags": [
           "scenarios"
         ]
@@ -22416,6 +22901,114 @@
         ]
       }
     },
+    "/api/v1/scenario-runs/{run_id}/step": {
+      "post": {
+        "description": "Run the next block of a run in a debug pause, then pause before the one after it.",
+        "operationId": "step_run_api_v1_scenario_runs__run_id__step_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Step Run",
+        "tags": [
+          "scenarios"
+        ]
+      }
+    },
+    "/api/v1/scenario-runs/{run_id}/values": {
+      "get": {
+        "description": "A paused run's inputs and each finished block's inputs, status and output, from its\nrecord (needs the launch cookie; never on a production environment).",
+        "operationId": "get_scenario_run_values_api_v1_scenario_runs__run_id__values_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioRunValues"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Scenario Run Values",
+        "tags": [
+          "scenarios"
+        ]
+      }
+    },
     "/api/v1/scenarios": {
       "get": {
         "description": "The scenarios of every (or one) project, each with its last scenario run, and the\nfiles that do not load.",
@@ -22613,6 +23206,82 @@
           }
         },
         "summary": "Save Scenario",
+        "tags": [
+          "scenarios"
+        ]
+      }
+    },
+    "/api/v1/scenarios/{project}/{name}/migrate": {
+      "post": {
+        "description": "Write a graph scenario (version 1) again as blocks (version 2), or with ``check`` say\nwhat would be written; a node a tree cannot hold is a problem and nothing is written.",
+        "operationId": "migrate_scenario_api_v1_scenarios__project___name__migrate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MigrateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioMigration"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Migrate Scenario",
         "tags": [
           "scenarios"
         ]

@@ -2088,6 +2088,8 @@ export function aScenarioDetail(overrides: Partial<ScenarioDetail> = {}): Scenar
         description: "Render the order's invoice PDF",
       }),
     ],
+    version: 1,
+    blocks: [],
     ...overrides,
   };
 }
@@ -2353,6 +2355,9 @@ export function aScenarioRunDetail(overrides: Partial<ScenarioRunDetail> = {}): 
         at: at(10),
       },
     ],
+    debug: null,
+    breakpoints: [],
+    stepping: false,
     ...overrides,
   };
 }

@@ -9,6 +9,12 @@ investigation start processes, an issue reaches the tracker and a note writes in
 ``POST /scenario-runs/{run_id}/investigation`` starts the session once per investigation and
 answers it again on a later call (``ScenarioInvestigations``); the chat goes through the
 agent-session routes with the id it answers.
+
+Debugging a scenario written as blocks (ADR 0049): ``PUT
+/scenario-runs/{run_id}/breakpoints``, ``POST .../step`` and ``.../continue`` are run writes
+like the others; ``GET .../values`` needs the launch cookie as the agent-session routes do (and
+answers 404 in the container); ``POST /scenarios/{project}/{name}/migrate`` is an item write,
+as the builder's save is.
 """
 
 from typing import Annotated
@@ -24,11 +30,13 @@ from agent_hub.api.dependencies import (
 from agent_hub.api.openapi_paths import AGENT_SESSIONS, API_PREFIX
 from agent_hub.api.scenario_builder import (
     ActionLibrary,
+    MigrateRequest,
     NewAction,
     ProposalView,
     SaveRequest,
     SaveResult,
     ScenarioBuilder,
+    ScenarioMigration,
     ValidateRequest,
     ValidateResult,
     create_action,
@@ -37,6 +45,8 @@ from agent_hub.api.scenario_builder import (
 )
 from agent_hub.api.scenario_catalog import (
     FINDING_ID_TEXT,
+    Breakpoints,
+    BreakpointsRequest,
     FindingIssue,
     FindingIssueRequest,
     FindingNote,
@@ -48,6 +58,7 @@ from agent_hub.api.scenario_catalog import (
     ScenarioPlanRequest,
     ScenarioPlanView,
     ScenarioRunDetail,
+    ScenarioRunValues,
     ScenarioStartRequest,
 )
 from agent_hub.api.scenario_investigation import InvestigationSession
@@ -173,11 +184,63 @@ def start_scenario(
     return accepted
 
 
+@router.post("/scenarios/{project}/{name}/migrate")
+def migrate_scenario(
+    project: NamePath,
+    name: NamePath,
+    *,
+    body: MigrateRequest,
+    reads: ScenarioReadsDep,
+    writes: ItemVersionWritesDep,
+) -> ScenarioMigration:
+    """Write a graph scenario (version 1) again as blocks (version 2), or with ``check`` say
+    what would be written; a node a tree cannot hold is a problem and nothing is written."""
+    return ScenarioBuilder(reads).migrate(project, name, request=body, writes=writes)
+
+
 @router.get("/scenario-runs/{run_id}")
 def get_scenario_run(run_id: ScenarioRunIdPath, reads: ScenarioReadsDep) -> ScenarioRunDetail:
     """A scenario run as its record holds it: timeline, polls, captures, decisions, findings,
-    investigations, the latest proposal's options and the workarounds."""
+    investigations, the latest proposal's options, the workarounds and its debug pause."""
     return reads.get_run(run_id)
+
+
+@router.get("/scenario-runs/{run_id}/values")
+def get_scenario_run_values(
+    run_id: ScenarioRunIdPath, reads: ScenarioReadsDep
+) -> ScenarioRunValues:
+    """A paused run's inputs and each finished block's inputs, status and output, from its
+    record (needs the launch cookie; never on a production environment)."""
+    return reads.run_values(run_id)
+
+
+@router.put("/scenario-runs/{run_id}/breakpoints")
+def put_breakpoints(
+    run_id: ScenarioRunIdPath, *, body: BreakpointsRequest, commands: ScenarioCommandsDep
+) -> Breakpoints:
+    """Replace a run's breakpoints, blocks of its pinned tree (none clears them); a run that
+    runs takes them at its next block. Refused on production, but for clearing them."""
+    return commands.set_breakpoints(run_id, body)
+
+
+@router.post("/scenario-runs/{run_id}/step", status_code=202)
+def step_run(
+    run_id: ScenarioRunIdPath, commands: ScenarioCommandsDep, response: Response
+) -> RunAccepted:
+    """Run the next block of a run in a debug pause, then pause before the one after it."""
+    accepted = commands.debug(run_id, "step")
+    response.headers["Location"] = f"{API_PREFIX}/scenario-runs/{run_id}"
+    return accepted
+
+
+@router.post("/scenario-runs/{run_id}/continue", status_code=202)
+def continue_run(
+    run_id: ScenarioRunIdPath, commands: ScenarioCommandsDep, response: Response
+) -> RunAccepted:
+    """Run a run in a debug pause to its next breakpoint, or its end."""
+    accepted = commands.debug(run_id, "continue")
+    response.headers["Location"] = f"{API_PREFIX}/scenario-runs/{run_id}"
+    return accepted
 
 
 @router.post(

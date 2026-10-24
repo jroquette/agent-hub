@@ -452,7 +452,8 @@ instruction" for actions and for the deterministic nodes of a workflow that decl
   canonical writer gives the API's builder validate and Save for a `version: 2` document, writing nothing for an
   unchanged one, and `hub doctor` warns on each graph-format scenario, with `hub init` seeding its example as
   `version: 2`; the CLI's debugger, `hub scenario run --break`, `break`, `step` and `continue`, refused on production;
-  `hub scenario migrate`; the builder screen AGH-521 shipped edits `version: 1` files, see the ADR's delivery notes):
+  `hub scenario migrate`; the API's routes for breakpoints, Step, Continue, a paused run's values and migrate; the
+  builder screen AGH-521 shipped edits `version: 1` files, see the ADR's delivery notes):
   a scenario may be written as `version: 2`, named stages of ordered blocks (Do, Wait until, You, Wait, Include;
   Repeat, If/else, At the same time), which core translates to the node graph at load, so the policy, gates and
   records are unchanged; hub web's builder edits that file block for block, and Save of an unchanged file writes

@@ -142,6 +142,16 @@ writes nothing at all when any scenario asked cannot be migrated, each checked (
 translated back to the same graph) before the first write ([design/scenarios.md](../design/scenarios.md) § Tree format, AGH-515). A tree has no `returns` or
 `outcome_field`, so a graph that sets them is not migrated; it does not split the conditions of nested Ifs joined on
 one node either.
+And the API's debugger and migrate ([API.md](../API.md) § Scenarios, AGH-516): `PUT
+/scenario-runs/{run_id}/breakpoints` waits for `hub scenario break RUN --set -- ADDR…`, and `POST …/step|continue`
+resume a run in a debug pause through `hub scenario step|continue RUN`, detached; a start takes `breakpoints`. The
+server checks each address against the address grammar and the run's pinned tree (422), and the production rule as
+read then (409), before the CLI runs, which checks again and records nothing when it refuses. `GET
+…/values` gives a paused run's inputs and each finished block's values from its record, behind the launch cookie
+and never on production; the run view names the debug pause, the breakpoints and step mode, and a scenario's detail
+its version and blocks. `POST /scenarios/{project}/{name}/migrate` migrates one scenario in the server, as the CLI
+does, through the item write step the builder's Save uses, over the bytes the builder last read when it sends their
+hash.
 The scenario builder that shipped with AGH-521 is the one the owner validated in the playground, and where it differs
 from the decision above, the validated behavior wins for what the screen shows:
 
@@ -164,10 +174,9 @@ from the decision above, the validated behavior wins for what the screen shows:
   name, and a run input the start does not give takes the environment's non-secret value of that name before its
   declared default (`hub env` sets them). The decision above does not cover them; they live beside it in
   [design/scenarios.md](../design/scenarios.md) and [design/environments.md](../design/environments.md).
-- **Debugger.** The engine's run-control port, core's fold of the debug record lines and values, and the CLI's
-  commands are built: breakpoints, Step and Continue are set and sent from the terminal only. hub web has no
-  debugger yet: the values read and the routes are not built, and the API paths in [API.md](../API.md) marked
-  AGH-507 are the contract for them.
+- **Debugger.** The engine's run-control port, core's fold of the debug record lines and values, the CLI's commands
+  and the API's routes (breakpoints, Step, Continue, the values read) are built. hub web's screens do not use them yet:
+  breakpoints, Step and Continue are set and sent from the terminal, or through the API.
 
 ## More Information
 

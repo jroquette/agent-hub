@@ -14,6 +14,8 @@ refuses before routing, so a refused request never reaches a port.
   (``run-control-off``): both start processes in a hub.
 - **Run writes** (start, cancel, resume, abandon a workflow run) need the cookie too; their
   Origin and JSON checks are the strict ones of ``LocalSecurityMiddleware``.
+- **Run reads** (a paused scenario run's values, ADR 0049) need the cookie and follow the reads'
+  Origin rules below; with ``sessions_off`` they answer 404 ``run-control-off``.
 - **Item writes** (a Restore into a hub's tree, AGH-295 D13) need the cookie too, with the
   strict checks; with ``sessions_off`` they answer 409 ``hub_read_only`` before the cookie is
   looked at (A6): the container mounts the hubs read-only and mints no token.
@@ -39,6 +41,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from agent_hub.api.local_security import (
     STATE_CHANGING_METHODS,
     is_item_write,
+    is_run_read,
     is_run_write,
     strict_refusal,
 )
@@ -133,6 +136,8 @@ class SessionAccessMiddleware:
             response = self._run_refusal(path, headers)
         elif is_item_write(str(scope["method"]), path):
             response = self._item_write_refusal(path, headers)
+        elif is_run_read(str(scope["method"]), path):
+            response = self._run_read_refusal(path, headers)
         else:
             response = self._exchange(scope)
         if response is None:
@@ -191,6 +196,23 @@ class SessionAccessMiddleware:
         if self._has_cookie(headers):
             return None
         return self._unauthorized(instance)
+
+    def _run_read_refusal(self, instance: str, headers: Headers) -> Response | None:
+        if self._off:
+            return problem(
+                404,
+                title="Run control is off",
+                detail="A scenario run's values cannot be read from the agent-hub container.",
+                instance=instance,
+                members={"type": RUNS_OFF_PROBLEM_TYPE},
+            )
+        if not self._has_cookie(headers):
+            return self._unauthorized(instance)
+        refusal = read_refusal(headers)
+        if refusal is None:
+            return None
+        status, title, detail = refusal
+        return problem(status, title=title, detail=detail, instance=instance)
 
     def _item_write_refusal(self, instance: str, headers: Headers) -> Response | None:
         if self._off:

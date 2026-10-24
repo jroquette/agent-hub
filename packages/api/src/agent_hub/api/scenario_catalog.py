@@ -29,7 +29,20 @@ that accepts it, AM-5) and whether it can be picked now (core's ``option_refusal
   ``hub scenario findings --issue`` claims too), made exclusively before the call, refuses a
   second create from either side,
   and a failed create is never retried here;
-- ``finding_inbox`` writes the finding's ``brain/_inbox/`` note, never over another.
+- ``finding_inbox`` writes the finding's ``brain/_inbox/`` note, never over another;
+- ``set_breakpoints`` and ``debug`` (Step, Continue) debug a run written as blocks (ADR 0049):
+  the addresses are checked against the run's pinned tree (its snapshot's document; 422
+  ``unknown_block``), and anything but clearing them is refused on an environment that is
+  ``production: true`` as read now (409 ``debug_production``), before ``hub scenario break RUN
+  --set -- ADDR...`` is waited for, or ``hub scenario step|continue RUN`` resumes a run in a
+  debug pause detached; the CLI checks again and records nothing when it refuses. A start with
+  breakpoints is checked the same way against the tree it pins, and its plan's problems name
+  blocks.
+
+A paused run's values (``ScenarioCatalog.run_values``, core's ``fold_values``) are its effective
+inputs and each finished node's rendered inputs, status and output, by the address of the block
+that holds it: read from the record, only while the run is paused (a debug pause, a gate or an
+investigation) and never on a production environment; the route needs the launch cookie.
 """
 
 import contextlib
@@ -56,7 +69,7 @@ from pydantic import (
 )
 
 from agent_hub.api.agent_session_runtime import HubCredentials
-from agent_hub.api.run_launcher import ScenarioLaunch
+from agent_hub.api.run_launcher import DebugCommand, ScenarioLaunch
 from agent_hub.api.scenario_investigation import (
     RECORDS,
     RUN_FOLDERS,
@@ -80,7 +93,7 @@ from agent_hub.core.runs.workflow_run import (
     WorkflowRunStatus,
     scenario_label,
 )
-from agent_hub.core.scenarios.access_policy import PolicyDecision, deny_reason
+from agent_hub.core.scenarios.access_policy import PolicyDecision, deny_reason, find_environment
 from agent_hub.core.scenarios.action_catalog import ActionEntry, ActionRefError, resolve_action
 from agent_hub.core.scenarios.environment_values import with_environment_values
 from agent_hub.core.scenarios.findings import (
@@ -96,9 +109,12 @@ from agent_hub.core.scenarios.run_record import (
     InvestigationView,
     OptionView,
     ScenarioRunView,
+    debug_resume,
     fold_records,
+    fold_values,
 )
 from agent_hub.core.scenarios.scenario_plan import ScenarioPlan, plan_scenario
+from agent_hub.core.scenarios.tree_translate import BlockMap, block_map
 from agent_hub.core.scenarios.workaround import (
     StepPlan,
     accept_command,
@@ -109,7 +125,7 @@ from agent_hub.core.scenarios.workaround import (
 )
 from agent_hub.core.tracker.tracker_client import TrackerClient
 from agent_hub.core.workflows.catalog import check_workflows
-from agent_hub.core.workflows.document import EnvironmentRef
+from agent_hub.core.workflows.document import EnvironmentRef, WorkflowLoadError, is_tree
 from agent_hub.core.workflows.gate_decisions import ResumeAfterDecisionError
 from agent_hub.core.workflows.gates import GateAnswer
 from agent_hub.core.workflows.launch import (
@@ -121,15 +137,18 @@ from agent_hub.core.workflows.launch import (
     RunConflictError,
     RunInputError,
     RunLaunchError,
+    UnknownBlockError,
     argv_text,
     launch_inputs,
     new_run_id,
 )
 from agent_hub.core.workflows.plan import WorkflowPlan
+from agent_hub.core.workflows.substitution import echo
 from agent_hub.core.workflows.workflow_reads import WorkflowInputView, WorkflowProblemView
 from agent_hub.generator.action_discovery import ActionDiscovery, discover_actions
 from agent_hub.generator.finding_issues import HeldIssue, IssueMarked, claim_issue
 from agent_hub.generator.scenario_discovery import DiscoveredScenarioSource
+from agent_hub.generator.workflow_discovery import DiscoveredWorkflow
 from agent_hub.generator.workflow_yaml import WorkflowFileError, load_workflow_bytes
 
 if TYPE_CHECKING:
@@ -152,11 +171,28 @@ LOCAL_UNREADABLE: Final = (
     "hub.local.json cannot be read or conflicts with hub.json, so the options cannot be planned now"
 )
 CONFIG_UNREADABLE: Final = "hub.json cannot be read, so the options cannot be planned now"
+# A run's pinned tree: its snapshot's document, read up to this size (a scenario file loads
+# only up to 256 KiB).
+SNAPSHOT_DOCUMENT: Final = Path("snapshot", "workflow.json")
+SNAPSHOT_BYTES: Final = 1 << 20
+# A block address (docs/design/scenarios.md § Tree format): ``2``, ``2.3``, ``2.3.then.1``,
+# ``2.3.p2.1``, ``4.1.2``. It never starts with ``-``, so no address reads as a CLI option.
+BLOCK_ADDRESS: Final = r"^[1-9][0-9]*(\.((then|else|p[1-9][0-9]*)\.)?[1-9][0-9]*)*$"
+MAX_ADDRESS_CHARS: Final = 64
+MAX_BREAKPOINTS: Final = 512
+OFF_PRODUCTION: Final = "debugging runs only off production"
+NO_ADDRESSES: Final = "only a scenario written as blocks (version 2) has block addresses"
+# The record lines that start, pause or end a pass: a pause is the run's while it is the last.
+_PASS_LINES: Final = frozenset({"start", "resume", "held", "end"})
 
 type ScenarioMode = Literal["interactive", "regression"]
 type Choice = Literal["pick", "retry", "stop"]
 type OptionId = Annotated[str, StringConstraints(strict=True, pattern=r"^o[0-9]{1,2}$")]
 type Inputs = Annotated[dict[InputName, InputValue], Field(max_length=MAX_INPUTS)]
+type BlockAddress = Annotated[
+    str, StringConstraints(strict=True, max_length=MAX_ADDRESS_CHARS, pattern=BLOCK_ADDRESS)
+]
+type BlockAddresses = Annotated[tuple[BlockAddress, ...], Field(max_length=MAX_BREAKPOINTS)]
 
 
 # Reads
@@ -260,10 +296,21 @@ class ScenarioActionView(ViewModel):
     problem: str | None = None
 
 
+class BlockView(ViewModel):
+    """A block of a scenario written as blocks: its address, kind (``stage``, ``do``, ``if``,
+    ...), label and the nodes it starts with, each id as a run records it."""
+
+    address: str
+    kind: str
+    label: str
+    entry_nodes: tuple[str, ...]
+
+
 class ScenarioDetail(ScenarioSummary):
     """A scenario's steps, its scenario runs, newest first, and the environments it can be
     planned in (empty when ``hub.local.json`` or ``hub.json`` cannot be read), with its file
-    (hub-relative ``path`` and raw ``document_text``) and the actions its steps call."""
+    (hub-relative ``path`` and raw ``document_text``) and the actions its steps call; its
+    format's ``version`` and, written as blocks (2), its ``blocks`` in declaration order."""
 
     steps: tuple[ScenarioStepView, ...]
     runs: tuple[ScenarioRunRef, ...]
@@ -273,6 +320,8 @@ class ScenarioDetail(ScenarioSummary):
     actions: tuple[ScenarioActionView, ...] = ()
     document: dict[str, JsonValue] | None = None
     content_hash: str | None = None
+    version: int = 1
+    blocks: tuple[BlockView, ...] = ()
 
 
 class ScenarioCatalogView(ViewModel):
@@ -390,9 +439,22 @@ class WorkaroundEntry(ViewModel):
     status: str | None
 
 
+class DebugPauseEntry(ViewModel):
+    """The debug pause a run is in: the block it paused before, that block's node, why
+    (``breakpoint`` or ``step``), its number in the run and when."""
+
+    block: str
+    node: str
+    reason: str
+    number: int
+    at: str | None
+
+
 class ScenarioRunDetail(ViewModel):
     """A scenario run as its record holds it. ``status`` is its end's, ``None`` while it has
-    none; ``open_investigation`` is the number of the investigation waiting for an answer."""
+    none; ``open_investigation`` is the number of the investigation waiting for an answer;
+    ``debug`` the debug pause it is in, ``breakpoints`` the block addresses last set and
+    ``stepping`` whether its last debug command was a Step."""
 
     run_id: str
     project: str
@@ -412,6 +474,35 @@ class ScenarioRunDetail(ViewModel):
     proposal: ProposalEntry | None
     workarounds: tuple[WorkaroundEntry, ...]
     actions: tuple[ActionCallEntry, ...] = ()
+    debug: DebugPauseEntry | None = None
+    breakpoints: tuple[str, ...] = ()
+    stepping: bool = False
+
+
+class BlockValues(ViewModel):
+    """A finished node of a paused run: the address of the block that holds it (``None`` in a
+    version-1 run), its last end's status and output, the inputs its last action call rendered
+    (``with``) and, for a Wait until, its polls and the last poll's output."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+    address: str | None
+    node: str
+    attempt: int | None
+    status: str | None
+    with_: JsonValue = Field(alias="with")
+    output: JsonValue
+    polls: int
+    last_poll: JsonValue
+
+
+class ScenarioRunValues(ViewModel):
+    """What a paused run shows to inspect, from its record: its effective inputs (environment
+    values included) and each finished node, in the order they first ended."""
+
+    run_id: str
+    inputs: dict[str, JsonValue]
+    blocks: tuple[BlockValues, ...]
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -479,7 +570,8 @@ class ScenarioCatalog:
 
     def get_scenario(self, project: str, name: str) -> ScenarioDetail:
         """One scenario that loads, its steps and runs; ``EntityNotFoundError`` else."""
-        hub, plan, pack, file = self._scenario_file(project, name)
+        hub, plan, found_file = self.scenario_source(project, name)
+        pack, file = found_file.pack, found_file.path
         page = self._runs.list_runs(
             RunFilter(
                 project=project, kind="scenario", workflow=scenario_label(name), limit=RUN_PAGE
@@ -507,6 +599,8 @@ class ScenarioCatalog:
             document=_document_of(data, source=_hub_relative(file, hub)),
             content_hash=None if data is None or cut else _hash_of(data),
             actions=tuple(action_view(ref, pack, found) for ref in refs if found is not None),
+            version=2 if is_tree(found_file.document) else 1,
+            blocks=_block_views(found_file.document),
         )
 
     def _environments(self, hub: str, project: str) -> tuple[ScenarioEnvironment, ...]:
@@ -557,19 +651,20 @@ class ScenarioCatalog:
     def scenario(self, project: str, name: str) -> tuple[str, WorkflowPlan, str]:
         """The project's hub, the scenario's plan and its pack; ``EntityNotFoundError`` when
         the project or a scenario of that name that loads is unknown."""
-        hub, plan, pack, _ = self._scenario_file(project, name)
-        return hub, plan, pack
+        hub, plan, found = self.scenario_source(project, name)
+        return hub, plan, found.pack
 
-    def _scenario_file(self, project: str, name: str) -> tuple[str, WorkflowPlan, str, Path]:
-        """``scenario`` and the scenario's file."""
+    def scenario_source(
+        self, project: str, name: str
+    ) -> tuple[str, WorkflowPlan, DiscoveredWorkflow]:
+        """``scenario``, with the scenario as discovered (its pack, file and raw mapping)."""
         hub = self.hub_of(project)
         source = DiscoveredScenarioSource(Path(hub), only=name)
         catalog = check_workflows(source)
         plan = next((item for item in catalog.plans if item.document.name == name), None)
         if plan is None:
             raise EntityNotFoundError(entity="scenario", entity_id=f"{project}/{name}")
-        found = source.found[name]
-        return hub, plan, found.pack, found.path
+        return hub, plan, source.found[name]
 
     def scenario_run(self, run_id: str) -> ScenarioRun:
         """Scenario run ``run_id``'s folder and record; ``EntityNotFoundError`` when no
@@ -620,6 +715,57 @@ class ScenarioCatalog:
                 WorkaroundEntry.model_validate(_fields(item)) for item in view.workarounds
             ),
             actions=tuple(ActionCallEntry.model_validate(_fields(item)) for item in view.actions),
+            debug=_debug_entry(view),
+            breakpoints=view.debug.breakpoints,
+            stepping=view.debug.stepping,
+        )
+
+    def on_production(self, hub: str, project: str, environment: str) -> bool:
+        """Whether ``environment`` is ``production: true`` in the project's effective config as
+        read now (``HubLocalInvalidError`` when ``hub.local.json`` cannot be read)."""
+        found = find_environment(self.credentials.environments_of(hub, project), environment)
+        return found is not None and found.production
+
+    def refuse_on_production(self, run: ScenarioRun, *, what: str) -> None:
+        """409 ``debug_production`` when ``run``'s environment is production as read now."""
+        environment = str(run.records[0].get("environment"))
+        if self.on_production(run.hub, run.project, environment):
+            raise RunConflictError(
+                code="debug_production",
+                reason=production_reason(environment, what),
+                run_id=run.folder.name,
+            )
+
+    def run_values(self, run_id: str) -> ScenarioRunValues:
+        """What scenario run ``run_id`` shows to inspect while it is paused, from its record;
+        409 on a production environment (``debug_production``) and while it is not paused
+        (``not_paused``)."""
+        run = self.scenario_run(run_id)
+        self.refuse_on_production(run, what="reading a run's values")
+        view = fold_records(run.records)
+        if not _paused(run.records, view):
+            reason = "the run is not paused: its values are shown only while it is paused"
+            raise RunConflictError(code="not_paused", reason=reason, run_id=run_id)
+        values = fold_values(run.records)
+        tree = pinned_tree(run.folder)
+        return ScenarioRunValues(
+            run_id=run_id,
+            inputs=dict(values.inputs),
+            blocks=tuple(
+                BlockValues.model_validate(
+                    {
+                        "address": _address_of(tree, item.node),
+                        "node": item.node,
+                        "attempt": item.attempt,
+                        "status": item.status,
+                        "with": item.inputs,
+                        "output": item.output,
+                        "polls": item.polls,
+                        "last_poll": item.last_poll,
+                    }
+                )
+                for item in values.nodes
+            ),
         )
 
     def _proposal(
@@ -788,6 +934,11 @@ def read_text_bounded(path: Path, limit: int) -> tuple[str | None, bool]:
     return _text_of(_read_bytes(path, limit), limit)
 
 
+def read_bytes_bounded(path: Path, limit: int) -> bytes | None:
+    """Up to ``limit`` + 1 bytes of a regular file, never through a link; None if unreadable."""
+    return _read_bytes(path, limit)
+
+
 def _read_bytes(path: Path, limit: int) -> bytes | None:
     """Up to ``limit`` + 1 bytes of a regular file, never through a link and never waiting on a
     FIFO or a device; None when it is not one or cannot be read."""
@@ -834,6 +985,100 @@ def run_header(hub: str, run_id: str) -> Mapping[str, JsonValue] | None:
     except ValueError:
         return None
     return value if isinstance(value, dict) else None
+
+
+def _block_views(document: object) -> tuple[BlockView, ...]:
+    """The blocks of a scenario written as blocks, in declaration order; none for a graph."""
+    if not is_tree(document):
+        return ()
+    try:
+        blocks = block_map(document).blocks
+    except WorkflowLoadError:
+        return ()
+    return tuple(
+        BlockView(
+            address=block.address,
+            kind=block.kind,
+            label=block.label,
+            entry_nodes=block.entry_nodes,
+        )
+        for block in blocks
+    )
+
+
+def _debug_entry(view: ScenarioRunView) -> DebugPauseEntry | None:
+    pause = view.debug.pause
+    if pause is None:
+        return None
+    return DebugPauseEntry(
+        block=pause.block, node=pause.node, reason=pause.reason, number=pause.number, at=pause.at
+    )
+
+
+def production_reason(environment: str, what: str) -> str:
+    """Why ``what`` is refused on ``environment``, a production one (the CLI's words)."""
+    return f"{environment} is a production environment: {what} is refused there ({OFF_PRODUCTION})"
+
+
+def _paused(records: Sequence[Mapping[str, JsonValue]], view: ScenarioRunView) -> bool:
+    """Whether the run's last pass paused (a debug pause or a gate: its ``held`` line is the
+    last pass line) or it waits for an investigation's answer; never once it ended."""
+    last = next(
+        (event for record in reversed(records) if (event := record.get("event")) in _PASS_LINES),
+        None,
+    )
+    if last == "end":
+        return False
+    if last == "held" or view.debug.pause is not None:
+        return True
+    pending = view.open_investigation
+    return pending is not None and pending.choice is None
+
+
+def pinned_tree(folder: Path) -> BlockMap | None:
+    """The block map of the tree a scenario run pins (its snapshot's document, read up to
+    ``SNAPSHOT_BYTES``, never through a link); ``None`` for a graph run, or one whose snapshot
+    cannot be read or translated."""
+    snapshot = folder / SNAPSHOT_DOCUMENT.parent
+    if snapshot.is_symlink():
+        return None
+    data = _read_bytes(folder / SNAPSHOT_DOCUMENT, SNAPSHOT_BYTES)
+    if data is None or len(data) > SNAPSHOT_BYTES:
+        return None
+    try:
+        content = json.loads(data)
+    except ValueError, RecursionError:
+        return None
+    if not is_tree(content):
+        return None
+    try:
+        return block_map(content)
+    except WorkflowLoadError:
+        return None
+
+
+def ordered_blocks(
+    tree: BlockMap | None, given: Sequence[str], *, whose: str, run_id: str | None = None
+) -> tuple[str, ...]:
+    """``given`` in the tree's declaration order, each once; 422 ``unknown_block`` naming the
+    first address ``tree`` (``whose``: the run's pinned tree, or the scenario) does not hold."""
+    for address in given:
+        if tree is None:
+            reason = f"{whose} has no block {echo(address)}: {NO_ADDRESSES}"
+            raise UnknownBlockError(block=address, reason=reason, run_id=run_id)
+        if tree.block(address) is None:
+            reason = f"{whose} has no block {echo(address)}"
+            raise UnknownBlockError(block=address, reason=reason, run_id=run_id)
+    wanted = set(given)
+    blocks = () if tree is None else tree.blocks
+    return tuple(block.address for block in blocks if block.address in wanted)
+
+
+def _address_of(tree: BlockMap | None, node: str) -> str | None:
+    """The address of the block that holds ``node`` (a gate or an included node is its
+    block's), or ``None``."""
+    located = None if tree is None else tree.located(node)
+    return None if located is None else located[0]
 
 
 def _fields(item: DataclassInstance) -> dict[str, object]:
@@ -917,6 +1162,10 @@ class ScenarioLauncher(Protocol):
 
     def resume(self, hub_path: str, run_id: str, *, issue: str | None) -> None: ...
 
+    def set_breakpoints(self, hub_path: str, run_id: str, addresses: Sequence[str]) -> None: ...
+
+    def debug(self, hub_path: str, run_id: str, *, command: DebugCommand) -> None: ...
+
     def live_runs(self, hub_path: str) -> Mapping[str, str | None]: ...
 
 
@@ -930,9 +1179,27 @@ class ScenarioPlanRequest(BaseModel):
 
 
 class ScenarioStartRequest(ScenarioPlanRequest):
-    """The body of a start: a plan's, and the mode (``interactive`` by default)."""
+    """The body of a start: a plan's, the mode (``interactive`` by default) and the
+    breakpoints, block addresses of the tree the run pins (``--break``)."""
 
     mode: ScenarioMode = "interactive"
+    breakpoints: BlockAddresses = Field(default_factory=tuple)
+
+
+class BreakpointsRequest(BaseModel):
+    """A run's breakpoints, replaced whole: block addresses of its pinned tree (none clears
+    them)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    blocks: BlockAddresses
+
+
+class Breakpoints(ViewModel):
+    """The breakpoints written, in the pinned tree's declaration order."""
+
+    run_id: str
+    blocks: tuple[str, ...]
 
 
 class PlanEndpoint(ViewModel):
@@ -1100,10 +1367,7 @@ class ScenarioCommands:
         # with hub.json refuses before any child runs.
         view = self._catalog.credentials.environments_of(hub, project)
         # The child fills the environment's values itself: only the given inputs go to it.
-        given = with_environment_values(
-            plan, request.inputs, view=view, environment=request.environment
-        )
-        launch_inputs(plan, given)
+        _filled(plan, request, view=view)
         texts = {key: argv_text(value) for key, value in request.inputs.items()}
         code, printed = self._launcher.plan_scenario(
             hub, name, environment=request.environment, inputs=texts
@@ -1119,21 +1383,29 @@ class ScenarioCommands:
         return ScenarioPlanView(project=project, **shown.model_dump(exclude={"rows"}), rows=rows)
 
     def start(self, project: str, name: str, request: ScenarioStartRequest) -> RunAccepted:
-        """Start a scenario run once its plan holds no problem and no ``deny``."""
+        """Start a scenario run once its plan holds no problem and no ``deny``; breakpoints
+        only off production, and only blocks of the scenario's tree."""
         run_id = self._mint()
-        hub, plan, pack = self._catalog.scenario(project, name)
+        hub, plan, found = self._catalog.scenario_source(project, name)
         view = self._catalog.credentials.environments_of(hub, project)
-        given = with_environment_values(
-            plan, request.inputs, view=view, environment=request.environment
-        )
-        inputs = launch_inputs(plan, given)
+        blocks = block_map(found.document) if is_tree(found.document) else None
+        breakpoints: tuple[str, ...] = ()
+        if request.breakpoints:
+            if self._catalog.on_production(hub, project, request.environment):
+                what = "a start with breakpoints"
+                reason = f"{production_reason(request.environment, what)}; no scenario run"
+                raise RunConflictError(code="debug_production", reason=f"{reason} was created")
+            whose = f"the scenario {echo(name)}"
+            breakpoints = ordered_blocks(blocks, request.breakpoints, whose=whose)
+        inputs = _filled(plan, request, view=view)
         planned = plan_scenario(
             plan,
-            pack=pack,
+            pack=found.pack,
             actions=discover_actions(Path(hub)).actions,
             view=view,
             environment=request.environment,
             inputs=inputs,
+            blocks=blocks,
         )
         if planned.denied:
             raise _refused_start(planned)
@@ -1145,6 +1417,7 @@ class ScenarioCommands:
             environment=request.environment,
             mode=request.mode,
             inputs=dict(request.inputs),
+            breakpoints=breakpoints,
         )
         with self._lock:
             self._launcher.start_scenario(spec)
@@ -1184,6 +1457,47 @@ class ScenarioCommands:
             choice=request.choice,
             option=request.option,
         )
+
+    def set_breakpoints(self, run_id: str, request: BreakpointsRequest) -> Breakpoints:
+        """Replace the breakpoints of scenario run ``run_id`` through ``hub scenario break``:
+        blocks of its pinned tree only (422), not once it ended (409 ``ended``), and anything
+        but clearing them never on production (409 ``debug_production``). A run whose child
+        runs takes them at its next layer of nodes."""
+        with self._lock:
+            run = self._catalog.scenario_run(run_id)
+            status = fold_records(run.records).status
+            if status in {"done", "cancelled"}:
+                reason = f"the run already ended {status}"
+                raise RunConflictError(code="ended", reason=reason, run_id=run_id)
+            whose = f"the run {run_id}'s pinned tree"
+            tree = pinned_tree(run.folder)
+            blocks = ordered_blocks(tree, request.blocks, whose=whose, run_id=run_id)
+            if blocks:
+                self._catalog.refuse_on_production(run, what="setting breakpoints")
+            self._launcher.set_breakpoints(run.hub, run_id, blocks)
+        return Breakpoints(run_id=run_id, blocks=blocks)
+
+    def debug(self, run_id: str, command: DebugCommand) -> RunAccepted:
+        """Step or Continue scenario run ``run_id``, in a debug pause (409
+        ``not_debug_paused``), off production (409 ``debug_production``) and with no child
+        running it (409 ``in_use``): ``hub scenario step|continue`` records the command, then
+        resumes the run detached."""
+        with self._lock:
+            run = self._catalog.scenario_run(run_id)
+            if fold_records(run.records).debug.pause is None:
+                reason = (
+                    f"the run is not in a debug pause: {command} resumes only a run paused by a"
+                    " breakpoint or by step"
+                )
+                raise RunConflictError(code="not_debug_paused", reason=reason, run_id=run_id)
+            self._catalog.refuse_on_production(run, what=f"a {command}")
+            # The resume's own check: a pause line it cannot read refuses it (422).
+            debug_resume(run.records)
+            if run_id in self._launcher.live_runs(run.hub):
+                reason = "the run's child is still running"
+                raise RunConflictError(code="in_use", reason=reason, run_id=run_id)
+            self._launcher.debug(run.hub, run_id, command=command)
+        return RunAccepted(run_id=run_id, project=run.project, action=command)
 
     def finding_issue(
         self, run_id: str, finding_id: str, request: FindingIssueRequest
@@ -1273,6 +1587,25 @@ class ScenarioCommands:
         with os.fdopen(descriptor, "wb") as file:
             file.write(note.text.encode())
         return FindingNote(run_id=run_id, finding_id=finding_id, path=shown)
+
+
+def _filled(
+    plan: WorkflowPlan, request: ScenarioPlanRequest, *, view: EffectiveEnvironments
+) -> dict[str, JsonValue]:
+    """The request's inputs, then the environment's values, then the defaults; 422 naming the
+    input and the environment when a required one has none, as the CLI does."""
+    environment = request.environment
+    given = with_environment_values(plan, request.inputs, view=view, environment=environment)
+    declared = plan.document.inputs
+    missing = next(
+        (key for key, item in declared.items() if item.required and key not in given), None
+    )
+    if missing is not None:
+        raise RunInputError(
+            f"the input {echo(missing)} is required: give it in the inputs, or as a value of"
+            f" environment {echo(environment)}"
+        )
+    return launch_inputs(plan, given)
 
 
 def _plan_row(row: _PrintedRow, found: ActionDiscovery | None) -> ScenarioPlanRow:

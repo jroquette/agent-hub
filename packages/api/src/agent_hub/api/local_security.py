@@ -40,26 +40,33 @@ STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # decision on a plan change request whose run is gone (two-level-flows AC-2.14): it answers in
 # the run's stead. The scenario writes (AGH-350 plan T12) run the CLI too: a plan (the scripts'
 # plan mode), a start, an investigation's session and answer; a finding's issue reaches the
-# tracker and its note writes into the hub.
+# tracker and its note writes into the hub. A scenario run's breakpoints (a PUT), Step and
+# Continue (ADR 0049) run ``hub scenario break|step|continue``.
 RUN_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/(workflow-runs(/[^/]+/(cancel|resume|abandon))?"
     r"|approvals/[^/]+/decision"
     r"|scenarios/[^/]+/[^/]+/(plan|runs)"
-    r"|scenario-runs/[^/]+/(investigation|answer|findings/[^/]+/(issue|inbox))"
+    r"|scenario-runs/[^/]+/"
+    r"(investigation|answer|breakpoints|step|continue|findings/[^/]+/(issue|inbox))"
     r"|features/[^/]+/[^/]+/acs/[^/]+/check-runs"
     r"|features/[^/]+/[^/]+/change-requests/[^/]+/decision)$"
 )
 # The item writes (AGH-295, S7, D13) write into a hub's working tree: strict too, and they need
 # the launch's cookie (``session_access``, which answers 409 ``hub_read_only`` in the container).
-# Restore of a Toolkit item's or a hub workflow's version, the Studio's Publish of a draft, and
-# the scenario builder's save (a PUT of ``/scenarios/{project}/{name}``; its GET is a read).
+# Restore of a Toolkit item's or a hub workflow's version, the Studio's Publish of a draft, the
+# scenario builder's save (a PUT of ``/scenarios/{project}/{name}``; its GET is a read) and a
+# scenario's migrate to blocks (ADR 0049).
 ITEM_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/((projects/[^/]+/skills/[^/]+/[^/]+/[^/]+"
     r"|workflows/[^/]+/[^/]+)/versions/[^/]+/restore"
     r"|projects/[^/]+/skills/drafts/[^/]+/publish"
-    r"|scenarios/[^/]+/[^/]+(/proposal/dismiss)?"
+    r"|scenarios/[^/]+/[^/]+(/proposal/dismiss|/migrate)?"
     r"|projects/[^/]+/actions(/[^/]+/[^/]+)?)$"
 )
+# The run reads that need the launch cookie (ADR 0049): a paused scenario run's values (its
+# action inputs and outputs), which no other local process may read; off in the container.
+RUN_READS = re.compile(rf"^{re.escape(API_PREFIX)}/scenario-runs/[^/]+/values$")
+READ_METHODS = frozenset({"GET", "HEAD"})
 STRICT_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/learnings/[^/]+/(accept|reject)$|{RUN_WRITES.pattern}"
     rf"|{ITEM_WRITES.pattern}"
@@ -184,6 +191,11 @@ def is_run_write(method: str, path: str) -> bool:
     """Whether a request starts, cancels, resumes or abandons a workflow run, or decides one's
     gate (``RUN_WRITES``)."""
     return method in STATE_CHANGING_METHODS and RUN_WRITES.fullmatch(path) is not None
+
+
+def is_run_read(method: str, path: str) -> bool:
+    """Whether a request reads a scenario run's values (``RUN_READS``)."""
+    return method in READ_METHODS and RUN_READS.fullmatch(path) is not None
 
 
 def is_item_write(method: str, path: str) -> bool:

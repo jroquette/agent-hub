@@ -14,6 +14,14 @@
   (``base_content_hash``), else ``stale_document``. When the document with the file's own
   revision renders to the file's bytes, it writes nothing and keeps the revision
   (``changed`` false). No git command runs.
+- ``migrate`` writes a graph scenario (``version: 1``) again as blocks (``version: 2``), as
+  ``hub scenario migrate NAME`` does (core's ``migrate_graph``, the canonical writer, the text
+  loaded back and translated again): one stage named after the scenario, its revision kept. It
+  migrates the bytes it read, only over the content the builder last read when it sends
+  ``base_content_hash`` (``stale_document`` else), through the same write step as Save; with
+  ``check`` it writes nothing. A node a tree cannot hold, a JSON file or a path the item writer
+  does not write is a problem, and nothing is written; a ``version: 2`` scenario is 409
+  ``scenario_already_tree``.
 """
 
 import contextlib
@@ -25,16 +33,18 @@ from pathlib import Path
 from typing import Final, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from agent_hub.api.scenario_catalog import (
     DOCUMENT_TEXT_BYTES,
     ScenarioActionView,
     ScenarioCatalog,
     action_view,
+    read_bytes_bounded,
     read_text_bounded,
 )
 from agent_hub.core.features.output_shape import output_path
+from agent_hub.core.item_versions.hub_item_writer import checked_unit_parts
 from agent_hub.core.item_versions.item_units import ItemUnit
 from agent_hub.core.item_versions.item_version import UnitKind
 from agent_hub.core.item_versions.item_version_ports import ItemVersionWrites, ItemWriteResult
@@ -43,6 +53,7 @@ from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.readmodels.view_types import ViewModel
 from agent_hub.core.scenarios.action_catalog import ActionRefError, resolve_action
 from agent_hub.core.scenarios.action_document import parse_action
+from agent_hub.core.scenarios.tree_migrate import MigrationError, migrate_graph
 from agent_hub.core.scenarios.tree_translate import Block, translate_tree
 from agent_hub.core.workflows.catalog import LoadProblem, WorkflowFile, check_workflows
 from agent_hub.core.workflows.document import Loc, WorkflowLoadError, is_tree
@@ -52,7 +63,7 @@ from agent_hub.generator.scenario_discovery import HUB_SCENARIOS, discover_scena
 from agent_hub.generator.scenario_yaml import render_document
 from agent_hub.generator.workflow_discovery import pack_resolver
 from agent_hub.generator.workflow_outputs import JsonSchemaOutputs
-from agent_hub.generator.workflow_yaml import WorkflowFileError, load_workflow_bytes
+from agent_hub.generator.workflow_yaml import JSON_SUFFIX, WorkflowFileError, load_workflow_bytes
 
 KEBAB: Final = r"^[a-z][a-z0-9-]{0,63}$"
 _KEBAB: Final = re.compile(KEBAB)
@@ -114,6 +125,34 @@ class SaveResult(ViewModel):
     yaml: str
     changed: bool
     versioned: bool
+
+
+class MigrateRequest(BaseModel):
+    """A migrate: ``check`` writes nothing; ``base_content_hash``, when sent, is the content
+    hash of the file the builder last read, which the file must still hold."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    check: StrictBool = False
+    base_content_hash: str | None = None
+
+
+class MigrationProblemView(ViewModel):
+    """A node a tree cannot hold, and why (``node`` None for the document or its file)."""
+
+    node: str | None
+    message: str
+
+
+class ScenarioMigration(ViewModel):
+    """What a migrate did: the file, whether it was written, the tree's canonical text (None
+    when it cannot be migrated), the file's content hash after the call, and the problems."""
+
+    path: str
+    written: bool
+    yaml: str | None
+    content_hash: str | None
+    problems: tuple[MigrationProblemView, ...]
 
 
 class OutputField(ViewModel):
@@ -245,6 +284,95 @@ class ScenarioBuilder:
             changed=written.changed,
             versioned=written.versioned,
         )
+
+    def migrate(
+        self, project: str, name: str, *, request: MigrateRequest, writes: ItemVersionWrites
+    ) -> ScenarioMigration:
+        """Write the graph scenario ``name`` again as blocks (see the module docstring)."""
+        hub, _plan, found = self.catalog.scenario_source(project, name)
+        if is_tree(found.document):
+            reason = f"{name} is already written as blocks (version 2)"
+            raise RunConflictError(code="scenario_already_tree", reason=reason)
+        unit_path = found.path.relative_to(hub).as_posix()
+        refused = _not_in_place(found.path, unit_path)
+        # One read: the bytes hashed are the bytes migrated.
+        data = None if refused is not None else _read_no_link(found.path)
+        disk_hash = None if data is None else content_hash(data)
+        if request.base_content_hash is not None and request.base_content_hash != disk_hash:
+            reason = "the scenario file changed since the builder read it"
+            raise RunConflictError(code="stale_document", reason=reason)
+        text: str | None = None
+        problems: list[tuple[str | None, str]] = []
+        if data is None:
+            problems.append((None, refused or "the scenario file cannot be read"))
+        else:
+            text, problems = _migrated(data, unit_path)
+        if text is None or problems:
+            return ScenarioMigration(
+                path=unit_path,
+                written=False,
+                yaml=None,
+                content_hash=disk_hash,
+                problems=tuple(
+                    MigrationProblemView(node=node, message=message) for node, message in problems
+                ),
+            )
+        if request.check:
+            return ScenarioMigration(
+                path=unit_path, written=False, yaml=text, content_hash=disk_hash, problems=()
+            )
+        unit = ItemUnit(project=project, unit_path=unit_path, kind=UnitKind.SCENARIO)
+        written = writes.write_file(str(hub), unit, text.encode())
+        return ScenarioMigration(
+            path=unit_path,
+            written=written.changed,
+            yaml=text,
+            content_hash=content_hash(text.encode()),
+            problems=(),
+        )
+
+
+def _not_in_place(path: Path, unit_path: str) -> str | None:
+    """Why migrate does not rewrite the file at ``path`` in place, or ``None``."""
+    if path.suffix == JSON_SUFFIX:
+        return "it is a JSON file: migrate rewrites a .yaml file in place"
+    if path.is_symlink():
+        return "it is a link: migrate writes the file in place, never through a link"
+    try:
+        checked_unit_parts(unit_path, UnitKind.SCENARIO)
+    except ValueError:
+        return "its path holds a backslash or a control character: migrate writes no such path"
+    return None
+
+
+def _read_no_link(path: Path) -> bytes | None:
+    """The file's bytes, read once, never through a link and within the loader's bound; None
+    when it cannot be read or is larger."""
+    data = read_bytes_bounded(path, DOCUMENT_TEXT_BYTES)
+    return None if data is None or len(data) > DOCUMENT_TEXT_BYTES else data
+
+
+def _migrated(data: bytes, source: str) -> tuple[str | None, list[tuple[str | None, str]]]:
+    """The canonical text of the tree the graph in ``data`` migrates to, or the problems."""
+    written: list[str] = []
+
+    def read_back(tree: dict[str, JsonValue]) -> object:
+        written.append(render_document(tree))
+        return load_workflow_bytes(written[-1].encode(), source=source).document
+
+    try:
+        loaded = load_workflow_bytes(data, source=source).document
+    except WorkflowFileError as error:
+        return None, [(None, f"the scenario file does not load: {error.reason}")]
+    try:
+        migrate_graph(loaded, read_back=read_back)
+    except MigrationError as error:
+        return None, [(problem.node, problem.message) for problem in error.problems]
+    except WorkflowLoadError as error:
+        return None, [(None, str(error))]
+    except WorkflowFileError as error:
+        return None, [(None, f"as blocks it would not load: {error.reason}")]
+    return written[-1], []
 
 
 def _revision(data: bytes | None) -> int:

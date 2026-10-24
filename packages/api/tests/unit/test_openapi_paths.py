@@ -353,6 +353,12 @@ SCENARIO_SPEC_PATHS = {
     ("post", "/api/v1/scenario-runs/{run_id}/answer"),
     ("post", "/api/v1/scenario-runs/{run_id}/findings/{finding_id}/issue"),
     ("post", "/api/v1/scenario-runs/{run_id}/findings/{finding_id}/inbox"),
+    # Debugging a run (its breakpoints, Step, Continue, its values) and migrate (ADR 0049).
+    ("put", "/api/v1/scenario-runs/{run_id}/breakpoints"),
+    ("post", "/api/v1/scenario-runs/{run_id}/step"),
+    ("post", "/api/v1/scenario-runs/{run_id}/continue"),
+    ("get", "/api/v1/scenario-runs/{run_id}/values"),
+    ("post", "/api/v1/scenarios/{project}/{name}/migrate"),
 }
 
 

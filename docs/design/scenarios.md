@@ -37,8 +37,9 @@ scenario and translates it to the node graph at load, with its block map and its
 (the format, bounds, addresses, ids and translation below), and `generator`'s canonical YAML writer, which the API's
 builder routes use: validate and Save take a `version: 2` document as well as a `version: 1` one, and Save of an
 unchanged document writes nothing. Built too: doctor's `scenarios.graph_format` warning, `hub init` seeds its
-example as `version: 2`, and `hub scenario migrate`, which that warning's fix names (core's `tree_migrate`).
-Proposed, not built yet: a builder screen that edits `version: 2`, and its Migrate action. Hub web's builder reads
+example as `version: 2`, and `hub scenario migrate`, which that warning's fix names (core's `tree_migrate`), and the
+API's migrate route (`POST /scenarios/{project}/{name}/migrate`, [API.md](../API.md) § Scenarios). Proposed, not built
+yet: a builder screen that edits `version: 2`, and its Migrate action. Hub web's builder reads
 and writes `version: 1` files only, so a `version: 2` file, the seeded example among them, opens in Build read-only
 (the steps core translates it to, and its file) and is edited as text or with Claude until the builder reads
 `version: 2` (see the ADR's delivery notes).
@@ -134,8 +135,10 @@ A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blo
   first write. It writes through a temporary file and a rename, never through a
   link, and runs no git command; a write that still fails part way (an I/O error, a file that became a link) stops
   there, and the files printed as migrated before it are the ones written. `--check` writes nothing and prints what it
-  would migrate (a line per file: its stage and block count). hub web's builder is to offer Migrate for a graph
-  scenario (not built yet).
+  would migrate (a line per file: its stage and block count). The API's `POST /scenarios/{project}/{name}/migrate`
+  does the same for one scenario in the server (the item write step Save uses; with `check` it writes nothing, and
+  the file must still hold the `base_content_hash` it is sent), returning the tree's text and each problem on its node;
+  hub web's builder is to offer it as Migrate for a graph scenario (not built yet).
 
 ### Debugging
 
@@ -145,8 +148,9 @@ before a node through its run-control port, and the resume goes on with the pass
 below (the run view's debug pause, breakpoints and commands, a `debug.pause` line read back for its resume, and the
 values to inspect). The CLI is built: `breakpoints.json`, `hub scenario run --break`, `break`, `step` and `continue`
 (`cli/scenario_debug.py`, the run control over that file and the record), which write those lines and emit the
-`debug.*` events, and the production refusal. Proposed, not built yet: the API routes, the route that reads the
-values, and hub web's debugger. Today's builder reads and writes `version: 1` files and Save goes through the API
+`debug.*` events, and the production refusal. The API is built too: its breakpoints, Step and Continue routes run
+those commands as children, a start takes breakpoints, the run view names the debug pause, and the values read
+([API.md](../API.md) § Scenarios). Proposed, not built yet: hub web's debugger. Today's builder reads and writes `version: 1` files and Save goes through the API
 (see the ADR's delivery notes).
 
 A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([ADR
@@ -197,9 +201,11 @@ A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([A
   Continue go on with the pass the pause stopped, so a block that failed is not run again
   ([workflow-engine-rules.md](workflow-engine-rules.md) § Run control); in interactive mode its divergence opens the
   investigation once that pass ends, as in a run with no pause.
-- While a run is paused, hub web may read its inputs (the effective ones, environment values included) and each
-  finished block's rendered inputs, status and last output (a Wait until's last poll and its count), from its record,
-  through a route that needs the launch cookie; never for a run on a `production: true` environment.
+- While a run is paused (its last pass ended on a debug pause or a gate, or it waits for an investigation's answer),
+  hub web may read its inputs (the effective ones, environment values included) and each finished block's rendered
+  inputs, status and last output (a Wait until's last poll and its count), from its record, through a route that
+  needs the launch cookie (`GET /scenario-runs/{run_id}/values`); never for a run on a `production: true`
+  environment.
 - Breakpoints, Step, Continue and a start with breakpoints are refused, recording nothing, when the run's environment
   is `production: true` in the effective config as read at that moment; clearing breakpoints (a change that leaves
   none) and cancelling a run stay allowed. A run that resumes there (an approval, `hub workflow run --resume`) gets no

@@ -468,6 +468,59 @@ def test_runs_scenario_commands_when_scenario_planned_or_started(tmp_path: Path)
     ]
 
 
+def _argv_of(written: Path) -> list[str]:
+    deadline = time.monotonic() + 10
+    while not written.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    argv: list[str] = json.loads(written.read_text())
+    return argv
+
+
+def test_runs_debug_commands_when_breakpoints_set_or_run_stepped(tmp_path: Path) -> None:
+    # Breakpoints wait for ``hub scenario break``, the addresses after ``--`` so none
+    # is read as an option; Step and Continue resume detached; a start passes each breakpoint
+    # as one ``--break=ADDR`` argument.
+    written = tmp_path / "argv.json"
+    record = f"import json, sys\nopen({str(written)!r}, 'w').write(json.dumps(sys.argv[1:]))\n"
+
+    def recording(exit_code: int) -> ProcessRunLauncher:
+        program = [sys.executable, "-c", f"{record}sys.exit({exit_code})\n"]
+        return ProcessRunLauncher(db_path=tmp_path / "db", environ={}, program=program)
+
+    recording(0).set_breakpoints(str(tmp_path), "walk-1", ("1.2", "2"))
+    set_argv = _argv_of(written)
+    written.unlink()
+    with pytest.raises(RunConflictError) as refused:
+        recording(1).set_breakpoints(str(tmp_path), "walk-1", ())
+    clear_argv = _argv_of(written)
+    written.unlink()
+    recording(0).debug(str(tmp_path), "walk-1", command="step")
+    step_argv = _argv_of(written)
+    written.unlink()
+    recording(0).start_scenario(
+        run_launcher.ScenarioLaunch(
+            run_id="walk-2",
+            project="demo",
+            hub_path=str(tmp_path),
+            name="order-tree",
+            environment="local",
+            mode="interactive",
+            inputs={},
+            breakpoints=("1.2", "2"),
+        )
+    )
+    start_argv = _argv_of(written)
+
+    assert set_argv == ["scenario", "break", "walk-1", "--set", "--", "1.2", "2"]
+    assert clear_argv == ["scenario", "break", "walk-1", "--set", "--"]
+    assert refused.value.code == "refused"
+    assert step_argv == ["scenario", "step", "walk-1"]
+    assert start_argv == [
+        *("scenario", "run", "order-tree", "--env", "local", "--mode", "interactive"),
+        *("--run-id", "walk-2", "--break=1.2", "--break=2"),
+    ]
+
+
 def test_pins_plan_bounds_when_launcher_built() -> None:
     assert run_launcher.PLAN_TIMEOUT_SECONDS == 300
     assert run_launcher.MAX_PLAN_BYTES == 4 * 1024 * 1024

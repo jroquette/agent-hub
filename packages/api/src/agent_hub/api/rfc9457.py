@@ -83,6 +83,7 @@ from agent_hub.core.workflows.launch import (
     RunConflictError,
     RunInputError,
     RunLaunchError,
+    UnknownBlockError,
 )
 from agent_hub.storage.errors import DatabaseAccessError
 
@@ -500,6 +501,19 @@ def _run_conflict_problem(error: RunConflictError) -> Problem:
     return Problem(409, "Workflow run command refused", error.reason, members)
 
 
+def _unknown_block_problem(error: UnknownBlockError) -> Problem:
+    """A breakpoint address the tree does not hold: 422 naming it (its grammar spells no
+    other character)."""
+    members: dict[str, JsonValue] = {
+        "type": f"{WORKFLOW_RUN_PROBLEM_PREFIX}unknown-block",
+        "code": "unknown_block",
+        "block": error.block,
+    }
+    if error.run_id is not None:
+        members["run_id"] = error.run_id
+    return Problem(422, "Unknown block", error.reason, members)
+
+
 def _run_record_problem(error: RunRecordError) -> Problem:
     """A scenario run's record the API cannot read whole: 422 with ``code``."""
     code = "record_too_large" if isinstance(error, RecordTooLargeError) else "record_unreadable"
@@ -849,6 +863,7 @@ PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     SkillFileTooLargeError: _skill_file_too_large_problem,
     RunInputError: _run_input_problem,
     RunConflictError: _run_conflict_problem,
+    UnknownBlockError: _unknown_block_problem,
     RunRecordError: _run_record_problem,
     ChangeRequestDecisionError: _change_request_decision_problem,
     RunLaunchError: _run_launch_problem,

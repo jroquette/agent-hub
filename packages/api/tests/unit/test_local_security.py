@@ -247,6 +247,9 @@ RUN_WRITES = (
     "/api/v1/scenario-runs/walk-1/answer",
     "/api/v1/scenario-runs/walk-1/findings/f1/issue",
     "/api/v1/scenario-runs/walk-1/findings/f1/inbox",
+    # Step and Continue resume a run in a debug pause through the CLI (ADR 0049).
+    "/api/v1/scenario-runs/walk-1/step",
+    "/api/v1/scenario-runs/walk-1/continue",
 )
 OWN_JSON = {"Origin": "http://127.0.0.1:7420", "Content-Type": "application/json"}
 
@@ -274,6 +277,9 @@ def test_marks_strict_run_write_when_post_to_run_command(path: str) -> None:
         ("GET", "/api/v1/scenario-runs/walk-1"),
         ("POST", "/api/v1/scenarios/demo/order-walk/plan/extra"),
         ("POST", "/api/v1/scenario-runs/walk-1/findings/f1/other"),
+        ("POST", "/api/v1/scenario-runs/walk-1/step/extra"),
+        ("GET", "/api/v1/scenario-runs/walk-1/breakpoints"),
+        ("GET", "/api/v1/scenario-runs/walk-1/values"),
     ],
 )
 def test_keeps_default_checks_when_not_run_command(method: str, path: str) -> None:
@@ -324,6 +330,41 @@ def test_turns_run_commands_off_when_sessions_off(
     assert listed.status_code != 404
 
 
+# A run's breakpoints are a PUT, a run write like the other debug commands (ADR 0049).
+BREAKPOINTS = "/api/v1/scenario-runs/walk-1/breakpoints"
+
+
+@pytest.mark.parametrize(
+    ("headers", "status"),
+    [
+        ({"Content-Type": "application/json"}, 403),
+        ({**OWN_JSON, "Sec-Fetch-Site": "same-site"}, 403),
+        ({**OWN_JSON, "Content-Type": "text/plain"}, 415),
+        (OWN_JSON, 501),
+    ],
+)
+def test_applies_strict_rule_and_cookie_when_breakpoints_put(
+    client: TestClient, *, headers: dict[str, str], status: int
+) -> None:
+    response = client.put(BREAKPOINTS, content=b'{"blocks": []}', headers=headers)
+    client.cookies.clear()
+    unsigned = client.put(BREAKPOINTS, content=b'{"blocks": []}', headers=OWN_JSON)
+
+    assert is_run_write("PUT", BREAKPOINTS)
+    assert is_strict_write("PUT", BREAKPOINTS)
+    assert response.status_code == status
+    assert unsigned.status_code == 401
+
+
+def test_turns_breakpoints_off_when_sessions_off(api_settings: ApiSettings, web_dist: Path) -> None:
+    app = create_app(replace(api_settings, sessions_off=True), web_dist=web_dist)
+    with TestClient(app, base_url="http://127.0.0.1:7420") as off:
+        response = off.put(BREAKPOINTS, content=b'{"blocks": []}', headers=OWN_JSON)
+
+    assert response.status_code == 404
+    assert response.json()["type"] == "urn:agent-hub:problem:run-control-off"
+
+
 ITEM_WRITES = (
     "/api/v1/projects/demo/skills/skill/demo/alpha/versions/0199f0a0-0000-7000-8000-00000000000a/restore",
     "/api/v1/projects/demo/skills/hook/project/pre-tool-use-1/versions/v-1/restore",
@@ -345,6 +386,8 @@ BUILDER_WRITES = (
     ("POST", "/api/v1/scenarios/demo/walk/proposal/dismiss"),
     ("POST", "/api/v1/projects/demo/actions"),
     ("PUT", "/api/v1/projects/demo/actions/demo/send"),
+    # Migrate rewrites the scenario's file as blocks (ADR 0049).
+    ("POST", "/api/v1/scenarios/demo/walk/migrate"),
 )
 
 
