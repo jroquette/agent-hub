@@ -102,6 +102,8 @@ class FakeHub:
     files: dict[str, bytes] = field(default_factory=dict)
     # The folders directly under ``workflows/`` the doctor snapshot lists.
     folders: tuple[str, ...] = ()
+    # The folders directly under ``scenarios/`` the doctor snapshot lists.
+    scenario_folders: tuple[str, ...] = ()
     now: bytes | UnreadHubFile = MISSING
     agents_md_lines: dict[str, int] = field(default_factory=dict)
     features: tuple[FeatureFolder, ...] = ()
@@ -173,9 +175,11 @@ class FakeHubFileReader:
         local: LocalConfig | tuple[ConfigProblem, ...],
     ) -> DoctorSnapshot:
         """A snapshot of the hub's ``files``, every one listed; no repo checkout, no hooks; the
-        item leftovers only when a selected rule reads the item folders, as the real reader."""
+        item leftovers only when a selected rule reads the item folders, and the scenario folders
+        only when one reads the scenarios, as the real reader."""
         reads = {read for rule in selection.rules for read in rule.reads}
         item_folders = Read.ITEM_FOLDERS in reads
+        scenarios = Read.SCENARIOS in reads
         hub = self._hub(hub_path)
         self.snapshots[hub_path] = self.snapshots.get(hub_path, 0) + 1
         entries = {
@@ -193,6 +197,7 @@ class FakeHubFileReader:
             workflow_folders=hub.folders,
             item_leftovers=hub.item_leftovers if item_folders else None,
             item_folders=hub.item_folders if item_folders else (),
+            scenario_folders=hub.scenario_folders if scenarios else (),
         )
 
     def modified_times(self, hub_path: str, paths: Sequence[str]) -> tuple[int | None, ...]:

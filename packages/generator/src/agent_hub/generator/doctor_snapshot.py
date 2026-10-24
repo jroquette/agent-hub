@@ -13,7 +13,8 @@ only when a rule reads the remotes. The workflows are the hub's and the built-in
 ``hub workflow`` reads them, when a rule reads them (AGH-227). The item folders (AGH-297) are
 scanned by name only for temp-shaped entries an interrupted item write left beside a unit. The
 declared env files are looked up in the workspace (the hub's parent), with ``git check-ignore`` in
-the checkout that holds each, only when a rule reads them.
+the checkout that holds each, only when a rule reads them. The scenarios are the hub's
+``scenarios/<pack>/``, read as ``hub scenario`` reads them, when a rule reads them.
 """
 
 import os
@@ -50,6 +51,7 @@ from agent_hub.generator.doctor_tree import read_checkout, read_doctor_tree
 from agent_hub.generator.env_file_reader import locate_env_file
 from agent_hub.generator.errors import GeneratorError
 from agent_hub.generator.hub_tree import read_root_entry
+from agent_hub.generator.scenario_discovery import HUB_SCENARIOS, DiscoveredScenarioSource
 from agent_hub.generator.workflow_discovery import HUB_WORKFLOWS
 from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
 
@@ -84,6 +86,8 @@ def build_doctor_snapshot(
     packs = pack_folders(root) if workflows is not None else ()
     leftovers, item_folders = item_leftovers(root) if Read.ITEM_FOLDERS in reads else (None, ())
     env_files = env_file_facts(root, config, local) if Read.ENV_FILES in reads else None
+    scenarios = DiscoveredScenarioSource(Path(root)) if Read.SCENARIOS in reads else None
+    scenario_packs = pack_folders(root, HUB_SCENARIOS) if scenarios is not None else ()
     return DoctorSnapshot(
         config=config,
         running_version=running,
@@ -99,6 +103,8 @@ def build_doctor_snapshot(
         item_leftovers=leftovers,
         item_folders=item_folders,
         env_files=env_files,
+        scenarios=scenarios,
+        scenario_folders=scenario_packs,
     )
 
 
@@ -200,14 +206,15 @@ def _temp_names(root: str, folder: str) -> list[str] | None:
     return sorted(names)
 
 
-def pack_folders(root: str) -> tuple[str, ...]:
-    """``workflows/<pack>`` for each folder directly under ``workflows/`` (links not followed)."""
+def pack_folders(root: str, top: str = HUB_WORKFLOWS) -> tuple[str, ...]:
+    """``<top>/<pack>`` for each folder directly under ``<top>/`` (``workflows/`` by default;
+    links not followed)."""
     try:
-        with os.scandir(os.path.join(root, HUB_WORKFLOWS)) as listing:
+        with os.scandir(os.path.join(root, top)) as listing:
             names = sorted(e.name for e in listing if e.is_dir(follow_symlinks=False))
     except OSError:
         return ()
-    return tuple(f"{HUB_WORKFLOWS}/{name}" for name in names)
+    return tuple(f"{top}/{name}" for name in names)
 
 
 def repo_checkouts(root: str, config: HubConfig) -> tuple[RepoFiles, ...]:

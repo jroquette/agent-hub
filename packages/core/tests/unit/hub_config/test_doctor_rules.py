@@ -41,6 +41,7 @@ RULE_TABLE_IDS = [
     "environments.production",
     "environments.env_file",
     "workflows.starts",
+    "scenarios.graph_format",
     "brain.memory",
     "sandbox.workflow",
     "workflows.valid",

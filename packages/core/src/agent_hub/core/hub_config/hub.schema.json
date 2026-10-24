@@ -286,6 +286,9 @@
         "workflows.starts": {
           "$ref": "#/$defs/RuleSettings"
         },
+        "scenarios.graph_format": {
+          "$ref": "#/$defs/RuleSettings"
+        },
         "repos.agents": {
           "$ref": "#/$defs/RuleSettings"
         },
