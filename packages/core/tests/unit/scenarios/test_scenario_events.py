@@ -9,6 +9,7 @@ from agent_hub.core.scenarios.policy_gates import NodeDecision
 from agent_hub.core.scenarios.scenario_events import ScenarioEvents
 from agent_hub.core.testing.workflow_fakes import START
 from agent_hub.core.workflows.ports import ContextCapture, ExpectPoll
+from agent_hub.core.workflows.run_control import DebugPause
 
 SECRET_OUTPUT = {"status": "ON_HOLD", "order_id": "o-secret-7"}
 
@@ -244,3 +245,44 @@ def test_keeps_only_payload_keys_when_scenario_events_built() -> None:
     requested = by_type[EventType.GATE_REQUEST].payload
     assert (requested["kind"], requested["reason"]) == ("human_gate", "investigation")
     assert len({event.source_id for event in built}) == len(built)
+
+
+# AGH-507: a debug pause, the command that resumes it and a breakpoint set, metadata only.
+
+
+def test_keeps_only_payload_keys_when_scenario_events_built_for_debugging() -> None:
+    events = ScenarioEvents(project="demo", run_id="1a2b3c4d", workflow="scenario:walk")
+
+    events.breakpoints_set(2, number=1, at=START)
+    events.debug_paused(DebugPause("payment--2", "5.2", "breakpoint"), number=1, at=START)
+    events.debug_commanded("step", approver="Ada", node="payment--2", number=1, at=START)
+    events.breakpoints_set(0, number=2, at=START)
+
+    breakpoints, paused, commanded, cleared = events.events
+    assert [event.type for event in events.events] == [
+        EventType.DEBUG_BREAKPOINTS,
+        EventType.DEBUG_PAUSE,
+        EventType.DEBUG_COMMAND,
+        EventType.DEBUG_BREAKPOINTS,
+    ]
+    assert breakpoints.payload == {"run": "1a2b3c4d", "attempt": 1, "count": 2}
+    assert breakpoints.step is None
+    assert paused.payload == {"run": "1a2b3c4d", "attempt": 1} | {
+        "node": "payment--2",
+        "block": "5.2",
+        "reason": "breakpoint",
+    }
+    assert commanded.payload == {"run": "1a2b3c4d", "attempt": 1} | {
+        "command": "step",
+        "approver": "Ada",
+    }
+    assert (paused.step, commanded.step) == ("payment--2", "payment--2")
+    assert cleared.payload["count"] == 0
+    keys, common = payload_keys.PAYLOAD_KEYS, payload_keys.COMMON_PAYLOAD_KEYS
+    assert keys[EventType.DEBUG_PAUSE] - common == {"node", "block", "reason"}
+    assert keys[EventType.DEBUG_COMMAND] - common == {"command", "approver"}
+    assert keys[EventType.DEBUG_BREAKPOINTS] - common == {"count"}
+    for event in events.events:
+        assert kept_payload(event.type, event.payload) == event.payload, event.type
+        assert (event.source, event.session) == (EventSource.EXECUTOR, "run:1a2b3c4d")
+    assert len({event.source_id for event in events.events}) == 4

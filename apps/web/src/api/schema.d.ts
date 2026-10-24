@@ -3437,7 +3437,10 @@ export interface components {
       | "policy.decision"
       | "finding"
       | "workaround.start"
-      | "workaround.end";
+      | "workaround.end"
+      | "debug.pause"
+      | "debug.command"
+      | "debug.breakpoints";
     /**
      * Evidence
      * @description Where Claude saw something: a file relative to the workspace, inside a picked repo.

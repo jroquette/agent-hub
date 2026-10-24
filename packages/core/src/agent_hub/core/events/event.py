@@ -51,6 +51,11 @@ class EventType(StrEnum):
     FINDING = "finding"
     WORKAROUND_START = "workaround.start"
     WORKAROUND_END = "workaround.end"
+    # A debugging scenario run's pause, the Step or Continue that resumes it and a breakpoint set
+    # (docs/design/scenarios.md § Debugging).
+    DEBUG_PAUSE = "debug.pause"
+    DEBUG_COMMAND = "debug.command"
+    DEBUG_BREAKPOINTS = "debug.breakpoints"
 
 
 class EventSource(StrEnum):

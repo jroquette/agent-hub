@@ -856,7 +856,8 @@ default); `repo`, `agent`, `workflow` and `step` are optional. Unknown fields ar
   summaries), `session.title` ([ADR 0035](adr/0035-session-titles.md)), and a scenario run's `expect.poll`,
   `context.capture`, `action.start`, `action.end`, `policy.decision`, `finding`, `workaround.start` and
   `workaround.end` ([ADR 0041](adr/0041-scenarios-actions-and-enforced-access.md); a standalone `hub action run`
-  emits its `policy.decision` and `action.*` events under the session `action:<uuid>`).
+  emits its `policy.decision` and `action.*` events under the session `action:<uuid>`), and a debugging scenario
+  run's `debug.pause`, `debug.command` and `debug.breakpoints` ([ADR 0049](adr/0049-scenario-blocks-and-run-control.md)).
 - `source` is a closed list: `claude_code`, `transcript`, `otel`, `executor`, `github`, `linear` and `control_plane`
   (an action the user took in `hub web`, added by AGH-201: a learning decision). Widening either list later is a
   compatible change.
@@ -933,6 +934,7 @@ before anything is appended, and the data stays on the machine in v1:
 | `policy.decision` | `action` or `node`, `environment`, `effect`, `origin`, `decision`, `reason_kind` |
 | `finding` | `finding_id`, `step` (its title, text and evidence stay in the run's record) |
 | `workaround.start`, `workaround.end` | `workaround_id`, `option` (its id), `steps` (count), `status` |
+| `debug.pause`, `debug.command`, `debug.breakpoints` | `node`, `block`, `reason` (`breakpoint` or `step`); `command` (`step` or `continue`), `approver`; `count` (no value of the run) |
 
 Note, spec, plan and brain text is read from the hub on request and never stored or logged; a learning's summary
 (its note's first paragraph) is computed on read.
