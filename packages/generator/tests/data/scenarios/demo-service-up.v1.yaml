@@ -1,0 +1,22 @@
+# The example scenario hub init wrote before the tree format, in the graph format (version 1):
+# its seed now writes the same scenario as blocks (version 2), which translates to this graph.
+version: 1
+kind: scenario
+name: demo-service-up
+revision: 1
+description: Wait until a service answers its health check, then read its root path
+inputs:
+  service: {type: string, required: true}
+nodes:
+  - id: service-up
+    type: expect
+    action: demo-get-status
+    with: {target: $INPUTS.service}
+    every: 10s
+    timeout: 2m
+    until_when: "$self.output.status == 200"
+  - id: read-root
+    type: action
+    depends_on: [service-up]
+    action: demo-get-status
+    with: {target: $INPUTS.service, path: /}

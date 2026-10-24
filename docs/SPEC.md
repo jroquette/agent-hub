@@ -438,7 +438,8 @@ instruction" for actions and for the deterministic nodes of a workflow that decl
   view say so. Scenario runs are local only in v1, and a scenario run is a WorkflowRun that is always called a
   scenario run.
 - **Seed:** `hub init` writes one example, the read action `demo-get-status` (with its Python script) and the
-  scenario `demo-service-up` that uses it, each file only where absent. They are the project's files: `hub sync`
+  scenario `demo-service-up` that uses it (written as blocks, `version: 2`, so a fresh hub has no
+  `scenarios.graph_format` warning), each file only where absent. They are the project's files: `hub sync`
   never adds them and `hub.lock` does not list them, so a hub without `scenarios/`, `actions/` and `environments`
   renders and syncs as before.
 - **Blocks and debugging** ([ADR 0049](adr/0049-scenario-blocks-and-run-control.md), AGH-507): a scenario may be
