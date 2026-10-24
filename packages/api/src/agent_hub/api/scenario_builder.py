@@ -1,16 +1,19 @@
 """The scenario builder's reads and its save (hub web's visual editor of a scenario).
 
 - ``validate`` renders a scenario document (the JSON the builder holds) as the canonical YAML
-  Save would write, loads it with the strict loader and core's ``check_workflows`` (an include
-  resolving among the pack's scenarios on disk, as the catalog does), checks each action
-  reference against the hub's actions, and places every problem on its node. It writes nothing.
+  Save would write (``generator.scenario_yaml``), loads it with the strict loader and core's
+  ``check_workflows`` (an include resolving among the pack's scenarios on disk, as the catalog
+  does), checks each action reference against the hub's actions (a tree's through its
+  translated blocks), and places every problem on its node. It writes nothing.
 - ``library`` lists the hub's actions (the builder's palette), each with its output fields and
   the scenarios that call it.
 - ``save`` writes the scenario file (``scenarios/<pack>/<name>.yaml``) through the shared item
   write step (``ItemVersionWrites.write_file``: one lock, the disk recorded first, never through
   a link, a ``publish`` version recorded), only when the document loads, with the revision the
   server sets (the file's plus one) and only over the content the builder last read
-  (``base_content_hash``), else ``stale_document``. No git command runs.
+  (``base_content_hash``), else ``stale_document``. When the document with the file's own
+  revision renders to the file's bytes, it writes nothing and keeps the revision
+  (``changed`` false). No git command runs.
 """
 
 import contextlib
@@ -30,6 +33,7 @@ from agent_hub.api.scenario_catalog import (
     action_view,
     read_text_bounded,
 )
+from agent_hub.core.features.output_shape import output_path
 from agent_hub.core.item_versions.item_units import ItemUnit
 from agent_hub.core.item_versions.item_version import UnitKind
 from agent_hub.core.item_versions.item_version_ports import ItemVersionWrites, ItemWriteResult
@@ -38,11 +42,13 @@ from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.readmodels.view_types import ViewModel
 from agent_hub.core.scenarios.action_catalog import ActionRefError, resolve_action
 from agent_hub.core.scenarios.action_document import parse_action
+from agent_hub.core.scenarios.tree_translate import Block, translate_tree
 from agent_hub.core.workflows.catalog import LoadProblem, WorkflowFile, check_workflows
-from agent_hub.core.workflows.document import WorkflowLoadError
+from agent_hub.core.workflows.document import Loc, WorkflowLoadError, is_tree
 from agent_hub.core.workflows.launch import RunConflictError
 from agent_hub.generator.action_discovery import ActionDiscovery, discover_actions
 from agent_hub.generator.scenario_discovery import HUB_SCENARIOS, discover_scenarios
+from agent_hub.generator.scenario_yaml import render_document
 from agent_hub.generator.workflow_discovery import pack_resolver
 from agent_hub.generator.workflow_outputs import JsonSchemaOutputs
 from agent_hub.generator.workflow_yaml import WorkflowFileError, load_workflow_bytes
@@ -50,11 +56,10 @@ from agent_hub.generator.workflow_yaml import WorkflowFileError, load_workflow_b
 KEBAB: Final = r"^[a-z][a-z0-9-]{0,63}$"
 _KEBAB: Final = re.compile(KEBAB)
 _NODE_KEY: Final = re.compile(r"^nodes\[(\d+)\]")
-# The keys of a document in the order the YAML lists them; a node's ``id`` and ``type`` first.
-_DOCUMENT_ORDER: Final = ("version", "kind", "name", "revision", "description", "environment")
-_NODE_ORDER: Final = ("id", "type", "description", "depends_on", "when", "trigger_rule")
 MAX_DOCUMENT_BYTES: Final = 256 << 10
 _ACTION_NODES: Final = frozenset({"action", "expect"})
+# The tree's blocks that call an action, by their kind key.
+_ACTION_BLOCKS: Final = frozenset({"do", "wait_until"})
 
 
 class BuilderProblem(ViewModel):
@@ -132,33 +137,6 @@ def content_hash(data: bytes) -> str:
     return f"sha256:{hashlib.sha256(data).hexdigest()}"
 
 
-def render_document(document: Mapping[str, JsonValue]) -> str:
-    """The canonical YAML of a scenario document: its keys in a fixed order, then the rest."""
-    ordered: dict[str, JsonValue] = {
-        key: document[key] for key in _DOCUMENT_ORDER if key in document
-    }
-    for key, value in document.items():
-        if key not in ordered and key != "nodes":
-            ordered[key] = value
-    nodes = document.get("nodes")
-    if isinstance(nodes, list):
-        ordered["nodes"] = [_ordered_node(node) for node in nodes]
-    elif nodes is not None:
-        ordered["nodes"] = nodes
-    return yaml.safe_dump(ordered, sort_keys=False, allow_unicode=True, width=100)
-
-
-def _ordered_node(node: JsonValue) -> JsonValue:
-    if not isinstance(node, dict):
-        return node
-    ordered: dict[str, JsonValue] = {key: node[key] for key in _NODE_ORDER if key in node}
-    ordered.update({key: value for key, value in node.items() if key not in ordered})
-    body = ordered.get("nodes")
-    if isinstance(body, list):
-        ordered["nodes"] = [_ordered_node(item) for item in body]
-    return ordered
-
-
 class _OneFile:
     """A ``WorkflowSource`` of one in-memory file."""
 
@@ -231,8 +209,22 @@ class ScenarioBuilder:
         document = dict(request.document)
         document["name"] = name
         document["kind"] = "scenario"
-        document["revision"] = _revision(on_disk) + 1
-        checked = _validate(hub, request.pack, document, found=discover_actions(hub))
+        found = discover_actions(hub)
+        kept = _revision(on_disk)
+        if on_disk is not None and kept >= 1:
+            document["revision"] = kept
+            same = _validate(hub, request.pack, document, found=found)
+            if same.loads and same.yaml.encode() == on_disk:
+                return SaveResult(
+                    path=unit_path,
+                    revision=kept,
+                    content_hash=content_hash(on_disk),
+                    yaml=same.yaml,
+                    changed=False,
+                    versioned=False,
+                )
+        document["revision"] = kept + 1
+        checked = _validate(hub, request.pack, document, found=found)
         if not checked.loads:
             first = next(problem for problem in checked.problems if problem.severity == "error")
             raise RunConflictError(code="document_invalid", reason=first.message)
@@ -297,6 +289,10 @@ def _validate(
     problems.extend(_problem(problem, node_ids) for problem in catalog.problems)
     for index, node in enumerate(nodes_raw if isinstance(nodes_raw, list) else []):
         problems.extend(_action_problems(node, index, node_ids=node_ids, pack=pack, found=found))
+    for block, ref in _tree_calls(loaded.document):
+        key = output_path((*block.key, block.kind))
+        node = block.nodes[0] if block.nodes else None
+        problems.extend(_ref_problems(ref, node=node, key=key, pack=pack, found=found))
     loads = bool(catalog.plans) and not any(item.severity == "error" for item in problems)
     return ValidateResult(loads=loads, yaml=text, problems=tuple(problems), nodes=lines)
 
@@ -316,23 +312,59 @@ def _action_problems(
         return []
     ref = node.get("action")
     where = node_ids[index] if index < len(node_ids) else None
+    return _ref_problems(ref, node=where, key="action", pack=pack, found=found)
+
+
+def _ref_problems(
+    ref: object, *, node: str | None, key: str, pack: str, found: ActionDiscovery
+) -> list[BuilderProblem]:
+    """``ref`` when it names no action, or one that is a draft (a warning)."""
     if not isinstance(ref, str) or ref == "":
-        return [BuilderProblem(node=where, key="action", line=None, message="choose an action")]
+        return [BuilderProblem(node=node, key=key, line=None, message="choose an action")]
     try:
         entry = resolve_action(found.actions, ref, pack=pack)
     except ActionRefError as error:
-        return [BuilderProblem(node=where, key="action", line=None, message=str(error))]
+        return [BuilderProblem(node=node, key=key, line=None, message=str(error))]
     if entry.draft:
         return [
             BuilderProblem(
-                node=where,
-                key="action",
+                node=node,
+                key=key,
                 line=None,
                 message=f"action {ref} is a draft: commit it before the scenario can run",
                 severity="warning",
             )
         ]
     return []
+
+
+def _tree_calls(content: object) -> list[tuple[Block, object]]:
+    """Each Do and Wait until block of the tree ``content`` holds, with the action it names;
+    none for a graph or a tree that does not translate (its load problems say why)."""
+    if not is_tree(content):
+        return []
+    try:
+        blocks = translate_tree(content).blocks.blocks
+    except WorkflowLoadError:
+        return []
+    return [
+        (block, _at(content, block.key).get(block.kind))
+        for block in blocks
+        if block.kind in _ACTION_BLOCKS
+    ]
+
+
+def _at(content: object, key: Loc) -> dict[str, object]:
+    """The mapping at ``key`` in ``content``, else an empty one."""
+    value = content
+    for part in key:
+        if isinstance(part, int) and isinstance(value, list) and 0 <= part < len(value):
+            value = value[part]
+        elif isinstance(part, str) and isinstance(value, dict):
+            value = value.get(part)
+        else:
+            return {}
+    return value if isinstance(value, dict) else {}
 
 
 def _problem(problem: LoadProblem, node_ids: list[str]) -> BuilderProblem:
@@ -378,8 +410,9 @@ def _users(hub: Path) -> dict[str, set[str]]:
     users: dict[str, set[str]] = {}
     for found in discover_scenarios(hub).workflows:
         nodes = found.document.get("nodes") if isinstance(found.document, dict) else None
-        for node in _walk(nodes):
-            ref = node.get("action")
+        refs = [node.get("action") for node in _walk(nodes)]
+        refs.extend(ref for _, ref in _tree_calls(found.document))
+        for ref in refs:
             if isinstance(ref, str):
                 full = ref if "/" in ref else f"{found.pack}/{ref}"
                 users.setdefault(full, set()).add(found.name)
