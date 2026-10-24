@@ -160,6 +160,24 @@ class BlockMap:
         """The block at ``address``, if the tree holds one."""
         return next((block for block in self.blocks if block.address == address), None)
 
+    def located(self, node: str, loc: Loc = ()) -> tuple[str, Loc] | None:
+        """The address of the innermost block holding ``node`` (an id as recorded; an included
+        node is its include's) and the tree key path of ``loc``, a key path of that node, as
+        the block spells it; ``None`` when no block holds it."""
+        held = self._holding(node)
+        if held is None:
+            included = self._holding(node.split(SEPARATOR, 1)[0])
+            return None if included is None else (included.address, (*included.key, "include"))
+        head, kind = (loc[0] if loc else None), held.kind
+        if not isinstance(head, str) or head in _WRITTEN or kind == "stage":
+            return held.address, held.key
+        spelled = _TREE_KEYS.get(kind, {}).get(head, (head,))
+        return held.address, (*held.key, *spelled, *loc[1:])
+
+    def _holding(self, node: str) -> Block | None:
+        # A container comes before the blocks it holds: the innermost is the last holding it.
+        return next((block for block in reversed(self.blocks) if node in block.nodes), None)
+
     def run_entries(self, plan: WorkflowPlan) -> dict[str, tuple[str, ...]]:
         """Each block's entry nodes as ``plan`` runs them, by address: an include's by the roots
         of what it includes, a gated step's by its ``<step>__ask`` gate."""
