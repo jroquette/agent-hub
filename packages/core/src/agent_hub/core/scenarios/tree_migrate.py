@@ -29,8 +29,10 @@ single last node), a node that breaks those dependency rules (the graph is not
 series-parallel), and a ``when`` no If gives: on a node that opens a list, two that are no
 condition and its complement, and the conditions of nested Ifs joined on one node, which are
 not split. Reading stops at the first block whose shape breaks; a node's own keys are all
-checked. The mapping found is translated back and compared node for node, so a tree that would
-not load (past a cap), or would give another graph, is refused too.
+checked. It also stops at the first If, Together or Repeat that would nest past ``MAX_DEPTH``,
+reading nothing inside it, so the work and the problems stay bounded whatever the graph holds.
+The mapping found is translated back and compared node for node, so a tree that would not load
+(past another cap), or would give another graph, is refused too.
 """
 
 import contextlib
@@ -43,6 +45,7 @@ from agent_hub.core.json_form import JsonValue
 from agent_hub.core.scenarios.tree_document import MAX_CONDITION_ATOMS, MAX_CONDITION_CHARS
 from agent_hub.core.scenarios.tree_translate import (
     JOIN_RULE,
+    MAX_DEPTH,
     complement,
     condition_text,
     stage_slug,
@@ -189,24 +192,32 @@ class _Level:
 @dataclass(frozen=True)
 class _Place:
     """Where a block stands: what its entry nodes depend on, whether they take the join rule,
-    its address in the stage and its tree key path."""
+    its address in the stage, its tree key path and the containers around it."""
 
     before: tuple[str, ...]
     join: bool
     address: str
     key: Loc
+    depth: int
+
+    def inner(self, head: str, key: Loc) -> _List:
+        """A step list of the container at this place: ``head`` after its address, ``key``
+        after its key path."""
+        return _List(f"{self.address}.{head}", (*self.key, *key), self.depth + 1)
 
 
 @dataclass(frozen=True)
 class _List:
-    """A step list: the addresses of its blocks (``<head><n>``) and its key path."""
+    """A step list: the addresses of its blocks (``<head><n>``), its key path and the
+    containers around it."""
 
     head: str
     key: Loc
+    depth: int = 0
 
     def at(self, index: int, before: tuple[str, ...], *, join: bool) -> _Place:
         """The place of block ``index`` (from 0), after ``before``."""
-        return _Place(before, join, f"{self.head}{index + 1}", (*self.key, index))
+        return _Place(before, join, f"{self.head}{index + 1}", (*self.key, index), self.depth)
 
 
 _STAGE_STEPS: Final = _List("", ("stages", 0, "steps"))
@@ -233,6 +244,10 @@ class _Group:
 
 class _StopError(Exception):
     """A block whose shape breaks: its problems are recorded, the graph is read no further."""
+
+
+class _TooDeepError(_StopError):
+    """A container past ``MAX_DEPTH``: whatever else the graph holds, it is read no further."""
 
 
 @dataclass
@@ -353,8 +368,9 @@ class _Migrator:
         self.keys[at.key] = node_id
         steps: list[JsonValue] = []
         if isinstance(node, LoopGroupNode):
+            self._nest(at, "repeat")
             body = self.bodies[node.id]
-            within = _List(f"{at.address}.", (*at.key, "repeat", "steps"))
+            within = at.inner("", ("repeat", "steps"))
             steps = self._read(body, set(body.nodes), within=within, before=(), join=False)[0]
         step = _step(node, derived=self._derived(at.address), body=steps)
         return _Block(step, frozenset({node_id}), (node_id,))
@@ -409,6 +425,7 @@ class _Migrator:
         branch = remaining - level.reach(others, remaining.difference(entries))
         level.taken.update(entries)
         self.keys[at.key] = entries[0]
+        self._nest(at, "if")
         steps, end = self._read(
             level, branch, within=self._branch(at, "then"), before=at.before, join=at.join
         )
@@ -428,22 +445,30 @@ class _Migrator:
             return self._if_else(level, groups, condition=condition, at=at, held=held)
         paths = _paths(level, groups)
         if len(paths) > 1:
-            # Read as a Together, which may not hold; then its problems are not the ones to show.
-            mark = len(self.problems)
+            # Read as a Together, which may not hold; then what it read is undone. A container
+            # past the nesting cap ends the reading all the same, so that refusal stands.
+            mark, taken, keys = len(self.problems), set(level.taken), dict(self.keys)
             try:
                 return self._together(level, paths, at=at, held=held)
+            except _TooDeepError:
+                raise
             except _StopError:
                 del self.problems[mark:]
-        self._refuse_start(level, entries, texts, branches=condition is not None)
+                level.taken, self.keys = taken, keys
+        self._refuse_start(level, groups, texts, branches=condition is not None)
         raise _StopError
 
     def _refuse_start(
-        self, level: _Level, entries: list[str], texts: list[str], *, branches: bool
+        self, level: _Level, groups: list[_Group], texts: list[str], *, branches: bool
     ) -> None:
         """Refuses entries that each hold a ``when`` and are no If with an else."""
+        entries = level.ordered(entry for group in groups for entry in group.entries)
         if branches:
+            # The entries of a group holding both texts: there the two branches meet.
+            meet = {n for group in groups if _text_of(level, group) is None for n in group.entries}
             for entry in entries:
-                self._refuse(entry, _BRANCHES_MEET)
+                if entry in meet:
+                    self._refuse(entry, _BRANCHES_MEET)
         elif len(texts) == 2:  # noqa: PLR2004 -- a condition and another
             first, second = texts
             first_entry = next(entry for entry in entries if level.when(entry) == first)
@@ -472,6 +497,7 @@ class _Migrator:
         entries = level.ordered(entry for group in groups for entry in group.entries)
         level.taken.update(entries)
         self.keys[at.key] = entries[0]
+        self._nest(at, "if")
         then_steps, then_end = self._read(
             level, then, within=self._branch(at, "then"), before=at.before, join=at.join
         )
@@ -497,8 +523,9 @@ class _Migrator:
         exits: list[str] = []
         branching = False
         self.keys[at.key] = groups[0].entries[0]
+        self._nest(at, "together")
         for number, group in enumerate(groups, start=1):
-            path = _List(f"{at.address}.p{number}.", (*at.key, "together", number - 1))
+            path = at.inner(f"p{number}.", ("together", number - 1))
             steps, end = self._read(
                 level, set(group.nodes), within=path, before=at.before, join=at.join
             )
@@ -509,7 +536,15 @@ class _Migrator:
 
     @staticmethod
     def _branch(at: _Place, branch: str) -> _List:
-        return _List(f"{at.address}.{branch}.", (*at.key, branch))
+        return at.inner(f"{branch}.", (branch,))
+
+    def _nest(self, at: _Place, kind: str) -> None:
+        """Refuses the container ``kind`` at ``at`` when it would nest past ``MAX_DEPTH``, on the
+        node ``keys`` holds there, as translating the tree would; nothing inside it is read."""
+        if at.depth >= MAX_DEPTH:
+            problem = WorkflowProblem((*at.key, kind), f"containers nest at most {MAX_DEPTH} deep")
+            self.problems.append(self._located(problem))
+            raise _TooDeepError
 
     def _derived(self, address: str) -> str:
         return f"{self.slug}--{address.replace('.', '-')}"
@@ -540,8 +575,9 @@ class _Migrator:
             raise MigrationError([self._located(problem) for problem in error.problems]) from None
         given = {node.id: _shape(node) for node in self.document.nodes}
         found = {node.id: _shape(node) for node in translated.nodes}
-        changed = [node_id for node_id in given if given[node_id] != found.get(node_id)]
-        if changed or found.keys() != given.keys():
+        ids = [*given, *(node_id for node_id in found if node_id not in given)]
+        changed = [node_id for node_id in ids if given.get(node_id) != found.get(node_id)]
+        if changed:
             message = "as a block it would translate to another node"
             raise MigrationError([MigrationProblem(node_id, message) for node_id in changed])
 

@@ -322,6 +322,19 @@ def _starts_together(node: str) -> str:
     return STARTS_TOGETHER.format(others=others)
 
 
+# ``c1``, ``c2`` with a when, ``c3`` and ``c4`` each after the one before with a when: an If
+# whose then holds the next If, three deep; a container after ``c4`` would be the fourth.
+THREE_IFS = (do("c1"), *(do(f"c{n}", f"c{n - 1}", when=ON_HOLD) for n in range(2, 5)))
+TOO_DEEP = (
+    "as a block it would not load: stages[0].steps[1].then[1].then[1].then[1].{kind}:"
+    " containers nest at most 3 deep"
+)
+BRANCHES_MEET = (
+    "starts a branch that meets the other branch before the block after the If: the graph is"
+    " not series-parallel"
+)
+
+
 @pytest.mark.parametrize(
     ("content", "problems"),
     [
@@ -454,6 +467,87 @@ def _starts_together(node: str) -> str:
                 )
             ],
         ),
+        (
+            a_graph(do("a"), outcome_field="status"),
+            [(None, "outcome_field: the tree format has no outcome_field")],
+        ),
+        (
+            a_graph(do("s"), do("a", "s", "b"), do("b", "a")),
+            [
+                ("a", "depends on a node that depends on it: the graph has a cycle"),
+                ("b", "depends on a node that depends on it: the graph has a cycle"),
+            ],
+        ),
+        (
+            a_graph(do("a"), do("b", "a", when="$CTX.order_id == '" + "x" * 1_100 + "'")),
+            [("b", "its when holds 1,119 characters: an If's condition holds at most 1,024")],
+        ),
+        (
+            a_graph(do("a"), do("b", "a", when=" && ".join(f"$CTX.v{n} == 'x'" for n in range(9)))),
+            [("b", "its when holds 9 atoms: an If's condition holds at most 8")],
+        ),
+        (
+            a_graph(do("a"), do("b", "a", when="$CTX.order_id ==")),
+            [
+                (
+                    "b",
+                    'its when cannot be an If\'s condition: "$CTX.order_id ==": each atom is'
+                    " <reference> <operator> <literal>",
+                )
+            ],
+        ),
+        (
+            # ``b`` and ``c`` (a condition and its complement) meet at ``x``; ``d`` meets nothing.
+            a_graph(
+                do("a"),
+                do("b", "a", when=ON_HOLD),
+                do("c", "a", when=NOT_ON_HOLD),
+                do("d", "a", when=ON_HOLD),
+                do("x", "b", "c", trigger_rule=JOIN),
+                do("z", "x", "d"),
+            ),
+            [("b", BRANCHES_MEET), ("c", BRANCHES_MEET)],
+        ),
+        (
+            a_graph(
+                *THREE_IFS,
+                {
+                    "id": "loop",
+                    "type": "loop_group",
+                    "depends_on": ["c4"],
+                    "max_iterations": 2,
+                    "until_when": ON_HOLD,
+                    "nodes": [do("e")],
+                },
+            ),
+            [("loop", TOO_DEEP.format(kind="repeat"))],
+        ),
+        (
+            a_graph(*THREE_IFS, do("e", "c4"), do("f", "c4"), do("h", "e", "f")),
+            [("e", TOO_DEEP.format(kind="together"))],
+        ),
+        (
+            # A Together of two Ifs with an else; in the first, the Ifs of ``d`` and ``e``: the
+            # fourth container is refused as such, not as entries that are no Together.
+            a_graph(
+                do("a"),
+                do("b", "a", when=ON_HOLD),
+                do("b2", "a", when=NOT_ON_HOLD),
+                do("c", "a", when="$CTX.order_id != ''"),
+                do("c2", "a", when="$CTX.order_id == ''"),
+                do("d", "b", when="$CTX.order_id != ''"),
+                do("e", "d", when="$CTX.order_id != ''"),
+                do("z", "e", "b2", "c", "c2", trigger_rule=JOIN),
+            ),
+            [
+                (
+                    "e",
+                    "as a block it would not load:"
+                    " stages[0].steps[1].together[0][0].then[1].then[1].if: containers nest at"
+                    " most 3 deep",
+                )
+            ],
+        ),
     ],
     ids=[
         "one-success",
@@ -467,12 +561,38 @@ def _starts_together(node: str) -> str:
         "joined-conditions",
         "until-bash",
         "returns",
+        "outcome-field",
+        "cycle",
+        "long-condition",
+        "many-atoms",
+        "no-condition",
+        "branches-meet",
+        "repeat-too-deep",
+        "together-too-deep",
+        "too-deep-in-a-together",
     ],
 )
 def test_names_each_node_and_why_when_a_graph_cannot_be_mapped(
     content: object, problems: list[tuple[str | None, str]]
 ) -> None:
     assert problems_of(content) == problems
+
+
+@pytest.mark.parametrize("size", [5, 400])
+def test_names_only_the_first_container_too_deep_when_ifs_nest_past_the_cap(size: int) -> None:
+    # Each node after ``c1`` follows the one before with a when: Ifs nested in turn, so the If
+    # of ``c5`` is the fourth; nothing inside it is read, whatever the chain's length.
+    chain = (do(f"c{n}", f"c{n - 1}", when=ON_HOLD) for n in range(2, size + 1))
+
+    assert problems_of(a_graph(do("c1"), *chain)) == [("c5", TOO_DEEP.format(kind="if"))]
+
+
+def test_refuses_the_document_when_it_is_not_a_scenario() -> None:
+    shell = {"id": "a", "type": "shell", "command": ["true"]}
+
+    assert problems_of(a_graph(shell, kind="workflow")) == [
+        (None, "kind: only a scenario has a tree format")
+    ]
 
 
 def test_refuses_the_document_when_it_is_already_a_tree() -> None:
