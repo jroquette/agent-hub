@@ -119,6 +119,19 @@ A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([A
   is `production: true` in the effective config as read at that moment; clearing breakpoints and cancelling a run
   stay allowed. Runs without breakpoints keep the policy above there.
 - Nothing is rewound: no captured value is edited, no finished block re-run or skipped.
+- Record lines (`records.jsonl`, folded by core's `run_record`): `debug.breakpoints` (`addresses`, the set as written;
+  the latest line holds the run's breakpoints); `debug.pause` (`node`, `block`, `reason` `breakpoint` or `step`,
+  `number` from 1 in the run, then what the resume goes on with: `pass` (`layer`, `ends` and `before` by node with
+  `state`, `output` and an end's `skip_cause`, `origin`, `failure_kind`, `changed`, `stale`, `gate`) and `gates` (each
+  open gate's `attempt` and `due`); held groups stay in the `held` line written beside it); `debug.command` (`command`
+  `step` or `continue`, `approver`, and the `node` and `number` of the pause it resumes). A pause is the run's while no
+  `resume`, `start` or `end` line follows it: then the debugger is why the run is paused, not a gate an earlier pass
+  left open (no investigation is open), and a resume rebuilds the stopped pass from that line, so it goes on exactly
+  as the run would have without leaving the process. A `debug.pause` line that cannot be read refuses the resume.
+- The values to inspect are read from lines the record already holds: the `inputs` line, and for each node with an
+  end its last `step_end` (`status`, `output`; a `prior_success` reuse keeps the end it reused), the `inputs` of its
+  last `action` line, and for an expect its polls (its `action_start` lines with a `poll`, as the engine counts them)
+  and the last `expect.poll` line's `output`.
 
 ### Actions and the script contract
 
