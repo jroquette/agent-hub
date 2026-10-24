@@ -36,7 +36,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   name, and a run input not given takes the environment's non-secret value of that name (`values` in `hub.json` or
   `hub.local.json`, set with `hub env add|set --value NAME=VALUE` and `--unset-value`) before its default (AGH-521).
 - ADR 0049 (proposed): scenarios as ordered stages of blocks (`version: 2`) translated to the graph at load, and a
-  debugger as engine run control, with its reference fixtures; not built yet (AGH-508, AGH-521).
+  debugger as engine run control, with its reference fixtures (AGH-508, AGH-521). Built so far: core loads a
+  `version: 2` scenario and translates its stages and blocks to the node graph, each load or plan problem on the
+  tree's key path (AGH-509); the rest is not built yet.
 
 ### Changed
 

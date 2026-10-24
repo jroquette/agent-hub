@@ -28,7 +28,7 @@ from agent_hub.core.errors import AgentHubError
 from agent_hub.core.hub_config.effective_environments import SourcedEnvironment
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.scenarios.access_policy import Effect, PolicyDecision, decide
-from agent_hub.core.workflows.document import WorkflowDocument
+from agent_hub.core.workflows.document import WorkflowDocument, WorkflowLoadError
 from agent_hub.core.workflows.includes import IncludeResolver, expand_includes
 from agent_hub.core.workflows.nodes import (
     ApprovalNode,
@@ -103,7 +103,10 @@ def gated_plan(
     """The plan of ``document`` with the gates of ``asks``, its includes expanded first."""
     if not asks:
         return plan_workflow(document, includes=includes)
-    expanded = expand_includes(document, includes).document
+    try:
+        expanded = expand_includes(document, includes).document
+    except WorkflowLoadError as error:
+        raise WorkflowLoadError(document.located(error.problems)) from None
     return plan_workflow(with_policy_gates(expanded, asks))
 
 

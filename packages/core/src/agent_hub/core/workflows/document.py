@@ -4,17 +4,23 @@
 frozen model, or raises ``WorkflowLoadError`` with every problem pydantic found. A problem is
 located by its key path (``loc``), never by a line: the loader that read the file knows the
 lines, and the catalog maps a key path to one (``catalog.WorkflowFile.line_of``).
+
+A document translated from another source carries a ``ProblemLocator``, so a problem found on
+its generated nodes (``located``) is put back where the source holds it: a scenario in the tree
+format (``version: 2``, docs/design/scenarios.md § Tree format), which ``parse_workflow`` hands
+to ``scenarios.tree_translate``, on the tree's key path.
 """
 
 import json
 import math
-from collections.abc import Iterator, Mapping, Sequence
-from typing import Annotated, Final, Literal, NamedTuple, Self
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from typing import Annotated, Final, Literal, NamedTuple, Protocol, Self
 
 from pydantic import (
     AfterValidator,
     Field,
     JsonValue,
+    PrivateAttr,
     StrictBool,
     StrictInt,
     StrictStr,
@@ -55,8 +61,11 @@ _NODE_TYPES = (
 )
 # The node types a ``kind: scenario`` document may hold (docs/design/scenarios.md).
 SCENARIO_NODE_TYPES: Final = ("action", "expect", "approval", "wait", "loop_group", "include")
+# A scenario's tree format: ordered stages of blocks in place of nodes.
+TREE_VERSION: Final = 2
+UNKNOWN_KEY: Final = "unknown key"
 _MESSAGES = {
-    "extra_forbidden": "unknown key",
+    "extra_forbidden": UNKNOWN_KEY,
     "model_type": "must be a mapping",
     "model_attributes_type": "must be a mapping",
     "union_tag_invalid": f"must be one of {_NODE_TYPES}",
@@ -131,6 +140,15 @@ class WorkflowInput(WorkflowObject):
         return is_bool == (self.type == "boolean") and isinstance(value, _INPUT_TYPES[self.type])
 
 
+class ProblemLocator(Protocol):
+    """Where a translated document's source holds what a problem on its nodes is about."""
+
+    def locate(self, document: WorkflowDocument, problem: WorkflowProblem) -> WorkflowProblem:
+        """``problem``, found on ``document`` (or a copy of it with nodes added or expanded), at
+        its key path in the source."""
+        ...
+
+
 class WorkflowDocument(WorkflowObject):
     """A workflow file's content: a graph of typed nodes."""
 
@@ -151,6 +169,8 @@ class WorkflowDocument(WorkflowObject):
     # Checked after the items, not as a length constraint: pydantic reports a length error
     # whenever an item fails, which would hide the real problems behind a false one.
     nodes: Annotated[tuple[Node, ...], AfterValidator(_not_empty)]
+    # A translated document's locator; model copies (an expansion, policy gates) keep it.
+    _locator: ProblemLocator | None = PrivateAttr(default=None)
 
     @field_validator("version", mode="before")
     @classmethod
@@ -161,9 +181,38 @@ class WorkflowDocument(WorkflowObject):
             raise ValueError(msg)
         return value
 
+    def located(self, problems: Iterable[WorkflowProblem]) -> list[WorkflowProblem]:
+        """``problems``, found on this document's nodes, where its source holds them, each
+        once; a document that has no other source keeps them as found."""
+        locator = self._locator
+        if locator is None:
+            return list(problems)
+        return list(dict.fromkeys(locator.locate(self, problem) for problem in problems))
+
+
+def with_locator(document: WorkflowDocument, locator: ProblemLocator) -> WorkflowDocument:
+    """A copy of ``document`` whose problems ``locator`` puts back on its source."""
+    copied = document.model_copy()
+    copied._locator = locator
+    return copied
+
+
+def is_tree(content: object) -> bool:
+    """Whether ``content`` is a document in the tree format: ``version`` is the integer 2."""
+    if not isinstance(content, dict):
+        return False
+    version = content.get("version")
+    return type(version) is int and version == TREE_VERSION
+
 
 def parse_workflow(content: object) -> WorkflowDocument:
-    """The document ``content`` holds; raises ``WorkflowLoadError`` naming every problem."""
+    """The document ``content`` holds, a tree translated to its graph; raises
+    ``WorkflowLoadError`` naming every problem."""
+    if is_tree(content):
+        # Imported here: the tree modules build on this one.
+        from agent_hub.core.scenarios.tree_translate import translate_tree
+
+        return translate_tree(content).document
     try:
         document = WorkflowDocument.model_validate(content)
     except ValidationError as error:

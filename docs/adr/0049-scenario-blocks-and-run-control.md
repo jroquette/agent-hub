@@ -36,7 +36,8 @@ Chosen option: 1.
   fixed set: `do` (an action), `wait_until` (a read action polled with `until`, `every`, `timeout`), `you` (an
   approval), `wait` and `include`; a container is `repeat` (a `loop_group`), `if`/`then`/`else`, or `together`
   (parallel paths joined by the next step). Conditions use the existing `when:` grammar; an else is the complement of
-  its condition, computed at translation (bounded: 8 atoms, 64 terms). Each block has an address (`2.3`, `2.3.then.1`,
+  its condition, computed at translation (bounded: 8 atoms and 1,024 characters per If, 64 terms per joined
+  condition, 262,144 characters of conditions written in all). Each block has an address (`2.3`, `2.3.then.1`,
   `2.3.p2.1`); ids are optional, and a block without one gets `<stage slug>--<its address in the stage>`
   (`payment--3-then-1`), which no other derived id can equal; an explicit id equal to another block's fails the load.
   An If with no else exits through its branch and the block before it in the same step list, so a false condition
@@ -105,13 +106,15 @@ Chosen option: 1.
 
 ## Delivery notes (AGH-521)
 
-This ADR stays proposed: nothing below the contract is built yet. The scenario builder that shipped with AGH-521 is
-the one the owner validated in the playground, and where it differs from the decision above, the validated behavior
-wins for what the screen shows:
+This ADR stays proposed. Of the decision above, only the translation at load is built: `parse_workflow` reads a
+`version: 2` scenario into the node graph, with its block map and its problems on the tree's key paths (AGH-509).
+The scenario builder that shipped with AGH-521 is the one the owner validated in the playground, and where it differs
+from the decision above, the validated behavior wins for what the screen shows:
 
 - **Format.** The builder reads and writes `version: 1` graph scenarios. Its step list shows the graph as ordered
-  steps with groups (Repeat, If, At the same time) and a Start row, which is the shape `version: 2` will store; there
-  is no translator, no block map and no `hub scenario migrate` yet. A graph that is not nested paths still opens and
+  steps with groups (Repeat, If, At the same time) and a Start row, which is the shape `version: 2` stores; core
+  translates a `version: 2` file at load, with its block map, but the builder does not read one yet, and there is no
+  `hub scenario migrate` yet. A graph that is not nested paths still opens and
   can be edited (not read-only, as Migration above says): what the list cannot show stays as loose steps under it,
   and a Graph view and the YAML are a tab away.
 - **Canonical writer.** Save goes through the API's builder (`api/scenario_builder.py`), not a `generator` writer;

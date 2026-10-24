@@ -126,14 +126,19 @@ def plan_workflow(
     document: WorkflowDocument, *, includes: IncludeResolver | None = None
 ) -> WorkflowPlan:
     """The plan of ``document``, its includes expanded through ``includes`` (``includes.py``);
-    raises ``WorkflowLoadError`` naming every problem found, on the document's own nodes."""
-    expansion = expand_includes(document, includes)
+    raises ``WorkflowLoadError`` naming every problem found, on the document's own nodes (a
+    translated tree's on its key paths: ``WorkflowDocument.located``)."""
+    try:
+        expansion = expand_includes(document, includes)
+    except WorkflowLoadError as error:
+        raise WorkflowLoadError(document.located(error.problems)) from None
     if kinds := [expansion.locate(p) for p in kind_problems(expansion.document)]:
-        raise WorkflowLoadError(kinds)
+        raise WorkflowLoadError(document.located(kinds))
     try:
         plan = _plan(expansion.document)
     except WorkflowLoadError as error:
-        raise WorkflowLoadError([expansion.locate(p) for p in error.problems]) from None
+        found = [expansion.locate(p) for p in error.problems]
+        raise WorkflowLoadError(document.located(found)) from None
     scopes = dict(expansion.scopes)
     for group in plan.document.nodes:
         if isinstance(group, LoopGroupNode):
@@ -362,6 +367,23 @@ def _path_problem(producer: Node, ref: NodeRef) -> str | None:
         path = ".".join(ref.path)
         return f"the path {echo(path)} is not in the output of {echo(ref.node)}"
     return None
+
+
+def ref_mentions(ref: Ref) -> tuple[str, ...]:
+    """The texts by which this module's reference problems name ``ref``: each message about it
+    holds one, and none about another reference does (a translated tree finds by them the If
+    whose condition a problem on a joined ``when`` is about)."""
+    if isinstance(ref, CtxRef):
+        return (f"$CTX.{ref.name} ",)
+    if isinstance(ref, InputRef):
+        return (f"input {echo(ref.name)}",)
+    if isinstance(ref, WithRef):
+        return (f"named {echo(ref.name)}",)
+    if isinstance(ref, SelfRef):
+        return ("$self ",)
+    node = echo(ref.node)
+    mentions = (f"id {node}", f"node {node} ", f"of {node}")
+    return (*mentions, "$LOOP_PREV ") if isinstance(ref, LoopPrevRef) else mentions
 
 
 def _group_problems(graph: _Graph) -> Iterator[WorkflowProblem]:
