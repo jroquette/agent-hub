@@ -73,6 +73,29 @@ together. The format is the schema's contract; the reasons are in [ADR 0032](../
   iteration open (the resume goes on in it, with the body nodes it ended and `$LOOP_PREV`); two suspendable nodes (a
   gate, or a group whose body holds one) with no order between them are a load error. After Ctrl-C no gate opens.
 
+### Run control
+
+A debug pause stops a run before a node by a breakpoint or by Step ([ADR
+0049](../adr/0049-scenario-blocks-and-run-control.md), [scenarios.md](scenarios.md) § Debugging). The engine knows
+only nodes: the run-control port maps blocks to the nodes they enter by, and decides which ones Step pauses before.
+
+- Without the port, or while it is not debugging (no breakpoint, no step mode), the engine asks nothing more and runs
+  as before.
+- When a layer starts (a group body's layer in each iteration), the port is asked, once per node, about each node the
+  run did not reach in an earlier pass: never one that ended then (completed, skipped or failed; a body node's ends
+  count in their iteration), nor a held group or a gate a resume takes up. So a breakpoint set while a layer runs
+  takes effect from the next layer, and resume reuse comes first, then run control, then `trigger_rule` and `when:`.
+- A layer holding a node to pause at runs one node at a time in declaration order and stops before the first such
+  node: the nodes before it run, it and the nodes after it do not start. Nothing is recorded and no gate opens; the
+  report is `paused`, its `reason` that node, and the run state holds the pause (node, block, `breakpoint` or
+  `step`). A pause in a group body holds its iteration as a body gate does.
+- The resume takes up the pause: the first visit of the node it stopped before, and of each node the port names the
+  same block for (an If's or a Together's other entry nodes), runs. It goes on where that pass stopped: what
+  completed is reused (an `always_run` node too), what failed keeps its failure and runs nothing again (nothing more
+  is recorded for it), and a skipped node is evaluated again, to the same skip.
+- A gate that opens in the pass wins: the report is the gate's, with no debug pause, and the nodes the pass stopped
+  before are asked again on its resume.
+
 ## Invariants
 
 - Expansion is deterministic and bounded: the same documents give the same expanded graph.

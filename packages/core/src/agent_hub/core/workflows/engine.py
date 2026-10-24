@@ -10,20 +10,31 @@ Planning keeps read-only nodes (``mutates_checkout: false``) and nodes resuming 
 of a shared layer. A read-only node's attempt reads the ``CheckoutProbe`` before and after: a
 change fails it ``config`` (never retried).
 
-Each node goes through: the resume cache, its ``trigger_rule``, its ``when:``, then its attempts.
-A resumed run reuses a node that completed before (``prior_success``) unless it is ``always_run``
-or an ancestor now ends differently. Every visit takes the node's next ``attempt``, counted over
-the whole run and its resumes, so no two steps share one. A failed attempt asks
-``retry_decision`` and waits through the ``Clock``; each retry is recorded, and a loop's retry
-starts the loop again from its first turn. A ``halt`` ends the
-run ``cancelled``. An ``approval`` or ``wait`` node opens a gate (``gates.py``) and, until it
-has its answer or its time, pauses the run: once its layer ends, the report is ``paused``, with
-no end, and later layers wait for the resume, which takes up the same gate. Planning lets at most
+Each node goes through: the resume cache, run control, its ``trigger_rule``, its ``when:``, then
+its attempts. A resumed run reuses a node that completed before (``prior_success``) unless it is
+``always_run`` or an ancestor now ends differently. Every visit takes the node's next
+``attempt``, counted over the whole run and its resumes, so no two steps share one. A failed
+attempt asks ``retry_decision`` and waits through the ``Clock``; each retry is recorded, and a
+loop's retry starts the loop again from its first turn. A ``halt`` ends the run ``cancelled``.
+An ``approval`` or ``wait`` node opens a gate (``gates.py``) and, until it has its answer or its
+time, pauses the run: once its layer ends, the report is ``paused``, with no end, and later
+layers wait for the resume, which takes up the same gate. Planning lets at most
 one gate be open at a time (two suspendable nodes are always ordered). A gate in a ``loop_group``
 body pauses its iteration once the body layer ends; the group's step stays open, and the resume
 goes on in that iteration with the body nodes it already ended and the same ``$LOOP_PREV``.
 Rejecting an approval with the default decisions ends the run ``cancelled`` like a ``halt``,
 unless the workflow reads the decision.
+
+Run control (``run_control.py``, ``EnginePorts.control``) pauses a run before a node no gate
+holds. While it is ``debugging()``, each layer asks it about the nodes the run did not reach in
+an earlier pass (none that ended then, nor a group or gate left open); a layer holding a node to
+pause at runs one node at a time in declaration order and stops before that node, and once the
+layer ends the report is ``paused`` with ``RunState.pause`` and no gate open. A body node's
+pause holds its iteration as a body gate does. The resume takes up the pause: the first visit
+of the node it stopped before, and of any node paused for the same block, runs; and it goes on
+where that pass stopped, reusing what completed (``always_run`` too) and keeping what failed. A
+gate open in the same pass wins: the report is the gate's, and the nodes the pass stopped before
+are asked again on its resume.
 
 A ``loop_group`` is one step around its body's: each iteration runs the body's layers (body ids
 as recorded, ``<group>__<id>``, each visit a new attempt), with ``$LOOP_PREV`` reading the
@@ -112,6 +123,7 @@ from agent_hub.core.workflows.ports import (
     StepEnd,
     StepStart,
 )
+from agent_hub.core.workflows.run_control import DebugPause, PauseReason, RunControl
 from agent_hub.core.workflows.run_state import (
     HeldGroup,
     NodeEnd,
@@ -162,6 +174,8 @@ class EnginePorts:
     gates: GateAnswers = NoAnswers()
     # A scenario run's polls and captures; ``None`` when no one keeps them.
     trace: RunTrace | None = None
+    # Breakpoints and step mode; ``None`` (or not debugging): the run never pauses before a node.
+    control: RunControl | None = None
 
 
 def run_workflow(
@@ -213,6 +227,10 @@ class _Run:
         # The groups paused around that gate, and the gates a resume already took up once.
         self.held: dict[str, HeldGroup] = {}
         self.taken: set[str] = set()
+        # The first node run control stopped this pass before, and the nodes whose first visit
+        # took up the debug pause the run resumes from.
+        self.debug: DebugPause | None = None
+        self.released: set[str] = set()
         # Each body node's group, and each running group's previous iteration.
         self.owner = {
             body.id: node
@@ -245,18 +263,17 @@ class _Run:
                     self.changed.add(node_id)
             if self.halted_by is not None:
                 return self._finish()
-            if self.paused is not None:
-                return self._pause(*self.paused)
+            if (paused := self._pause()) is not None:
+                return paused
         return self._finish()
 
     def _run_layer(self, nodes: Sequence[Node]) -> None:
-        """Visit a layer's nodes, concurrently unless one may halt the run (then in order)."""
-        sequential = self.ports.max_parallel <= 1 or len(nodes) == 1
+        """Visit a layer's nodes, concurrently unless one may halt the run or run control pauses
+        before one (then in order)."""
+        stops = self._stops(nodes)
+        sequential = self.ports.max_parallel <= 1 or len(nodes) == 1 or bool(stops)
         if sequential or any(_may_halt(node) for node in nodes):
-            for node in nodes:
-                self._visit(node)
-                if self.halted_by is not None:
-                    return
+            self._run_in_order(nodes, stops)
             return
         # A thread per node: the run-wide permits bound how many attempts run at once.
         with ThreadPoolExecutor(max_workers=min(len(nodes), MAX_LAYER_THREADS)) as pool:
@@ -287,13 +304,77 @@ class _Run:
         state = RunState(nodes, self.attempts, self.sessions, polls=dict(self.polls))
         return RunReport(status, outcome, reason, state)
 
-    def _pause(self, node: str, gate: OpenGate) -> RunReport:
-        """The report of a run stopped on an open gate: no end is recorded."""
+    def _run_in_order(self, nodes: Sequence[Node], stops: Mapping[str, PauseReason]) -> None:
+        """Visit ``nodes`` one at a time, up to a halt or the first node of ``stops``."""
+        for node in nodes:
+            if (stop := stops.get(node.id)) is not None:
+                self._pause_before(node, stop)
+                return
+            self._visit(node)
+            if self.halted_by is not None:
+                return
+
+    def _pause(self) -> RunReport | None:
+        """The report of a pass stopped on an open gate, or before a node by run control (a gate
+        wins, and its resume asks run control again), else ``None``: no end is recorded."""
+        gates: dict[str, OpenGate] = {}
+        debug: DebugPause | None = None
+        if self.paused is not None:
+            node, gate = self.paused
+            gates[node] = gate
+        elif self.debug is not None:
+            node, debug = self.debug.node, self.debug
+        else:
+            return None
         nodes = {**self.prior.nodes, **self.results}
         state = RunState(
-            nodes, self.attempts, self.sessions, {node: gate}, dict(self.held), dict(self.polls)
+            nodes, self.attempts, self.sessions, gates, dict(self.held), dict(self.polls), debug
         )
         return RunReport("paused", None, node, state)
+
+    def _stops(self, nodes: Sequence[Node]) -> dict[str, PauseReason]:
+        """The nodes of a layer run control pauses before, with why: none unless it is
+        debugging, never one the run reached in an earlier pass, nor the first visit of a node
+        taking up the pause the run resumes from."""
+        control = self.ports.control
+        if control is None or not control.debugging():
+            return {}
+        stops: dict[str, PauseReason] = {}
+        for node in nodes:
+            if self._reached(node):
+                continue
+            stop = control.pause_before(node.id)
+            if stop is not None and not self._takes_up_pause(node, stop):
+                stops[node.id] = stop
+        return stops
+
+    def _reached(self, node: Node) -> bool:
+        """A node the run reached in an earlier pass: it ended then (a body node's ends count in
+        their iteration, which a held group restores), or it is a held group or a gate not yet
+        taken up."""
+        with self.lock:
+            ended = node.id in self.prior.nodes and node.id not in self.owner
+            open_gate = node.id in self.prior.gates and node.id not in self.taken
+            return ended or open_gate or node.id in self.prior.groups
+
+    def _takes_up_pause(self, node: Node, stop: PauseReason) -> bool:
+        """Whether this visit takes up the debug pause the run resumes from: the first visit of
+        the node it stopped before, or of a node paused for the same block (an If's or a
+        Together's other entry nodes)."""
+        resumed = self.prior.pause
+        if resumed is None or (node.id != resumed.node and stop.block != resumed.block):
+            return False
+        with self.lock:
+            if node.id in self.released:
+                return False
+            self.released.add(node.id)
+            return True
+
+    def _pause_before(self, node: Node, stop: PauseReason) -> None:
+        """End the pass before ``node``: nothing of it starts or is recorded."""
+        with self.lock:
+            if self.debug is None:
+                self.debug = DebugPause(node.id, stop.block, stop.reason)
 
     def _end(self, node: Node, end: NodeEnd) -> None:
         with self.lock:
@@ -302,7 +383,7 @@ class _Run:
 
     def _visit(self, node: Node) -> None:
         if self._reusable(node):
-            self._skip(node, "prior_success", result=self.prior.nodes[node.id])
+            self._reuse(node)
         elif (blocked := trigger_skip(node, self.ends)) is not None:
             self._skip(node, *blocked)
         elif node.when is None or not self._stopped_by_when(node, node.when):
@@ -341,14 +422,27 @@ class _Run:
         return True
 
     def _reusable(self, node: Node) -> bool:
-        """A node that completed before, is not ``always_run``, and has no changed ancestor."""
+        """A node that completed before, is not ``always_run``, and has no changed ancestor. On
+        a resume from a debug pause, one that completed or failed before: that pass goes on
+        where it stopped, so a pause never changes what runs."""
         before = self.prior.nodes.get(node.id)
-        if before is None or before.state != "completed" or node.id in self.owner:
+        if before is None or node.id in self.owner or isinstance(node, HaltNode | IncludeNode):
             return False
-        if isinstance(node, HaltNode | IncludeNode) or getattr(node, "always_run", False):
-            return False
+        if self.prior.pause is not None:
+            kept = before.state != "skipped"
+        else:
+            kept = before.state == "completed" and not getattr(node, "always_run", False)
         # References reach only ancestors (planning), so an unchanged ancestry reads the same.
-        return node.id not in self.stale
+        return kept and node.id not in self.stale
+
+    def _reuse(self, node: Node) -> None:
+        """``node``'s end from before: a completed one reused (``prior_success``), a failure kept
+        with nothing recorded (the record already holds its end)."""
+        before = self.prior.nodes[node.id]
+        if before.state == "completed":
+            self._skip(node, "prior_success", result=before)
+        else:
+            self._end(node, NodeEnd(before))
 
     def _attempt(self, node: Node) -> int:
         with self.lock:
@@ -839,7 +933,7 @@ class _Run:
                 self._run_layer(waiting)
             if self.halted_by is not None:
                 return NodeFailedError("cancelled", "a halt in the body ended the run")
-            if self.paused is not None:
+            if self.paused is not None or self.debug is not None:
                 return _Paused()
         failed = next((n for n in body if self.ends[n].result.state == "failed"), None)
         if failed is None:
@@ -881,7 +975,7 @@ class _Run:
 
 
 class _Paused:
-    """A group iteration stopped on an open gate in its body."""
+    """A group iteration stopped on an open gate, or before a node, in its body."""
 
 
 class _RunStoppedError(BaseException):
