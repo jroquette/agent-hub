@@ -21,7 +21,9 @@ need a gate (a policy ``ask``, an ``approval`` or a ``wait``) with no order betw
 
 A problem names its step as ``step <node id>``; a scenario written as blocks (``version: 2``,
 whose ``BlockMap`` the caller passes) names the block instead, by its address and its key path
-in the tree (``block 2.1 (stages[1].steps[0].capture.order_id)``), never a generated node id.
+in the tree (``block 2.1 (stages[1].steps[0].capture.order_id)``), never a generated node id; a
+problem on an If's condition names the If once (``block 1.2 (stages[0].steps[1].if)``), though
+the condition is on each branch's first node.
 """
 
 from collections.abc import Iterator, Mapping, Sequence
@@ -167,7 +169,8 @@ def plan_scenario(
         rows.append(row)
         if problem is not None:
             problems.append(f"{names.of(node.id)}: {problem}")
-    problems += _path_problems(plan, entries, names)
+    # An If's condition is on each entry node of its branches: its problem is named once.
+    problems += dict.fromkeys(_path_problems(plan, entries, names))
     asks = frozenset(row.step for row in rows if row.decision == "ask")
     problems += (names.unordered(*pair) for pair in _unordered_gates(plan.document.nodes, asks))
     return ScenarioPlan(
@@ -186,9 +189,10 @@ class _Names:
 
     blocks: BlockMap | None
 
-    def of(self, node: str, loc: Loc = ()) -> str:
-        """``step <id>[: <key>]``, or ``block <address> (<tree key path>)``."""
-        found = None if self.blocks is None else self.blocks.located(node, loc)
+    def of(self, node: str, loc: Loc = (), *, ref: Ref | None = None) -> str:
+        """``step <id>[: <key>]``, or ``block <address> (<tree key path>)`` (a problem about
+        ``ref`` on a ``when`` names the If whose condition reads it)."""
+        found = None if self.blocks is None else self.blocks.located(node, loc, ref=ref)
         if found is None:
             return f"step {node}" + (f": {_key(loc)}" if loc else "")
         address, key = found
@@ -344,7 +348,7 @@ def _path_problems(
                     continue
                 if not schema_has_path(producer.document.output_format, path):
                     yield (
-                        f"{names.of(node.id, loc)}: the path {echo('.'.join(path))}"
+                        f"{names.of(node.id, loc, ref=ref)}: the path {echo('.'.join(path))}"
                         f" is not in the output of {producer.ref}"
                     )
 

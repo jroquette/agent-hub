@@ -89,7 +89,8 @@ A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blo
   A problem on a generated node, at load or by planning, is reported on the tree's key path; one on a joined
   condition, on the `if` of the If whose condition holds the reference it names. The scenario plan's problems
   (`hub scenario plan|run`) name the block, `block <address> (<key path>)`, as `block 1.2 (stages[0].steps[1].until)`,
-  never a generated node id.
+  never a generated node id; one on an If's condition names the If once, as `block 1.2 (stages[0].steps[1].if)`,
+  though the condition is on each branch's first node.
 - **Canonical YAML**, written by `generator`'s scenario writer (`scenario_yaml.render_document`) and shared by hub
   web's Save and `hub scenario migrate`: PyYAML's safe dumper (no key sorting, Unicode kept, width 100, so a long
   `until` folds; a text the strict loader would read as a JSON number, boolean or null, such as `1e5`, is put in

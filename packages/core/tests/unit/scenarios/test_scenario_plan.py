@@ -527,3 +527,30 @@ def test_names_both_blocks_when_unordered_gates_are_paths_of_a_tree() -> None:
         " (stages[0].steps[0].together[1][0]) both need a gate and have no order between"
         " them: one must come after the other",
     )
+
+
+def test_names_the_if_once_when_its_condition_reads_a_path_not_in_the_output() -> None:
+    send = {"do": "send-order", "id": "send", "with": {"target": "api"}}
+    get = {"do": "get-order", "with": {"target": "api"}}
+    content = a_tree(send, {"if": "$send.output.state == 'X'", "then": [get], "else": [get]})
+
+    plan = planned_tree(content)
+
+    assert plan.problems == (
+        'block 1.2 (stages[0].steps[1].if): the path "state" is not in the output of'
+        " demo/send-order",
+    )
+
+
+def test_names_the_inner_if_when_a_nested_condition_reads_a_path_not_in_the_output() -> None:
+    send = {"do": "send-order", "id": "send", "with": {"target": "api"}}
+    get = {"do": "get-order", "with": {"target": "api"}}
+    inner = {"if": "$send.output.state == 'X'", "then": [get], "else": [get]}
+    content = a_tree(send, {"if": "$send.output.status == 'A'", "then": [inner], "else": [get]})
+
+    plan = planned_tree(content)
+
+    assert plan.problems == (
+        'block 1.2.then.1 (stages[0].steps[1].then[0].if): the path "state" is not in the'
+        " output of demo/send-order",
+    )

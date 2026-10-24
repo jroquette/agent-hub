@@ -32,7 +32,8 @@ condition that passes a cap, and reads nothing inside a container it refuses, so
 within the caps whatever the document holds. A problem on a generated node, found here or by
 planning, is put back on the tree's key path by the document's ``TreeLocator``
 (``WorkflowDocument.located``); one on a joined condition goes to the If whose condition holds
-the reference it names.
+the reference it names. ``BlockMap.located`` names the block a scenario plan's problem is on,
+with the same key paths.
 """
 
 import itertools
@@ -75,7 +76,7 @@ from agent_hub.core.workflows.includes import MAX_EXPANDED_NODES
 from agent_hub.core.workflows.nodes import LoopGroupNode, Node
 from agent_hub.core.workflows.plan import WorkflowPlan, ref_mentions
 from agent_hub.core.workflows.rewrite import SEPARATOR
-from agent_hub.core.workflows.substitution import echo
+from agent_hub.core.workflows.substitution import Ref, echo
 
 type BlockKind = Literal[
     "stage", "do", "wait_until", "you", "wait", "include", "repeat", "if", "together"
@@ -152,27 +153,34 @@ class Block:
 @dataclass(frozen=True)
 class BlockMap:
     """Every block of a tree, in declaration order: a stage, then its blocks, a container before
-    the blocks it holds."""
+    the blocks it holds; and where each node comes from, by its id as recorded."""
 
     blocks: tuple[Block, ...]
+    origins: Mapping[str, NodeOrigin]
 
     def block(self, address: str) -> Block | None:
         """The block at ``address``, if the tree holds one."""
         return next((block for block in self.blocks if block.address == address), None)
 
-    def located(self, node: str, loc: Loc = ()) -> tuple[str, Loc] | None:
-        """The address of the innermost block holding ``node`` (an id as recorded; an included
-        node is its include's) and the tree key path of ``loc``, a key path of that node, as
-        the block spells it; ``None`` when no block holds it."""
+    def located(
+        self, node: str, loc: Loc = (), *, ref: Ref | None = None
+    ) -> tuple[str, Loc] | None:
+        """The block a problem on ``node`` (an id as recorded; an included node is its
+        include's) is reported on, by address, and its tree key path. With ``loc``, a key path
+        of that node, the path is the one the load reports (``TreeLocator``): the key as the
+        block spells it, and a ``when`` on the ``if`` of the If whose condition reads ``ref``
+        (else the outermost If). With no ``loc``, it is the innermost block holding the node,
+        at its own key. ``None`` when no block holds it."""
         held = self._holding(node)
         if held is None:
             included = self._holding(node.split(SEPARATOR, 1)[0])
             return None if included is None else (included.address, (*included.key, "include"))
-        head, kind = (loc[0] if loc else None), held.kind
-        if not isinstance(head, str) or head in _WRITTEN or kind == "stage":
+        if not loc:
             return held.address, held.key
-        spelled = _TREE_KEYS.get(kind, {}).get(head, (head,))
-        return held.address, (*held.key, *spelled, *loc[1:])
+        key = _tree_loc(self.origins[node], loc, "", ref=ref)
+        # The innermost block whose key path ``key`` starts with (an If's, for its ``if``).
+        at = next((b for b in reversed(self.blocks) if key[: len(b.key)] == b.key), held)
+        return at.address, key
 
     def _holding(self, node: str) -> Block | None:
         # A container comes before the blocks it holds: the innermost is the last holding it.
@@ -190,11 +198,13 @@ class BlockMap:
 
 @dataclass(frozen=True)
 class ConditionOrigin:
-    """An If whose condition a node's ``when`` holds: its ``if`` key, and the texts by which
-    planning's problems name each reference of it (``plan.ref_mentions``)."""
+    """An If whose condition a node's ``when`` holds: its ``if`` key, the texts by which
+    planning's problems name each reference of it (``plan.ref_mentions``), and the references
+    it reads."""
 
     key: Loc
     mentions: frozenset[str]
+    refs: frozenset[Ref]
 
     def names(self, message: str) -> bool:
         """Whether ``message`` names a reference of this condition."""
@@ -210,10 +220,14 @@ class NodeOrigin:
     key: Loc
     conditions: tuple[ConditionOrigin, ...] = ()
 
-    def condition_key(self, message: str) -> Loc:
-        """The ``if`` key of the If whose condition holds the reference ``message`` names: the
-        outermost such If, else the outermost If (a single If's, whatever it names)."""
-        named = next((c for c in self.conditions if c.names(message)), None)
+    def condition_key(self, message: str, ref: Ref | None = None) -> Loc:
+        """The ``if`` key of the If whose condition holds ``ref``, or with none the reference
+        ``message`` names: the outermost such If, else the outermost If (a single If's,
+        whatever it names)."""
+        if ref is not None:
+            named = next((c for c in self.conditions if ref in c.refs), None)
+        else:
+            named = next((c for c in self.conditions if c.names(message)), None)
         if named is not None:
             return named.key
         return self.conditions[0].key if self.conditions else self.key
@@ -327,14 +341,14 @@ def _literal_text(literal: str | Decimal) -> str:
     return "'" + literal.replace("'", "''") + "'"
 
 
-def _tree_loc(origin: NodeOrigin, rest: Loc, message: str) -> Loc:
-    """A node's key path ``rest``, where a problem ``message`` was found, as its block spells
-    it."""
+def _tree_loc(origin: NodeOrigin, rest: Loc, message: str, *, ref: Ref | None = None) -> Loc:
+    """A node's key path ``rest``, where a problem ``message`` (about ``ref``, when known) was
+    found, as its block spells it."""
     head = rest[0] if rest else None
     if not isinstance(head, str) or head in _WRITTEN:
         return (*origin.key, "wait") if origin.kind == "wait" and not rest else origin.key
     if head == "when":
-        return origin.condition_key(message)
+        return origin.condition_key(message, ref)
     spelled = _TREE_KEYS.get(origin.kind, {}).get(head, (head,))
     return (*origin.key, *spelled, *rest[1:])
 
@@ -451,8 +465,9 @@ class _Translator:
             flow = self._stage(index, slug, flow)
         if self.problems:
             raise WorkflowLoadError(_unique_problems(self.problems))
-        blocks = BlockMap(tuple(block for block in self.blocks if block is not None))
-        return Translation(self._document(), blocks)
+        made = tuple(block for block in self.blocks if block is not None)
+        origins = {m.recorded: _origin(m) for m in self.made.values()}
+        return Translation(self._document(), BlockMap(made, MappingProxyType(origins)))
 
     def _refuse(self, loc: Loc, message: str) -> None:
         self.problems.append(WorkflowProblem(loc, message))
@@ -582,7 +597,8 @@ class _Translator:
     def _if(self, step: IfStep, at: _At, before: tuple[str, ...]) -> _Span:
         condition = parse_condition(step.if_, scenario=True)
         mentions = (ref_mentions(atom.ref) for clause in condition.clauses for atom in clause)
-        origin = ConditionOrigin((*at.key, "if"), frozenset(itertools.chain(*mentions)))
+        refs = frozenset(atom.ref for clause in condition.clauses for atom in clause)
+        origin = ConditionOrigin((*at.key, "if"), frozenset(itertools.chain(*mentions)), refs)
         then = at.within.inner(f"{at.address}.then", (*at.key, "then"))
         flow, entry = self._steps(step.then, then, _Flow(before))
         self._condition(entry, (condition, step.if_), origin)
@@ -680,9 +696,7 @@ class _Translator:
         }
         if tree.description is not None:
             content["description"] = tree.description
-        origins = {
-            node_id: NodeOrigin(m.kind, m.key, m.conditions) for node_id, m in self.made.items()
-        }
+        origins = {node_id: _origin(m) for node_id, m in self.made.items()}
         locator = TreeLocator(MappingProxyType(origins))
         try:
             document = WorkflowDocument.model_validate(content)
@@ -700,6 +714,10 @@ class _Translator:
 
     def _raw_body(self, node: _NodeSpec) -> list[str]:
         return [str(child["id"]) for child in self.bodies.get(str(node["id"]), [])]
+
+
+def _origin(made: _Made) -> NodeOrigin:
+    return NodeOrigin(made.kind, made.key, made.conditions)
 
 
 def _node_keys(step: _Leaf) -> _NodeSpec:
