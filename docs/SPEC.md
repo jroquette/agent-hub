@@ -78,6 +78,8 @@ hub start ISSUE [--repo DIR]… [--no-agent]   # issue to worktrees, In Progress
 hub brief [--no-network]   # session brief: now, journal, repo/PR/CI state
 hub agent [ARGS…]   # claude with every repo attached (./agent)
 hub next   # the tracker's ready issues, one line each
+hub scenario list|plan|run|propose|findings …   # the hub's scenarios: listed, planned in an environment, run; an investigation's proposal and findings (ADR 0041)
+hub scenario run NAME --env ENV [--break ADDR]… | break RUN [ADDR…] [--off|--set] | step RUN | continue RUN   # debug a version-2 scenario run: breakpoints on block addresses, one block at a time, to the next breakpoint (ADR 0049; refused on production)
 hub run ISSUE --repo REPO [--live] [--budget USD] [--from implement|verify] …   # one issue with a complete brief to a PR through the tracker port
 hub ship [ISSUE] [--draft] [--dry-run]   # each changed repo's check, push and PR, PRs linked, the issue to review
 hub step worktree|verdict|commits|pr|report …   # one hub run stage as JSON, for the issue-to-pr workflow's nodes
@@ -448,7 +450,8 @@ instruction" for actions and for the deterministic nodes of a workflow that decl
   run-control port, core folds a run's debug record lines and the values a paused run shows, and `generator`'s
   canonical writer gives the API's builder validate and Save for a `version: 2` document, writing nothing for an
   unchanged one, and `hub doctor` warns on each graph-format scenario, with `hub init` seeding its example as
-  `version: 2`; the builder screen AGH-521 shipped edits `version: 1` files, see the ADR's delivery notes): a scenario
+  `version: 2`; the CLI's debugger, `hub scenario run --break`, `break`, `step` and `continue`, refused on production;
+  the builder screen AGH-521 shipped edits `version: 1` files, see the ADR's delivery notes): a scenario
   may be written as `version: 2`, named stages of ordered blocks (Do, Wait until, You, Wait, Include; Repeat, If/else,
   At the same time), which core translates to the node graph at load, so the policy, gates and records are unchanged;
   hub web's builder edits that file block for block, and Save of an unchanged file writes nothing. A scenario run may

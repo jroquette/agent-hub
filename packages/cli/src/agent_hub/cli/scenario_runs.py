@@ -61,6 +61,7 @@ from agent_hub.cli.collect import hub_project_name
 from agent_hub.cli.effective_config import load_effective_config_or_exit
 from agent_hub.cli.init_report import shown_text
 from agent_hub.cli.run_log import now
+from agent_hub.cli.scenario_debug import on_production, record_breakpoints, run_control
 from agent_hub.cli.scenario_investigation import (
     LIMIT_REACHED,
     AnswerPorts,
@@ -115,8 +116,13 @@ from agent_hub.core.scenarios.policy_gates import (
     PolicyAsk,
 )
 from agent_hub.core.scenarios.run_record import (
+    DEBUG_PAUSE,
+    DebugResume,
     InvestigationView,
+    RunRecordError,
     ScenarioRunView,
+    debug_pause_line,
+    debug_resume,
     fold_records,
 )
 from agent_hub.core.scenarios.scenario_events import ScenarioEvents
@@ -129,7 +135,8 @@ from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 from agent_hub.core.workflows.ports import (
     RunEnd,
 )
-from agent_hub.core.workflows.run_state import RunReport
+from agent_hub.core.workflows.run_control import DebugPause
+from agent_hub.core.workflows.run_state import RunReport, RunState
 from agent_hub.generator.action_discovery import ActionDiscovery
 from agent_hub.generator.scenario_discovery import discover_scenarios
 from agent_hub.generator.workflow_discovery import DiscoveredWorkflow, pack_resolver
@@ -159,6 +166,8 @@ class ScenarioStart:
     mode: str
     # Each scenario the plan included, as resolved while planning: the snapshot keeps them.
     included: Mapping[str, WorkflowMapping]
+    # The run's breakpoints from its start, addresses of its tree (``scenario_debug``).
+    breakpoints: tuple[str, ...] = ()
 
 
 def load_scenario(
@@ -191,7 +200,9 @@ def start(hub: Path, run_id: str, begin: ScenarioStart) -> int:
             begun = True
             inputs: dict[str, JsonValue] = {"event": "inputs", "inputs": begin.inputs}
             append_record(folder, inputs)
-            return execute(hub, folder, [header, inputs], resumed=False)
+            if begin.breakpoints:
+                record_breakpoints(hub, folder, begin.breakpoints, header=header)
+            return execute(hub, folder, read_records(folder), resumed=False)
     except BaseException:
         if not begun:
             # Nothing ran: a half-made run is not left to resume.
@@ -240,8 +251,13 @@ def resume(hub: Path, folder: Path, records: list[dict[str, JsonValue]]) -> int:
             f" {pending.step}: answer it with hub workflow respond {folder.name} --node"
             f" {pending.gate} --choice {'|'.join(CHOICES)}"
         )
+    try:
+        # Read before the resume line: after it, the pause is no longer the run's.
+        debug = debug_resume(records)
+    except RunRecordError as error:
+        raise WorkflowRunError(f"cannot resume the run {folder.name}: {error}") from None
     append_record(folder, {"event": "resume"})
-    return execute(hub, folder, records, resumed=True, answered=pending)
+    return execute(hub, folder, records, resumed=True, answered=pending, debug=debug)
 
 
 def _unfinished(view: ScenarioRunView, last: InvestigationView) -> bool:
@@ -263,13 +279,16 @@ def execute(
     *,
     resumed: bool,
     answered: InvestigationView | None = None,
+    debug: DebugResume | None = None,
 ) -> int:
     """Run the scenario run in ``folder`` on the engine, as its snapshot pins it, after acting
-    on ``answered``, the answered investigation it was paused at."""
+    on ``answered``, the answered investigation it was paused at; ``debug`` is the debug pause
+    it resumes from, whose pass it goes on with."""
     header, snapshot = records[0], folder / SNAPSHOT
     environment, pack = str(header.get("environment")), str(header.get("pack"))
     pinned = pinned_actions(snapshot, header)
-    document, includes, recorded = _snapshot_parts(snapshot)
+    content = _pinned(snapshot)
+    document, includes, recorded = _snapshot_parts(snapshot, content)
     effective = load_effective_config_or_exit(hub)
     view = effective_environments(effective.config, effective.local)
     hidden = CredentialNames.of(view)
@@ -355,6 +374,15 @@ def execute(
     held = None
     if header.get("mode") == INTERACTIVE:
         held = HeldEnd(recorder=recorder, plan=plan, opened=investigations(records))
+    control = run_control(
+        folder,
+        content,
+        plan,
+        records=records,
+        resumed=None if debug is None else debug.pause,
+        production=on_production(view, environment),
+        note=lambda line: _noted(log, line),
+    )
     ports = EnginePorts(
         runner,
         held or recorder,
@@ -366,16 +394,43 @@ def execute(
         interrupt=runner.stop_children,
         gates=RecordedAnswers(records),
         trace=log,
+        control=control,
     )
     inputs = next((r["inputs"] for r in records if r.get("event") == "inputs"), {})
     report = run_workflow(
         plan,
         inputs if isinstance(inputs, dict) else {},
         ports,
-        prior=resumed_prior(records, owed.reopen) if resumed else None,
+        prior=_prior(records, owed, debug) if resumed else None,
     )
     append_record(folder, {"event": "sessions", "sessions": dict(report.state.sessions)})
-    return _reported(folder, header, report, held=held, recorder=recorder)
+    pauses = sum(1 for record in records if record.get("event") == DEBUG_PAUSE)
+    return _reported(folder, header, report, held=held, recorder=recorder, log=log, pauses=pauses)
+
+
+def _prior(records: list[dict[str, JsonValue]], owed: Owed, debug: DebugResume | None) -> RunState:
+    """The state a resume starts from: the records', with the pass a debug pause stopped."""
+    prior = resumed_prior(records, owed.reopen)
+    return prior if debug is None else debug.applied_to(prior)
+
+
+def _noted(log: ActionLog, line: dict[str, JsonValue]) -> None:
+    """Append ``line`` beside the action lines a run writes from its threads."""
+    with log.lock:
+        append_record(log.folder, line)
+
+
+def _debug_paused(
+    folder: Path, state: RunState, *, pause: DebugPause, log: ActionLog, number: int
+) -> int:
+    """Record the run's ``number``-th debug pause, ``state``'s ``pause`` (the pass it stopped in
+    the ``debug.pause`` line; its groups are in the ``held`` line) and its event; exit 0."""
+    with log.lock:
+        append_record(folder, debug_pause_line(state, number=number))
+        log.events.debug_paused(pause, number=number, at=now())
+        log.sink.flush(log.events)
+    typer.echo(f"run {folder.name}: paused before {pause.block} ({pause.reason})")
+    return 0
 
 
 def _owed_divergence(
@@ -414,11 +469,16 @@ def _reported(
     *,
     held: HeldEnd | None,
     recorder: RecordedRun,
+    log: ActionLog,
+    pauses: int,
 ) -> int:
-    """Print how the pass ended (an investigation it opened included); its exit code."""
+    """Print how the pass ended (an investigation it opened, or a debug pause, the run's
+    ``pauses + 1``-th, included); its exit code."""
     run_id = folder.name
     if report.status == "paused":
         append_record(folder, held_record(report.state))
+        if (pause := report.state.pause) is not None:
+            return _debug_paused(folder, report.state, pause=pause, log=log, number=pauses + 1)
         typer.echo(f"run {run_id}: paused at {report.reason}")
         return 0
     if held is not None and held.held is not None and (step := held.held.reason) is not None:
@@ -480,12 +540,21 @@ def _snapshot(folder: Path, begin: ScenarioStart) -> str:
     return content_hash
 
 
-def _snapshot_parts(
-    snapshot: Path,
-) -> tuple[WorkflowDocument, IncludeResolver, dict[str, PolicyAsk]]:
-    """The snapshot's document, its includes and the gates ``policy_gates.json`` names."""
+def _pinned(snapshot: Path) -> object:
+    """The snapshot's document as written: a tree for a version-2 scenario."""
     try:
-        document = parse_workflow(json.loads((snapshot / DOCUMENT).read_bytes()))
+        return json.loads((snapshot / DOCUMENT).read_bytes())
+    except (OSError, ValueError) as error:
+        raise WorkflowRunError(f"cannot load the scenario run's snapshot: {error}") from None
+
+
+def _snapshot_parts(
+    snapshot: Path, content: object
+) -> tuple[WorkflowDocument, IncludeResolver, dict[str, PolicyAsk]]:
+    """The snapshot's document, ``content`` parsed, its includes and the gates
+    ``policy_gates.json`` names."""
+    try:
+        document = parse_workflow(content)
         asks = read_gates(json.loads((snapshot / GATES).read_bytes()))
     except (OSError, ValueError, WorkflowLoadError) as error:
         raise WorkflowRunError(f"cannot load the scenario run's snapshot: {error}") from None

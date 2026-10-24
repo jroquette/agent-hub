@@ -87,7 +87,9 @@ A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blo
   gives each address its kind, label, node ids (a Repeat body's as recorded, `<group>__<id>`), entry nodes (in a
   run's plan, the `<step>__ask` gate in front of a gated step and an include's first nodes), exit nodes and key path.
   A problem on a generated node, at load or by planning, is reported on the tree's key path; one on a joined
-  condition, on the `if` of the If whose condition holds the reference it names.
+  condition, on the `if` of the If whose condition holds the reference it names. The scenario plan's problems
+  (`hub scenario plan|run`) name the block, `block <address> (<key path>)`, as `block 1.2 (stages[0].steps[1].until)`,
+  never a generated node id.
 - **Canonical YAML**, written by `generator`'s scenario writer (`scenario_yaml.render_document`) and shared by hub
   web's Save and `hub scenario migrate`: PyYAML's safe dumper (no key sorting, Unicode kept, width 100, so a long
   `until` folds; a text the strict loader would read as a JSON number, boolean or null, such as `1e5`, is put in
@@ -110,20 +112,26 @@ A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blo
 before a node through its run-control port, and the resume goes on with the pass it stopped
 ([workflow-engine-rules.md](workflow-engine-rules.md) § Run control); core's `run_record` folds the record lines
 below (the run view's debug pause, breakpoints and commands, a `debug.pause` line read back for its resume, and the
-values to inspect), and the `debug.*` events exist. Proposed, not built yet: the rest of this section
-(`breakpoints.json`, the `hub scenario` debug commands, which write those lines and emit those events, the route that
-reads the values, the production refusal and hub web's debugger). Today's builder reads and writes `version: 1` files
-and Save goes through the API (see the ADR's delivery notes).
+values to inspect). The CLI is built: `breakpoints.json`, `hub scenario run --break`, `break`, `step` and `continue`
+(`cli/scenario_debug.py`, the run control over that file and the record), which write those lines and emit the
+`debug.*` events, and the production refusal. Proposed, not built yet: the API routes, the route that reads the
+values, and hub web's debugger. Today's builder reads and writes `version: 1` files and Save goes through the API
+(see the ADR's delivery notes).
 
 A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([ADR
 0049](../adr/0049-scenario-blocks-and-run-control.md)). It is not a gate and Approvals does not list it.
 
-- Breakpoints are block addresses of the run's pinned tree, kept in the run folder: `breakpoints.json`, written whole
-  (a temporary file, then a rename), at most 64 KiB and 512 addresses, read as each layer of nodes starts, never
-  through a link; a file that cannot be read or parsed counts as no breakpoint and adds a record line. They are set by
-  `hub scenario run --break ADDR…`, `hub scenario break RUN ADDR… [--off]` (adds or removes), `hub scenario break RUN
-  --set [ADDR…]` (replaces the set; none clears it) or hub web. One set while the run runs takes effect from the next
-  layer of nodes (so not between the paths of a Together that already started). They are never in the document.
+- Breakpoints are block addresses of the run's pinned tree, kept in the run folder: `breakpoints.json`
+  (`{"addresses": […]}`, in the tree's declaration order), written whole (a temporary file in the run folder, then a
+  rename), at most 64 KiB and 512 addresses, read as each layer of nodes starts, never through a link; a file that
+  cannot be read or parsed, or names a block the tree does not hold, counts as no breakpoint and adds one
+  `debug.breakpoints_unreadable` line (`reason`) per reason and process. They are set by `hub scenario run --break
+  ADDR` (repeated for more), `hub scenario break RUN ADDR… [--off]` (adds or removes), `hub scenario break RUN --set
+  [ADDR…]` (replaces the set; none clears it) or hub web; each prints the set written (`run <id>: breakpoints 2,
+  3.1`, or `run <id>: no breakpoints`). An address the pinned tree does not hold is refused, naming it, and nothing
+  is written. A change takes the breakpoints lock (`breakpoints.lock`) and, while no process runs the run, its run
+  lock; one set while the run runs takes effect from the next layer of nodes (so not between the paths of a Together
+  that already started). They are never in the document.
 - Before a block means before its first node and before its `<step>__ask` gate; for a stage, before its first block;
   a Repeat, before the group (a body block's breakpoint pauses in every iteration); an If, before its condition is
   read; a Together, before any path. An Include is one block: nothing inside the scenario it includes takes a
@@ -131,7 +139,17 @@ A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([A
 - `hub scenario step RUN` runs exactly the next leaf block (Do, Wait until, You, Wait, and an Include as one block)
   in declaration order and pauses before the one after it, entering containers; the run stays in step mode until
   `hub scenario continue RUN`, which runs to the next breakpoint or the end. A gate met meanwhile pauses as before;
-  once answered, a stepping run pauses before the next block. Both are resumes, recorded with who sent them.
+  once answered, a stepping run pauses before the next block. Both are resumes, recorded with who sent them (the
+  account, refused when none is known, as a gate decision's approver), and only a run in a debug pause takes them.
+- How the run control reads that: step mode is on while the record's last `debug.command` is `step`; then each leaf
+  block pauses before its entry nodes (`step`), except the leaf the Step released: the first leaf from the block the
+  run paused before, so a Step from before a stage, an If, a Together or a Repeat runs the first leaf inside it. A
+  node pauses for a breakpoint when it is an entry node of a block the file names (the outermost such block is
+  reported; in step mode a leaf's entry node pauses as `step`, at the leaf); the pause a run resumes from has taken
+  up the breakpoints of every block its node enters, at that node's first visit, so a Continue from a Step into a
+  Together's first path does not pause again at its second.
+- A debug pause records its lines and event, prints `run <id>: paused before <address> (breakpoint|step)` and exits
+  0. A version-1 run has no block addresses: `--break`, `break`, `step` and `continue` refuse it.
 - With a breakpoint or step mode on, a layer holding a block to pause at runs one node at a time in declaration
   order; without either, the engine runs as before. A pause changes when a run stops, never what it does: Step and
   Continue go on with the pass the pause stopped, so a block that failed is not run again
@@ -140,11 +158,14 @@ A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([A
   finished block's rendered inputs, status and last output (a Wait until's last poll and its count), from its record,
   through a route that needs the launch cookie; never for a run on a `production: true` environment.
 - Breakpoints, Step, Continue and a start with breakpoints are refused, recording nothing, when the run's environment
-  is `production: true` in the effective config as read at that moment; clearing breakpoints and cancelling a run
-  stay allowed. Runs without breakpoints keep the policy above there.
+  is `production: true` in the effective config as read at that moment; clearing breakpoints (a change that leaves
+  none) and cancelling a run stay allowed. A run that resumes there (an approval, `hub workflow run --resume`) gets no
+  run control: no breakpoint or step mode pauses it, though it still goes on with a pass a debug pause stopped. Runs
+  without breakpoints keep the policy above there.
 - Nothing is rewound: no captured value is edited, no finished block re-run or skipped.
 - Record lines (`records.jsonl`, folded by core's `run_record`): `debug.breakpoints` (`addresses`, the set as written;
-  the latest line holds the run's breakpoints); `debug.pause` (`node`, `block`, `reason` `breakpoint` or `step`,
+  the latest line holds the run's breakpoints); `debug.breakpoints_unreadable` (`reason`: why the file counted as no
+  breakpoint); `debug.pause` (`node`, `block`, `reason` `breakpoint` or `step`,
   `number` from 1 in the run, then what the resume goes on with: `pass` (`layer`, `ends` and `before` by node with
   `state`, `output` and an end's `skip_cause`, `origin`, `failure_kind`, `changed`, `stale`, `gate`) and `gates` (each
   open gate's `attempt` and `due`); held groups stay in the `held` line written beside it); `debug.command` (`command`
@@ -235,9 +256,11 @@ gate-needing steps that do not depend on each other are a plan error naming both
 `hub scenario plan <name> --env <env> [--input k=v]… [--json]` shows each step's action, args (run-time values as
 `<$CTX.<name> from <node>>`), effect, service → endpoint, content hash, draft state and decision. It calls a script in
 `plan` mode, with no credential, only when all its args are known (else `runs with values known at run time`), and
-starts no run-mode process, agent, event or run; exit 1 on a `deny`. `hub scenario run` (same arguments, `--mode
-interactive|regression`, interactive by default) refuses a plan problem or `deny` (exit 1, no scenario run),
-pins its action files and gates, labels events `workflow: scenario:<name>`, and decides each action again as it runs.
+starts no run-mode process, agent, event or run; exit 1 on a `deny`. A required input that no `--input`, value of the
+environment or default fills exits 2, naming the input and the environment. `hub scenario run` (same arguments,
+`--mode interactive|regression`, interactive by default, `--break ADDR` for a breakpoint, § Debugging) refuses a plan
+problem or `deny` (exit 1, no scenario run), pins its action files and gates, labels events `workflow:
+scenario:<name>`, and decides each action again as it runs.
 
 - **Regression:** no agent, no token. A divergence (a failed action, an `expect` timeout, an output contract failure)
   fails the scenario run and prints `step <id>: <reason>`. Policy asks and `approval` nodes still pause it.

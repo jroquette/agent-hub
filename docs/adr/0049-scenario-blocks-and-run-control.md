@@ -127,6 +127,13 @@ with `hub scenario migrate` as its fix, a command not built yet ([design/hub-doc
 `hub init` seeds `demo-service-up` as `version: 2`, so a fresh hub has no such warning, and its `version: 1` text
 stays as a test fixture (AGH-513). Until the builder screen reads `version: 2`, that seed does not open in it: Build
 shows a `version: 2` file read-only (Format below).
+And the CLI's debugger: `hub scenario run --break ADDR`, `hub scenario break RUN ADDR… [--off|--set]`, `hub scenario
+step RUN` and `hub scenario continue RUN` keep a run's breakpoints in `breakpoints.json`, give the engine a run
+control over that file and the record (step mode while the last debug command is a Step), write the debug record
+lines and emit the `debug.*` events, and refuse a start with breakpoints, a breakpoint, a Step and a Continue on a
+production environment, recording nothing ([design/scenarios.md](../design/scenarios.md) § Debugging, AGH-514);
+a run resumed on an environment that became production gets no run control. A plan problem of a `version: 2`
+scenario names its block by address and tree key path.
 The scenario builder that shipped with AGH-521 is the one the owner validated in the playground, and where it differs
 from the decision above, the validated behavior wins for what the screen shows:
 
@@ -148,10 +155,10 @@ from the decision above, the validated behavior wins for what the screen shows:
   name, and a run input the start does not give takes the environment's non-secret value of that name before its
   declared default (`hub env` sets them). The decision above does not cover them; they live beside it in
   [design/scenarios.md](../design/scenarios.md) and [design/environments.md](../design/environments.md).
-- **Debugger.** Only the engine's run-control port and core's fold of the debug record lines and values are built.
-  Nothing sets a breakpoint, sends Step or Continue, or writes a debug line or event yet: `breakpoints.json`, the CLI
-  commands, the values read and their routes are not built, and the API paths in [API.md](../API.md) marked AGH-507
-  are the contract for them.
+- **Debugger.** The engine's run-control port, core's fold of the debug record lines and values, and the CLI's
+  commands are built: breakpoints, Step and Continue are set and sent from the terminal only. hub web has no
+  debugger yet: the values read and the routes are not built, and the API paths in [API.md](../API.md) marked
+  AGH-507 are the contract for them.
 
 ## More Information
 
