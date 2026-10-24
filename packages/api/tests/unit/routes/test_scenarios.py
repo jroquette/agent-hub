@@ -2050,6 +2050,23 @@ def test_writes_nothing_when_saved_unchanged(scenarios: Any) -> None:
     assert path.read_text(encoding="utf-8") == TREE
 
 
+def test_keeps_revision_when_graph_saved_again_unchanged(scenarios: Any) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    detail = scenarios.client.get("/api/v1/scenarios/demo/order-walk").json()
+    first = _put(scenarios, "order-walk", detail["document"], base=detail["content_hash"]).json()
+    path = scenarios.hub / "scenarios" / "demo" / "order-walk.yaml"
+    written = path.read_bytes()
+
+    again = _put(scenarios, "order-walk", detail["document"], base=first["content_hash"]).json()
+
+    assert (first["changed"], first["revision"]) == (True, 2)
+    assert (again["changed"], again["revision"]) == (False, 2)
+    assert again["content_hash"] == first["content_hash"]
+    assert writes.calls == ["scenarios/demo/order-walk.yaml"]
+    assert path.read_bytes() == written
+
+
 def test_writes_next_revision_when_tree_saved_with_an_edit(scenarios: Any) -> None:
     writes = _DiskWrites()
     scenarios.wire(item_version_writes=writes)
