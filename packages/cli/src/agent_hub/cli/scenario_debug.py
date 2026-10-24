@@ -19,12 +19,15 @@ gate, an include's first nodes) of a block the file names, the outermost first. 
 while the record's last debug command is ``step``: then every leaf block (Do, Wait until, You,
 Wait, and an Include as one block) pauses before its entry nodes, except the leaf the Step
 released, the first leaf from the block the run paused before, in declaration order (so a Step
-from before a container runs the first leaf inside it). The pause the run resumes from has taken
-up the breakpoints of every block that node enters, at its first visit.
+from before a container visits the first leaf inside it). The engine visits nodes layer by layer,
+so Steps follow that order, not the file's: a Together's paths interleave, and a leaf the run
+skips still takes a Step. The pause the run resumes from has taken up the breakpoints of every
+block that node enters, at its first visit.
 
-``hub scenario step|continue RUN`` take only a run in a debug pause: the command is recorded
-(``debug.command``: ``command``, ``approver``, the paused ``node`` and ``number``, and its
-event) under the run's lock, then the run resumes as ``hub workflow run --resume`` does. The
+``hub scenario step|continue RUN`` take only a run in a debug pause: once its snapshot still
+matches its ``content_hash`` and its ``debug.pause`` line can be read back, the command is
+recorded (``debug.command``: ``command``, ``approver``, the paused ``node`` and ``number``, and
+its event) under the run's lock, then the run resumes as ``hub workflow run --resume`` does. The
 approver is the account (``getpass``), refused when none is known, as a gate decision is.
 
 On an environment that is ``production: true`` in the effective config as read then, a start with
@@ -52,7 +55,12 @@ import typer
 from agent_hub.cli.collect import hub_project_name
 from agent_hub.cli.effective_config import load_effective_config_or_exit
 from agent_hub.cli.run_log import now
-from agent_hub.cli.workflow_command import continue_run, ended_check, existing_run
+from agent_hub.cli.workflow_command import (
+    check_snapshot,
+    continue_run,
+    ended_check,
+    existing_run,
+)
 from agent_hub.cli.workflow_runs import (
     DOCUMENT,
     SNAPSHOT,
@@ -73,6 +81,7 @@ from agent_hub.core.json_form import JsonValue
 from agent_hub.core.scenarios.access_policy import find_environment
 from agent_hub.core.scenarios.run_record import (
     DEBUG_BREAKPOINTS,
+    DEBUG_BREAKPOINTS_UNREADABLE,
     DEBUG_COMMAND,
     RunRecordError,
     debug_resume,
@@ -89,7 +98,6 @@ BREAKPOINTS: Final = "breakpoints.json"
 BREAKPOINTS_LOCK: Final = "breakpoints.lock"
 MAX_BREAKPOINTS_BYTES: Final = 64 << 10
 MAX_BREAKPOINTS: Final = 512
-UNREADABLE: Final = "debug.breakpoints_unreadable"
 # The blocks Step runs one at a time; containers and stages are entered.
 LEAF_KINDS: Final = frozenset({"do", "wait_until", "you", "wait", "include"})
 NO_ADDRESSES: Final = (
@@ -159,7 +167,7 @@ class FileRunControl:
                 self._noted.add(reason)
         if fresh:
             typer.echo(f"run {self._folder.name}: no breakpoint holds: {reason}", err=True)
-            self._note({"event": UNREADABLE, "reason": reason})
+            self._note({"event": DEBUG_BREAKPOINTS_UNREADABLE, "reason": reason})
         return self._stepping or bool(found)
 
     def pause_before(self, node: str) -> PauseReason | None:
@@ -397,6 +405,8 @@ def send_command(hub: Path, run: str, command: DebugCommand) -> int:
                 f"the run {run} is not in a debug pause: {command} resumes only a run paused"
                 " by a breakpoint or by step"
             )
+        # The resume's own checks first: a command it would refuse is not recorded.
+        check_snapshot(folder, header)
         try:
             debug_resume(records)
         except RunRecordError as error:

@@ -12,6 +12,7 @@ commands run in process with ``AGENT_HUB_ROOT`` naming the hub.
 
 import getpass
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -24,8 +25,9 @@ import pytest
 import yaml
 from typer.testing import CliRunner, Result
 
+from agent_hub.cli import scenario_debug
 from agent_hub.cli.main import app
-from agent_hub.cli.workflow_runs import snapshot_hash
+from agent_hub.cli.workflow_runs import WorkflowRunError, snapshot_hash
 from agent_hub.core.events.event import Event
 from agent_hub.core.testing.builders import an_environments_document
 from agent_hub.storage.event_store import open_event_store
@@ -312,6 +314,84 @@ def test_refuses_the_start_naming_the_address_when_the_tree_has_no_such_block(
     assert not debug_hub.folder.exists()
 
 
+def test_leaves_no_run_when_the_start_cannot_write_its_breakpoints(
+    debug_hub: DebugHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refused(folder: Path, addresses: object) -> None:
+        raise WorkflowRunError(f"cannot write the run {folder.name}'s breakpoints: disk full")
+
+    monkeypatch.setattr(scenario_debug, "write_breakpoints", refused)
+    debug_hub.order("fetched")
+
+    result = debug_hub.start("--break", "2.1")
+
+    assert result.exit_code == 1, result.output
+    assert "disk full" in plain(result.output)
+    assert not debug_hub.folder.exists()
+
+
+# AC-507.10: a breakpoint before an asked step answers no gate.
+
+ASKED = """\
+version: 2
+kind: scenario
+name: asked-write
+revision: 1
+inputs:
+  shop_order_id: {required: true}
+  personal_name: {required: true}
+  aws_account_id: {required: true}
+stages:
+- name: Fix
+  steps:
+  - wait_until: order-state
+    until: $self.output.order_id != ''
+    every: 15s
+    timeout: 10m
+    capture:
+      order_id: $self.output.order_id
+  - do: order-set-carrier
+    with: {order_id: $CTX.order_id}
+"""
+
+
+def test_opens_the_ask_and_runs_the_action_only_once_approved_when_a_breakpoint_holds_it(
+    debug_hub: DebugHub,
+) -> None:
+    (debug_hub.hub / "scenarios" / "fixture" / "asked-write.yaml").write_text(ASKED)
+    git(debug_hub.hub, "add", "-A")
+    git(debug_hub.hub, "commit", "-q", "-m", "a scenario with an asked write")
+    debug_hub.order("sample")
+    account = f"aws_account_id={VALUES['aws_account_id']}"
+
+    started = debug_hub.start(
+        "--break", "1.2", "--input", account, name="asked-write", environment="staging"
+    )
+    stepped = debug_hub.run("scenario", "step", RUN)
+    asked = [line for line in debug_hub.records() if line["event"] == "action"]
+    refused = debug_hub.run("scenario", "continue", RUN)
+    approved = debug_hub.run("workflow", "approve", RUN)
+
+    assert last_line(started) == f"run {RUN}: paused before 1.2 (breakpoint)", started.output
+    assert last_line(stepped) == f"run {RUN}: paused at fix--2__ask", stepped.output
+    assert [line["node"] for line in asked] == ["fix--1"]
+    assert refused.exit_code == 1, refused.output
+    assert "not in a debug pause" in plain(refused.output)
+    assert (approved.exit_code, last_line(approved)) == (0, f"run {RUN}: done"), approved.output
+    lines = debug_hub.records()
+    [pause] = [line for line in lines if line["event"] == "debug.pause"]
+    assert (pause["node"], pause["block"]) == ("fix--2__ask", "1.2")
+    events = [line["event"] for line in lines]
+    decided = events.index("decision")
+    [ran] = [
+        index
+        for index, line in enumerate(lines)
+        if line.get("node") == "fix--2" and line["event"] == "action"
+    ]
+    assert decided < ran
+    assert [line["command"] for line in lines if line["event"] == "debug.command"] == ["step"]
+
+
 # AC-507.11: Step runs exactly the next leaf block; Continue runs to the next breakpoint.
 
 
@@ -382,6 +462,67 @@ def test_steps_one_path_block_at_a_time_when_a_together_is_stepped(debug_hub: De
     ]
 
 
+TWO_PATHS = """\
+version: 2
+kind: scenario
+name: two-paths
+revision: 1
+inputs:
+  shop_order_id: {required: true}
+  personal_name: {required: true}
+  aws_account_id: {required: true}
+stages:
+- name: Fix
+  steps:
+  - wait_until: order-state
+    until: $self.output.order_id != ''
+    every: 15s
+    timeout: 10m
+    capture:
+      order_id: $self.output.order_id
+  - together:
+    - - do: order-set-carrier
+        with: {order_id: $CTX.order_id}
+      - do: queue-send
+        with: {message: demo.first-path, order_id: $CTX.order_id}
+    - - do: shipments-regenerate
+        with: {order_id: $CTX.order_id}
+      - do: shipments-mark-in-transit
+        with: {order_id: $CTX.order_id}
+  - do: queue-send
+    with: {message: demo.process-order, order_id: $CTX.order_id}
+"""
+
+
+def test_steps_the_paths_layer_by_layer_when_a_together_holds_two_blocks_per_path(
+    debug_hub: DebugHub,
+) -> None:
+    (debug_hub.hub / "scenarios" / "fixture" / "two-paths.yaml").write_text(TWO_PATHS)
+    git(debug_hub.hub, "add", "-A")
+    git(debug_hub.hub, "commit", "-q", "-m", "a together of two blocks per path")
+    debug_hub.order("sample")
+    started = debug_hub.start("--break", "1.2", name="two-paths")
+
+    stepped = [debug_hub.run("scenario", "step", RUN) for _ in range(5)]
+
+    assert last_line(started) == f"run {RUN}: paused before 1.2 (breakpoint)", started.output
+    assert [last_line(result) for result in stepped] == [
+        f"run {RUN}: paused before 1.2.p2.1 (step)",
+        f"run {RUN}: paused before 1.2.p1.2 (step)",
+        f"run {RUN}: paused before 1.2.p2.2 (step)",
+        f"run {RUN}: paused before 1.3 (step)",
+        f"run {RUN}: done",
+    ]
+    assert passes(debug_hub.records()) == [
+        ["fix--1"],
+        ["fix--2-p1-1"],
+        ["fix--2-p2-1"],
+        ["fix--2-p1-2"],
+        ["fix--2-p2-2"],
+        ["fix--3"],
+    ]
+
+
 def test_pauses_once_before_a_together_when_continued_from_a_step_into_it(
     debug_hub: DebugHub,
 ) -> None:
@@ -436,6 +577,26 @@ def test_pauses_before_the_next_block_when_a_gate_met_while_stepping_is_answered
     assert [line["command"] for line in commands] == ["step", "step"]
 
 
+def test_records_no_command_when_the_resume_is_refused_by_a_changed_snapshot(
+    debug_hub: DebugHub,
+) -> None:
+    debug_hub.order("fetched")
+    started = debug_hub.start("--break", "2.1")
+    snapshot = debug_hub.folder / "snapshot" / "workflow.json"
+    snapshot.write_bytes(snapshot.read_bytes() + b" ")
+    record = (debug_hub.folder / "records.jsonl").read_bytes()
+    stored = debug_hub.stored()
+
+    refused = [debug_hub.run("scenario", command, RUN) for command in ("step", "continue")]
+
+    assert last_line(started) == f"run {RUN}: paused before 2.1 (breakpoint)", started.output
+    for result in refused:
+        assert result.exit_code == 1, result.output
+        assert "content_hash" in plain(result.output)
+    assert (debug_hub.folder / "records.jsonl").read_bytes() == record
+    assert debug_hub.stored() == stored
+
+
 # AC-507.12: edits during a pause change nothing of the run.
 
 
@@ -458,11 +619,16 @@ def test_runs_the_pinned_content_when_the_scenario_and_an_action_are_edited_duri
 
     unknown = debug_hub.run("scenario", "break", RUN, "9.1")
     stepped = debug_hub.run("scenario", "step", RUN)
+    debug_hub.order("reviewed")
+    added = debug_hub.run("scenario", "break", RUN, "3.5")
+    continued = debug_hub.run("scenario", "continue", RUN)
 
     assert last_line(started) == f"run {RUN}: paused before 2.1 (breakpoint)", started.output
     assert unknown.exit_code == 1, unknown.output
     assert '"9.1"' in plain(unknown.output)
     assert last_line(stepped) == f"run {RUN}: paused before 2.2 (step)", stepped.output
+    assert added.exit_code == 0, added.output
+    assert last_line(continued) == f"run {RUN}: paused before 3.5 (breakpoint)", continued.output
     lines = debug_hub.records()
     [review] = [line for line in lines if line["event"] == "action" and line["node"] == "review--1"]
     assert review["inputs"]["message"] == "demo.review-orders"
@@ -476,6 +642,9 @@ def test_runs_the_pinned_content_when_the_scenario_and_an_action_are_edited_duri
     calls = [line for line in lines if line["event"] == "action"]
     assert calls
     assert all(line["content_hash"] == header["actions"][line["action"]] for line in calls)
+    assert all(line["status"] == "ok" for line in calls)
+    sent = {line["inputs"].get("message") for line in calls}
+    assert not sent & {"demo.edited", "demo.extra"}
 
 
 # AC-507.13: production refuses the debugger and records nothing; clearing stays allowed.
@@ -502,6 +671,7 @@ def test_refuses_debug_commands_and_records_nothing_when_the_environment_became_
     debug_hub.write_hub_json(document)
     record = (debug_hub.folder / "records.jsonl").read_bytes()
     marked = (debug_hub.folder / "breakpoints.json").read_bytes()
+    stored = debug_hub.stored()
 
     refused = [
         debug_hub.run("scenario", "break", RUN, "3.1"),
@@ -510,6 +680,9 @@ def test_refuses_debug_commands_and_records_nothing_when_the_environment_became_
         debug_hub.run("scenario", "continue", RUN),
     ]
     unchanged = (debug_hub.folder / "records.jsonl").read_bytes()
+    kept = (debug_hub.folder / "breakpoints.json").read_bytes()
+    emitted = debug_hub.stored()
+    removed = debug_hub.run("scenario", "break", RUN, "2.1", "--off")
     cleared = debug_hub.run("scenario", "break", RUN, "--set")
 
     assert last_line(started) == f"run {RUN}: paused before 2.1 (breakpoint)", started.output
@@ -517,13 +690,16 @@ def test_refuses_debug_commands_and_records_nothing_when_the_environment_became_
         assert result.exit_code == 1, result.output
         assert "production" in plain(result.output)
     assert unchanged == record
-    assert cleared.exit_code == 0, cleared.output
-    assert last_line(cleared) == f"run {RUN}: no breakpoints"
-    assert marked != (debug_hub.folder / "breakpoints.json").read_bytes()
+    assert kept == marked
+    assert emitted == stored
+    for result in (removed, cleared):
+        assert result.exit_code == 0, result.output
+        assert last_line(result) == f"run {RUN}: no breakpoints"
     assert json.loads((debug_hub.folder / "breakpoints.json").read_text()) == {"addresses": []}
     lines = debug_hub.records()
     assert [line["addresses"] for line in lines if line["event"] == "debug.breakpoints"] == [
         ["2.1"],
+        [],
         [],
     ]
     assert [line for line in lines if line["event"] == "debug.command"] == []
@@ -596,7 +772,17 @@ def test_adds_removes_and_replaces_breakpoints_when_break_runs(debug_hub: DebugH
     assert not [path.name for path in debug_hub.folder.iterdir() if path.name.endswith(".tmp")]
 
 
-@pytest.mark.parametrize("kind", ["junk", "link"])
+# Each bad breakpoints file, and a word of the reason it counts as none.
+BAD_FILES = {
+    "junk": "is not an object",
+    "link": "cannot be read",
+    "unknown": 'names "9.9"',
+    "large": "regular file",
+    "fifo": "regular file",
+}
+
+
+@pytest.mark.parametrize("kind", sorted(BAD_FILES))
 def test_counts_no_breakpoint_and_records_why_when_the_breakpoints_file_is_bad(
     debug_hub: DebugHub, tmp_path: Path, kind: str
 ) -> None:
@@ -606,10 +792,16 @@ def test_counts_no_breakpoint_and_records_why_when_the_breakpoints_file_is_bad(
     marked.unlink()
     if kind == "junk":
         marked.write_text("{not json")
-    else:
+    elif kind == "link":
         elsewhere = tmp_path / "elsewhere.json"
         elsewhere.write_text(json.dumps({"addresses": ["1.3"]}))
         marked.symlink_to(elsewhere)
+    elif kind == "unknown":
+        marked.write_text(json.dumps({"addresses": ["1.3", "9.9"]}))
+    elif kind == "large":
+        marked.write_text(json.dumps({"addresses": ["1.3"], "pad": "x" * (64 << 10)}))
+    else:
+        os.mkfifo(marked)
 
     continued = debug_hub.run("scenario", "continue", RUN)
 
@@ -618,7 +810,7 @@ def test_counts_no_breakpoint_and_records_why_when_the_breakpoints_file_is_bad(
     lines = debug_hub.records()
     unreadable = [line for line in lines if line["event"] == "debug.breakpoints_unreadable"]
     assert len(unreadable) == 1
-    assert unreadable[0]["reason"]
+    assert BAD_FILES[kind] in unreadable[0]["reason"]
     assert [line for line in lines if line["event"] == "debug.pause"][1:] == []
 
 
@@ -656,6 +848,7 @@ def test_refuses_debugging_with_a_plain_reason_when_the_scenario_is_a_graph(
     refused = [
         debug_hub.run("scenario", "break", RUN, "1.1"),
         debug_hub.run("scenario", "step", RUN),
+        debug_hub.run("scenario", "continue", RUN),
     ]
 
     assert refused_start.exit_code == 1, refused_start.output

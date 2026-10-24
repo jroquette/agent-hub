@@ -818,15 +818,21 @@ def _resume(hub: Path, run_id: str) -> int:
         return continue_run(hub, folder)
 
 
+def check_snapshot(folder: Path, header: Mapping[str, JsonValue]) -> None:
+    """Refuse the run in ``folder`` when its snapshot no longer matches the ``content_hash`` of
+    its start record ``header``."""
+    if snapshot_hash(folder / SNAPSHOT) != header.get("content_hash"):
+        raise WorkflowRunError(
+            f"the run {folder.name}'s snapshot no longer matches its content_hash"
+        )
+
+
 def continue_run(hub: Path, folder: Path) -> int:
     """Resume the run in ``folder`` from its snapshot and records (the caller holds its lock and
     dropped its torn tail); the run's exit code."""
     records = ended_check(folder)
     header = records[0]
-    if snapshot_hash(folder / SNAPSHOT) != header.get("content_hash"):
-        raise WorkflowRunError(
-            f"the run {folder.name}'s snapshot no longer matches its content_hash"
-        )
+    check_snapshot(folder, header)
     try:
         document = parse_workflow(_json((folder / SNAPSHOT / DOCUMENT).read_bytes()))
     except (OSError, WorkflowLoadError) as error:

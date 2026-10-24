@@ -35,6 +35,9 @@ A debugging run (ADR 0049; docs/design/scenarios.md § Debugging) adds three lin
 - ``debug.command``: ``command`` (``step`` or ``continue``), ``approver``, and the ``node`` and
   ``number`` of the pause it resumes.
 
+The run control also writes ``debug.breakpoints_unreadable`` (``reason``: why the breakpoints
+file counted as none), which the view leaves out.
+
 A pause is the run's while no ``resume``, ``start`` or ``end`` line follows it: then the run is
 paused by the debugger, not by a gate an earlier pass left open (``open_investigation`` is
 ``None``). ``debug_resume`` reads the pass back, so a run rebuilt from its record resumes as the
@@ -71,6 +74,7 @@ ACTION_START: Final = "action_start"
 DEBUG_PAUSE: Final = "debug.pause"
 DEBUG_COMMAND: Final = "debug.command"
 DEBUG_BREAKPOINTS: Final = "debug.breakpoints"
+DEBUG_BREAKPOINTS_UNREADABLE: Final = "debug.breakpoints_unreadable"
 # The lines after which a debug pause is no longer the run's: the pass it stopped went on.
 _PASS_LINES: Final = frozenset({"start", "resume", "end"})
 _NODE_STATES: Final = frozenset(get_args(NodeState.__value__))

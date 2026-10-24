@@ -138,17 +138,28 @@ A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([A
   read; a Together, before any path. An Include is one block: nothing inside the scenario it includes takes a
   breakpoint. The pause answers no gate.
 - `hub scenario step RUN` runs exactly the next leaf block (Do, Wait until, You, Wait, and an Include as one block)
-  in declaration order and pauses before the one after it, entering containers; the run stays in step mode until
-  `hub scenario continue RUN`, which runs to the next breakpoint or the end. A gate met meanwhile pauses as before;
-  once answered, a stepping run pauses before the next block. Both are resumes, recorded with who sent them (the
-  account, refused when none is known, as a gate decision's approver), and only a run in a debug pause takes them.
+  and pauses before the one after it, entering containers; the run stays in step mode until `hub scenario continue
+  RUN`, which runs to the next breakpoint or the end. A gate met meanwhile pauses as before; once answered, a
+  stepping run pauses before the next block. Both are resumes, recorded with who sent them (the account, refused
+  when none is known, as a gate decision's approver), and only a run in a debug pause takes them; one the resume
+  would refuse (a snapshot that no longer matches its `content_hash`) records nothing.
+- "Next" is the order the run visits blocks: layer by layer, in declaration order inside a layer, not the order of
+  the file. So a Together's paths interleave: with two blocks in each path, the Steps run `p1.1`, `p2.1`, `p1.2`,
+  `p2.2`. A leaf the run visits and skips (such as the first block of a branch whose condition is false) still
+  takes a Step: that Step runs nothing, and the run pauses before the leaf it visits next. Only an Include's first
+  nodes pause: its other nodes run as the run reaches them, so they may run during another path's Step.
 - How the run control reads that: step mode is on while the record's last `debug.command` is `step`; then each leaf
-  block pauses before its entry nodes (`step`), except the leaf the Step released: the first leaf from the block the
-  run paused before, so a Step from before a stage, an If, a Together or a Repeat runs the first leaf inside it. A
+  block pauses before its entry nodes (`step`), except the leaf the Step released: the first leaf, in declaration
+  order, from the block the run paused before, so a Step from before a stage, an If, a Together or a Repeat visits
+  the first leaf inside it (for an If, the first leaf of `then`, which the run skips when the condition is false). A
   node pauses for a breakpoint when it is an entry node of a block the file names (the outermost such block is
   reported; in step mode a leaf's entry node pauses as `step`, at the leaf); the pause a run resumes from has taken
   up the breakpoints of every block its node enters, at that node's first visit, so a Continue from a Step into a
   Together's first path does not pause again at its second.
+- A gate decision (`hub workflow approve|reject|respond`) on a gate the stopped pass left open, sent while the debug
+  pause is the run's, is recorded and resumes the run as `hub workflow run --resume` does, with no `debug.command`
+  line: the stopped pass goes on, then pauses on that gate, and the next `hub workflow run --resume` takes up the
+  answer (a second decision is refused: the gate is already decided).
 - A debug pause records its lines and event, prints `run <id>: paused before <address> (breakpoint|step)` and exits
   0. A version-1 run has no block addresses: `--break`, `break`, `step` and `continue` refuse it.
 - With a breakpoint or step mode on, a layer holding a block to pause at runs one node at a time in declaration

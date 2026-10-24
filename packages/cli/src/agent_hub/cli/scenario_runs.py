@@ -190,18 +190,19 @@ def load_scenario(
 
 def start(hub: Path, run_id: str, begin: ScenarioStart) -> int:
     """Make the scenario run ``run_id``: its snapshot and start record, then run it; the exit
-    code (0 done or paused, 1 otherwise). A snapshot that cannot be written leaves no run."""
+    code (0 done or paused, 1 otherwise). A snapshot, start record, inputs or breakpoints that
+    cannot be written leave no run."""
     folder = run_folder(hub, run_id)
     make_run(folder)
     begun = False
     try:
         with run_lock(folder):
             header = _begin(folder, begin)
-            begun = True
             inputs: dict[str, JsonValue] = {"event": "inputs", "inputs": begin.inputs}
             append_record(folder, inputs)
             if begin.breakpoints:
                 record_breakpoints(hub, folder, begin.breakpoints, header=header)
+            begun = True
             return execute(hub, folder, read_records(folder), resumed=False)
     except BaseException:
         if not begun:
