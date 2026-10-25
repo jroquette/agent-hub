@@ -1006,7 +1006,7 @@ The MVP goes up to Phase 2: generate hubs from Loki and see the agents' sessions
 | 3 · Knowledge and decisions | Provenance in the brain, inbox triage in the UI (accept and reject moved to Phase 2 by AGH-201; snooze stays here), extracted decisions, learning metrics | One learning traced from the session to the rule |
 | 4 · Workflows as data and actions | Generic executor reading the workflow ([ADR 0032](adr/0032-workflow-engine.md)), gates approved from the UI, adapters for other agents | — |
 
-Status (2026-10-23, latest release v0.23.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
+Status (2026-10-25, latest release v0.24.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
 Phase 1 in progress: `init`, `sync` (`--adopt`), `doctor`, `worktree`, `brief`, `agent`, `next`, `run` and `bench`
 shipped in v0.8.0, and `setup`, `start` and `ship` in v0.9.0. Phase 2's first slice is shipped too: the control plane
 `hub web` (AGH-200) in v0.9.0 and its clarity pass (AGH-201: session labels, problems, learning accept and reject
@@ -1031,7 +1031,9 @@ the dispatched release workflow (ADR 0047), and v0.21.0 the Scenarios screens (A
 outcome and the dependents' preflight (AGH-473) and `repos[].ui_paths` with the `ux` and `overengineering` review
 outputs (AGH-474), and v0.22.0 the knowledge view in `hub web`: search, note backlinks and the learning trail
 (AGH-393), and v0.23.0 the AI Toolkit flows: every skill runs as a workflow pack, started on a schedule or a
-GitHub event by `hub web` (AGH-480, ADR 0048), and the example scenario `hub init` writes (AGH-365);
+GitHub event by `hub web` (AGH-480, ADR 0048), and the example scenario `hub init` writes (AGH-365), and v0.24.0
+the scenario builder and the playground's screens (AGH-521), the flaky workflow pack (AGH-449) and the post-merge
+signal in the brief's Outcome (AGH-451);
 other agents' adapters stay in Phase 4. The Phase 1 gate (Loki hub recreated) is open;
 pilot: AGH-54.
 
