@@ -61,10 +61,11 @@ region. A scenario planned or started in environment E (`hub scenario plan|run -
 fills each declared input it is not given with E's value of the same name, typed as the input declares (`integer`,
 `number`, `boolean` as `true`/`false`; a value that does not read as the type refuses the plan or start, naming the
 input and environment). The order is: **given input > environment value > declared default**; a required input that
-none of them fills refuses the plan or start, naming the input (`hub scenario plan|run` name the environment too). A
-value for a name the scenario does not declare is ignored; the run record keeps the effective inputs. The effective
-values of a committed environment are `hub.json`'s, then `hub.local.json`'s per key. Values are never secrets: a
-secret-shaped one is refused like any string here, and credentials stay in `credentials.env_file`.
+none of them fills refuses the plan or start, naming the input and the environment (`hub scenario plan|run` and hub
+web's plan and start alike). A value for a name the scenario does not declare is ignored; the run record keeps the
+effective inputs. The effective values of a committed environment are `hub.json`'s, then `hub.local.json`'s per key.
+Values are never secrets: a secret-shaped one is refused like any string here, and credentials stay in
+`credentials.env_file`.
 
 ```json
 {"environments": {"local": {"values": {"personal_name": "jane-personal", "aws_account_id": "123456789012"}}}}
