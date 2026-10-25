@@ -5,6 +5,8 @@ import { dependsOn, toDocument, type BuilderNode, type Json } from "./model";
 import {
   JOIN_RULE,
   addressOfKey,
+  addressed,
+  decisionsAfter,
   findItem,
   idChanges,
   insertAt,
@@ -541,6 +543,40 @@ describe("scenario block program, written as blocks (version 2)", () => {
       ["new", "1.5"],
     ]);
     expect(new Set(changes.map((change) => change.id)).size).toBe(2);
+  });
+
+  it("lists each block a proposal removes as a change of its own, its decision kept while others are taken", () => {
+    const mine = stagesOf(tree("demo-order-roundtrip"));
+    // The proposal drops the two alike `queue-send demo.poll` blocks of Approval (7.1 and 7.3)
+    // and the same block in Payment (8.3).
+    const proposed = tree("demo-order-roundtrip");
+    const [, , , , , , approval, payment] = proposed.stages as { steps: Json[] }[];
+    approval?.steps.splice(2, 1);
+    approval?.steps.splice(0, 1);
+    payment?.steps.splice(2, 1);
+    const theirs = stagesOf(proposed);
+
+    const changes = treeChanges(mine, theirs);
+
+    expect(changes.map((change) => [change.kind, change.address])).toEqual([
+      ["removed", "7.1"],
+      ["removed", "7.3"],
+      ["removed", "8.3"],
+    ]);
+    expect(new Set(changes.map((change) => change.id)).size).toBe(3);
+    // Block 7.1 taken out: its twin is block 7.2 now, still a change to decide.
+    const [first, twin] = changes.map((change) => change.id);
+    const { items, keys } = addressed(takeFrom(mine, "7.1", true).rest);
+    const left = treeChanges(items, theirs);
+    expect(left.map((change) => [change.kind, change.address])).toEqual([
+      ["removed", "7.2"],
+      ["removed", "8.3"],
+    ]);
+    expect(decisionsAfter(new Set([first ?? ""]), changes, left, keys)).toEqual(new Set());
+    // Its twin's removal rejected before: the decision stays on it, at its new address.
+    expect(decisionsAfter(new Set([first ?? "", twin ?? ""]), changes, left, keys)).toEqual(
+      new Set([left[0]?.id]),
+    );
   });
 
   it("draws the stages as one chain of nodes: a stage's first block runs after the last one before it", () => {

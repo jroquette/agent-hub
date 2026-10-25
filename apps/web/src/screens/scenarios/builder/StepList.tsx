@@ -671,7 +671,7 @@ export function StepList(props: StepListProps) {
             look,
             "stage",
             item.name || "A stage with no name",
-            item.name,
+            item.name || "A stage with no name",
             count,
             count,
             null,
@@ -680,7 +680,11 @@ export function StepList(props: StepListProps) {
             true,
           )}
           {open && (
-            <div role="group" className="st-group" aria-label={`Stage ${number}: ${item.name}`}>
+            <div
+              role="group"
+              className="st-group"
+              aria-label={`Stage ${number}: ${item.name || "A stage with no name"}`}
+            >
               {list(item.steps, { in: "stage", owner: id }, level + 1)}
             </div>
           )}

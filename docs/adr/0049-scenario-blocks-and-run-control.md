@@ -157,7 +157,7 @@ And hub web's builder on the tree (AGH-517, [screen spec 23](../design/control-p
 `version: 2` file is edited as its stages. The builder's model reads `stages` straight into its blocks, each keyed by
 its address, and writes them back to the same JSON the server parsed (its keys in the canonical order), so no block
 is left loose and a file opened and saved unchanged writes nothing; a block's id is written only when it gives one
-(without one it runs under the id its place gives, and an edit that gives it another place rewrites the references
+(the one its place gives too, which it then keeps when it moves; without one it runs under the id its place gives, and an edit that gives it another place rewrites the references
 to it, so no reference starts reading another block). The step list shows a header per stage (added from the Blocks
 tab's Stage block or a "+" between stages, renamed in its editor, moved and removed as a step is), each block
 numbered by its address; a block's editor has no "runs after", no `when` and no join rule; the Graph view draws how

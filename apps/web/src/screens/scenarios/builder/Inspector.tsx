@@ -698,6 +698,7 @@ export function BlockInspector({
   environment,
   placeId,
   named = false,
+  onId,
 }: {
   document: BuilderDocument;
   node: BuilderNode;
@@ -729,6 +730,9 @@ export function BlockInspector({
   placeId?: string | undefined;
   /** Written as blocks: whether the block gives its id (even one equal to its place's). */
   named?: boolean;
+  /** Written as blocks: the id given in its field, the block's own from then on (even one equal
+   * to its place's), or "" for none (it runs under its place's). */
+  onId?: ((id: string) => void) | undefined;
 }) {
   const look = kindLook(node.type);
   const tree = placeId !== undefined;
@@ -1329,9 +1333,9 @@ export function BlockInspector({
                       }}
                       onBlur={() => {
                         if (id === ownId) return;
-                        if (id === "") onChange({ ...node, id: "" });
-                        else if (/^[a-z][a-z0-9-]*$/.test(id)) onChange({ ...node, id });
-                        else setId(ownId);
+                        if (id !== "" && !/^[a-z][a-z0-9-]*$/.test(id)) setId(ownId);
+                        else if (onId) onId(id);
+                        else onChange({ ...node, id });
                       }}
                     />
                   )}
@@ -1569,6 +1573,7 @@ export function GroupInspector({
   onClose,
   openerRef,
   footer,
+  problems = [],
 }: {
   kind: "if" | "parallel";
   number: string | undefined;
@@ -1580,9 +1585,12 @@ export function GroupInspector({
   onClose: () => void;
   openerRef: RefObject<HTMLElement | null>;
   footer?: ReactNode;
+  /** The server's problems on it (an If's condition). */
+  problems?: readonly BuilderProblem[];
 }) {
   const look = kindLook(kind === "if" ? "branch" : "parallel");
   const isIf = kind === "if";
+  const errors = problems.filter((problem) => problem.severity === "error");
   return (
     <FormShell
       icon={look.icon}
@@ -1602,6 +1610,13 @@ export function GroupInspector({
       openerRef={openerRef}
       footer={footer}
     >
+      {errors.length > 0 && (
+        <Banner tone="error" live={false}>
+          {errors.map((problem, index) => (
+            <div key={index}>{problem.message}</div>
+          ))}
+        </Banner>
+      )}
       {isIf ? (
         <Section
           title="Condition"

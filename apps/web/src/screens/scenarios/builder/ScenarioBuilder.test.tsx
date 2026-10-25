@@ -377,6 +377,11 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const editor = screen.getByRole("region", { name: "Inspector: Stage 2" });
     const nameField = within(editor).getByLabelText("Name");
     await user.clear(nameField);
+    // A stage with no name is read out as it shows.
+    expect(screen.getByRole("treeitem", { name: /^Stage 2:/ })).toHaveAttribute(
+      "aria-label",
+      "Stage 2: A stage with no name, 0 steps.",
+    );
     await user.type(nameField, "Ship");
     const stage = screen.getByRole("group", { name: "Stage 2: Ship" });
     await user.click(within(stage).getByRole("button", { name: /Empty. Add a step here/ }));
@@ -450,6 +455,40 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await save(user);
     const sent = (await savedDocument(requests)) as { stages: { steps: { id?: string }[] }[] };
     expect(sent.stages[0]?.steps.map((step) => step.id ?? null)).toEqual(["fetch", null]);
+  });
+
+  it("scenario builder writes the id a block's place gives when it is given as its own, and keeps it when a block goes before it", async () => {
+    const user = userEvent.setup();
+    const { requests } = renderTree(REFERENCE, { [SAVE]: () => SAVED });
+
+    await user.click(await screen.findByRole("treeitem", { name: /^Step 1\.2,/ }));
+    const editor = screen.getByRole("region", { name: "Inspector: Wait until fetch-order--2" });
+    await user.click(within(editor).getByRole("button", { name: "More: id" }));
+    const id = within(editor).getByLabelText("Id");
+    expect(id).toHaveValue("");
+    // The id its place gives, typed as its own: it is the block's id now, written in the file.
+    await user.type(id, "fetch-order--2");
+    await user.tab();
+    expect(await screen.findByText("Unsaved")).toBeInTheDocument();
+    expect(id).toHaveValue("fetch-order--2");
+    // A Pause put before it: the block is 1.3 and runs under the id it was given.
+    await user.click(screen.getByRole("treeitem", { name: /^Step 1\.1,/ }));
+    const blocks = screen.getByRole("complementary", { name: "Blocks, variables and actions" });
+    await user.click(within(blocks).getByRole("button", { name: "Add Pause after step 1.1" }));
+    await user.click(await screen.findByRole("treeitem", { name: /^Step 1\.3, Wait until/ }));
+    const moved = screen.getByRole("region", { name: "Inspector: Wait until fetch-order--2" });
+    await user.click(within(moved).getByRole("button", { name: "More: id" }));
+    expect(within(moved).getByLabelText("Id")).toHaveValue("fetch-order--2");
+
+    await save(user);
+    const sent = (await savedDocument(requests)) as { stages: { steps: unknown[] }[] };
+    const [fetch, pinned] = (aTreeDocument(REFERENCE) as { stages: { steps: object[] }[] })
+      .stages[0]?.steps ?? [{}, {}];
+    expect(sent.stages[0]?.steps).toStrictEqual([
+      fetch,
+      { wait: { duration: "30s" } },
+      { ...pinned, id: "fetch-order--2" },
+    ]);
   });
 
   it("scenario builder rewrites what reads a block written as blocks when its own id is renamed", async () => {
@@ -642,7 +681,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.click(screen.getByRole("button", { name: "Graph" }));
 
     expect(
-      await screen.findByText(/The graph shows how the blocks run: edit them in Blocks/),
+      await screen.findByText("The graph shows how the blocks run: edit them in Blocks."),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Add a block/ })).not.toBeInTheDocument();
   });
@@ -695,6 +734,142 @@ describe("ScenarioBuilder (scenario builder)", () => {
     ]);
     await save(user);
     expect(await savedDocument(requests)).toStrictEqual(proposed);
+  });
+
+  it("scenario builder's Accept all takes the stages of Claude's proposal for a scenario written as blocks", async () => {
+    const user = userEvent.setup();
+    const proposed = aTreeDocument("blocks-together") as {
+      stages: { name: string; steps: unknown[] }[];
+    };
+    proposed.stages[0]?.steps.shift();
+    proposed.stages.push({ name: "Ship", steps: [{ wait: { duration: "30s" } }] });
+    const { requests } = renderTree("blocks-together", {
+      [SAVE]: () => SAVED,
+      [`${DETAIL}/proposal`]: {
+        path: ".agent-runs/proposals/scenarios/orders/order-lifecycle.yaml",
+        document: proposed,
+        check: { loads: true, yaml: "", problems: [], nodes: [] },
+        problem: null,
+      },
+      [`POST ${DETAIL}/proposal/dismiss`]: {},
+    });
+
+    const proposes = await screen.findByText("Claude proposes");
+    expect(proposes.parentElement).toHaveTextContent(/1 new or changed block, 1 removed/);
+    await user.click(screen.getByRole("button", { name: "Accept all" }));
+
+    expect(await screen.findByRole("treeitem", { name: /^Stage 2: Ship/ })).toBeInTheDocument();
+    await save(user);
+    expect(await savedDocument(requests)).toStrictEqual(proposed);
+  });
+
+  it("scenario builder takes or leaves each of two alike blocks Claude's proposal removes, in one stage and across stages", async () => {
+    const user = userEvent.setup();
+    // The proposal drops the two alike `queue-send demo.poll` blocks of Approval (7.1 and 7.3)
+    // and the same block in Payment (8.3).
+    const dropped = (stage: number, ...at: number[]) => {
+      const changed = aTreeDocument(REFERENCE) as { stages: { steps: unknown[] }[] };
+      for (const index of at) changed.stages[stage]?.steps.splice(index, 1);
+      return changed;
+    };
+    const proposed = dropped(6, 2, 0);
+    proposed.stages[7]?.steps.splice(2, 1);
+    const { requests } = renderTree(REFERENCE, {
+      [SAVE]: () => SAVED,
+      [`${DETAIL}/proposal`]: {
+        path: ".agent-runs/proposals/scenarios/orders/order-lifecycle.yaml",
+        document: proposed,
+        check: { loads: true, yaml: "", problems: [], nodes: [] },
+        problem: null,
+      },
+      [`POST ${DETAIL}/proposal/dismiss`]: {},
+    });
+
+    await screen.findByText("Claude proposes");
+    await user.click(screen.getByRole("button", { name: "Review" }));
+    const review = screen.getByRole("region", { name: "Claude's proposal" });
+    const listed = () =>
+      within(review)
+        .getAllByRole("button", { name: /^Accept / })
+        .map((button) => button.getAttribute("aria-label"));
+    expect(listed()).toEqual(["Accept block 7.1", "Accept block 7.3", "Accept block 8.3"]);
+
+    // One taken: only that block goes, and its twin (block 7.2 now) is still to decide.
+    await user.click(within(review).getByRole("button", { name: "Accept block 7.1" }));
+    await waitFor(() => {
+      expect(listed()).toEqual(["Accept block 7.2", "Accept block 8.3"]);
+    });
+    // One left as it is: the other is still to decide.
+    await user.click(within(review).getByRole("button", { name: "Reject block 7.2" }));
+    expect(listed()).toEqual(["Accept block 8.3"]);
+    await user.click(within(review).getByRole("button", { name: "Accept block 8.3" }));
+
+    // Every change decided: the review closes and the proposal is dismissed.
+    await waitFor(() => {
+      expect(screen.queryByRole("region", { name: "Claude's proposal" })).not.toBeInTheDocument();
+    });
+    expect(requests.some((request) => request.url.endsWith("/proposal/dismiss"))).toBe(true);
+    await save(user);
+    const expected = dropped(6, 0);
+    expected.stages[7]?.steps.splice(2, 1);
+    expect(await savedDocument(requests)).toStrictEqual(expected);
+  });
+
+  it("scenario builder pins a problem of a scenario written as blocks on its block, the field it names and the Problems list", async () => {
+    const user = userEvent.setup();
+    renderTree("blocks-if-else", {
+      [VALIDATE]: () => ({
+        loads: false,
+        yaml: "",
+        problems: [
+          {
+            node: "check--3",
+            key: "stages[0].steps[2].do",
+            line: null,
+            message: "unknown action 'queue-send'",
+            severity: "error",
+          },
+          {
+            node: "check--2-then-1",
+            key: "stages[0].steps[1].if",
+            line: null,
+            message: "the If's condition names no value",
+            severity: "error",
+          },
+        ],
+        nodes: [],
+      }),
+    });
+
+    expect(await screen.findByText("2 problems")).toBeInTheDocument();
+    expect(screen.getByRole("treeitem", { name: /^Step 1\.1,/ })).not.toHaveAttribute(
+      "data-problem",
+    );
+    expect(screen.getByRole("treeitem", { name: /^Step 1\.2,/ })).toHaveAttribute(
+      "data-problem",
+      "true",
+    );
+    expect(screen.getByRole("treeitem", { name: /^Step 1\.3,/ })).toHaveAttribute(
+      "data-problem",
+      "true",
+    );
+    // The If's editor says what is wrong with its condition.
+    await user.click(screen.getByRole("treeitem", { name: /^Step 1\.2,/ }));
+    expect(screen.getByRole("region", { name: "Inspector: If" })).toHaveTextContent(
+      "the If's condition names no value",
+    );
+    // The Problems list opens the block a problem is on; its editor shows it under the field.
+    await user.click(screen.getByRole("button", { name: /2 problems/ }));
+    const list = screen.getByRole("dialog", { name: "Problems" });
+    await user.click(within(list).getByRole("button", { name: /^1\.3: ?unknown action/ }));
+    expect(await screen.findByRole("treeitem", { name: /^Step 1\.3,/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    const action = within(
+      screen.getByRole("region", { name: "Inspector: Run an action check--3" }),
+    ).getByLabelText("Action");
+    expect(action.closest(".sb-field")).toHaveTextContent("unknown action 'queue-send'");
   });
 
   it("scenario builder offers Migrate for a graph scenario: it checks first, shows the blocks, then writes", async () => {
@@ -854,6 +1029,35 @@ describe("ScenarioBuilder (scenario builder)", () => {
     );
     expect(within(dialog).queryByRole("button", { name: "Migrate" })).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText("The scenario as blocks")).not.toBeInTheDocument();
+  });
+
+  it("scenario builder's Migrate dialog has no serious a11y violation, checked or refused (a11y)", async () => {
+    const user = userEvent.setup();
+    let calls = 0;
+    renderBuilder({
+      [MIGRATE]: () => {
+        calls += 1;
+        return calls === 1
+          ? MIGRATION
+          : {
+              ...MIGRATION,
+              yaml: null,
+              problems: [
+                { node: "order-on-hold", message: "its trigger_rule one_success has no block" },
+              ],
+            };
+      },
+    });
+
+    await screen.findByRole("treeitem", { name: CHECK });
+    await user.click(screen.getByRole("button", { name: "More" }));
+    await user.click(screen.getByRole("button", { name: "Migrate to stages of blocks" }));
+    const dialog = screen.getByRole("dialog", { name: "Migrate to stages of blocks" });
+    await within(dialog).findByLabelText("The scenario as blocks");
+    expect(await seriousViolations(dialog)).toEqual([]);
+    await user.click(within(dialog).getByRole("button", { name: "Migrate" }));
+    await within(dialog).findByRole("list", { name: "What blocks cannot hold" });
+    expect(await seriousViolations(dialog)).toEqual([]);
   });
 
   it("scenario builder's Migrate names each step a graph cannot hold and writes nothing", async () => {

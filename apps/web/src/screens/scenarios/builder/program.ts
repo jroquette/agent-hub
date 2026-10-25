@@ -854,9 +854,9 @@ export function addressOfKey(key: string | null | undefined): string | null {
 
 /** A change Claude's proposal makes to a scenario written as blocks, by block address. */
 export interface TreeChange {
-  /** What changes, and where the proposal puts it (its address there, which stays as other
-   * changes are accepted): a decision on it holds while they are, and two blocks the proposal
-   * adds alike are two changes. */
+  /** What changes, and where: a new or changed block by its address in the proposal, a removed
+   * one by its address in the draft, so that two blocks alike are two changes (one decided is
+   * not the other). A removal's id moves with its block: `decisionsAfter` follows it. */
   id: string;
   kind: "new" | "changed" | "removed";
   /** A stage, or a block of a stage's steps (with what it holds). */
@@ -901,7 +901,7 @@ export function treeChanges(mine: readonly Item[], theirs: readonly Item[]): Tre
   for (const stage of stagesOfMine) {
     if (kept.has(stageSlug(stage.name))) continue;
     changes.push({
-      id: `removed:${text(stage)}`,
+      id: `removed:${stage.key}:${text(stage)}`,
       kind: "removed",
       of: "stage",
       address: stage.key,
@@ -953,7 +953,7 @@ function stepChanges(
               at: { stage: own.key, index: i },
             }
           : {
-              id: `removed:${text(mine)}`,
+              id: `removed:${itemId(mine)}:${text(mine)}`,
               kind: "removed",
               of: "block",
               address: itemId(mine),
@@ -999,6 +999,31 @@ function stepChanges(
   }
   flush(i);
   return changes;
+}
+
+/** The decisions on the changes `before` lists (the ids in `decided`), as ids of the changes
+ * `after` lists once an edit of the draft is made (`keys`: each item's key after it, as
+ * `addressed` gives them): a removal follows its block to its new address, a new or a changed
+ * block keeps its place in the proposal, which no edit of the draft moves. A decision whose
+ * change the draft no longer differs by is dropped. */
+export function decisionsAfter(
+  decided: ReadonlySet<string>,
+  before: readonly TreeChange[],
+  after: readonly TreeChange[],
+  keys: ReadonlyMap<string, string>,
+): Set<string> {
+  const out = new Set<string>();
+  for (const change of before) {
+    if (!decided.has(change.id)) continue;
+    const moved = change.kind === "removed" ? keys.get(change.address) : undefined;
+    const now = after.find((next) =>
+      change.kind === "removed"
+        ? next.kind === "removed" && next.of === change.of && next.address === moved
+        : next.kind === change.kind && next.of === change.of && next.proposed === change.proposed,
+    );
+    if (now) out.add(now.id);
+  }
+  return out;
 }
 
 /** The builder's copy of a scenario written as blocks: the file's mapping as it is. */

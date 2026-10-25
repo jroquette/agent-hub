@@ -30,6 +30,8 @@ describe("what the builder asks Claude", () => {
       expect(message).toContain(key);
     }
     expect(message).toContain("No `nodes`, `depends_on`, `trigger_rule` or `when`");
+    // What a Repeat cannot hold, as the load refuses it.
+    expect(message).toContain("no Repeat or Include inside a Repeat");
     expect(message).toContain("This scenario is written as blocks: `version: 2`");
     // Nothing of the graph's format, from the steps or from the brief after them.
     for (const graph of [

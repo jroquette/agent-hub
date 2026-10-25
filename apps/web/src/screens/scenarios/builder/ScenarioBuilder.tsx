@@ -73,6 +73,7 @@ import {
 import {
   addressOfKey,
   addressed,
+  decisionsAfter,
   derivedId,
   findItem,
   fresh as freshItems,
@@ -120,6 +121,13 @@ import {
  * and the Graph view only draws how they run. The builder never writes YAML: the server does. */
 
 type View = "blocks" | "graph" | "yaml";
+
+/** An edit of a scenario written as blocks: the document it writes, and each item's key after
+ * it. */
+interface TreeWrite {
+  written: ScenarioDocument;
+  keys: Map<string, string>;
+}
 
 const FILE_POLL_MS = 4000;
 const HELP_KEY = "ah.builder.help.v6";
@@ -404,26 +412,35 @@ export function ScenarioBuilder({
   const main: Item[] = tree ? stages : program.main;
   const kept: BuilderNode[] = tree ? [] : program.kept;
 
+  /* Written as blocks: the document the stages `next` write, where each reference to a block
+   * whose place id the edit changes follows it (`idChanges`; `asWritten` keeps them, for a
+   * proposal's block taken in at the place of the one it changes), and each item's key after
+   * the edit (keys are addresses). */
+  const treeWrite = (next: readonly Item[], asWritten = false): TreeWrite => ({
+    written: renameRefs(
+      treeOf(raw, next),
+      asWritten ? new Map<string, string>() : idChanges(main, next),
+    ),
+    keys: addressed(next).keys,
+  });
+  // Puts a tree write in the draft; `focus` as `commit` takes it.
+  const writeTree = ({ written, keys }: TreeWrite, focus?: string | null) => {
+    const follow = focus === undefined ? selected : focus;
+    setSelected(follow === null ? null : (keys.get(follow) ?? null));
+    if (JSON.stringify(written) !== JSON.stringify(raw)) draft.edit(written);
+    return (key: string) => keys.get(key) ?? key;
+  };
+
   /* Writes the list back: a graph's nodes (steps the list cannot place stay as written), or the
-   * stages of a scenario written as blocks, where each reference to a block whose place id the
-   * edit changes follows it (`idChanges`; `asWritten` keeps them, for a proposal's block taken in
-   * at the place of the one it changes). `focus` is what to select after (by its key now); the
-   * answer gives an item's key after the edit (written as blocks, keys are addresses). */
+   * stages of a scenario written as blocks (`treeWrite`). `focus` is what to select after (by
+   * its key now); the answer gives an item's key after the edit. */
   const commit = (
     next: Item[],
     keptNext: BuilderNode[] = kept,
     focus?: string | null,
     asWritten = false,
   ): ((key: string) => string) => {
-    if (tree) {
-      const { keys } = addressed(next);
-      const follow = focus === undefined ? selected : focus;
-      setSelected(follow === null ? null : (keys.get(follow) ?? null));
-      const ids = asWritten ? new Map<string, string>() : idChanges(main, next);
-      const written = renameRefs(treeOf(raw, next), ids);
-      if (JSON.stringify(written) !== JSON.stringify(raw)) draft.edit(written);
-      return (key) => keys.get(key) ?? key;
-    }
+    if (tree) return writeTree(treeWrite(next, asWritten), focus);
     const nodes = [...nodesOf(next), ...keptNext];
     setProgram({ main: next, kept: keptNext });
     const text = JSON.stringify(nodes);
@@ -593,8 +610,9 @@ export function ScenarioBuilder({
     ? document
     : { ...document, nodes: [...nodesOf(main), ...kept] };
 
-  /* Written as blocks, a block's id changed in its editor: its own, or none (it runs under its
-   * place's again). The references to the id it ran under follow it as any edit's do
+  /* Written as blocks, a block's id given in its editor: its own (written even when it equals its
+   * place's, so that it stays when the block moves), or none (it runs under its place's again).
+   * The references to the id it ran under follow it as any edit's do
    * (`idChanges`): not when another block ran under that id, or runs under the new one. */
   const renameBlock = (key: string, next: BuilderNode) => {
     const current = findItem(main, key);
@@ -752,6 +770,13 @@ export function ScenarioBuilder({
           number={stepNumbers(main).get(key)}
           placeId={tree ? placeIdOf(key) : undefined}
           named={selectedItem.named === true}
+          onId={
+            tree
+              ? (id) => {
+                  renameBlock(key, { ...node, id });
+                }
+              : undefined
+          }
           libraryError={library.isError}
           openerRef={selectedCard}
           tab={stepTab}
@@ -836,6 +861,7 @@ export function ScenarioBuilder({
           setSelected(null);
         }}
         openerRef={selectedCard}
+        problems={problemsOf(groupId)}
         footer={
           <Button
             variant="ghost"
@@ -929,40 +955,44 @@ export function ScenarioBuilder({
   const open = listed.filter((change) => !resolved.has(change.id));
   const suggestedIds = new Set(open.flatMap((change) => change.suggested));
   const removedCount = open.filter((change) => change.kind === "removed").length;
+  const closeReview = () => {
+    setReviewing(false);
+    setResolved(new Set());
+    dismiss.mutate();
+  };
   const finish = (next: Set<string>) => {
-    if (listed.every((change) => next.has(change.id))) {
-      setReviewing(false);
-      setResolved(new Set());
-      dismiss.mutate();
-    } else setResolved(next);
+    if (listed.every((change) => next.has(change.id))) closeReview();
+    else setResolved(next);
   };
   // Written as blocks: a change taken into the draft at its place (a new one where the proposal
-  // puts it, among the draft's blocks), its ids as the proposal gives them.
+  // puts it, among the draft's blocks), its ids as the proposal gives them. The decisions made
+  // follow their blocks, and the review is done when every change the draft still differs by
+  // is decided (an accept can move what a later block reads).
   const acceptTreeChange = (id: string) => {
     const change = treeChangeList.find((item) => item.id === id);
-    if (!change) return;
+    if (!change || !theirStages) return;
     const taken_ = freshItems([change.item], true);
     const stage = change.at.stage;
-    if (change.kind === "removed") commit(takeFrom(main, change.address, true).rest);
+    let next: Item[];
+    if (change.kind === "removed") next = takeFrom(main, change.address, true).rest;
     else if (change.kind === "new") {
-      commit(
+      next =
         stage === null
           ? insertAt(main, { in: "main" }, Math.min(change.at.index, main.length), taken_)
-          : insertAt(main, { in: "stage", owner: stage }, change.at.index, taken_),
-      );
+          : insertAt(main, { in: "stage", owner: stage }, change.at.index, taken_);
     } else {
       const at = locate(main, change.address);
       if (!at) return;
       // In the place of the block it changes: no other block moves, and what read that place
       // reads the proposal's block there.
-      commit(
-        insertAt(takeFrom(main, change.address, true).rest, at.slot, at.index, taken_),
-        kept,
-        undefined,
-        true,
-      );
+      next = insertAt(takeFrom(main, change.address, true).rest, at.slot, at.index, taken_);
     }
-    finish(new Set([...resolved, id]));
+    const write = treeWrite(next, change.kind === "changed");
+    writeTree(write);
+    const left = treeChanges(stagesOf(write.written), theirStages);
+    const decided = decisionsAfter(new Set([...resolved, id]), treeChangeList, left, write.keys);
+    if (left.every((item) => decided.has(item.id))) closeReview();
+    else setResolved(decided);
   };
   const acceptOne = (id: string) => {
     if (tree) {
@@ -1000,9 +1030,7 @@ export function ScenarioBuilder({
     if (from.inputs !== undefined) next.inputs = from.inputs;
     if (typeof from.description === "string") next.description = from.description;
     draft.edit(next);
-    setReviewing(false);
-    setResolved(new Set());
-    dismiss.mutate();
+    closeReview();
   };
   const reviewPanel =
     reviewing && (proposed ?? proposedTree) ? (
@@ -1687,15 +1715,7 @@ export function ScenarioBuilder({
               <Button size="sm" variant="primary" icon="check" onClick={acceptProposal}>
                 Accept all
               </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setReviewing(false);
-                  setResolved(new Set());
-                  dismiss.mutate();
-                }}
-              >
+              <Button size="sm" variant="ghost" onClick={closeReview}>
                 Reject all
               </Button>
             </>
@@ -1911,8 +1931,7 @@ export function ScenarioBuilder({
           {view === "graph" && tree && (
             <div className="sb-graph-picture">
               <span className="ah-small ah-muted" role="note">
-                The graph shows how the blocks run: edit them in Blocks, where their order is their
-                place.
+                The graph shows how the blocks run: edit them in Blocks.
               </span>
               <FlowCanvas
                 nodes={document.nodes}

@@ -238,7 +238,9 @@ other one. The builder never writes YAML: it holds the file's JSON, the server w
   into a stage's list (or a group's), a stage only between stages.
 - **A block's editor.** No "Runs after", no "Only if" and no "Runs when": position is order. More: id shows the
   block's own id, empty when it runs under the one its place gives (`fetch-order--1`, the placeholder); one given is
-  written to the file and the references to the old one follow it.
+  written to the file and the references to the old one follow it. The placeholder typed in is given too: the block
+  keeps that id when it moves, and a block then put at its old place runs under the same one, which the check refuses
+  on the given `id` until one of them has another.
 - **References follow their block.** No edit changes which block a `$<id>.output` (or `$LOOP_PREV.<id>.output`)
   reference reads: when a block with no id of its own gets another place id (a block inserted, moved or removed before
   it, a move to another stage, its stage renamed), every reference to it is rewritten to the new one, all at once; a
@@ -256,7 +258,10 @@ other one. The builder never writes YAML: it holds the file's JSON, the server w
   the tree's (no graph header, node types or `until_when`; the page's Discuss brief too); it names a place by its
   address (a stage's: at its end); the proposal is reviewed block by block by address (stages matched by name, each
   stage's blocks aligned), each change accepted or rejected on its own ("Accept block 1.4"), and Accept all takes the
-  proposal's stages as the review listed them.
+  proposal's stages as the review listed them. Each block the proposal removes is a change of its own, even one alike
+  another's (two `queue-send demo.poll` blocks); a decision stays on its block as other changes are accepted (a removal
+  follows its block to its new address, a new or changed block keeps its place in the proposal), and the review closes
+  when every change the draft still differs by is decided, one an accept brings in (a reference it moved) included.
 - **Migrate, for a graph.** More › Migrate to stages of blocks opens a dialog that checks first (`POST
   …/migrate` with `check` and the hash of the file the builder read) and shows the file as blocks, or each step a
   tree cannot hold and why, with nothing written; Migrate writes it over the file the check read (the check's
