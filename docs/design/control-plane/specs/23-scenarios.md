@@ -254,13 +254,19 @@ other one. The builder never writes YAML: it holds the file's JSON, the server w
   reaches once the blocks before them are taken too); a block of the draft's alone (its removal or its change
   rejected) has its references follow the blocks they read, to the block that takes one's place when that change is
   accepted (a changed block, one Claude gives an id of its own); a block both hold reads the block it reads in both,
-  or the one of its two the draft still holds, and is left as written otherwise.
-- **Graph view.** A picture of how the blocks run (the nodes they translate to, each selected with its block), with
-  nothing to add or move there: "The graph shows how the blocks run: edit them in Blocks."
+  or the one of its two the draft still holds, and is left as written otherwise. A reference is rewritten only inside
+  a value (never a key) and only to an id a reference can name (letters, digits, `_` and `-`): one to a block given
+  any other id (a proposal's `k"q`, a file the load refused) stays as written, for the check to name.
+- **Graph view.** A picture of how the blocks run (the builder's own reading of the blocks as nodes, a stage's first
+  block after the last one before it, each selected with its block; an If nested in another shows its own condition,
+  not the joined one core's translation runs), with nothing to add or move there: "The graph shows how the blocks
+  run: edit them in Blocks."
 - **Claude.** Describe with Claude teaches the tree's keys (stages, `do`, `wait_until`, `you`, `wait`, `include`,
   `repeat`, `if`, `together`; no `nodes`, `depends_on`, `trigger_rule` or `when`), and the format brief after them is
   the tree's (no graph header, node types or `until_when`; the page's Discuss brief too); it names a place by its
-  address, in the dialog as in the prompt ("Steps after block 1.2", "Steps at the end of stage 2"). The proposal is
+  address, in the dialog as in the prompt ("Steps after block 1.2", "Steps at the end of stage 2"), and the brief
+  says what an address is (stage, then step; `then`/`else`, `p<n>` for a Together's path, a Repeat's steps by their
+  place), as "Ask Claude about this step" does when it names a block by its address. The proposal is
   reviewed change by change (stages matched by name, each stage's blocks aligned), and the review lists its changes
   once, when it opens, from the draft as it is then and the proposal: each block or stage added, changed or removed
   (one alike another's too: two `queue-send demo.poll` blocks removed are two changes), a stage's own change (its
@@ -272,7 +278,10 @@ other one. The builder never writes YAML: it holds the file's JSON, the server w
   The review closes when every change it listed is decided; Accept all and Reject all decide every change at once
   (Reject all after an accept gives back the draft the review opened on; Undo brings the accepts back). Any other edit
   of the draft (Back to my draft, then an edit or Undo) opens the review again on the draft as it then is. A proposal
-  with no stages (a graph's `nodes`) says so in the banner: taken all, it leaves no stage.
+  with no stages (a graph's `nodes`) says so in the banner: taken all, it leaves no stage. The banner counts new or
+  changed stages (a stage's own change among them) apart from new or changed blocks ("Claude proposes 1 new or
+  changed stage, 1 removed, changed inputs"). Under review the blocks shown are the proposal's, so none shows a row
+  of a plan made for the draft; Back to my draft shows them again.
 - **Migrate, for a graph.** More › Migrate to stages of blocks opens a dialog that checks first (`POST
   …/migrate` with `check` and the hash of the file the builder read) and shows the file as blocks, or each step a
   tree cannot hold and why, with nothing written (to change in the builder, then open Migrate again); Migrate writes it over the file the check read (the check's

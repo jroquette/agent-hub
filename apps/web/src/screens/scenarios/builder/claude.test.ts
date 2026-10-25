@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { describeMessage } from "./claude";
+import { aboutStepMessage, describeMessage } from "./claude";
 
 const ASKED = {
   text: "Send the order, then wait until it is on hold.",
@@ -54,5 +54,20 @@ describe("what the builder asks Claude", () => {
     expect(describeMessage({ ...ASKED, tree: true, scope: "after", after: "2" })).toContain(
       "at the end of stage 2",
     );
+    // And it says what an address is.
+    expect(message).toContain("A block is named by its address");
+    expect(describeMessage(ASKED)).not.toContain("A block is named by its address");
+  });
+
+  it("asks about a block by its address, saying what an address is, and a graph's step by its id", () => {
+    const about = { scenario: "order-lifecycle", path: "scenarios/orders/order-lifecycle.yaml" };
+
+    const block = aboutStepMessage({ ...about, id: "2.3.p2.1", tree: true });
+    expect(block).toContain("About the block 2.3.p2.1 of the scenario `order-lifecycle`");
+    expect(block).toContain("`p<n>` for a Together's n-th path");
+    expect(block).toContain("Change nothing.");
+    const step = aboutStepMessage({ ...about, id: "send-order" });
+    expect(step).toContain("About the step `send-order` of the scenario `order-lifecycle`");
+    expect(step).not.toContain("address");
   });
 });

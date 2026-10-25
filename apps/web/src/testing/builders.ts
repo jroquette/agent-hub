@@ -12,7 +12,7 @@ import { onTestFinished, vi } from "vitest";
 
 import type { components } from "../api/schema";
 import { PreferencesProvider } from "../lib/preferences";
-import { TREE_DOCUMENTS } from "./treeDocuments";
+import { EVERY_KEY_DOCUMENT, TREE_DOCUMENTS } from "./treeDocuments";
 
 type Schemas = components["schemas"];
 export type Session = Schemas["Session"];
@@ -2104,6 +2104,12 @@ export function aTreeDocument(name: string): Record<string, unknown> {
   const found = TREE_DOCUMENTS[name];
   if (found === undefined) throw new Error(`no tree fixture ${name}`);
   return structuredClone(found) as Record<string, unknown>;
+}
+
+/** A synthetic tree holding every key the scenario writer orders, in the writer's order (written
+ * by it and read back, checked by the generator's tests): a fresh copy each call. */
+export function anEveryKeyTree(): Record<string, unknown> {
+  return structuredClone(EVERY_KEY_DOCUMENT);
 }
 
 export function aScenarioAction(overrides: Partial<ScenarioAction> = {}): ScenarioAction {

@@ -477,7 +477,8 @@ const KIND_OF: Readonly<Record<string, string>> = {
 /** A node that holds a step the builder cannot read (no kind key, or two), written as it is. */
 const UNREAD = "unread";
 // The canonical key order (generator's scenario writer): a canonical file's mapping written back
-// reads as the same JSON, key for key, so an edit undone leaves nothing to save.
+// reads as the same JSON, key for key, so an edit undone leaves nothing to save. The round trip
+// of the writer's own every-key document (testing/treeDocuments.ts) checks it is the writer's.
 const TREE_ORDER = ["version", "kind", "name", "revision", "description", "inputs", "stages"];
 const STAGE_ORDER = ["name", "description", "steps"];
 const STEP_ORDER = [
@@ -750,6 +751,9 @@ export function idChanges(before: readonly Item[], next: readonly Item[]): Map<s
 // A block's output read in a value: `$<id>.output…` or `$LOOP_PREV.<id>.output…` (`$$` is a
 // written dollar, not a reference).
 const OUTPUT_REF = /\$(?:\$|(LOOP_PREV\.)?([A-Za-z0-9_-]+)\.output(?![A-Za-z0-9_]))/g;
+// An id a reference can name: a reference is written only with one (a proposal, or a file the
+// load refused, can give a block any id).
+const REF_ID = /^[A-Za-z0-9_-]+$/;
 
 /** `document` with each reference in its stages to a block whose id `ids` maps written with the
  * id it maps to, all at once (so two blocks that swap places swap their references too). */
@@ -758,18 +762,29 @@ export function renameRefs(document: Mapping, ids: ReadonlyMap<string, string>):
   return { ...document, stages: renamedIn(document.stages, ids) };
 }
 
-/** `value` with each reference to a block whose id `ids` maps written with the id it maps to. */
+/** `value` with each reference to a block whose id `ids` maps written with the id it maps to,
+ * in its string values only (never a key), and only when that id is one a reference can name:
+ * a reference to a block whose new id no reference can name stays as written. `value` itself
+ * when nothing changes. */
 function renamedIn(value: Json, ids: ReadonlyMap<string, string>): Json {
   if (ids.size === 0) return value;
-  const text = JSON.stringify(value);
-  const next = text.replace(
-    OUTPUT_REF,
-    (whole: string, prev: string | undefined, id: string | undefined) => {
-      const to = id === undefined ? undefined : ids.get(id);
-      return to === undefined ? whole : `$${prev ?? ""}${to}.output`;
-    },
-  );
-  return next === text ? value : (JSON.parse(next) as Json);
+  if (typeof value === "string") {
+    return value.replace(
+      OUTPUT_REF,
+      (whole: string, prev: string | undefined, id: string | undefined) => {
+        const to = id === undefined ? undefined : ids.get(id);
+        return to === undefined || !REF_ID.test(to) ? whole : `$${prev ?? ""}${to}.output`;
+      },
+    );
+  }
+  if (Array.isArray(value)) {
+    const next = value.map((item) => renamedIn(item, ids));
+    return next.some((item, at) => item !== value[at]) ? next : value;
+  }
+  if (value === null || typeof value !== "object") return value;
+  const entries = Object.entries(value);
+  const next = entries.map(([key, item]): [string, Json] => [key, renamedIn(item, ids)]);
+  return next.some(([, item], at) => item !== entries[at]?.[1]) ? Object.fromEntries(next) : value;
 }
 
 /** `items` as new blocks of a scenario written as blocks: no id of their own (their place gives

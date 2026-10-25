@@ -38,7 +38,12 @@ import { BlocksTab, type BlockLook } from "./BlocksTab";
 import { StepList, nearestGap, scrollNear, type GapKind, type InsertTarget } from "./StepList";
 import { VariablesPanel, type KeptValue } from "./VariablesPanel";
 import { InsertMenu } from "./InsertMenu";
-import { createActionMessage, describeMessage, type DescribeScope } from "./claude";
+import {
+  aboutStepMessage,
+  createActionMessage,
+  describeMessage,
+  type DescribeScope,
+} from "./claude";
 import {
   AskActionDialog,
   DescribeDialog,
@@ -691,9 +696,7 @@ export function ScenarioBuilder({
         variant="ghost"
         icon="message-square"
         onClick={() => {
-          ask(
-            `About the ${tree ? `block ${id}` : `step \`${id}\``} of the scenario \`${scenario.name}\` (the file \`${scenario.path ?? ""}\`): explain in a few lines what it does, what it runs and where it can stop. Change nothing.`,
-          );
+          ask(aboutStepMessage({ id, scenario: scenario.name, path: scenario.path ?? "", tree }));
         }}
       >
         Ask Claude about this step
@@ -954,6 +957,7 @@ export function ScenarioBuilder({
         return {
           id: change.id,
           kind: change.kind,
+          of: change.of,
           shown: change.address === "" ? change.of : change.address,
           name: change.id,
           detail:
@@ -977,6 +981,7 @@ export function ScenarioBuilder({
     : changes.map((change) => ({
         id: change.id,
         kind: change.kind,
+        of: "block" as const,
         shown: change.id,
         name: change.id,
         detail: `${kindLook(change.node.type).label}${typeof change.node.action === "string" ? ` · ${change.node.action}` : ""}${typeof change.node.description === "string" ? ` · ${change.node.description}` : ""}`,
@@ -987,10 +992,22 @@ export function ScenarioBuilder({
   );
   const suggestedIds = new Set(open.flatMap((change) => change.suggested));
   const removedCount = open.filter((change) => change.kind === "removed").length;
-  // Written as blocks, the open changes the banner counts apart from the blocks and stages.
-  const inputsOpen = open.some((change) => change.id === "changed inputs");
-  const descriptionOpen = open.some((change) => change.id === "changed description");
-  const blocksOpen = open.length - removedCount - Number(inputsOpen) - Number(descriptionOpen);
+  // What the banner counts: new or changed blocks, and apart from them (written as blocks)
+  // new or changed stages, a stage's own change among them, the inputs and the description.
+  const added = (of: string) =>
+    open.filter((change) => change.of === of && change.kind !== "removed").length;
+  const blocksOpen = added("block");
+  const stagesOpen = added("stage");
+  const inputsOpen = open.some((change) => change.of === "inputs");
+  const descriptionOpen = open.some((change) => change.of === "description");
+  const counted = (n: number, what: string) => `${String(n)} ${what}${n === 1 ? "" : "s"}`;
+  const proposes = [
+    ...(blocksOpen > 0 || stagesOpen === 0 ? [counted(blocksOpen, "new or changed block")] : []),
+    ...(stagesOpen > 0 ? [counted(stagesOpen, "new or changed stage")] : []),
+    ...(removedCount > 0 ? [`${String(removedCount)} removed`] : []),
+    ...(inputsOpen ? ["changed inputs"] : []),
+    ...(descriptionOpen ? ["a changed description"] : []),
+  ].join(", ");
   const closeReview = () => {
     setReviewing(false);
     setResolved(new Set());
@@ -1717,11 +1734,7 @@ export function ScenarioBuilder({
           {offered ? (
             <>
               <span>
-                <b>Claude proposes</b> {blocksOpen} new or changed{" "}
-                {blocksOpen === 1 ? "block" : "blocks"}
-                {removedCount > 0 && `, ${String(removedCount)} removed`}
-                {inputsOpen && ", changed inputs"}
-                {descriptionOpen && ", a changed description"}
+                <b>Claude proposes</b> {proposes}
                 {proposedGraph &&
                   " · it is written as a graph (nodes), not as stages: accepting it all leaves no stage"}
                 {offered.check
@@ -1894,7 +1907,11 @@ export function ScenarioBuilder({
               selected={selected}
               actionOf={actionFacts}
               problemsOf={tree && reviewProgram ? () => [] : problemsOf}
-              planOf={(id) => planRows.get(nodeIdOf(id)) ?? null}
+              // The plan was made for the draft's blocks: a proposal's, by its own addresses,
+              // are other blocks, so none shows one.
+              planOf={
+                tree && reviewProgram ? () => null : (id) => planRows.get(nodeIdOf(id)) ?? null
+              }
               planStale={previewFor !== null && previewFor !== JSON.stringify(document.nodes)}
               start={{
                 environment: environment || null,

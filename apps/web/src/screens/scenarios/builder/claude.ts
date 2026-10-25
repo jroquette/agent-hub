@@ -1,4 +1,4 @@
-import { scenarioBrief } from "../brief";
+import { BLOCK_ADDRESS, scenarioBrief } from "../brief";
 import type { LibraryAction } from "./useScenarioDraft";
 
 /* What the builder asks Claude, through the Discuss panel (the owner's click sends it; nothing
@@ -83,6 +83,23 @@ export function describeMessage({
     "",
     scenarioBrief(tree),
   ].join("\n");
+}
+
+/** Asks Claude what one step does, changing nothing: a step by its id in a graph, a block by
+ * its address in a scenario written as blocks (`tree`), which the message then explains. */
+export function aboutStepMessage({
+  id,
+  scenario,
+  path,
+  tree = false,
+}: {
+  id: string;
+  scenario: string;
+  path: string;
+  tree?: boolean;
+}): string {
+  const about = `About the ${tree ? `block ${id}` : `step \`${id}\``} of the scenario \`${scenario}\` (the file \`${path}\`): explain in a few lines what it does, what it runs and where it can stop. Change nothing.`;
+  return tree ? `${about}\n\n${BLOCK_ADDRESS}` : about;
 }
 
 /** The structure of a graph scenario (`version: 1`), as the prompt teaches it. */

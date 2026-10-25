@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { TREE_FIXTURES, aTreeDocument } from "../../../testing/builders";
+import { TREE_FIXTURES, aTreeDocument, anEveryKeyTree } from "../../../testing/builders";
 import { dependsOn, toDocument, type BuilderNode, type Json } from "./model";
 import {
   JOIN_RULE,
@@ -194,80 +194,8 @@ const ADDRESSED = (items: readonly Item[]): unknown =>
     return { [`${key} together`]: item.lanes.map(ADDRESSED) };
   });
 
-// A synthetic tree holding the step keys the fixtures leave out, in the canonical key order.
-const EVERY_KEY: Record<string, Json> = {
-  version: 2,
-  kind: "scenario",
-  name: "every-key",
-  revision: 3,
-  description: "Every step key of the tree format",
-  inputs: { order_id: { required: true } },
-  stages: [
-    {
-      name: "Every key",
-      description: "Each step with its optional keys",
-      steps: [
-        {
-          do: "order-get",
-          id: "get-order",
-          description: "Reads the order",
-          with: { order_id: "$INPUTS.order_id" },
-          timeout: "5m",
-          capture: { status: "$self.output.status" },
-          retry: { max_attempts: 3, delay: "5s", on_error: "all" },
-        },
-        {
-          wait_until: "order-state",
-          until: "$self.output.status == 'DONE'",
-          every: "15s",
-          timeout: "10m",
-          retry: { max_attempts: 1 },
-        },
-        {
-          you: "Approve the order, or reject it.",
-          description: "A person decides",
-          decisions: [
-            { id: "approve", label: "Approve" },
-            { id: "reject", label: "Reject" },
-          ],
-          capture_response: true,
-        },
-        { wait: { until: "2030-01-01T00:00:00Z" } },
-        {
-          wait: {
-            attention: "Pick a carrier",
-            options: [
-              { id: "fast", label: "Fast" },
-              { id: "slow", label: "Slow" },
-            ],
-          },
-          id: "pick-carrier",
-          description: "Waits for a choice",
-        },
-        {
-          include: "blocks-repeat",
-          description: "Polls the review",
-          with: { shop_order_id: "$INPUTS.order_id" },
-        },
-        {
-          if: "$CTX.status == 'DONE'",
-          description: "Only when done",
-          then: [{ wait: { duration: "1m" } }],
-        },
-        { together: [[{ do: "order-a" }], [{ do: "order-b" }]], description: "Both at once" },
-        {
-          repeat: {
-            max: 3,
-            until: "$get-order.output.status == 'DONE'",
-            steps: [{ do: "order-c" }],
-          },
-          id: "again",
-          description: "Tries again",
-        },
-      ],
-    },
-  ],
-};
+// A synthetic tree holding every key the scenario writer orders, as the writer writes it.
+const EVERY_KEY = anEveryKeyTree() as Record<string, Json>;
 
 /** The steps of each stage of a document written as blocks. */
 function stepsOf(document: Record<string, Json>): Json[][] {
@@ -406,7 +334,7 @@ describe("scenario block program, written as blocks (version 2)", () => {
     },
   );
 
-  it("round-trips a tree holding every step key the fixtures leave out", () => {
+  it("round-trips a tree holding every key in the order the scenario writer writes them", () => {
     expect(treeOf(EVERY_KEY, stagesOf(EVERY_KEY))).toStrictEqual(EVERY_KEY);
     expect(JSON.stringify(treeOf(EVERY_KEY, stagesOf(EVERY_KEY)))).toBe(JSON.stringify(EVERY_KEY));
   });
@@ -910,6 +838,75 @@ describe("scenario block program, written as blocks (version 2)", () => {
     expect(applyReview(review, new Set(ids))).toStrictEqual(proposed);
   });
 
+  it("leaves a reference to a block as written when the proposal gives its place an id no reference can name", () => {
+    const b = { do: "b", with: { v: "$s--1.output", w: 'say "$s--1.output"' } };
+    const draft = {
+      version: 2,
+      kind: "scenario",
+      name: "s",
+      stages: [{ name: "S", steps: [{ do: "a" }, b, { do: "c" }] }],
+    };
+    for (const id of ['k","injected":"z', 'k"q', "k\\", "k.output"]) {
+      const proposed = {
+        ...draft,
+        stages: [{ name: "S", steps: [{ do: "a2", id }, { do: "c" }] }],
+      };
+      const review = treeReview(draft, proposed);
+      expect(
+        review.changes.map((change) => change.id),
+        id,
+      ).toEqual(["changed block 1.1", "removed block 1.2"]);
+
+      // B, kept, reads exactly as the draft wrote it: no key added, nothing thrown.
+      expect(stepsOf(applyReview(review, new Set(["changed block 1.1"]))), id).toStrictEqual([
+        [{ do: "a2", id }, b, { do: "c" }],
+      ]);
+      expect(
+        decideReview(review, new Map(), ["changed block 1.1"], "accept").draft,
+        id,
+      ).toStrictEqual({
+        ...draft,
+        stages: [{ name: "S", steps: [{ do: "a2", id }, b, { do: "c" }] }],
+      });
+    }
+  });
+
+  it("follows a reference inside a value holding quotes and backslashes, and only in values", () => {
+    const document = {
+      stages: [
+        {
+          name: "S",
+          steps: [
+            {
+              do: "b",
+              with: {
+                "$s--1.output": 'say "\\$s--1.output\\" $$s--1.output',
+                n: ["$s--1.output.x"],
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(renameRefs(document, new Map([["s--1", "fetch"]]))).toStrictEqual({
+      stages: [
+        {
+          name: "S",
+          steps: [
+            {
+              do: "b",
+              with: {
+                "$s--1.output": 'say "\\$fetch.output\\" $$s--1.output',
+                n: ["$fetch.output.x"],
+              },
+            },
+          ],
+        },
+      ],
+    });
+  });
+
   it("lists the scenario's inputs and description a proposal changes as changes of their own", () => {
     const draft = tree("blocks-together");
     const proposed = {
@@ -970,18 +967,30 @@ describe("scenario block program, written as blocks (version 2)", () => {
     }
   });
 
-  it("aligns a stage of more steps than the format runs without a table of every pair", () => {
+  it("aligns a stage of more steps than the format runs by the steps alike at its ends, the rest each changed", () => {
     const steps = (n: number, from = 0) =>
       Array.from({ length: n }, (_, at) => ({ do: `a-${String(at + from)}` }));
-    const draft = { version: 2, kind: "scenario", stages: [{ name: "S", steps: steps(3000) }] };
-    const proposed = {
-      ...draft,
-      stages: [{ name: "S", steps: [...steps(1500), { do: "new" }, ...steps(1500, 1500)] }],
-    };
+    const stage = (list: Json[]) => ({
+      version: 2,
+      kind: "scenario",
+      stages: [{ name: "S", steps: list }],
+    });
+    const draft = stage(steps(3000));
+    const proposed = stage([...steps(1500), { do: "new" }, ...steps(1500, 1500)]);
 
+    // The steps alike at either end are kept, so one block added in the middle is one change.
     const { changes } = treeReview(draft, proposed);
-
     expect(changes.map((change) => [change.kind, change.address])).toEqual([["new", "1.1501"]]);
+
+    // Both ends changed: up to 512 steps a side are aligned in full (two changes); past it, each
+    // step between the ends alike is a change of its own.
+    const ends = (n: number, first: string, last: string) =>
+      stage([{ do: first }, ...steps(n - 2), { do: last }]);
+    const full = treeReview(ends(512, "p", "q"), ends(512, "r", "s")).changes;
+    expect(full.map((change) => change.id)).toEqual(["changed block 1.1", "changed block 1.512"]);
+    const past = treeReview(ends(513, "p", "q"), ends(513, "r", "s")).changes;
+    expect(past).toHaveLength(513);
+    expect(past.every((change) => change.kind === "changed")).toBe(true);
   });
 
   it("draws the stages as one chain of nodes: a stage's first block runs after the last one before it", () => {

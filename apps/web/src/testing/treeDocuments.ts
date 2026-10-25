@@ -1,7 +1,8 @@
 // Generated: the strict loader's parse of each scenario of
 // packages/core/tests/data/scenarios/blocks/tree, as GET /api/v1/scenarios/{project}/{name}
-// gives it as `document`. packages/generator/tests/unit/test_workflow_yaml.py checks it and
-// rewrites it with GOLDEN_UPDATE=1. Tests read it through aTreeDocument (builders.ts).
+// gives it as `document`, and the scenario writer's key order. test_workflow_yaml.py
+// (packages/generator/tests/unit) checks it and rewrites it with GOLDEN_UPDATE=1. Tests read
+// it through aTreeDocument and anEveryKeyTree (builders.ts).
 export const TREE_DOCUMENTS: Readonly<Record<string, unknown>> = {
   "blocks-if-else": {
     "version": 2,
@@ -523,4 +524,142 @@ export const TREE_DOCUMENTS: Readonly<Record<string, unknown>> = {
       }
     ]
   }
+};
+
+// The scenario writer's key order: a tree holding every key it orders, written from its
+// keys in reverse order and read back.
+export const EVERY_KEY_DOCUMENT: Readonly<Record<string, unknown>> = {
+  "version": 2,
+  "kind": "scenario",
+  "name": "every-key",
+  "revision": 3,
+  "description": "Every step key of the tree format",
+  "inputs": {
+    "order_id": {
+      "required": true
+    }
+  },
+  "stages": [
+    {
+      "name": "Every key",
+      "description": "Each step with its optional keys",
+      "steps": [
+        {
+          "do": "order-get",
+          "id": "get-order",
+          "description": "Reads the order",
+          "with": {
+            "order_id": "$INPUTS.order_id"
+          },
+          "timeout": "5m",
+          "capture": {
+            "status": "$self.output.status"
+          },
+          "retry": {
+            "on_error": "all",
+            "delay": "5s",
+            "max_attempts": 3
+          }
+        },
+        {
+          "wait_until": "order-state",
+          "until": "$self.output.status == 'DONE'",
+          "every": "15s",
+          "timeout": "10m",
+          "retry": {
+            "max_attempts": 1
+          }
+        },
+        {
+          "you": "Approve the order, or reject it.",
+          "description": "A person decides",
+          "decisions": [
+            {
+              "label": "Approve",
+              "id": "approve"
+            },
+            {
+              "label": "Reject",
+              "id": "reject"
+            }
+          ],
+          "capture_response": true
+        },
+        {
+          "wait": {
+            "duration": "1m",
+            "until": "2030-01-01T00:00:00Z"
+          }
+        },
+        {
+          "wait": {
+            "attention": "Pick a carrier",
+            "options": [
+              {
+                "label": "Fast",
+                "id": "fast"
+              },
+              {
+                "label": "Slow",
+                "id": "slow"
+              }
+            ]
+          },
+          "id": "pick-carrier",
+          "description": "Waits for a choice"
+        },
+        {
+          "include": "blocks-repeat",
+          "description": "Polls the review",
+          "with": {
+            "shop_order_id": "$INPUTS.order_id"
+          }
+        },
+        {
+          "if": "$CTX.status == 'DONE'",
+          "description": "Only when done",
+          "then": [
+            {
+              "wait": {
+                "duration": "1m"
+              }
+            }
+          ],
+          "else": [
+            {
+              "do": "order-d"
+            }
+          ]
+        },
+        {
+          "together": [
+            [
+              {
+                "do": "order-a"
+              }
+            ],
+            [
+              {
+                "do": "order-b"
+              }
+            ]
+          ],
+          "description": "Both at once"
+        },
+        {
+          "repeat": {
+            "max": 3,
+            "until": "$get-order.output.status == 'DONE'",
+            "steps": [
+              {
+                "do": "order-c"
+              }
+            ]
+          },
+          "id": "again",
+          "description": "Tries again"
+        }
+      ]
+    }
+  ]
 };

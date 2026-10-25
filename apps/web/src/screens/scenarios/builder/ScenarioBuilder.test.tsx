@@ -788,9 +788,10 @@ describe("ScenarioBuilder (scenario builder)", () => {
       [`POST ${DETAIL}/proposal/dismiss`]: {},
     });
 
+    // The new stage counts as a stage, not as one of the blocks.
     const proposes = await screen.findByText("Claude proposes");
     expect(proposes.parentElement).toHaveTextContent(
-      /1 new or changed block, 1 removed, changed inputs/,
+      /Claude proposes 1 new or changed stage, 1 removed, changed inputs/,
     );
     await user.click(screen.getByRole("button", { name: "Accept all" }));
 
@@ -998,6 +999,64 @@ describe("ScenarioBuilder (scenario builder)", () => {
     });
     await save(user);
     expect(await savedDocument(requests)).toStrictEqual(proposed);
+  });
+
+  it("scenario builder shows a plan on the draft's blocks, never on Claude's proposal under review", async () => {
+    const user = userEvent.setup();
+    const proposed = aTreeDocument("blocks-together") as { stages: { steps: unknown[] }[] };
+    proposed.stages[0]?.steps.unshift({ wait: { duration: "30s" } });
+    renderTree("blocks-together", {
+      [`POST ${DETAIL}/plan`]: aScenarioPlan({
+        rows: [aScenarioPlanRow({ step: "fix-shipping--1", plan: "Would read the order" })],
+      }),
+      [`${DETAIL}/proposal`]: {
+        path: ".agent-runs/proposals/scenarios/orders/order-lifecycle.yaml",
+        document: proposed,
+        check: { loads: true, yaml: "", problems: [], nodes: [] },
+        problem: null,
+      },
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Plan in personal" }));
+    const form = screen.queryByRole("form", { name: "Values to plan with" });
+    if (form) {
+      for (const box of within(form).getAllByRole("textbox")) await user.type(box, "x-1");
+      await user.click(within(form).getByRole("button", { name: "Plan in personal" }));
+    }
+    await waitFor(() => {
+      expect(screen.getByRole("treeitem", { name: /^Step 1\.1,/ })).toHaveTextContent(
+        "Would read the order",
+      );
+    });
+
+    // Under review, block 1.1 is the proposal's new Pause: the draft's plan is not its own.
+    await user.click(await screen.findByRole("button", { name: "Review" }));
+    expect(screen.getByRole("treeitem", { name: /^Step 1\.1, Pause/ })).not.toHaveTextContent(
+      "Would read the order",
+    );
+    await user.click(screen.getByRole("button", { name: "Back to my draft" }));
+    expect(screen.getByRole("treeitem", { name: /^Step 1\.1,/ })).toHaveTextContent(
+      "Would read the order",
+    );
+  });
+
+  it("scenario builder counts a stage Claude's proposal only renames as a changed stage, no block", async () => {
+    const proposed = aTreeDocument("blocks-together") as { stages: { name: string }[] };
+    const [stage] = proposed.stages;
+    // The same slug, so the same stage: its own change.
+    if (stage) stage.name = stage.name.toUpperCase();
+    renderTree("blocks-together", {
+      [`${DETAIL}/proposal`]: {
+        path: ".agent-runs/proposals/scenarios/orders/order-lifecycle.yaml",
+        document: proposed,
+        check: { loads: true, yaml: "", problems: [], nodes: [] },
+        problem: null,
+      },
+    });
+
+    const proposes = await screen.findByText("Claude proposes");
+    expect(proposes.parentElement).toHaveTextContent(/Claude proposes 1 new or changed stage · /);
+    expect(proposes.parentElement).not.toHaveTextContent(/block/);
   });
 
   it("scenario builder says so when Claude's proposal for a scenario written as blocks is a graph", async () => {
