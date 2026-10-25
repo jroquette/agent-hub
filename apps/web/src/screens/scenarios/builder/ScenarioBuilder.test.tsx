@@ -818,7 +818,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     };
     proposed.stages[0]?.steps.shift();
     proposed.stages.push({ name: "Ship", steps: [{ wait: { duration: "30s" } }] });
-    proposed.inputs = { ...proposed.inputs, carrier: { default: "fedex" } };
+    proposed.inputs = { ...proposed.inputs, carrier: { default: "ground" } };
     const { requests } = renderTree("blocks-together", {
       [SAVE]: () => SAVED,
       [`${DETAIL}/proposal`]: {

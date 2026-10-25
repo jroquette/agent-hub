@@ -973,7 +973,7 @@ describe("scenario block program, written as blocks (version 2)", () => {
     const proposed = {
       ...tree("blocks-together"),
       description: "Fixes shipping, then checks it",
-      inputs: { shop_order_id: { required: true }, carrier: { default: "fedex" } },
+      inputs: { shop_order_id: { required: true }, carrier: { default: "ground" } },
     };
     const review = treeReview(draft, proposed);
 
