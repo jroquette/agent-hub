@@ -1,14 +1,16 @@
 # Scenarios, scenario detail and scenario run
 
-**Phase:** P2 with local writes (plan, start, the investigation session, the answer and the finding actions are strict
-writes, [ADR 0040](../../../adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md)) ·
+**Phase:** P2 with local writes (plan, start, the investigation session, the answer and the finding actions, and a
+scenario run's breakpoints, Step and Continue and a scenario's Migrate are strict writes,
+[ADR 0040](../../../adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md)) ·
 **Routes:** `/scenarios`, `/scenarios/:project/:name` (a scenario's name is unique per project only),
 `/scenarios/:project/:name/runs/:runId` · **Answers:** "What will this scenario do in this environment, may it start,
 and when a scenario run stops, what do I decide?"
 
 The contract is [scenarios.md](../../scenarios.md); the decision is
-[ADR 0041](../../../adr/0041-scenarios-actions-and-enforced-access.md). Glossary: a **scenario run** is a WorkflowRun of a
-scenario; the UI always says "scenario run", and "run" alone means a workflow run.
+[ADR 0041](../../../adr/0041-scenarios-actions-and-enforced-access.md), and for scenarios written as blocks and their
+debugger [ADR 0049](../../../adr/0049-scenario-blocks-and-run-control.md). Glossary: a **scenario run** is a
+WorkflowRun of a scenario; the UI always says "scenario run", and "run" alone means a workflow run.
 
 ## Navigation
 

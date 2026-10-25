@@ -32,23 +32,23 @@ adds them, `hub.lock` does not list them, and the init report does not count the
 
 ### Tree format (version 2)
 
-**Partly built** ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md), AGH-507): core loads a `version: 2`
-scenario and translates it to the node graph at load, with its block map and its problems on the tree's key paths
-(the format, bounds, addresses, ids and translation below), and `generator`'s canonical YAML writer, which the API's
-builder routes use: validate and Save take a `version: 2` document as well as a `version: 1` one, and Save of an
-unchanged document writes nothing. Built too: doctor's `scenarios.graph_format` warning, `hub init` seeds its
-example as `version: 2`, and `hub scenario migrate`, which that warning's fix names (core's `tree_migrate`), and the
-API's migrate route (`POST /scenarios/{project}/{name}/migrate`, [API.md](../API.md) § Scenarios). And hub web's
-builder (AGH-517): it edits a `version: 2` file as its stages, each block read straight from `stages` and keyed by
-its address, and writes the same JSON back (its keys in the canonical order below), so nothing is loose and a file
-opened and saved unchanged is unchanged; an edit that gives a block with no `id` another place (or its stage another
-name) rewrites each `$<id>.output` reference to it to the new derived id, and one to a removed block to `<id>-removed`,
-so no reference starts reading another block (only inside a value, and only to an id a reference can name, spelt as
-the grammar spells one, `[a-z][a-z0-9_-]*`: one to a block a proposal gives any other id is left as written;
-`$self.output` is a block's own output, never a reference to a block named `self`, and none is rewritten to it, so
-the Id field refuses `self`; an id another block runs under, before the edit or after it, is left as written: the Id
-rename too; a stage name typed letter by letter follows from the ids before the rename began); a `version: 1` file it
-edits as AGH-521 shipped it, and offers Migrate (screen spec 23, the ADR's delivery notes).
+**Built** ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md), AGH-507): core loads a `version: 2` scenario
+and translates it to the node graph at load, with its block map and its problems on the tree's key paths (the format,
+bounds, addresses, ids and translation below). `generator`'s canonical YAML writer writes it back to its own bytes;
+the API's builder routes use it: validate and Save take a `version: 2` document as well as a `version: 1` one, and
+Save of an unchanged document writes nothing. Doctor's `scenarios.graph_format` warns on each `version: 1` scenario,
+and its fix, `hub scenario migrate` (core's `tree_migrate`), writes one as blocks, as the API's migrate route does
+(`POST /scenarios/{project}/{name}/migrate`, [API.md](../API.md) § Scenarios); `hub init` seeds its example as
+`version: 2`. hub web's builder edits a `version: 2` file as its stages, each block read straight from `stages` and
+keyed by its address, and writes the same JSON back (its keys in the canonical order below), so nothing is loose and a
+file opened and saved unchanged is unchanged; an edit that gives a block with no `id` another place (or its stage
+another name) rewrites each `$<id>.output` reference to it to the new derived id, and one to a removed block to
+`<id>-removed`, so no reference starts reading another block (only inside a value, and only to an id a reference can
+name, spelt as the grammar spells one, `[a-z][a-z0-9_-]*`: one to a block a proposal gives any other id is left as
+written; `$self.output` is a block's own output, never a reference to a block named `self`, and none is rewritten to
+it, so the Id field refuses `self`; an id another block runs under, before the edit or after it, is left as written:
+the Id rename too; a stage name typed letter by letter follows from the ids before the rename began); a `version: 1`
+file it edits as AGH-521 shipped it, and offers Migrate (screen spec 23, the ADR's delivery notes).
 
 A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md)):
 `version: 2` and `stages:` in place of `nodes:`, with `kind: scenario` (a version-2 document without it fails at
@@ -362,7 +362,7 @@ Metadata only ([ADR 0019](../adr/0019-metadata-only-events-and-redaction.md)), e
 `approver`, `status`, `failure_kind`), `policy.decision` (`action` or node, `environment`, `effect`, `origin`,
 `decision`, `reason_kind`), `expect.poll` (`poll`, `held`), `context.capture` (`name`), `finding` (`finding_id`,
 `step`), `workaround.start`/`workaround.end` (`workaround_id`, `option`, `steps`, `status`); `gate.request` gains
-`reason`. With AGH-507, defined with their rows but emitted by nothing until the debug commands are built:
+`reason`. A debugging run (§ Debugging, [ADR 0049](../adr/0049-scenario-blocks-and-run-control.md)) adds
 `debug.pause` (`node`, `block`, `reason`), `debug.command` (`command`, `approver`), `debug.breakpoints` (`count`). Args, outputs, captures, findings, chat stay in the run record. Bounds: `expect` `every` ≥ 5 s, `timeout` ≤ 24
 h, ≤ 1000 polls (retries, resumes too); action stdout ≤ 512 KiB; plan mode ≤ 60 s; ≤ 64 `--input` values of ≤ 64 KiB; a
 proposal ≤ 256 KiB, 20 findings, 5 options of ≤ 10 steps; ≤ 10 proposals per investigation; API record reads ≤ 8 MiB.
