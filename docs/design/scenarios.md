@@ -175,10 +175,11 @@ A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([A
   `debug.breakpoints_unreadable` line (`reason`) per reason and process. They are set by `hub scenario run --break
   ADDR` (repeated for more), `hub scenario break RUN ADDR… [--off]` (adds or removes), `hub scenario break RUN --set
   [ADDR…]` (replaces the set; none clears it) or hub web; each prints the set written (`run <id>: breakpoints 2,
-  3.1`, or `run <id>: no breakpoints`). An address the pinned tree does not hold is refused, naming it, and nothing
-  is written. A change takes the breakpoints lock (`breakpoints.lock`) and, while no process runs the run, its run
-  lock; one set while the run runs takes effect from the next layer of nodes (so not between the paths of a Together
-  that already started). They are never in the document.
+  3.1`, or `run <id>: no breakpoints`). An address the pinned tree (the run snapshot's document, read up to 1 MiB and
+  never through a link, as hub web reads it) does not hold is refused, naming it, and nothing is written. A change
+  takes the breakpoints lock (`breakpoints.lock`) and, while no process runs the run, its run lock; one set while the
+  run runs takes effect from the next layer of nodes (so not between the paths of a Together that already started).
+  They are never in the document.
 - Before a block means before its first node and before its `<step>__ask` gate; for a stage, before its first block;
   a Repeat, before the group (a body block's breakpoint pauses in every iteration); an If, before its condition is
   read; a Together, before any path. An Include is one block: nothing inside the scenario it includes takes a
@@ -201,7 +202,9 @@ A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([A
   node pauses for a breakpoint when it is an entry node of a block the file names (the outermost such block is
   reported; in step mode a leaf's entry node pauses as `step`, at the leaf); the pause a run resumes from has taken
   up the breakpoints of every block its node enters, at that node's first visit, so a Continue from a Step into a
-  Together's first path does not pause again at its second.
+  Together's first path does not pause again at its second. Only that first visit: in a Repeat, a Continue from a
+  body block's breakpoint pauses there again in the next iteration, and a Step from a body of one block runs one
+  iteration.
 - A gate decision (`hub workflow approve|reject|respond`) on a gate the stopped pass left open, sent while the debug
   pause is the run's, is recorded and resumes the run as `hub workflow run --resume` does, with no `debug.command`
   line: the stopped pass goes on, then pauses on that gate, and the next `hub workflow run --resume` takes up the

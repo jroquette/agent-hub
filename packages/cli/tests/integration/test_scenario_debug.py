@@ -29,7 +29,20 @@ from agent_hub.cli import scenario_debug
 from agent_hub.cli.main import app
 from agent_hub.cli.workflow_runs import WorkflowRunError, run_lock, snapshot_hash
 from agent_hub.core.events.event import Event
+from agent_hub.core.scenarios.tree_translate import block_map
 from agent_hub.core.testing.builders import an_environments_document
+from agent_hub.core.testing.workflow_fakes import (
+    FakeClock,
+    KeysOutputs,
+    ListRecorder,
+    ScriptedRunner,
+)
+from agent_hub.core.workflows.document import parse_workflow
+from agent_hub.core.workflows.engine import EnginePorts, run_workflow
+from agent_hub.core.workflows.plan import plan_workflow
+from agent_hub.core.workflows.ports import NodeCall, NodeReply
+from agent_hub.core.workflows.run_control import DebugPause
+from agent_hub.core.workflows.run_state import RunReport
 from agent_hub.storage.event_store import open_event_store
 
 BLOCKS = Path(__file__).resolve().parents[3] / "core/tests/data/scenarios/blocks"
@@ -57,6 +70,8 @@ STATES: dict[str, dict[str, Any]] = {
     "paid": {"paid": True, "payment_job_id": "p-1", "review_status": "CLOSED"},
     # Every condition of the small samples (blocks-together, blocks-repeat).
     "sample": {"order_id": "o-1", "approval_job_id": "a-1", "review_status": "APPROVED"},
+    # The samples' Wait untils hold, but a Repeat's until does not: it runs another iteration.
+    "pending": {"order_id": "o-1", "approval_job_id": "a-1", "review_status": "PENDING"},
 }
 # The reference scenario's node ids, by block address.
 NODES = {
@@ -632,6 +647,136 @@ def test_runs_the_first_body_block_when_a_repeat_is_stepped(debug_hub: DebugHub)
     ]
 
 
+def test_pauses_in_the_next_iteration_when_continued_from_a_body_block_breakpoint(
+    debug_hub: DebugHub,
+) -> None:
+    debug_hub.order("pending")
+    started = debug_hub.start("--break", "1.2.1", name="blocks-repeat")
+
+    continued = debug_hub.run("scenario", "continue", RUN)
+    debug_hub.order("sample")
+    finished = debug_hub.run("scenario", "continue", RUN)
+
+    assert last_line(started) == f"run {RUN}: paused before 1.2.1 (breakpoint)", started.output
+    assert last_line(continued) == f"run {RUN}: paused before 1.2.1 (breakpoint)", continued.output
+    assert (finished.exit_code, last_line(finished)) == (0, f"run {RUN}: done"), finished.output
+    lines = debug_hub.records()
+    assert passes(lines) == [
+        ["poll-review--1"],
+        ["poll-review--2__poll-review--2-1", "poll-review--2__poll"],
+        ["poll-review--2__poll-review--2-1", "poll-review--2__poll", "poll-review--2"],
+    ]
+    pauses = [line for line in lines if line["event"] == "debug.pause"]
+    assert [(p["node"], p["block"], p["number"]) for p in pauses] == [
+        ("poll-review--2__poll-review--2-1", "1.2.1", 1),
+        ("poll-review--2__poll-review--2-1", "1.2.1", 2),
+    ]
+
+
+ONE_STEP_BODY = """\
+version: 2
+kind: scenario
+name: one-step-body
+revision: 1
+inputs:
+  shop_order_id: {required: true}
+  personal_name: {required: true}
+  aws_account_id: {required: true}
+stages:
+- name: Poll
+  steps:
+  - wait_until: order-state
+    until: $self.output.order_id != ''
+    every: 15s
+    timeout: 10m
+  - repeat:
+      max: 5
+      until: $poll.output.review_status == 'APPROVED'
+      steps:
+      - wait_until: order-state
+        id: poll
+        until: $self.output.approval_job_id != ''
+        every: 15s
+        timeout: 10m
+"""
+
+
+def test_runs_one_iteration_per_step_when_a_repeat_body_holds_one_block(
+    debug_hub: DebugHub,
+) -> None:
+    (debug_hub.hub / "scenarios" / "fixture" / "one-step-body.yaml").write_text(ONE_STEP_BODY)
+    git(debug_hub.hub, "add", "-A")
+    git(debug_hub.hub, "commit", "-q", "-m", "a repeat whose body holds one block")
+    debug_hub.order("pending")
+    started = debug_hub.start("--break", "1.2.1", name="one-step-body")
+
+    stepped = [debug_hub.run("scenario", "step", RUN) for _ in range(2)]
+    debug_hub.order("sample")
+    continued = debug_hub.run("scenario", "continue", RUN)
+
+    assert last_line(started) == f"run {RUN}: paused before 1.2.1 (breakpoint)", started.output
+    assert [last_line(result) for result in stepped] == [
+        f"run {RUN}: paused before 1.2.1 (step)",
+        f"run {RUN}: paused before 1.2.1 (step)",
+    ], [result.output for result in stepped]
+    assert (continued.exit_code, last_line(continued)) == (0, f"run {RUN}: done")
+    assert passes(debug_hub.records()) == [
+        ["poll--1"],
+        ["poll--2__poll"],
+        ["poll--2__poll"],
+        ["poll--2__poll", "poll--2"],
+    ]
+
+
+class BreaksAfterPoll(ScriptedRunner):
+    """The Repeat sample's actions, every poll ``pending``; once the body's poll has run, it
+    sets ``addresses`` as the run's breakpoints, as ``hub scenario break`` does beside a run."""
+
+    def __init__(self, folder: Path, addresses: list[str]) -> None:
+        super().__init__()
+        self.folder, self.addresses = folder, addresses
+
+    def run(self, call: NodeCall) -> NodeReply:
+        super().run(call)
+        if call.node.id == "poll-review--2__poll":
+            scenario_debug.write_breakpoints(self.folder, self.addresses)
+        return NodeReply(json.dumps(STATES["pending"]))
+
+
+def test_pauses_in_the_next_iteration_when_the_breakpoint_is_set_again_after_the_resume_ran_it(
+    tmp_path: Path,
+) -> None:
+    content = yaml.safe_load((BLOCKS / "tree" / "blocks-repeat.yaml").read_text())
+    plan = plan_workflow(parse_workflow(content))
+    blocks = scenario_debug.RunBlocks.of(block_map(content), plan)
+    notes: list[dict[str, Any]] = []
+    inputs = {"shop_order_id": ORDER, **VALUES}
+
+    def run(runner: ScriptedRunner, resumed: RunReport | None) -> RunReport:
+        pause = None if resumed is None else resumed.state.pause
+        control = scenario_debug.FileRunControl(
+            tmp_path, blocks, stepping=False, resumed=pause, note=notes.append
+        )
+        ports = EnginePorts(
+            runner, ListRecorder(), FakeClock(), KeysOutputs(), lambda: 0.5, control=control
+        )
+        return run_workflow(plan, inputs, ports, prior=None if resumed is None else resumed.state)
+
+    scenario_debug.write_breakpoints(tmp_path, ["1.2.1"])
+    first = run(BreaksAfterPoll(tmp_path, ["1.2.1"]), None)
+    # Continued with no breakpoint; the body block's is set again once its iteration polled.
+    scenario_debug.write_breakpoints(tmp_path, [])
+    runner = BreaksAfterPoll(tmp_path, ["1.2.1"])
+    second = run(runner, first)
+
+    body = "poll-review--2__poll-review--2-1"
+    assert first.state.pause == DebugPause(body, "1.2.1", "breakpoint")
+    assert second.state.pause == DebugPause(body, "1.2.1", "breakpoint")
+    assert second.state.groups["poll-review--2"].iteration == 2
+    assert runner.ran() == [body, "poll-review--2__poll"]
+    assert notes == []
+
+
 def test_pauses_before_the_next_block_when_a_gate_met_while_stepping_is_answered(
     debug_hub: DebugHub,
 ) -> None:
@@ -671,6 +816,29 @@ def test_records_no_command_when_the_resume_is_refused_by_a_changed_snapshot(
         assert "content_hash" in plain(result.output)
     assert (debug_hub.folder / "records.jsonl").read_bytes() == record
     assert debug_hub.stored() == stored
+
+
+@pytest.mark.parametrize("kind", ["link", "large"])
+def test_refuses_the_breakpoints_change_when_the_pinned_tree_is_a_link_or_too_large(
+    debug_hub: DebugHub, tmp_path: Path, kind: str
+) -> None:
+    debug_hub.order("fetched")
+    debug_hub.start("--break", "2.1")
+    pinned = debug_hub.folder / "snapshot" / "workflow.json"
+    content = json.loads(pinned.read_bytes())
+    pinned.unlink()
+    if kind == "link":
+        elsewhere = tmp_path / "elsewhere.json"
+        elsewhere.write_text(json.dumps(content))
+        pinned.symlink_to(elsewhere)
+    else:
+        pinned.write_text(json.dumps(content | {"description": "x" * (1 << 20)}))
+
+    refused = debug_hub.run("scenario", "break", RUN, "2.2")
+
+    assert refused.exit_code == 1, refused.output
+    assert "cannot load the scenario run's snapshot" in plain(refused.output)
+    assert json.loads((debug_hub.folder / "breakpoints.json").read_text()) == {"addresses": ["2.1"]}
 
 
 # AC-507.12: edits during a pause change nothing of the run.
@@ -825,6 +993,42 @@ def test_pauses_at_no_breakpoint_when_a_run_resumes_on_an_environment_now_produc
 
 
 # breakpoints.json: replaced whole, read through no link; a bad one is no breakpoint.
+
+
+def test_pauses_at_each_breakpoint_when_the_start_gives_them_as_the_api_launcher_does(
+    debug_hub: DebugHub,
+) -> None:
+    # hub web's launcher passes one ``--break=ADDR`` argument per breakpoint.
+    debug_hub.order("fetched")
+
+    started = debug_hub.start("--break=2.1", "--break=3.3")
+
+    assert last_line(started) == f"run {RUN}: paused before 2.1 (breakpoint)", started.output
+    assert json.loads((debug_hub.folder / "breakpoints.json").read_text()) == {
+        "addresses": ["2.1", "3.3"]
+    }
+
+
+def test_replaces_and_clears_the_breakpoints_when_break_gets_the_api_launcher_argv(
+    debug_hub: DebugHub,
+) -> None:
+    # hub web's launcher sends ``break RUN --set -- ADDR...``, and ``--set --`` alone to clear.
+    debug_hub.order("fetched")
+    debug_hub.start("--break", "2.1")
+
+    replaced = debug_hub.run("scenario", "break", RUN, "--set", "--", "2.2", "1")
+    cleared = debug_hub.run("scenario", "break", RUN, "--set", "--")
+
+    assert (replaced.exit_code, last_line(replaced)) == (0, f"run {RUN}: breakpoints 1, 2.2"), (
+        replaced.output
+    )
+    assert (cleared.exit_code, last_line(cleared)) == (0, f"run {RUN}: no breakpoints"), (
+        cleared.output
+    )
+    marks = [
+        line["addresses"] for line in debug_hub.records() if line["event"] == "debug.breakpoints"
+    ]
+    assert marks == [["2.1"], ["1", "2.2"], []]
 
 
 def test_adds_removes_and_replaces_breakpoints_when_break_runs(debug_hub: DebugHub) -> None:

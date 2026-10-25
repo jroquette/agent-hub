@@ -10,19 +10,22 @@ Each change also appends a ``debug.breakpoints`` line (the set as written) and e
 lock when no process runs the run (dropping the record's torn tail first); while a process runs
 it, the change goes beside it, so a breakpoint set during a run takes effect at its next layer.
 
-``FileRunControl`` is the engine's ``RunControl`` for a version-2 run. ``debugging`` reads the
-file, never through a link, as each layer starts; a file that cannot be read or parsed (or names
-a block the tree does not hold) counts as no breakpoint and appends one
-``debug.breakpoints_unreadable`` line (``reason``) per reason and process. A node pauses for a
-breakpoint when it is an entry node (``BlockMap.run_entries``: a gated step's ``<step>__ask``
-gate, an include's first nodes) of a block the file names, the outermost first. Step mode is on
-while the record's last debug command is ``step``: then every leaf block (Do, Wait until, You,
-Wait, and an Include as one block) pauses before its entry nodes, except the leaf the Step
-released, the first leaf from the block the run paused before, in declaration order (so a Step
-from before a container visits the first leaf inside it). The engine visits nodes layer by layer,
-so Steps follow that order, not the file's: a Together's paths interleave, and a leaf the run
-skips still takes a Step. The pause the run resumes from has taken up the breakpoints of every
-block that node enters, at its first visit.
+``FileRunControl`` is the engine's ``RunControl`` for a version-2 run. ``debugging`` reads the file,
+never through a link, as each layer starts; a file that cannot be read or parsed (or names a block
+the tree does not hold) counts as no breakpoint and appends one ``debug.breakpoints_unreadable``
+line (``reason``) per reason and process. A node pauses for a breakpoint when it is an entry node
+(``BlockMap.run_entries``: a gated step's ``<step>__ask`` gate, an include's first nodes) of a block
+the file names, the outermost first. Step mode is on while the record's last debug command is
+``step``: then every leaf block (Do, Wait until, You, Wait, and an Include as one block) pauses
+before its entry nodes, except the leaf the Step released at its first visit, the first leaf from
+the block the run paused before, in declaration order (so a Step from before a container visits the
+first leaf inside it). The engine visits nodes layer by layer, so Steps follow that order, not the
+file's: a Together's paths interleave, and a leaf the run skips still takes a Step. The pause the
+run resumes from has taken up the breakpoints of every block that node enters, at its first visit; a
+later visit (a body node's in the next iteration) pauses as any other. ``debugging`` stays on all
+through a resume from a debug pause, breakpoints or not (with none, nothing pauses), so a node's
+first ask is its first visit: the engine takes up that pause at the same visit, whichever side
+releases it.
 
 ``hub scenario step|continue RUN`` take only a run in a debug pause: once its snapshot still
 matches its ``content_hash`` and its ``debug.pause`` line can be read back, the command is
@@ -97,6 +100,8 @@ from agent_hub.core.workflows.substitution import echo
 BREAKPOINTS: Final = "breakpoints.json"
 BREAKPOINTS_LOCK: Final = "breakpoints.lock"
 MAX_BREAKPOINTS_BYTES: Final = 64 << 10
+# The pinned tree is read as hub web reads it: never through a link, at most 1 MiB.
+MAX_SNAPSHOT_DOCUMENT_BYTES: Final = 1 << 20
 MAX_BREAKPOINTS: Final = 512
 # The blocks Step runs one at a time; containers and stages are entered.
 LEAF_KINDS: Final = frozenset({"do", "wait_until", "you", "wait", "include"})
@@ -157,6 +162,7 @@ class FileRunControl:
                 self._blocks_of.setdefault(node, []).append(address)
         self._released = _released(blocks, resumed) if stepping else None
         self._taken = frozenset(() if resumed is None else self._blocks_of.get(resumed.node, ()))
+        self._resuming = resumed is not None
 
     def debugging(self) -> bool:
         found, reason = _read_breakpoints(self._folder, self._known)
@@ -168,7 +174,8 @@ class FileRunControl:
         if fresh:
             typer.echo(f"run {self._folder.name}: no breakpoint holds: {reason}", err=True)
             self._note({"event": DEBUG_BREAKPOINTS_UNREADABLE, "reason": reason})
-        return self._stepping or bool(found)
+        # Asked about every visit while resuming, so a node's first ask is its first visit.
+        return self._stepping or self._resuming or bool(found)
 
     def pause_before(self, node: str) -> PauseReason | None:
         with self._lock:
@@ -213,11 +220,17 @@ def run_control(
 
 
 def _pinned_tree(folder: Path) -> BlockMap:
-    """The block map of the run's pinned tree (its snapshot's document); refused for a run of
-    a version-1 scenario."""
+    """The block map of the run's pinned tree (its snapshot's document, read through no link
+    and up to ``MAX_SNAPSHOT_DOCUMENT_BYTES``); refused for a run of a version-1 scenario."""
+    snapshot = folder / SNAPSHOT
     try:
-        content = json.loads((folder / SNAPSHOT / DOCUMENT).read_bytes())
-    except (OSError, ValueError) as error:
+        data = None
+        if not snapshot.is_symlink():
+            data = _read_file(snapshot / DOCUMENT, MAX_SNAPSHOT_DOCUMENT_BYTES)
+        if data is None:
+            raise ValueError("not a regular file of at most 1 MiB, read through no link")
+        content = json.loads(data)
+    except (OSError, ValueError, RecursionError) as error:
         raise WorkflowRunError(f"cannot load the scenario run's snapshot: {error}") from None
     if not is_tree(content):
         message = f"the run {folder.name} is of a version 1 scenario, which {NO_ADDRESSES}"
@@ -266,15 +279,15 @@ def _read_breakpoints(folder: Path, known: frozenset[str]) -> tuple[frozenset[st
     return frozenset(addresses), None
 
 
-def _read_file(path: Path) -> bytes | None:
+def _read_file(path: Path, limit: int = MAX_BREAKPOINTS_BYTES) -> bytes | None:
     """The file's bytes, opened through no link (nor blocking on a FIFO); ``None`` when it is
-    not a regular file or passes ``MAX_BREAKPOINTS_BYTES``."""
+    not a regular file or passes ``limit`` bytes."""
     flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
     with os.fdopen(os.open(path, flags), "rb") as file:
         if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
             return None
-        data = file.read(MAX_BREAKPOINTS_BYTES + 1)
-    return None if len(data) > MAX_BREAKPOINTS_BYTES else data
+        data = file.read(limit + 1)
+    return None if len(data) > limit else data
 
 
 def _addresses(data: bytes) -> list[str] | None:
