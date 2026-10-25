@@ -136,17 +136,9 @@ def reversed_keys(value: JsonValue) -> JsonValue:
     return value
 
 
-def test_refuses_to_rewrite_web_tree_documents_when_ci_set(
-    golden: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("GOLDEN_UPDATE", "1")
-    monkeypatch.setenv("CI", "true")
-
-    with pytest.raises(pytest.fail.Exception, match="GOLDEN_UPDATE=1 is refused when CI is set"):
-        golden.update_mode()
-
-
-def test_holds_the_loaders_parse_when_web_tree_documents_read(golden: Any) -> None:
+def check_web_tree_documents(golden: Any, module: Path) -> int:
+    """Checks ``module`` holds the web's tree documents (rewrites it first under
+    ``GOLDEN_UPDATE=1``); the number of tree fixtures it holds."""
     documents = {
         path.stem: load_workflow_bytes(path.read_bytes(), source=path.name).document
         for path in sorted(TREES.glob("*.yaml"))
@@ -157,7 +149,24 @@ def test_holds_the_loaders_parse_when_web_tree_documents_read(golden: Any) -> No
     every_key = load_workflow_bytes(text.encode(), source="every-key.yaml").document
     expected = web_tree_module(documents, every_key)
     if golden.update_mode():
-        WEB_TREES.write_text(expected, encoding="utf-8", newline="\n")
+        module.write_text(expected, encoding="utf-8", newline="\n")
 
-    assert len(documents) >= 6
-    assert WEB_TREES.read_text(encoding="utf-8") == expected, WEB_TREES_HINT
+    assert module.read_text(encoding="utf-8") == expected, WEB_TREES_HINT
+    return len(documents)
+
+
+def test_refuses_to_rewrite_web_tree_documents_when_ci_set(
+    golden: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("GOLDEN_UPDATE", "1")
+    monkeypatch.setenv("CI", "true")
+    module = tmp_path / "treeDocuments.ts"
+    module.write_text("// stale\n", encoding="utf-8")
+
+    with pytest.raises(pytest.fail.Exception, match="GOLDEN_UPDATE=1 is refused when CI is set"):
+        check_web_tree_documents(golden, module)
+    assert module.read_text(encoding="utf-8") == "// stale\n"
+
+
+def test_holds_the_loaders_parse_when_web_tree_documents_read(golden: Any) -> None:
+    assert check_web_tree_documents(golden, WEB_TREES) >= 6

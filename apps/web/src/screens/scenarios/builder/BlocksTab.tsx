@@ -28,6 +28,8 @@ export interface BlocksTabProps {
   taken: BuilderDocument;
   /** Where a click adds: "after step 4", or "at the end". */
   where: string;
+  /** Claude's proposal is under review: the draft is not edited, so no block is added. */
+  locked?: boolean;
   onAdd: (item: Item) => void;
   /** A press that may become a drag; a press without a move is a click. */
   onPress: (event: ReactPointerEvent, make: () => Item, look: BlockLook) => void;
@@ -41,6 +43,7 @@ function Block({
   hint,
   extra,
   where,
+  locked,
   make,
   onAdd,
   onPress,
@@ -49,6 +52,7 @@ function Block({
   hint: string;
   extra?: ReactNode;
   where: string;
+  locked: boolean;
   make: () => Item;
   onAdd: (item: Item) => void;
   onPress: BlocksTabProps["onPress"];
@@ -58,8 +62,9 @@ function Block({
       <button
         type="button"
         className="sb-pal"
-        aria-label={`Add ${look.label} ${where}`}
-        title={`Drag into the list, or click to add ${where}`}
+        aria-label={locked ? `Add ${look.label}` : `Add ${look.label} ${where}`}
+        aria-disabled={locked || undefined}
+        title={locked ? LOCKED : `Drag into the list, or click to add ${where}`}
         style={{ ["--tile" as string]: look.tint, ["--tile-soft" as string]: look.soft }}
         onPointerDown={(event) => {
           onPress(event, make, look);
@@ -85,11 +90,15 @@ function Block({
   );
 }
 
+const LOCKED =
+  "While you review Claude's proposal the draft is not edited: go back to your draft to add a block.";
+
 export function BlocksTab({
   library,
   pack,
   taken,
   where,
+  locked = false,
   onAdd,
   onPress,
   stages = null,
@@ -100,7 +109,7 @@ export function BlocksTab({
   return (
     <div className="sb-left-body">
       <span className="ah-small ah-muted">
-        Drag a block into the list, or click one to add it {where}.
+        {locked ? LOCKED : `Drag a block into the list, or click one to add it ${where}.`}
       </span>
       {stages && (
         <section className="sb-blocks" aria-label="Stages">
@@ -115,6 +124,7 @@ export function BlocksTab({
               }}
               hint={STAGE_ENTRY.hint}
               where={stages.where}
+              locked={locked}
               make={() => STAGE_ENTRY.make(stages.names)}
               onAdd={onAdd}
               onPress={onPress}
@@ -136,6 +146,7 @@ export function BlocksTab({
                   look={{ label: entry.label, icon: entry.icon, tint: kind.tint, soft: kind.soft }}
                   hint={entry.hint}
                   where={where}
+                  locked={locked}
                   make={() => entry.make(taken)}
                   onAdd={onAdd}
                   onPress={onPress}
@@ -167,6 +178,7 @@ export function BlocksTab({
                   hint={item.action.description ?? ""}
                   extra={<EffectBadge effect={item.action.effect} />}
                   where={where}
+                  locked={locked}
                   make={() => blockItem(taken, "action", refOf(item))}
                   onAdd={onAdd}
                   onPress={onPress}
@@ -185,6 +197,7 @@ export function BlocksTab({
                     }}
                     hint="Read again until a state holds"
                     where={where}
+                    locked={locked}
                     make={() => blockItem(taken, "expect", refOf(item))}
                     onAdd={onAdd}
                     onPress={onPress}

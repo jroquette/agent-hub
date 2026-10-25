@@ -1,6 +1,8 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 
 import { Banner, Button, Dialog } from "../../../components";
+import { apiQuery } from "../../../lib/api";
 import { useMigrateScenario } from "../queries";
 
 /* Migrate: a graph scenario (`version: 1`) stays editable in the builder, and this writes it
@@ -36,10 +38,22 @@ export function MigrateDialog({
     sent.current = contentHash;
     checkFile({ check: true, base_content_hash: contentHash });
   }, [unsaved, checkFile, contentHash]);
+  const client = useQueryClient();
+  // The builder reads the file every few seconds: the file is read again first, so the check is
+  // made with the hash of the file as it is now (and the builder shows that file).
   const checkAgain = () => {
-    write.reset();
-    sent.current = contentHash;
-    checkFile({ check: true, base_content_hash: contentHash });
+    const detail = apiQuery("/api/v1/scenarios/{project}/{name}", { path: { project, name } });
+    void client
+      .query({ ...detail, staleTime: 0 })
+      .then(
+        (read) => read.content_hash ?? contentHash,
+        () => contentHash,
+      )
+      .then((hash) => {
+        write.reset();
+        sent.current = hash;
+        checkFile({ check: true, base_content_hash: hash });
+      });
   };
   const checked = check.data ?? null;
   const wrote = write.data ?? null;

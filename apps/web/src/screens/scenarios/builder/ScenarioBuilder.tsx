@@ -822,7 +822,8 @@ export function ScenarioBuilder({
                 variant="ghost"
                 icon="message-square"
                 onClick={() => {
-                  setAskingAction({ step: node.id, readOnly: node.type === "expect" });
+                  // Written as blocks, a block is named by its address, as the file holds no id.
+                  setAskingAction({ step: tree ? key : node.id, readOnly: node.type === "expect" });
                 }}
               >
                 Ask Claude to write one
@@ -1862,6 +1863,7 @@ export function ScenarioBuilder({
                     ? `after step ${numbersNow.get(selected) ?? selected}`
                     : "at the end"
               }
+              locked={underReview}
               onAdd={addAtEnd}
               onPress={pressBlock}
               stages={
@@ -2070,6 +2072,7 @@ export function ScenarioBuilder({
                 pack: scenario.pack,
                 step: askingAction.step,
                 readOnly: askingAction.readOnly,
+                tree,
               }),
             );
             setAskingAction(null);
@@ -2116,6 +2119,8 @@ export function ScenarioBuilder({
                     size="sm"
                     variant="primary"
                     icon="plus"
+                    // Under review the draft is not edited (the Blocks tab says so).
+                    disabled={underReview}
                     onClick={() => {
                       const ref =
                         shownAction.pack === scenario.pack ? shownAction.name : shownAction.ref;

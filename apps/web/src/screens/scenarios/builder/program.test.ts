@@ -846,7 +846,8 @@ describe("scenario block program, written as blocks (version 2)", () => {
       name: "s",
       stages: [{ name: "S", steps: [{ do: "a" }, b, { do: "c" }] }],
     };
-    for (const id of ['k","injected":"z', 'k"q', "k\\", "k.output"]) {
+    // `$self.output` and `$CTX.output` read no block; core's ids start with a lowercase letter.
+    for (const id of ['k","injected":"z', 'k"q', "k\\", "k.output", "self", "CTX", "Fetch"]) {
       const proposed = {
         ...draft,
         stages: [{ name: "S", steps: [{ do: "a2", id }, { do: "c" }] }],
@@ -905,6 +906,66 @@ describe("scenario block program, written as blocks (version 2)", () => {
         },
       ],
     });
+  });
+
+  it("keeps `$self.output` a block's own output when an edit or a review renames a block named self", () => {
+    // `$self.output` reads the block's own output, before any block named self (the id is
+    // reserved, so the check names that block). `$LOOP_PREV.self.output` reads the block.
+    const wait = {
+      wait_until: "order-state",
+      until: "$self.output.ok == true",
+      every: "15s",
+      timeout: "10m",
+      capture: { v: "$self.output.v" },
+    };
+    const c = { do: "c", capture: { w: "$self.output.w" }, with: { p: "$LOOP_PREV.self.output" } };
+    const draft = {
+      version: 2,
+      kind: "scenario",
+      name: "s",
+      stages: [{ name: "S", steps: [{ do: "a", id: "self" }, wait, c] }],
+    };
+    const stages = stagesOf(draft);
+
+    // The block named self given another id in its editor.
+    const block = findItem(stages, "1.1");
+    const renamed =
+      block?.kind === "block"
+        ? replaceItem(stages, "1.1", { ...block, node: { ...block.node, id: "fetch" } })
+        : stages;
+    expect(idChanges(stages, renamed)).toEqual(new Map([["self", "fetch"]]));
+    expect(stepsOf(renameRefs(treeOf(draft, renamed), idChanges(stages, renamed)))).toStrictEqual([
+      [{ do: "a", id: "fetch" }, wait, { ...c, with: { p: "$LOOP_PREV.fetch.output" } }],
+    ]);
+
+    // A proposal renames it and changes the Wait until, which is rejected: as the draft wrote it.
+    const changed = { ...wait, until: "$self.output.ok == false" };
+    const renaming = treeReview(draft, {
+      ...draft,
+      stages: [{ name: "S", steps: [{ do: "a", id: "fetch" }, changed, c] }],
+    });
+    expect(renaming.changes.map((change) => change.id)).toEqual([
+      "changed block 1.1",
+      "changed block 1.2",
+    ]);
+    expect(stepsOf(applyReview(renaming, new Set(["changed block 1.1"])))).toStrictEqual([
+      [{ do: "a", id: "fetch" }, wait, c],
+    ]);
+
+    // The same rename, and a new block the proposal names self, which is rejected: the Wait
+    // until both hold still reads its own output.
+    const before = { ...draft, stages: [{ name: "S", steps: [{ do: "a", id: "self" }, wait] }] };
+    const adding = treeReview(before, {
+      ...draft,
+      stages: [{ name: "S", steps: [{ do: "a", id: "fetch" }, wait, { do: "n", id: "self" }] }],
+    });
+    expect(adding.changes.map((change) => change.id)).toEqual([
+      "changed block 1.1",
+      "new block 1.3",
+    ]);
+    expect(stepsOf(applyReview(adding, new Set(["changed block 1.1"])))).toStrictEqual([
+      [{ do: "a", id: "fetch" }, wait],
+    ]);
   });
 
   it("lists the scenario's inputs and description a proposal changes as changes of their own", () => {

@@ -1320,7 +1320,7 @@ export function BlockInspector({
               <Disclosure label="More: id">
                 <Field
                   label="Id"
-                  help={`Optional, kebab-case. Without one it runs as ${placeId}, from its place, and what reads its output follows it when it moves. Renaming updates what reads it.`}
+                  help={`Optional, kebab-case, not self ($self reads a block's own output). Without one it runs as ${placeId}, from its place, and what reads its output follows it when it moves. Renaming updates what reads it.`}
                 >
                   {(fieldId) => (
                     <input
@@ -1333,7 +1333,8 @@ export function BlockInspector({
                       }}
                       onBlur={() => {
                         if (id === ownId) return;
-                        if (id !== "" && !/^[a-z][a-z0-9-]*$/.test(id)) setId(ownId);
+                        if (id !== "" && (id === "self" || !/^[a-z][a-z0-9-]*$/.test(id)))
+                          setId(ownId);
                         else onId?.(id);
                       }}
                     />

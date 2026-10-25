@@ -748,12 +748,16 @@ export function idChanges(before: readonly Item[], next: readonly Item[]): Map<s
   return changes;
 }
 
-// A block's output read in a value: `$<id>.output…` or `$LOOP_PREV.<id>.output…` (`$$` is a
-// written dollar, not a reference).
-const OUTPUT_REF = /\$(?:\$|(LOOP_PREV\.)?([A-Za-z0-9_-]+)\.output(?![A-Za-z0-9_]))/g;
+// A block's output read in a value: `$<id>.output…` or `$LOOP_PREV.<id>.output…`, the id as the
+// grammar spells it (`$$` is a written dollar, not a reference).
+const OUTPUT_REF = /\$(?:\$|(LOOP_PREV\.)?([a-z][a-z0-9_-]*)\.output(?![A-Za-z0-9_]))/g;
 // An id a reference can name: a reference is written only with one (a proposal, or a file the
 // load refused, can give a block any id).
-const REF_ID = /^[A-Za-z0-9_-]+$/;
+const REF_ID = /^[a-z][a-z0-9_-]*$/;
+// `$self.output…` is a block's own output, read before any block of that id (which the check
+// refuses): it never names a block, and no reference is rewritten to it. `$LOOP_PREV.self.output`
+// does name one.
+const SELF = "self";
 
 /** `document` with each reference in its stages to a block whose id `ids` maps written with the
  * id it maps to, all at once (so two blocks that swap places swap their references too). */
@@ -764,16 +768,19 @@ export function renameRefs(document: Mapping, ids: ReadonlyMap<string, string>):
 
 /** `value` with each reference to a block whose id `ids` maps written with the id it maps to,
  * in its string values only (never a key), and only when that id is one a reference can name:
- * a reference to a block whose new id no reference can name stays as written. `value` itself
- * when nothing changes. */
+ * a reference to a block whose new id no reference can name stays as written, and so does
+ * `$self.output…`, a block's own output. `value` itself when nothing changes. */
 function renamedIn(value: Json, ids: ReadonlyMap<string, string>): Json {
   if (ids.size === 0) return value;
   if (typeof value === "string") {
     return value.replace(
       OUTPUT_REF,
       (whole: string, prev: string | undefined, id: string | undefined) => {
-        const to = id === undefined ? undefined : ids.get(id);
-        return to === undefined || !REF_ID.test(to) ? whole : `$${prev ?? ""}${to}.output`;
+        const own = (name: string) => prev === undefined && name === SELF;
+        const to = id === undefined || own(id) ? undefined : ids.get(id);
+        return to === undefined || !REF_ID.test(to) || own(to)
+          ? whole
+          : `$${prev ?? ""}${to}.output`;
       },
     );
   }

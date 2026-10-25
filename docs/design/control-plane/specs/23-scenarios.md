@@ -234,13 +234,15 @@ other one. The builder never writes YAML: it holds the file's JSON, the server w
   leaves nothing to save.
 - **Stages.** A stage is added from the Blocks tab's Stage block (after the selected step's stage, or at the end), a
   `+` between stages or Add stage; its header opens its editor (name, what it is for, Delete the stage and its steps,
-  with Undo; a problem on its name shows under the field, one on its steps above it); it moves by its handle, Alt arrows or its row menu (Move up, Move down, Delete stage). A step goes only
-  into a stage's list (or a group's), a stage only between stages.
+  with Undo; a problem on its name shows under the field, one on its steps above it); it moves by its handle, Alt
+  arrows or its row menu (Move up, Move down, Delete stage). A step goes only into a stage's list (or a group's), a
+  stage only between stages.
 - **A block's editor.** No "Runs after", no "Only if" and no "Runs when": position is order. More: id shows the
   block's own id, empty when it runs under the one its place gives (`fetch-order--1`, the placeholder); one given is
   written to the file and the references to the old one follow it. The placeholder typed in is given too: the block
   keeps that id when it moves, and a block then put at its old place runs under the same one, which the check refuses
-  on the given `id` until one of them has another.
+  on the given `id` until one of them has another. The field refuses `self` (its help says why: `$self.output` reads a
+  block's own output), as it refuses an id that is not kebab-case: the block keeps the id it had.
 - **References follow their block.** No edit changes which block a `$<id>.output` (or `$LOOP_PREV.<id>.output`)
   reference reads: when a block with no id of its own gets another place id (a block inserted, moved or removed before
   it, a move to another stage, its stage renamed), every reference to it is rewritten to the new one, all at once; a
@@ -255,8 +257,11 @@ other one. The builder never writes YAML: it holds the file's JSON, the server w
   rejected) has its references follow the blocks they read, to the block that takes one's place when that change is
   accepted (a changed block, one Claude gives an id of its own); a block both hold reads the block it reads in both,
   or the one of its two the draft still holds, and is left as written otherwise. A reference is rewritten only inside
-  a value (never a key) and only to an id a reference can name (letters, digits, `_` and `-`): one to a block given
-  any other id (a proposal's `k"q`, a file the load refused) stays as written, for the check to name.
+  a value (never a key) and only to an id a reference can name, spelt as the grammar spells one (`[a-z][a-z0-9_-]*`):
+  one to a block given any other id (a proposal's `k"q`, `CTX`, a file the load refused) stays as written, for the
+  check to name. `$self.output` is a block's own output, never a reference to a block named `self` (an id the check
+  refuses): a rename of that block leaves it as written, and no reference is rewritten to it
+  (`$LOOP_PREV.self.output` does read the block, and follows it).
 - **Graph view.** A picture of how the blocks run (the builder's own reading of the blocks as nodes, a stage's first
   block after the last one before it, each selected with its block; an If nested in another shows its own condition,
   not the joined one core's translation runs), with nothing to add or move there: "The graph shows how the blocks
@@ -284,12 +289,18 @@ other one. The builder never writes YAML: it holds the file's JSON, the server w
   of a plan made for the draft; Back to my draft shows them again. For the same reason a proposal's row selected
   under review is not a block of the draft: Delete, Alt arrows, ⌘D, a block of the Blocks tab (click or Enter), Add to
   the scenario and Describe's "after" leave the draft as it is, and opening or closing the review clears the
-  selection.
+  selection. The Blocks tab says so ("While you review Claude's proposal the draft is not edited: go back to your
+  draft to add a block."), its blocks marked unavailable and named with no place, and the action panel's Add to the
+  scenario is off.
+- **New action.** "Ask Claude to write one" in a block's editor names the block by its address in a scenario written
+  as blocks ("for the block 1.2 of this scenario"), with the brief's line on what an address is, as "Ask Claude about
+  this step" does; a graph's step by its id.
 - **Migrate, for a graph.** More › Migrate to stages of blocks opens a dialog that checks first (`POST
   …/migrate` with `check` and the hash of the file the builder read) and shows the file as blocks, or each step a
-  tree cannot hold and why, with nothing written (to change in the builder, then open Migrate again); Migrate writes it over the file the check read (the check's
-  `content_hash` as `base_content_hash`) and the page opens the stages. A file changed since the check is refused
-  (409 `stale_document`, shown in the dialog with Check again, which checks the file as the builder reads it now); a
+  tree cannot hold and why, with nothing written (to change in the builder, then open Migrate again); Migrate writes
+  it over the file the check read (the check's `content_hash` as `base_content_hash`) and the page opens the stages.
+  A file changed since the check is refused (409 `stale_document`, shown in the dialog with Check again, which reads
+  the file again first, without waiting for the builder's next read, and checks it with that file's hash); a
   write that migrates nothing lists its own problems and offers no Migrate. With unsaved changes it asks to save them
   first, and checks nothing. Where it has got to (checking, checked, refused, written) is read out in a polite live
   region.

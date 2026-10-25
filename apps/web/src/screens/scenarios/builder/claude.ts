@@ -132,20 +132,24 @@ function reuse(pack: string): string {
   );
 }
 
-/** Writes one new action, as a draft, for a step of the scenario. */
+/** Writes one new action, as a draft, for a step of the scenario: a step by its id in a graph,
+ * a block by its address in a scenario written as blocks (`tree`), which the message explains. */
 export function createActionMessage({
   text,
   pack,
   step,
   readOnly,
+  tree = false,
 }: {
   text: string;
   pack: string;
   step: string | null;
   readOnly: boolean;
+  tree?: boolean;
 }): string {
+  const named = step === null ? null : tree ? `the block ${step}` : `the step \`${step}\``;
   return [
-    `Write a new action in \`actions/${pack}/\` for ${step ? `the step \`${step}\` of this scenario` : "this scenario"}:`,
+    `Write a new action in \`actions/${pack}/\` for ${named ? `${named} of this scenario` : "this scenario"}:`,
     "",
     "<description>",
     text,
@@ -156,5 +160,6 @@ export function createActionMessage({
       : "Pick its effect honestly: read (only reads), write (changes data) or destroy (deletes or replaces data).",
     'Write its YAML (version 1, name = the file stem, description, effect, runtime python or sh, script under scripts/, timeout, inputs, output_format as a JSON Schema object with the fields it prints) and its script. The script reads one JSON object on stdin ({mode: plan|run, inputs, endpoint}); in plan mode it prints {"summary": "<one line>"} and changes nothing (no credential is available); in run mode it does the work and prints one JSON value matching output_format. Never put a secret in a file: credentials come from the environment\'s env file at run time.',
     "Check it loads with `./hub action list`. It stays a draft until I commit it. Answer with its name, effect, inputs and output fields.",
+    ...(tree && step !== null ? ["", BLOCK_ADDRESS] : []),
   ].join("\n");
 }

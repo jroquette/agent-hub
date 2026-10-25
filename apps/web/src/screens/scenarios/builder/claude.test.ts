@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { aboutStepMessage, describeMessage } from "./claude";
+import { aboutStepMessage, createActionMessage, describeMessage } from "./claude";
 
 const ASKED = {
   text: "Send the order, then wait until it is on hold.",
@@ -68,6 +68,19 @@ describe("what the builder asks Claude", () => {
     expect(block).toContain("Change nothing.");
     const step = aboutStepMessage({ ...about, id: "send-order" });
     expect(step).toContain("About the step `send-order` of the scenario `order-lifecycle`");
+    expect(step).not.toContain("address");
+  });
+
+  it("writes a new action for a block named by its address, and for a graph's step by its id", () => {
+    const asked = { text: "Read the order's state", pack: "orders", readOnly: true };
+
+    const block = createActionMessage({ ...asked, step: "1.2", tree: true });
+    expect(block).toContain(
+      "Write a new action in `actions/orders/` for the block 1.2 of this scenario:",
+    );
+    expect(block).toContain("A block is named by its address");
+    const step = createActionMessage({ ...asked, step: "check-order" });
+    expect(step).toContain("for the step `check-order` of this scenario:");
     expect(step).not.toContain("address");
   });
 });
