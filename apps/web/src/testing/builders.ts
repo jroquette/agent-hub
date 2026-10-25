@@ -12,6 +12,7 @@ import { onTestFinished, vi } from "vitest";
 
 import type { components } from "../api/schema";
 import { PreferencesProvider } from "../lib/preferences";
+import { TREE_DOCUMENTS } from "./treeDocuments";
 
 type Schemas = components["schemas"];
 export type Session = Schemas["Session"];
@@ -2092,6 +2093,17 @@ export function aScenarioDetail(overrides: Partial<ScenarioDetail> = {}): Scenar
     blocks: [],
     ...overrides,
   };
+}
+
+/** The names of the tree fixtures (`packages/core/tests/data/scenarios/blocks/tree`). */
+export const TREE_FIXTURES: readonly string[] = Object.keys(TREE_DOCUMENTS);
+
+/** A tree fixture as the API gives it in `ScenarioDetail.document` (the strict loader's parse,
+ * checked against the YAML file by the generator's tests): a fresh copy each call. */
+export function aTreeDocument(name: string): Record<string, unknown> {
+  const found = TREE_DOCUMENTS[name];
+  if (found === undefined) throw new Error(`no tree fixture ${name}`);
+  return structuredClone(found) as Record<string, unknown>;
 }
 
 export function aScenarioAction(overrides: Partial<ScenarioAction> = {}): ScenarioAction {

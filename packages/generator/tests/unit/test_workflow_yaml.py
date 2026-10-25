@@ -1,6 +1,11 @@
 """Strict workflow loader (AC-213.2): YAML through a refusing SafeLoader, JSON through core's
 strict reader; each key path's line recorded for the document model's errors (AC-213.1)."""
 
+import json
+import os
+from collections.abc import Mapping
+from pathlib import Path
+
 import pytest
 
 from agent_hub.core.hub_config.versions import ECHO_LIMIT
@@ -11,6 +16,23 @@ from agent_hub.generator.workflow_yaml import (
     WorkflowFileError,
     load_workflow_bytes,
 )
+
+_PACKAGES = Path(__file__).parents[3]
+TREES = _PACKAGES / "core" / "tests" / "data" / "scenarios" / "blocks" / "tree"
+# The web's copy of what the API gives as a tree scenario's ``document`` (this loader's parse),
+# which the builder's round trip is checked against (AC-507.24).
+WEB_TREES = _PACKAGES.parent / "apps" / "web" / "src" / "testing" / "treeDocuments.ts"
+UPDATE_VARIABLE = "GOLDEN_UPDATE"
+WEB_TREES_HINT = (
+    f"Update: {UPDATE_VARIABLE}=1 uv run --locked --all-packages pytest "
+    "packages/generator/tests/unit/test_workflow_yaml.py -q, then review and commit the diff"
+)
+WEB_TREES_HEADER = """\
+// Generated: the strict loader's parse of each scenario of
+// packages/core/tests/data/scenarios/blocks/tree, as GET /api/v1/scenarios/{project}/{name}
+// gives it as `document`. packages/generator/tests/unit/test_workflow_yaml.py checks it and
+// rewrites it with GOLDEN_UPDATE=1. Tests read it through aTreeDocument (builders.ts).
+"""
 
 
 def _refusal(content: bytes, source: str = "workflows/p/w.yaml") -> WorkflowFileError:
@@ -328,3 +350,23 @@ def test_leaves_lines_empty_when_json_text_defeats_composer(odd: str) -> None:
 )
 def test_counts_breaks_as_marks_do_when_control_character_given(content: bytes, line: int) -> None:
     assert _refusal(content).line == line
+
+
+def web_tree_module(documents: Mapping[str, object]) -> str:
+    """The web's module of ``documents`` by scenario name, as the check writes it."""
+    body = json.dumps(dict(sorted(documents.items())), indent=2, ensure_ascii=False)
+    declared = "export const TREE_DOCUMENTS: Readonly<Record<string, unknown>> ="
+    return f"{WEB_TREES_HEADER}{declared} {body};\n"
+
+
+def test_holds_the_loaders_parse_when_web_tree_documents_read() -> None:
+    documents = {
+        path.stem: load_workflow_bytes(path.read_bytes(), source=path.name).document
+        for path in sorted(TREES.glob("*.yaml"))
+    }
+    expected = web_tree_module(documents)
+    if os.environ.get(UPDATE_VARIABLE) == "1" and not os.environ.get("CI"):
+        WEB_TREES.write_text(expected, encoding="utf-8", newline="\n")
+
+    assert len(documents) >= 6
+    assert WEB_TREES.read_text(encoding="utf-8") == expected, WEB_TREES_HINT
