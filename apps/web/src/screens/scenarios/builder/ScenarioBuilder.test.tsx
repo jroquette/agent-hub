@@ -772,9 +772,11 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const user = userEvent.setup();
     const proposed = aTreeDocument("blocks-together") as {
       stages: { name: string; steps: unknown[] }[];
+      inputs: Record<string, unknown>;
     };
     proposed.stages[0]?.steps.shift();
     proposed.stages.push({ name: "Ship", steps: [{ wait: { duration: "30s" } }] });
+    proposed.inputs = { ...proposed.inputs, carrier: { default: "fedex" } };
     const { requests } = renderTree("blocks-together", {
       [SAVE]: () => SAVED,
       [`${DETAIL}/proposal`]: {
@@ -787,7 +789,9 @@ describe("ScenarioBuilder (scenario builder)", () => {
     });
 
     const proposes = await screen.findByText("Claude proposes");
-    expect(proposes.parentElement).toHaveTextContent(/1 new or changed block, 1 removed/);
+    expect(proposes.parentElement).toHaveTextContent(
+      /1 new or changed block, 1 removed, changed inputs/,
+    );
     await user.click(screen.getByRole("button", { name: "Accept all" }));
 
     expect(await screen.findByRole("treeitem", { name: /^Stage 2: Ship/ })).toBeInTheDocument();
@@ -830,13 +834,14 @@ describe("ScenarioBuilder (scenario builder)", () => {
       "Accept removed block 8.3",
     ]);
 
-    // One taken: only that block goes, and its twin (block 7.2 now) is still to decide.
+    // One taken: only that block goes, and its twin is still to decide, named as the review
+    // listed it when it opened (its address in the draft then).
     await user.click(within(review).getByRole("button", { name: "Accept removed block 7.1" }));
     await waitFor(() => {
-      expect(listed()).toEqual(["Accept removed block 7.2", "Accept removed block 8.3"]);
+      expect(listed()).toEqual(["Accept removed block 7.3", "Accept removed block 8.3"]);
     });
     // One left as it is: the other is still to decide.
-    await user.click(within(review).getByRole("button", { name: "Reject removed block 7.2" }));
+    await user.click(within(review).getByRole("button", { name: "Reject removed block 7.3" }));
     expect(listed()).toEqual(["Accept removed block 8.3"]);
     await user.click(within(review).getByRole("button", { name: "Accept removed block 8.3" }));
 
@@ -888,6 +893,50 @@ describe("ScenarioBuilder (scenario builder)", () => {
     });
     await save(user);
     expect(await savedDocument(requests)).toStrictEqual(proposed);
+  });
+
+  it("scenario builder's Reject all gives back the draft the review opened on, and an edit outside the review opens it again", async () => {
+    const user = userEvent.setup();
+    const proposed = aTreeDocument("blocks-together") as { stages: { steps: unknown[] }[] };
+    proposed.stages[0]?.steps.push({ wait: { duration: "30s" } }, { wait: { duration: "30s" } });
+    const { requests } = renderTree("blocks-together", {
+      [`${DETAIL}/proposal`]: {
+        path: ".agent-runs/proposals/scenarios/orders/order-lifecycle.yaml",
+        document: proposed,
+        check: { loads: true, yaml: "", problems: [], nodes: [] },
+        problem: null,
+      },
+      [`POST ${DETAIL}/proposal/dismiss`]: {},
+    });
+
+    await screen.findByText("Claude proposes");
+    await user.click(screen.getByRole("button", { name: "Review" }));
+    const listed = () =>
+      within(screen.getByRole("region", { name: "Claude's proposal" }))
+        .getAllByRole("button", { name: /^Accept / })
+        .map((button) => button.getAttribute("aria-label"));
+    await user.click(screen.getByRole("button", { name: "Accept new block 1.4" }));
+    expect(await screen.findByText("Unsaved")).toBeInTheDocument();
+    expect(listed()).toEqual(["Accept new block 1.5"]);
+
+    // Undone from the draft: the review opens again on the draft as it now is.
+    await user.click(screen.getByRole("button", { name: "Back to my draft" }));
+    await user.click(screen.getByRole("button", { name: "Undo (⌘Z)" }));
+    await waitFor(() => {
+      expect(screen.queryByText("Unsaved")).not.toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Review" }));
+    expect(listed()).toEqual(["Accept new block 1.4", "Accept new block 1.5"]);
+
+    // Reject all after an accept: every change rejected, the draft as the review opened on it.
+    await user.click(screen.getByRole("button", { name: "Accept new block 1.5" }));
+    expect(await screen.findByText("Unsaved")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Reject all" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("region", { name: "Claude's proposal" })).not.toBeInTheDocument();
+    });
+    expect(screen.queryByText("Unsaved")).not.toBeInTheDocument();
+    expect(requests.some((request) => request.url.endsWith("/proposal/dismiss"))).toBe(true);
   });
 
   it("scenario builder takes a proposal's block as Claude wrote it, so the blocks accepted bottom-up give the proposal", async () => {

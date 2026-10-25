@@ -4,10 +4,9 @@ import { TREE_FIXTURES, aTreeDocument } from "../../../testing/builders";
 import { dependsOn, toDocument, type BuilderNode, type Json } from "./model";
 import {
   JOIN_RULE,
-  acceptChange,
   addressOfKey,
-  addressed,
-  decisionsAfter,
+  applyReview,
+  decideReview,
   findItem,
   idChanges,
   insertAt,
@@ -21,9 +20,10 @@ import {
   replaceItem,
   stagesOf,
   takeFrom,
-  treeChanges,
   treeNodes,
   treeOf,
+  treeReview,
+  type Decision,
   type Item,
 } from "./program";
 
@@ -268,6 +268,130 @@ const EVERY_KEY: Record<string, Json> = {
     },
   ],
 };
+
+/** The steps of each stage of a document written as blocks. */
+function stepsOf(document: Record<string, Json>): Json[][] {
+  return (document.stages as { steps: Json[] }[]).map((stage) => stage.steps);
+}
+
+/** `draft` with all of `proposal` taken, as Accept all takes it: its stages, and its inputs and
+ * description when it gives them. */
+function takenAll(
+  draft: Record<string, Json>,
+  proposal: Record<string, Json>,
+): Record<string, Json> {
+  const out: Record<string, Json> = {
+    ...draft,
+    stages: Array.isArray(proposal.stages) ? proposal.stages : [],
+  };
+  if (proposal.inputs !== undefined) out.inputs = proposal.inputs;
+  if (typeof proposal.description === "string") out.description = proposal.description;
+  return out;
+}
+
+/** A seeded source of numbers in [0, 1) (mulberry32): the same seed, the same cases. */
+function random(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function pick<T>(next: () => number, items: readonly T[], fallback: T): T {
+  return items[Math.floor(next() * items.length)] ?? fallback;
+}
+
+function shuffled<T>(next: () => number, items: readonly T[]): T[] {
+  const out = [...items];
+  for (let at = out.length - 1; at > 0; at -= 1) {
+    const other = Math.floor(next() * (at + 1));
+    const here = out[at];
+    const there = out[other];
+    if (here === undefined || there === undefined) continue;
+    out[at] = there;
+    out[other] = here;
+  }
+  return out;
+}
+
+// Steps a generated draft or proposal is made of: alike ones, ones that read a block by the id
+// its place gives (`$s--1`, `$LOOP_PREV.t--1`, inside an If), one with an id of its own and
+// one that reads it, and containers.
+const STEP_POOL: readonly Json[] = [
+  { do: "a" },
+  { do: "b" },
+  { wait: { duration: "1m" } },
+  { do: "c", with: { v: "$s--1.output.x" } },
+  { do: "c", with: { v: "$s--2.output.x" } },
+  { do: "d", with: { v: "$LOOP_PREV.t--1.output" } },
+  { do: "e", id: "own" },
+  { do: "f", with: { v: "$own.output" } },
+  { if: "$CTX.x == 'y'", then: [{ do: "a" }, { do: "c", with: { v: "$s--1-then-1.output" } }] },
+  { repeat: { max: 2, steps: [{ do: "b" }, { do: "c", with: { v: "$t--2.output" } }] } },
+];
+
+function aStep(next: () => number): Json {
+  return JSON.parse(JSON.stringify(pick(next, STEP_POOL, { do: "a" }))) as Json;
+}
+
+/** A small draft written as blocks: up to three stages of up to four steps. */
+function aDraft(next: () => number): Record<string, Json> {
+  return {
+    version: 2,
+    kind: "scenario",
+    name: "generated",
+    revision: 1,
+    description: "A generated draft",
+    inputs: { x: { required: true } },
+    stages: ["S", "T", "U"]
+      .filter(() => next() < 0.7)
+      .map((name) => ({
+        name,
+        steps: Array.from({ length: Math.floor(next() * 5) }, () => aStep(next)),
+      })),
+  };
+}
+
+/** `draft` changed one to four times: a step added, removed or replaced, a stage renamed (its
+ * slug kept), given a description, moved, removed or added, the inputs or the description. */
+function aProposal(draft: Record<string, Json>, next: () => number): Record<string, Json> {
+  const proposal = JSON.parse(JSON.stringify(draft)) as Record<string, Json>;
+  const stages = proposal.stages as { name: string; description?: string; steps: Json[] }[];
+  for (let n = Math.floor(next() * 4); n >= 0; n -= 1) {
+    const what = Math.floor(next() * 8);
+    const stage = pick(next, stages, undefined);
+    const at = (list: readonly unknown[], end = 0) => Math.floor(next() * (list.length + end));
+    if (what === 0 && stage) stage.steps.splice(at(stage.steps, 1), 0, aStep(next));
+    else if (what === 1 && stage) stage.steps.splice(at(stage.steps), 1);
+    else if (what === 2 && stage && stage.steps.length > 0)
+      stage.steps[at(stage.steps)] = aStep(next);
+    else if (what === 3 && stage) {
+      if (next() < 0.5) stage.name = stage.name.toLowerCase();
+      else stage.description = "Changed by the proposal";
+    } else if (what === 4 && stage) {
+      stages.splice(stages.indexOf(stage), 1);
+      stages.splice(at(stages, 1), 0, stage);
+    } else if (what === 5 && stage) stages.splice(stages.indexOf(stage), 1);
+    else if (what === 6) {
+      const used = new Set(stages.map((item) => item.name.toLowerCase()));
+      const name = ["V", "W", "S", "T"].find((item) => !used.has(item.toLowerCase()));
+      if (name !== undefined) {
+        stages.splice(at(stages, 1), 0, {
+          name,
+          steps: Array.from({ length: Math.floor(next() * 3) }, () => aStep(next)),
+        });
+      }
+    } else if (what === 7) {
+      if (next() < 0.5) proposal.inputs = { x: { required: true }, y: { default: "1" } };
+      else proposal.description = "A changed description";
+    }
+  }
+  return proposal;
+}
 
 describe("scenario block program, written as blocks (version 2)", () => {
   it.each(TREE_FIXTURES)(
@@ -532,92 +656,67 @@ describe("scenario block program, written as blocks (version 2)", () => {
   });
 
   it("lists two blocks a proposal adds alike as two changes, each where the proposal puts it", () => {
-    const mine = stagesOf(tree("blocks-together"));
     const proposed = tree("blocks-together");
     const [stage] = proposed.stages as { steps: Json[] }[];
     stage?.steps.push({ wait: { duration: "30s" } }, { wait: { duration: "30s" } });
 
-    const changes = treeChanges(mine, stagesOf(proposed));
+    const { changes } = treeReview(tree("blocks-together"), proposed);
 
     expect(changes.map((change) => [change.kind, change.address])).toEqual([
       ["new", "1.4"],
       ["new", "1.5"],
     ]);
-    expect(new Set(changes.map((change) => change.id)).size).toBe(2);
+    expect(changes.map((change) => change.id)).toEqual(["new block 1.4", "new block 1.5"]);
   });
 
-  it("lists each block a proposal removes as a change of its own, its decision kept while others are taken", () => {
-    const mine = stagesOf(tree("demo-order-roundtrip"));
+  it("takes or leaves each of two alike blocks a proposal removes by its own decision, the list as it opened", () => {
+    const draft = tree("demo-order-roundtrip");
     // The proposal drops the two alike `queue-send demo.poll` blocks of Approval (7.1 and 7.3)
     // and the same block in Payment (8.3).
-    const proposed = tree("demo-order-roundtrip");
-    const [, , , , , , approval, payment] = proposed.stages as { steps: Json[] }[];
-    approval?.steps.splice(2, 1);
-    approval?.steps.splice(0, 1);
-    payment?.steps.splice(2, 1);
-    const theirs = stagesOf(proposed);
+    const dropped = (approval: number[], payment: number[]) => {
+      const changed = tree("demo-order-roundtrip");
+      const stages = changed.stages as { steps: Json[] }[];
+      for (const at of [...approval].reverse()) stages[6]?.steps.splice(at - 1, 1);
+      for (const at of [...payment].reverse()) stages[7]?.steps.splice(at - 1, 1);
+      return changed;
+    };
+    const review = treeReview(draft, dropped([1, 3], [3]));
 
-    const changes = treeChanges(mine, theirs);
-
-    expect(changes.map((change) => [change.kind, change.address])).toEqual([
-      ["removed", "7.1"],
-      ["removed", "7.3"],
-      ["removed", "8.3"],
+    expect(review.changes.map((change) => change.id)).toEqual([
+      "removed block 7.1",
+      "removed block 7.3",
+      "removed block 8.3",
     ]);
-    expect(new Set(changes.map((change) => change.id)).size).toBe(3);
-    // Block 7.1 taken out: its twin is block 7.2 now, still a change to decide.
-    const [first, twin] = changes.map((change) => change.id);
-    const { items, keys } = addressed(takeFrom(mine, "7.1", true).rest);
-    const left = treeChanges(items, theirs);
-    expect(left.map((change) => [change.kind, change.address])).toEqual([
-      ["removed", "7.2"],
-      ["removed", "8.3"],
-    ]);
-    // A decision on a block no longer in the draft goes with it.
-    expect(decisionsAfter(new Set([first ?? ""]), changes, left, keys)).toEqual(new Set());
-    // Its twin's removal rejected before: the rejection stays on it, at its new address.
-    expect(decisionsAfter(new Set([first ?? "", twin ?? ""]), changes, left, keys)).toEqual(
-      new Set([left[0]?.id]),
-    );
+    // Each removal is its own: taking one leaves its twin in the draft.
+    expect(applyReview(review, new Set(["removed block 7.1"]))).toStrictEqual(dropped([1], []));
+    expect(applyReview(review, new Set(["removed block 7.3"]))).toStrictEqual(dropped([3], []));
+    // Decided one by one, the list stays the one the review opened with.
+    let decided = decideReview(review, new Map(), ["removed block 7.1"], "accept");
+    expect(decided.closed).toBe(false);
+    decided = decideReview(review, decided.decisions, ["removed block 7.3"], "reject");
+    expect(decided.closed).toBe(false);
+    expect(decided.draft).toStrictEqual(dropped([1], []));
+    decided = decideReview(review, decided.decisions, ["removed block 8.3"], "accept");
+    expect(decided.closed).toBe(true);
+    expect(decided.draft).toStrictEqual(dropped([1], [3]));
   });
 
-  it("lists what a proposal still changes by the blocks taken in from it, when two alike are taken later first", () => {
+  it("keeps the earlier of two alike blocks a proposal adds to decide when the later one is accepted first", () => {
+    const draft = tree("blocks-together");
     const proposed = tree("blocks-together");
     const [stage] = proposed.stages as { steps: Json[] }[];
     stage?.steps.push({ wait: { duration: "30s" } }, { wait: { duration: "30s" } });
-    const theirs = stagesOf(proposed);
-    const document = tree("blocks-together");
-    const [earlier, later] = treeChanges(stagesOf(document), theirs);
+    const one = tree("blocks-together");
+    (one.stages as { steps: Json[] }[])[0]?.steps.push({ wait: { duration: "30s" } });
+    const review = treeReview(draft, proposed);
 
-    const one = acceptChange(document, theirs, new Map(), later?.id ?? "");
+    const later = decideReview(review, new Map(), ["new block 1.5"], "accept");
 
-    const left = treeChanges(stagesOf(one?.written ?? {}), theirs, one?.taken);
-    expect(left.map((change) => [change.kind, change.address])).toEqual([["new", "1.4"]]);
-    // An accept is no decision on what is left: only a rejection is carried.
-    expect(
-      decisionsAfter(
-        new Set(),
-        [earlier, later].flatMap((c) => c ?? []),
-        left,
-        one?.keys ?? new Map(),
-      ),
-    ).toEqual(new Set());
-    expect(
-      decisionsAfter(
-        new Set([earlier?.id ?? ""]),
-        [earlier, later].flatMap((c) => c ?? []),
-        left,
-        one?.keys ?? new Map(),
-      ),
-    ).toEqual(new Set([left[0]?.id]));
-    const both = acceptChange(
-      one?.written ?? {},
-      theirs,
-      one?.taken ?? new Map(),
-      left[0]?.id ?? "",
-    );
-    expect(both?.written).toStrictEqual(proposed);
-    expect(treeChanges(stagesOf(both?.written ?? {}), theirs, both?.taken)).toEqual([]);
+    expect(later.closed).toBe(false);
+    expect(later.draft).toStrictEqual(one);
+    const both = decideReview(review, later.decisions, ["new block 1.4"], "accept");
+    expect(both.closed).toBe(true);
+    expect(both.draft).toStrictEqual(proposed);
   });
 
   it("takes a proposal's block in as the proposal wrote it, its references read in the proposal's places", () => {
@@ -643,26 +742,232 @@ describe("scenario block program, written as blocks (version 2)", () => {
         },
       ],
     };
-    const theirs = stagesOf(proposed);
-    const z = treeChanges(stagesOf(draft), theirs).find((change) => change.address === "1.3");
+    const review = treeReview(draft, proposed);
+    expect(review.changes.map((change) => change.id)).toEqual(["new block 1.2", "new block 1.3"]);
 
-    const one = acceptChange(draft, theirs, new Map(), z?.id ?? "");
-
-    expect((one?.written.stages as { steps: Json[] }[])[0]?.steps).toStrictEqual([
-      { do: "a" },
-      { do: "z", with: { v: "$s--2.output.x" } },
-      { do: "b" },
+    // Z alone: as Claude wrote it, reading whatever runs at its place in the draft.
+    expect(stepsOf(applyReview(review, new Set(["new block 1.3"])))).toStrictEqual([
+      [{ do: "a" }, { do: "z", with: { v: "$s--2.output.x" } }, { do: "b" }],
     ]);
-    const left = treeChanges(stagesOf(one?.written ?? {}), theirs, one?.taken);
-    expect(left.map((change) => [change.kind, change.address])).toEqual([["new", "1.2"]]);
-    const both = acceptChange(
-      one?.written ?? {},
-      theirs,
-      one?.taken ?? new Map(),
-      left[0]?.id ?? "",
+    // Both, in either order: the proposal.
+    for (const order of [
+      ["new block 1.3", "new block 1.2"],
+      ["new block 1.2", "new block 1.3"],
+    ]) {
+      let decisions: ReadonlyMap<string, Decision> = new Map();
+      let closed = false;
+      let written: Record<string, Json> = draft;
+      for (const id of order) {
+        ({ decisions, closed, draft: written } = decideReview(review, decisions, [id], "accept"));
+      }
+      expect(closed).toBe(true);
+      expect(written).toStrictEqual(proposed);
+    }
+  });
+
+  it("keeps a rejected block as the draft wrote it, reading the block it read when one is taken in before it", () => {
+    const draft = {
+      version: 2,
+      kind: "scenario",
+      name: "s",
+      stages: [
+        { name: "S", steps: [{ do: "a" }, { do: "b" }, { do: "c", with: { v: "$s--2.output" } }] },
+      ],
+    };
+    // A new first block, and C changed to read B at its new place.
+    const proposed = {
+      ...draft,
+      stages: [
+        {
+          name: "S",
+          steps: [{ do: "n" }, { do: "a" }, { do: "b" }, { do: "c2", with: { v: "$s--3.output" } }],
+        },
+      ],
+    };
+    const review = treeReview(draft, proposed);
+    expect(review.changes.map((change) => change.id)).toEqual([
+      "new block 1.1",
+      "changed block 1.3",
+    ]);
+
+    // C's change rejected: C follows B to its new place.
+    expect(stepsOf(applyReview(review, new Set(["new block 1.1"])))).toStrictEqual([
+      [{ do: "n" }, { do: "a" }, { do: "b" }, { do: "c", with: { v: "$s--3.output" } }],
+    ]);
+    // C's change alone: as Claude wrote it (it reads itself, which the check names).
+    expect(stepsOf(applyReview(review, new Set(["changed block 1.3"])))).toStrictEqual([
+      [{ do: "a" }, { do: "b" }, { do: "c2", with: { v: "$s--3.output" } }],
+    ]);
+    expect(applyReview(review, new Set())).toStrictEqual(draft);
+    expect(applyReview(review, new Set(review.changes.map((change) => change.id)))).toStrictEqual(
+      proposed,
     );
-    expect(both?.written).toStrictEqual(proposed);
-    expect(treeChanges(stagesOf(both?.written ?? {}), theirs, both?.taken)).toEqual([]);
+  });
+
+  it("keeps what a block both hold reads when a removal before an addition is taken, the one or the other", () => {
+    // K reads E (third in both); J reads A in the draft and N in the proposal (second in both).
+    const k = { do: "k", with: { v: "$s--3.output" } };
+    const j = { do: "j", with: { v: "$LOOP_PREV.s--2.output" } };
+    const draft = {
+      version: 2,
+      kind: "scenario",
+      name: "s",
+      stages: [{ name: "S", steps: [{ do: "r" }, { do: "a" }, { do: "e" }, k, j] }],
+    };
+    const proposed = {
+      ...draft,
+      stages: [{ name: "S", steps: [{ do: "a" }, { do: "n" }, { do: "e" }, k, j] }],
+    };
+    const review = treeReview(draft, proposed);
+    expect(review.changes.map((change) => change.id)).toEqual([
+      "removed block 1.1",
+      "new block 1.2",
+    ]);
+
+    // The removal alone: K follows E, and J reads A, the one of its two the draft still holds.
+    expect(stepsOf(applyReview(review, new Set(["removed block 1.1"])))).toStrictEqual([
+      [
+        { do: "a" },
+        { do: "e" },
+        { do: "k", with: { v: "$s--2.output" } },
+        { do: "j", with: { v: "$LOOP_PREV.s--1.output" } },
+      ],
+    ]);
+    // The addition alone: K follows E; J's two are both in the draft, so it reads as written.
+    expect(stepsOf(applyReview(review, new Set(["new block 1.2"])))).toStrictEqual([
+      [
+        { do: "r" },
+        { do: "a" },
+        { do: "n" },
+        { do: "e" },
+        { do: "k", with: { v: "$s--4.output" } },
+        j,
+      ],
+    ]);
+    expect(applyReview(review, new Set())).toStrictEqual(draft);
+    expect(applyReview(review, new Set(["new block 1.2", "removed block 1.1"]))).toStrictEqual(
+      proposed,
+    );
+  });
+
+  it("follows a block the proposal gives an id of its own in the blocks the draft keeps, and renames or moves a stage on its own change", () => {
+    const draft = {
+      version: 2,
+      kind: "scenario",
+      name: "s",
+      stages: [
+        {
+          name: "Fetch order",
+          steps: [{ do: "a" }, { do: "b", with: { v: "$fetch-order--1.output" } }],
+        },
+        { name: "Ship", steps: [{ do: "s" }] },
+      ],
+    };
+    const proposed = {
+      ...draft,
+      stages: [
+        { name: "Ship", steps: [{ do: "s" }] },
+        {
+          name: "Fetch Order",
+          description: "Reads the order",
+          steps: [
+            { do: "a", id: "fetch" },
+            { do: "b", with: { v: "$fetch.output" } },
+          ],
+        },
+      ],
+    };
+    const review = treeReview(draft, proposed);
+    const ids = review.changes.map((change) => change.id);
+    expect(ids).toEqual(["changed stage 1", "changed block 1.1", "changed block 1.2"]);
+
+    // A's new id alone: B, as the draft wrote it, follows A to it.
+    expect(applyReview(review, new Set(["changed block 1.1"]))).toStrictEqual({
+      ...draft,
+      stages: [
+        {
+          name: "Fetch order",
+          steps: [
+            { do: "a", id: "fetch" },
+            { do: "b", with: { v: "$fetch.output" } },
+          ],
+        },
+        { name: "Ship", steps: [{ do: "s" }] },
+      ],
+    });
+    // The stage's own change: its name, what it is for and its place, its steps as the draft's.
+    expect(applyReview(review, new Set(["changed stage 1"]))).toStrictEqual({
+      ...draft,
+      stages: [
+        { name: "Ship", steps: [{ do: "s" }] },
+        {
+          name: "Fetch Order",
+          description: "Reads the order",
+          steps: [{ do: "a" }, { do: "b", with: { v: "$fetch-order--1.output" } }],
+        },
+      ],
+    });
+    expect(applyReview(review, new Set(ids))).toStrictEqual(proposed);
+  });
+
+  it("lists the scenario's inputs and description a proposal changes as changes of their own", () => {
+    const draft = tree("blocks-together");
+    const proposed = {
+      ...tree("blocks-together"),
+      description: "Fixes shipping, then checks it",
+      inputs: { shop_order_id: { required: true }, carrier: { default: "fedex" } },
+    };
+    const review = treeReview(draft, proposed);
+
+    expect(review.changes.map((change) => change.id)).toEqual([
+      "changed inputs",
+      "changed description",
+    ]);
+    expect(applyReview(review, new Set(["changed inputs"]))).toStrictEqual({
+      ...draft,
+      inputs: proposed.inputs,
+    });
+    expect(applyReview(review, new Set(["changed inputs", "changed description"]))).toStrictEqual(
+      proposed,
+    );
+  });
+
+  it("gives the draft each decision's order over the list it opened with: everything taken is the proposal, nothing taken the draft (property)", () => {
+    for (let seed = 1; seed <= 400; seed += 1) {
+      const next = random(seed);
+      const draft = aDraft(next);
+      const proposed = aProposal(draft, next);
+      const review = treeReview(draft, proposed);
+      const ids = review.changes.map((change) => change.id);
+      const context = `seed ${String(seed)}: ${JSON.stringify({ draft, proposed })}`;
+
+      expect(new Set(ids).size, context).toBe(ids.length);
+      expect(JSON.stringify(applyReview(review, new Set())), context).toBe(JSON.stringify(draft));
+      expect(applyReview(review, new Set(ids)), context).toStrictEqual(takenAll(draft, proposed));
+      // Accept all and Reject all: every change at once, the review closed.
+      const all = decideReview(review, new Map(), ids, "accept");
+      expect([all.closed, all.draft], context).toStrictEqual([true, takenAll(draft, proposed)]);
+      const none = decideReview(review, new Map(), ids, "reject");
+      expect([none.closed, JSON.stringify(none.draft)], context).toStrictEqual([
+        true,
+        JSON.stringify(draft),
+      ]);
+      // One by one, in any order, each accepted or rejected.
+      const order = shuffled(next, ids);
+      let decisions: ReadonlyMap<string, Decision> = new Map();
+      const accepted = new Set<string>();
+      for (const [at, id] of order.entries()) {
+        const decision: Decision = next() < 0.5 ? "accept" : "reject";
+        if (decision === "accept") accepted.add(id);
+        const decided = decideReview(review, decisions, [id], decision);
+        decisions = decided.decisions;
+        expect(decided.closed, context).toBe(at === order.length - 1);
+        expect(decided.draft, context).toStrictEqual(applyReview(review, accepted));
+      }
+      if (accepted.size === ids.length && ids.length > 0) {
+        expect(applyReview(review, accepted), context).toStrictEqual(takenAll(draft, proposed));
+      }
+    }
   });
 
   it("aligns a stage of more steps than the format runs without a table of every pair", () => {
@@ -674,7 +979,7 @@ describe("scenario block program, written as blocks (version 2)", () => {
       stages: [{ name: "S", steps: [...steps(1500), { do: "new" }, ...steps(1500, 1500)] }],
     };
 
-    const changes = treeChanges(stagesOf(draft), stagesOf(proposed));
+    const { changes } = treeReview(draft, proposed);
 
     expect(changes.map((change) => [change.kind, change.address])).toEqual([["new", "1.1501"]]);
   });

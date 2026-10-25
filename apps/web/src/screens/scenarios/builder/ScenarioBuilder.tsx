@@ -71,10 +71,9 @@ import {
   type ScenarioDocument,
 } from "./model";
 import {
-  acceptChange,
   addressOfKey,
   addressed,
-  decisionsAfter,
+  decideReview,
   derivedId,
   findItem,
   fresh as freshItems,
@@ -99,11 +98,12 @@ import {
   replaceItem,
   takeFrom,
   toTreeDocument,
-  treeChanges,
   treeNodes,
   treeOf,
+  treeReview,
+  type Decision,
   type Item,
-  type Taken,
+  type TreeReview,
 } from "./program";
 import {
   useActionLibrary,
@@ -351,16 +351,17 @@ export function ScenarioBuilder({
   const [describing, setDescribing] = useState(false);
   const [awaiting, setAwaiting] = useState(false);
   const [reviewing, setReviewing] = useState(false);
-  // The changes of Claude's proposal decided: a graph's accepted and rejected, by block id; for
-  // a scenario written as blocks, the rejected ones (an accept is the draft's own change).
+  // The changes of a graph's proposal decided, accepted and rejected, by block id.
   const [resolved, setResolved] = useState<Set<string>>(() => new Set());
-  // Written as blocks, the blocks taken in from the proposal under review (`Taken`), for the
-  // draft the review wrote last and that proposal's stages: any other edit of the draft lets
-  // them go, and the changes are read again as the draft now differs.
-  const [takenIn, setTakenIn] = useState<{
-    taken: Taken;
-    wrote: ScenarioDocument;
-    from: readonly Item[];
+  // Written as blocks, the review under way: its changes (read once, from the draft as it was
+  // when the review opened, `treeReview`), the decisions made on them, and the draft they gave
+  // and the proposal, as text: any other edit of the draft, or another proposal, opens the review
+  // again on the draft as it then is.
+  const [decided, setDecided] = useState<{
+    review: TreeReview;
+    decisions: ReadonlyMap<string, Decision>;
+    wrote: string;
+    proposal: string;
   } | null>(null);
   const [newAction, setNewAction] = useState<{
     node: string | null;
@@ -907,13 +908,17 @@ export function ScenarioBuilder({
   // other format): reviewed as it is, every stage is removed.
   const proposedGraph = proposedTree !== null && !Array.isArray(proposedTree.stages);
   const theirStages = useMemo(() => (proposedTree ? stagesOf(proposedTree) : null), [proposedTree]);
-  const takenFromProposal: Taken =
-    takenIn !== null &&
-    takenIn.from === theirStages &&
-    (takenIn.wrote === raw || JSON.stringify(takenIn.wrote) === JSON.stringify(raw))
-      ? takenIn.taken
-      : new Map();
-  const treeChangeList = theirStages ? treeChanges(main, theirStages, takenFromProposal) : [];
+  const proposalText = useMemo(() => JSON.stringify(proposedTree), [proposedTree]);
+  const rawText = JSON.stringify(raw);
+  const underway =
+    decided !== null && decided.wrote === rawText && decided.proposal === proposalText
+      ? decided
+      : null;
+  const review = useMemo(
+    () => underway?.review ?? (proposedTree ? treeReview(raw, proposedTree) : null),
+    [underway, proposedTree, raw],
+  );
+  const decisions: ReadonlyMap<string, Decision> = underway?.decisions ?? new Map();
   // The proposal's changes, block by block (a top-level step, a repeat with what it holds): new,
   // changed, or removed; the ones already accepted or rejected drop out.
   const changes: { id: string; kind: "new" | "changed" | "removed"; node: BuilderNode }[] = [];
@@ -933,30 +938,40 @@ export function ScenarioBuilder({
   }
   // Each change as the review lists it: what it is, its name to read, and its line of detail.
   const listed = tree
-    ? treeChangeList.map((change) => {
-        const node =
-          change.item.kind === "block" || change.item.kind === "repeat" ? change.item.node : null;
+    ? (review?.changes ?? []).map((change) => {
+        const { item } = change;
+        const node = item?.kind === "block" || item?.kind === "repeat" ? item.node : null;
         const look = kindLook(
-          change.item.kind === "if"
+          item?.kind === "if"
             ? "branch"
-            : change.item.kind === "parallel"
+            : item?.kind === "parallel"
               ? "parallel"
               : (node?.type ?? "stage"),
         );
-        // The kind in the name too: a removed block is named by its address in the draft, a new
-        // one by its address in the proposal, so two can have the same address.
-        const named = `${change.kind} ${change.of} ${change.address}`;
+        // Named by its id, its kind in it: a removed or changed block by its address in the
+        // draft the review opened on, a new one by its address in the proposal, so two can have
+        // the same address.
         return {
           id: change.id,
           kind: change.kind,
-          shown: change.address,
-          name: named,
+          shown: change.address === "" ? change.of : change.address,
+          name: change.id,
           detail:
-            change.item.kind === "stage"
-              ? `Stage · ${change.item.name}`
-              : `${look.label}${typeof node?.action === "string" ? ` · ${node.action}` : ""}${typeof node?.description === "string" ? ` · ${node.description}` : ""}`,
+            item === null
+              ? change.of === "inputs"
+                ? `Inputs · ${Object.keys(proposedTree?.inputs ?? {}).join(", ")}`
+                : `Description · ${typeof proposedTree?.description === "string" ? proposedTree.description : ""}`
+              : item.kind === "stage"
+                ? `Stage · ${item.name}`
+                : `${look.label}${typeof node?.action === "string" ? ` · ${node.action}` : ""}${typeof node?.description === "string" ? ` · ${node.description}` : ""}`,
+          // Outlined in the proposal: a new or changed block with what it holds; a stage's own
+          // change, its header.
           suggested:
-            change.kind === "removed" || change.proposed === null ? [] : keysOf(change.item),
+            item === null || change.kind === "removed"
+              ? []
+              : change.of === "stage" && change.kind === "changed"
+                ? [itemId(item)]
+                : keysOf(item),
         };
       })
     : changes.map((change) => ({
@@ -967,41 +982,43 @@ export function ScenarioBuilder({
         detail: `${kindLook(change.node.type).label}${typeof change.node.action === "string" ? ` · ${change.node.action}` : ""}${typeof change.node.description === "string" ? ` · ${change.node.description}` : ""}`,
         suggested: change.kind === "removed" ? [] : allNodes([change.node]).map((node) => node.id),
       }));
-  const open = listed.filter((change) => !resolved.has(change.id));
+  const open = listed.filter((change) =>
+    tree ? !decisions.has(change.id) : !resolved.has(change.id),
+  );
   const suggestedIds = new Set(open.flatMap((change) => change.suggested));
   const removedCount = open.filter((change) => change.kind === "removed").length;
+  // Written as blocks, the open changes the banner counts apart from the blocks and stages.
+  const inputsOpen = open.some((change) => change.id === "changed inputs");
+  const descriptionOpen = open.some((change) => change.id === "changed description");
+  const blocksOpen = open.length - removedCount - Number(inputsOpen) - Number(descriptionOpen);
   const closeReview = () => {
     setReviewing(false);
     setResolved(new Set());
-    setTakenIn(null);
+    setDecided(null);
     dismiss.mutate();
   };
   const finish = (next: Set<string>) => {
     if (listed.every((change) => next.has(change.id))) closeReview();
     else setResolved(next);
   };
-  // Written as blocks: a change taken into the draft at its place (`acceptChange`: a new one
-  // where the proposal puts it, among the draft's blocks), as the proposal writes it. The
-  // rejections made follow their blocks; an accept is carried by the blocks taken in, which the
-  // review aligns with the proposal's, so the review is done when the draft holds each block
-  // accepted and every change it still differs by is rejected (an accept can move what a
-  // later block reads: that is a change to decide).
-  const acceptTreeChange = (id: string) => {
-    if (!theirStages) return;
-    const accepted = acceptChange(raw, theirStages, takenFromProposal, id);
-    if (!accepted) return;
-    writeTree(accepted);
-    const left = treeChanges(stagesOf(accepted.written), theirStages, accepted.taken);
-    const rejected = decisionsAfter(resolved, treeChangeList, left, accepted.keys);
-    if (left.every((item) => rejected.has(item.id))) closeReview();
-    else {
-      setResolved(rejected);
-      setTakenIn({ taken: accepted.taken, wrote: accepted.written, from: theirStages });
+  // Written as blocks: `ids` decided, and the draft written again from the draft the review
+  // opened on, the proposal and every accept made (`decideReview`), never from the draft the
+  // last decision gave. The review is done when every change it listed is decided; Accept all
+  // and Reject all decide them all at once.
+  const decideTree = (ids: readonly string[], decision: Decision) => {
+    if (!review) return;
+    const next = decideReview(review, decisions, ids, decision);
+    const wrote = JSON.stringify(next.draft);
+    if (wrote !== rawText) {
+      draft.edit(next.draft);
+      setSelected(null);
     }
+    if (next.closed) closeReview();
+    else setDecided({ review, decisions: next.decisions, wrote, proposal: proposalText });
   };
   const acceptOne = (id: string) => {
     if (tree) {
-      acceptTreeChange(id);
+      decideTree([id], "accept");
       return;
     }
     const change = changes.find((item) => item.id === id);
@@ -1022,20 +1039,25 @@ export function ScenarioBuilder({
     finish(new Set([...resolved, id]));
   };
   const rejectOne = (id: string) => {
-    finish(new Set([...resolved, id]));
+    if (tree) decideTree([id], "reject");
+    else finish(new Set([...resolved, id]));
   };
+  const everyChange = (review?.changes ?? []).map((change) => change.id);
   const acceptProposal = () => {
-    const from = proposedTree ?? proposed;
-    if (!from) return;
-    // Written as blocks, the proposal's stages, as the review listed them (none: every stage
-    // of the draft removed).
-    const next: ScenarioDocument = proposedTree
-      ? { ...raw, stages: proposedTree.stages ?? [] }
-      : { ...document, nodes: proposed?.nodes ?? [] };
-    if (from.inputs !== undefined) next.inputs = from.inputs;
-    if (typeof from.description === "string") next.description = from.description;
+    if (tree) {
+      decideTree(everyChange, "accept");
+      return;
+    }
+    if (!proposed) return;
+    const next: ScenarioDocument = { ...document, nodes: proposed.nodes };
+    if (proposed.inputs !== undefined) next.inputs = proposed.inputs;
+    if (typeof proposed.description === "string") next.description = proposed.description;
     draft.edit(next);
     closeReview();
+  };
+  const rejectProposal = () => {
+    if (tree) decideTree(everyChange, "reject");
+    else closeReview();
   };
   const reviewPanel =
     reviewing && (proposed ?? proposedTree) ? (
@@ -1695,9 +1717,11 @@ export function ScenarioBuilder({
           {offered ? (
             <>
               <span>
-                <b>Claude proposes</b> {open.length - removedCount} new or changed{" "}
-                {open.length - removedCount === 1 ? "block" : "blocks"}
+                <b>Claude proposes</b> {blocksOpen} new or changed{" "}
+                {blocksOpen === 1 ? "block" : "blocks"}
                 {removedCount > 0 && `, ${String(removedCount)} removed`}
+                {inputsOpen && ", changed inputs"}
+                {descriptionOpen && ", a changed description"}
                 {proposedGraph &&
                   " · it is written as a graph (nodes), not as stages: accepting it all leaves no stage"}
                 {offered.check
@@ -1722,7 +1746,7 @@ export function ScenarioBuilder({
               <Button size="sm" variant="primary" icon="check" onClick={acceptProposal}>
                 Accept all
               </Button>
-              <Button size="sm" variant="ghost" onClick={closeReview}>
+              <Button size="sm" variant="ghost" onClick={rejectProposal}>
                 Reject all
               </Button>
             </>

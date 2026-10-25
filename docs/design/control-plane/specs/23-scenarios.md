@@ -249,26 +249,30 @@ other one. The builder never writes YAML: it holds the file's JSON, the server w
   edit or after it: a block given in More: id the id another block has, or another block's place id, keeps the
   references to either as written, and so does the id it is given after. A stage name is written as it is typed, and
   its blocks' references follow them from the ids they ran under before the rename began, so a name typed through
-  another stage's ("Order" on the way to "Order pay") loses none. A proposal's block accepted in place of the one it
-  changes keeps the references to that place, and every block taken in from a proposal keeps its references as the
-  proposal wrote them, on later accepts too: they read the proposal's places, which the draft reaches once the blocks
-  before them are taken.
+  another stage's ("Order" on the way to "Order pay") loses none. In the review of Claude's proposal, a block taken
+  from the proposal keeps its references as Claude wrote them (they read the proposal's places, which the draft
+  reaches once the blocks before them are taken too); a block of the draft's alone (its removal or its change
+  rejected) has its references follow the blocks they read, to the block that takes one's place when that change is
+  accepted (a changed block, one Claude gives an id of its own); a block both hold reads the block it reads in both,
+  or the one of its two the draft still holds, and is left as written otherwise.
 - **Graph view.** A picture of how the blocks run (the nodes they translate to, each selected with its block), with
   nothing to add or move there: "The graph shows how the blocks run: edit them in Blocks."
 - **Claude.** Describe with Claude teaches the tree's keys (stages, `do`, `wait_until`, `you`, `wait`, `include`,
   `repeat`, `if`, `together`; no `nodes`, `depends_on`, `trigger_rule` or `when`), and the format brief after them is
   the tree's (no graph header, node types or `until_when`; the page's Discuss brief too); it names a place by its
-  address, in the dialog as in the prompt ("Steps after block 1.2", "Steps at the end of stage 2"); the proposal is
-  reviewed block by block by address (stages matched by name, each stage's blocks aligned), each change accepted or
-  rejected on its own, named by its kind ("Accept new block 1.4", "Reject removed block 7.1": a removed block's
-  address is the draft's, a new one's the proposal's), and Accept all takes the proposal's stages as the review listed
-  them. Each block the proposal removes or adds is a change of its own, even one alike another's (two `queue-send
-  demo.poll` blocks). After an accept the review reads the changes again with each block taken in aligned with the
-  proposal's block it came from, so what is listed is what the draft still differs by (one alike block taken, its twin
-  is still listed); a rejection stays on its change (a removal follows its block to its new address, a new or changed
-  block keeps its place in the proposal), and the review closes when the draft holds each block accepted and every
-  change it still differs by is rejected, one an accept brings in (a reference it moved) included. A proposal with no
-  stages (a graph's `nodes`) says so in the banner: taken all, it leaves no stage.
+  address, in the dialog as in the prompt ("Steps after block 1.2", "Steps at the end of stage 2"). The proposal is
+  reviewed change by change (stages matched by name, each stage's blocks aligned), and the review lists its changes
+  once, when it opens, from the draft as it is then and the proposal: each block or stage added, changed or removed
+  (one alike another's too: two `queue-send demo.poll` blocks removed are two changes), a stage's own change (its
+  name, what it is for, its place among the stages), and the scenario's inputs and description when the proposal
+  gives others. Each change keeps its name until the review closes, its kind in it ("Accept new block 1.4" by its
+  address in the proposal, "Reject removed block 7.1" by its address in the draft the review opened on). The draft is
+  always the one the decisions give, written again from the draft the review opened on and the proposal at each
+  decision, never from the draft the last one gave: every change taken gives the proposal, none the draft as it was.
+  The review closes when every change it listed is decided; Accept all and Reject all decide every change at once
+  (Reject all after an accept gives back the draft the review opened on; Undo brings the accepts back). Any other edit
+  of the draft (Back to my draft, then an edit or Undo) opens the review again on the draft as it then is. A proposal
+  with no stages (a graph's `nodes`) says so in the banner: taken all, it leaves no stage.
 - **Migrate, for a graph.** More › Migrate to stages of blocks opens a dialog that checks first (`POST
   …/migrate` with `check` and the hash of the file the builder read) and shows the file as blocks, or each step a
   tree cannot hold and why, with nothing written (to change in the builder, then open Migrate again); Migrate writes it over the file the check read (the check's

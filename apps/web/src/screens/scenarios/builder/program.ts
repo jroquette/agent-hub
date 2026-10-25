@@ -755,14 +755,21 @@ const OUTPUT_REF = /\$(?:\$|(LOOP_PREV\.)?([A-Za-z0-9_-]+)\.output(?![A-Za-z0-9_
  * id it maps to, all at once (so two blocks that swap places swap their references too). */
 export function renameRefs(document: Mapping, ids: ReadonlyMap<string, string>): Mapping {
   if (ids.size === 0 || document.stages === undefined) return document;
-  const text = JSON.stringify(document.stages).replace(
+  return { ...document, stages: renamedIn(document.stages, ids) };
+}
+
+/** `value` with each reference to a block whose id `ids` maps written with the id it maps to. */
+function renamedIn(value: Json, ids: ReadonlyMap<string, string>): Json {
+  if (ids.size === 0) return value;
+  const text = JSON.stringify(value);
+  const next = text.replace(
     OUTPUT_REF,
     (whole: string, prev: string | undefined, id: string | undefined) => {
       const to = id === undefined ? undefined : ids.get(id);
       return to === undefined ? whole : `$${prev ?? ""}${to}.output`;
     },
   );
-  return { ...document, stages: JSON.parse(text) as Json };
+  return next === text ? value : (JSON.parse(next) as Json);
 }
 
 /** `items` as new blocks of a scenario written as blocks: no id of their own (their place gives
@@ -852,75 +859,503 @@ export function addressOfKey(key: string | null | undefined): string | null {
   return address;
 }
 
-/** A change Claude's proposal makes to a scenario written as blocks, by block address. */
+/* ---------- Claude's proposal for a scenario written as blocks, reviewed ---------- */
+
+/** A change Claude's proposal makes to a scenario written as blocks. A review lists its changes
+ * once, when it opens (`treeReview`), and each keeps its id until the review closes. */
 export interface TreeChange {
-  /** What changes, and where: a new or changed block by its address in the proposal, a removed
-   * one by its address in the draft, so that two blocks alike are two changes (one decided is
-   * not the other). A removal's id moves with its block: `decisionsAfter` follows it. */
+  /** What it is and where, as the review names it: `new block 1.4` and `new stage 3` by their
+   * address in the proposal, `changed block 2.3`, `removed block 7.1`, `changed stage 2` and
+   * `removed stage 4` by theirs in the draft the review opened on, `changed inputs`, `changed
+   * description`. Two blocks alike are two changes. */
   id: string;
   kind: "new" | "changed" | "removed";
-  /** A stage, or a block of a stage's steps (with what it holds). */
-  of: "stage" | "block";
-  /** The block's address in the draft (a new one: in the proposal). */
+  of: "stage" | "block" | "inputs" | "description";
+  /** The block's or stage's address in the draft the review opened on (a new one: in the
+   * proposal); "" for the scenario's inputs and description. */
   address: string;
-  /** Its address in the proposal (new and changed), to outline it there. */
+  /** Its address in the proposal (new and changed blocks and stages), to outline it there. */
   proposed: string | null;
-  /** The proposal's item (new, changed) or the draft's (removed). */
-  item: Item;
-  /** Where a new one goes: the draft's stage (its key; null for a new stage) and index. */
-  at: { stage: string | null; index: number };
+  /** The proposal's item (new, changed) or the draft's (removed); null for inputs and
+   * description. */
+  item: Item | null;
 }
 
-/** The blocks and stages of a draft taken in from a proposal under review: each one's key in
- * the draft, to its address in the proposal. */
-export type Taken = ReadonlyMap<string, string>;
+/** How a step of a stage both hold comes into the draft: kept (the same in both), or by its
+ * change's decision. */
+type StepPlan =
+  | { op: "kept"; i: number; j: number }
+  | { op: "changed"; i: number; j: number; id: string }
+  | { op: "removed"; i: number; id: string }
+  | { op: "new"; j: number; id: string };
 
-/** The changes from `mine` to `theirs`: stages matched by their slug, then each matched
- * stage's steps aligned by what they write (a run of removed and new steps between two kept
- * ones pairs up as changed). A block `taken` in from the proposal is aligned with the block it
- * was taken from, whatever blocks alike either holds, so a review lists what the draft still
- * differs by after an accept, not another reading of it. */
-export function treeChanges(
-  mine: readonly Item[],
-  theirs: readonly Item[],
-  taken: Taken = new Map(),
-): TreeChange[] {
-  const stagesOfMine = mine.filter(isStage);
-  const stagesOfTheirs = theirs.filter(isStage);
-  const bySlug = new Map(stagesOfMine.map((stage) => [stageSlug(stage.name), stage]));
-  const kept = new Set(stagesOfTheirs.map((stage) => stageSlug(stage.name)));
+/** How a stage comes into the draft: one both hold (in place; or moved, at the draft's place
+ * unless its change is accepted and at the proposal's when it is), the draft's alone or the
+ * proposal's alone. `frame` is the change of its name, the keys it gives beside its steps and
+ * its place, when any differs. */
+type StagePlan =
+  | { op: "kept" | "from" | "to"; i: number; j: number; frame: string | null; steps: StepPlan[] }
+  | { op: "removed"; i: number; id: string }
+  | { op: "new"; j: number; id: string };
+
+/** A review of Claude's proposal for a scenario written as blocks: the draft as it was when the
+ * review opened, the proposal, and the changes from one to the other, read once. */
+export interface TreeReview {
+  readonly base: Mapping;
+  readonly proposal: Mapping;
+  /** Every change, in reading order. */
+  readonly changes: readonly TreeChange[];
+  readonly mine: readonly StageItem[];
+  readonly theirs: readonly StageItem[];
+  readonly plan: readonly StagePlan[];
+}
+
+/** A person's decision on a change of a review. */
+export type Decision = "accept" | "reject";
+
+/** JSON text with every mapping's keys in order: two values give the same text when they are
+ * the same, whatever order their keys are written in. */
+function stable(value: Json | undefined): string {
+  if (value === undefined) return "";
+  return JSON.stringify(value, (_key, inner: unknown) =>
+    typeof inner === "object" && inner !== null && !Array.isArray(inner)
+      ? Object.fromEntries(
+          Object.entries(inner as Mapping).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+        )
+      : inner,
+  );
+}
+
+function stepsIn(stage: Json | undefined): Json[] {
+  return list(mapping(stage).steps);
+}
+
+/** A stage as written, but its steps: its name and the keys it gives beside them. */
+function frameOf(stage: Json | undefined): string {
+  return stable(
+    Object.fromEntries(Object.entries(mapping(stage)).filter(([key]) => key !== "steps")),
+  );
+}
+
+/** The review of `proposal` for `base` (both scenarios written as blocks): stages matched by
+ * their slug (one both hold but in another order is moved), then each matched stage's steps
+ * aligned by what they write (a run of removed and new steps between two kept ones pairs up as
+ * changed); the scenario's inputs and description when the proposal gives others. */
+export function treeReview(base: Mapping, proposal: Mapping): TreeReview {
+  const mine = stagesOf(base).filter(isStage);
+  const theirs = stagesOf(proposal).filter(isStage);
+  const mineRaw = list(base.stages);
+  const theirsRaw = list(proposal.stages);
   const changes: TreeChange[] = [];
-  const text = (item: Item) => JSON.stringify(stepOf(item));
-  for (const [index, stage] of stagesOfTheirs.entries()) {
-    const slug = stageSlug(stage.name);
-    const own = bySlug.get(slug);
-    if (!own) {
-      changes.push({
-        id: `new:${stage.key}:${text(stage)}`,
-        kind: "new",
-        of: "stage",
-        address: stage.key,
-        proposed: stage.key,
-        item: stage,
-        at: { stage: null, index },
-      });
-      continue;
-    }
-    changes.push(...stepChanges(own, stage, text, taken));
-  }
-  for (const stage of stagesOfMine) {
-    if (kept.has(stageSlug(stage.name))) continue;
+  if (proposal.inputs !== undefined && stable(proposal.inputs) !== stable(base.inputs)) {
     changes.push({
-      id: `removed:${stage.key}:${text(stage)}`,
-      kind: "removed",
-      of: "stage",
-      address: stage.key,
+      id: "changed inputs",
+      kind: "changed",
+      of: "inputs",
+      address: "",
       proposed: null,
-      item: stage,
-      at: { stage: null, index: 0 },
+      item: null,
     });
   }
-  return changes;
+  if (typeof proposal.description === "string" && proposal.description !== base.description) {
+    changes.push({
+      id: "changed description",
+      kind: "changed",
+      of: "description",
+      address: "",
+      proposed: null,
+      item: null,
+    });
+  }
+
+  const slugs = (stages: readonly StageItem[]) => stages.map((stage) => stageSlug(stage.name));
+  const a = slugs(mine);
+  const b = slugs(theirs);
+  const walk = aligned(a, b, [0, a.length], [0, b.length]);
+  // A stage both hold that the alignment leaves out on either side is moved (paired in order).
+  const free = walk.flatMap((step) => (step.i === undefined ? [step.j] : []));
+  const movedTo = new Map<number, number>();
+  for (const step of walk) {
+    if (step.j !== undefined) continue;
+    const at = free.findIndex((j) => j !== -1 && b[j] === a[step.i]);
+    const j = free[at];
+    if (j === undefined) continue;
+    movedTo.set(step.i, j);
+    free[at] = -1;
+  }
+  const movedFrom = new Map([...movedTo].map(([i, j]) => [j, i]));
+  const stepPlan = (i: number, j: number): { steps: StepPlan[]; changes: TreeChange[] } => {
+    const own = mine[i]?.steps ?? [];
+    const their = theirs[j]?.steps ?? [];
+    const x = stepsIn(mineRaw[i]).map(stable);
+    const y = stepsIn(theirsRaw[j]).map(stable);
+    const steps: StepPlan[] = [];
+    const listed: TreeChange[] = [];
+    let removed: number[] = [];
+    let added: number[] = [];
+    const flush = () => {
+      const pairs = Math.min(removed.length, added.length);
+      for (const [n, at] of removed.entries()) {
+        const mineStep = own[at];
+        const to = n < pairs ? added[n] : undefined;
+        const theirStep = to === undefined ? undefined : their[to];
+        if (!mineStep) continue;
+        if (to !== undefined && theirStep) {
+          const id = `changed block ${itemId(mineStep)}`;
+          steps.push({ op: "changed", i: at, j: to, id });
+          listed.push({
+            id,
+            kind: "changed",
+            of: "block",
+            address: itemId(mineStep),
+            proposed: itemId(theirStep),
+            item: theirStep,
+          });
+        } else {
+          const id = `removed block ${itemId(mineStep)}`;
+          steps.push({ op: "removed", i: at, id });
+          listed.push({
+            id,
+            kind: "removed",
+            of: "block",
+            address: itemId(mineStep),
+            proposed: null,
+            item: mineStep,
+          });
+        }
+      }
+      for (const at of added.slice(pairs)) {
+        const theirStep = their[at];
+        if (!theirStep) continue;
+        const id = `new block ${itemId(theirStep)}`;
+        steps.push({ op: "new", j: at, id });
+        listed.push({
+          id,
+          kind: "new",
+          of: "block",
+          address: itemId(theirStep),
+          proposed: itemId(theirStep),
+          item: theirStep,
+        });
+      }
+      removed = [];
+      added = [];
+    };
+    for (const step of aligned(x, y, [0, x.length], [0, y.length])) {
+      if (step.i !== undefined && step.j !== undefined) {
+        flush();
+        steps.push({ op: "kept", i: step.i, j: step.j });
+      } else if (step.i !== undefined) removed.push(step.i);
+      else added.push(step.j);
+    }
+    flush();
+    return { steps, changes: listed };
+  };
+
+  // A stage both hold: its change (its name, the keys beside its steps, its place) and its
+  // steps', read once whether it is met at the draft's place or the proposal's first.
+  interface Matched {
+    frame: TreeChange | null;
+    steps: StepPlan[];
+    changes: TreeChange[];
+  }
+  const matched = new Map<number, Matched>();
+  const matchOf = (i: number, j: number, moved: boolean): Matched => {
+    const known = matched.get(i);
+    if (known) return known;
+    const own = mine[i];
+    const their = theirs[j];
+    const frame: TreeChange | null =
+      own && their && (moved || frameOf(mineRaw[i]) !== frameOf(theirsRaw[j]))
+        ? {
+            id: `changed stage ${own.key}`,
+            kind: "changed",
+            of: "stage",
+            address: own.key,
+            proposed: their.key,
+            item: their,
+          }
+        : null;
+    const made = { frame, ...stepPlan(i, j) };
+    matched.set(i, made);
+    return made;
+  };
+  const plan: StagePlan[] = [];
+  const stageChange = (made: Matched) => {
+    if (made.frame) changes.push(made.frame);
+    changes.push(...made.changes);
+  };
+  for (const step of walk) {
+    if (step.i !== undefined && step.j !== undefined) {
+      const made = matchOf(step.i, step.j, false);
+      plan.push({
+        op: "kept",
+        i: step.i,
+        j: step.j,
+        frame: made.frame?.id ?? null,
+        steps: made.steps,
+      });
+      stageChange(made);
+    } else if (step.i !== undefined) {
+      const j = movedTo.get(step.i);
+      if (j !== undefined) {
+        const made = matchOf(step.i, j, true);
+        plan.push({ op: "from", i: step.i, j, frame: made.frame?.id ?? null, steps: made.steps });
+        continue;
+      }
+      const own = mine[step.i];
+      if (!own) continue;
+      const id = `removed stage ${own.key}`;
+      plan.push({ op: "removed", i: step.i, id });
+      changes.push({
+        id,
+        kind: "removed",
+        of: "stage",
+        address: own.key,
+        proposed: null,
+        item: own,
+      });
+    } else {
+      const i = movedFrom.get(step.j);
+      if (i !== undefined) {
+        const made = matchOf(i, step.j, true);
+        plan.push({ op: "to", i, j: step.j, frame: made.frame?.id ?? null, steps: made.steps });
+        stageChange(made);
+        continue;
+      }
+      const their = theirs[step.j];
+      if (!their) continue;
+      const id = `new stage ${their.key}`;
+      plan.push({ op: "new", j: step.j, id });
+      changes.push({
+        id,
+        kind: "new",
+        of: "stage",
+        address: their.key,
+        proposed: their.key,
+        item: their,
+      });
+    }
+  }
+  return { base, proposal, changes, mine, theirs, plan };
+}
+
+/** A step of the draft a review gives: what it is written as before its references are read
+ * again, the item it is read as, and where it comes from (the draft's alone, the proposal's
+ * alone, or one both hold), with the block it takes the place of or that takes its place. */
+interface Piece {
+  origin: "mine" | "theirs" | "both";
+  raw: Json;
+  item: Item;
+  mine?: Item;
+  theirs?: Item;
+}
+
+/** The draft a review gives when the changes `accepted` are taken and every other one is
+ * left: built again from the draft the review opened on and the proposal each time, never
+ * from the draft an earlier decision gave. A block taken from the proposal is written as the
+ * proposal wrote it; one of the draft's alone (a removal or a change rejected) has each
+ * reference read again so that it reads the block it read, at its place now (one taken out:
+ * `<id>-removed`, an id no place gives, unless it had an id of its own no block now runs under);
+ * one both hold reads the block it reads in both, or the one of its two the draft still holds,
+ * and is written as it is otherwise. Nothing accepted gives the draft; everything, the
+ * proposal. */
+export function applyReview(review: TreeReview, accepted: ReadonlySet<string>): Mapping {
+  const { base, proposal, mine, theirs, plan } = review;
+  const mineRaw = list(base.stages);
+  const theirsRaw = list(proposal.stages);
+  const taken = (id: string | null) => id !== null && accepted.has(id);
+  const out: { frame: Json; name: string; pieces: Piece[] }[] = [];
+  const alone = (origin: "mine" | "theirs", stage: StageItem, raw: Json | undefined) => {
+    const raws = stepsIn(raw);
+    out.push({
+      frame: raw ?? null,
+      name: stage.name,
+      pieces: stage.steps.map((item, at) => ({ origin, raw: raws[at] ?? null, item })),
+    });
+  };
+  for (const stage of plan) {
+    if (stage.op === "removed") {
+      const own = mine[stage.i];
+      if (own && !taken(stage.id)) alone("mine", own, mineRaw[stage.i]);
+      continue;
+    }
+    if (stage.op === "new") {
+      const their = theirs[stage.j];
+      if (their && taken(stage.id)) alone("theirs", their, theirsRaw[stage.j]);
+      continue;
+    }
+    const framed = taken(stage.frame);
+    if ((stage.op === "from" && framed) || (stage.op === "to" && !framed)) continue;
+    const own = mine[stage.i];
+    const their = theirs[stage.j];
+    if (!own || !their) continue;
+    const ownRaws = stepsIn(mineRaw[stage.i]);
+    const theirRaws = stepsIn(theirsRaw[stage.j]);
+    const pieces: Piece[] = [];
+    for (const step of stage.steps) {
+      const ownStep = step.op === "new" ? undefined : own.steps[step.i];
+      const theirStep = step.op === "removed" ? undefined : their.steps[step.j];
+      const ownRaw = step.op === "new" ? null : (ownRaws[step.i] ?? null);
+      const theirRaw = step.op === "removed" ? null : (theirRaws[step.j] ?? null);
+      if (step.op === "kept") {
+        if (ownStep && theirStep) {
+          pieces.push({ origin: "both", raw: ownRaw, item: ownStep, theirs: theirStep });
+        }
+      } else if (taken(step.id)) {
+        if (theirStep)
+          pieces.push({
+            origin: "theirs",
+            raw: theirRaw,
+            item: theirStep,
+            ...(ownStep ? { mine: ownStep } : {}),
+          });
+      } else if (ownStep) {
+        pieces.push({
+          origin: "mine",
+          raw: ownRaw,
+          item: ownStep,
+          ...(theirStep ? { theirs: theirStep } : {}),
+        });
+      }
+    }
+    out.push({
+      frame: (framed ? theirsRaw[stage.j] : mineRaw[stage.i]) ?? null,
+      name: framed ? their.name : own.name,
+      pieces,
+    });
+  }
+
+  // Each block at its place in the draft given, and the id it runs under there.
+  const placed = addressed(
+    out.map((stage): Item => ({
+      kind: "stage",
+      key: "",
+      name: stage.name,
+      steps: stage.pieces.map((piece) => piece.item),
+    })),
+  ).items;
+  const counted = (items: readonly Item[]) => {
+    const seen = new Map<string, number>();
+    for (const item of nodeItems(items)) seen.set(item.node.id, (seen.get(item.node.id) ?? 0) + 1);
+    return seen;
+  };
+  const inMine = counted(mine);
+  const inTheirs = counted(theirs);
+  const inResult = counted(placed);
+  // Each block's id in the draft (or in the proposal) to the id it runs under in the draft
+  // given, for the ones it holds; an id two blocks share, on either side, is left out.
+  const mineTo = new Map<string, string>();
+  const theirsTo = new Map<string, string>();
+  const held = new Set<Item>();
+  const heldTheirs = new Set<Item>();
+  const follow = (
+    to: Map<string, string>,
+    count: ReadonlyMap<string, number>,
+    keep: Set<Item>,
+    from: Item | undefined,
+    at: Item,
+  ) => {
+    if (!from) return;
+    const now = nodeItems([at]);
+    for (const [n, item] of nodeItems([from]).entries()) {
+      const next = now[n];
+      if (!next) break;
+      keep.add(item);
+      if (count.get(item.node.id) === 1 && inResult.get(next.node.id) === 1) {
+        to.set(item.node.id, next.node.id);
+      }
+    }
+  };
+  for (const [s, stage] of out.entries()) {
+    const at = placed[s];
+    const steps = at?.kind === "stage" ? at.steps : [];
+    for (const [k, piece] of stage.pieces.entries()) {
+      const step = steps[k];
+      if (!step) continue;
+      follow(mineTo, inMine, held, piece.origin === "theirs" ? piece.mine : piece.item, step);
+      follow(
+        theirsTo,
+        inTheirs,
+        heldTheirs,
+        piece.origin === "theirs" ? piece.item : piece.theirs,
+        step,
+      );
+    }
+  }
+  // The ids of blocks the draft given no longer holds, on either side.
+  const gone = (items: readonly Item[], count: ReadonlyMap<string, number>, keep: Set<Item>) =>
+    new Set(
+      nodeItems(items)
+        .filter((item) => !keep.has(item) && count.get(item.node.id) === 1)
+        .map((item) => item.node.id),
+    );
+  const mineGone = gone(mine, inMine, held);
+  const theirsGone = gone(theirs, inTheirs, heldTheirs);
+  const namedGone = new Set(
+    nodeItems(mine)
+      .filter((item) => mineGone.has(item.node.id) && item.named === true)
+      .map((item) => item.node.id),
+  );
+  // The draft's own blocks follow theirs; a block both hold reads its block when it reads the
+  // same one in both, or when the draft given holds only one of its two.
+  const own = new Map<string, string>();
+  for (const [from, to] of mineTo) if (from !== to) own.set(from, to);
+  for (const id of mineGone) {
+    if (!namedGone.has(id) || inResult.has(id)) own.set(id, `${id}-removed`);
+  }
+  const both = new Map<string, string>();
+  for (const id of new Set([...mineTo.keys(), ...theirsTo.keys()])) {
+    const m = mineTo.get(id);
+    const t = theirsTo.get(id);
+    const to =
+      t !== undefined && (m === t || mineGone.has(id))
+        ? t
+        : m !== undefined && theirsGone.has(id)
+          ? m
+          : undefined;
+    if (to !== undefined && to !== id) both.set(id, to);
+  }
+
+  const stages = out.map((stage): Json => {
+    const frame = mapping(stage.frame);
+    const steps = stage.pieces.map((piece) =>
+      piece.origin === "theirs"
+        ? piece.raw
+        : renamedIn(piece.raw, piece.origin === "mine" ? own : both),
+    );
+    return "steps" in frame || steps.length > 0 ? { ...frame, steps } : frame;
+  });
+  const written: Mapping = { ...base };
+  if ("stages" in base || stages.length > 0) written.stages = stages;
+  for (const change of review.changes) {
+    if (!accepted.has(change.id)) continue;
+    if (change.of === "inputs" && proposal.inputs !== undefined) written.inputs = proposal.inputs;
+    if (change.of === "description" && proposal.description !== undefined) {
+      written.description = proposal.description;
+    }
+  }
+  return written;
+}
+
+/** The decisions `decisions` with each of `ids` (changes the review lists) given `decision`,
+ * the draft they give (`applyReview`), and whether the review is done: every change it listed
+ * when it opened decided. Accept all and Reject all are every id at once. */
+export function decideReview(
+  review: TreeReview,
+  decisions: ReadonlyMap<string, Decision>,
+  ids: readonly string[],
+  decision: Decision,
+): { decisions: Map<string, Decision>; draft: Mapping; closed: boolean } {
+  const listed = new Set(review.changes.map((change) => change.id));
+  const next = new Map(decisions);
+  for (const id of ids) if (listed.has(id)) next.set(id, decision);
+  const accepted = new Set([...next].flatMap(([id, made]) => (made === "accept" ? [id] : [])));
+  return {
+    decisions: next,
+    draft: applyReview(review, accepted),
+    closed: review.changes.every((change) => next.has(change.id)),
+  };
 }
 
 /** The most steps a side of a stage is aligned over in full: the nodes a scenario may run as.
@@ -988,209 +1423,6 @@ function aligned(
     }
   }
   return out;
-}
-
-function stepChanges(
-  own: Extract<Item, { kind: "stage" }>,
-  theirs: Extract<Item, { kind: "stage" }>,
-  text: (item: Item) => string,
-  taken: Taken,
-): TreeChange[] {
-  const a = own.steps.map(text);
-  const b = theirs.steps.map(text);
-  // The steps taken in from the proposal, each with the step it was taken from, in order (one
-  // out of order is left to the alignment); the steps between two are aligned on their own.
-  const inTheirs = new Map(theirs.steps.map((step, j) => [itemId(step), j]));
-  const anchors: { i: number; j: number }[] = [];
-  for (const [i, step] of own.steps.entries()) {
-    const j = inTheirs.get(taken.get(itemId(step)) ?? "");
-    if (j !== undefined && j > (anchors.at(-1)?.j ?? -1)) anchors.push({ i, j });
-  }
-  const steps: (Aligned & { anchor?: true })[] = [];
-  let from = { i: 0, j: 0 };
-  for (const anchor of anchors) {
-    steps.push(...aligned(a, b, [from.i, anchor.i], [from.j, anchor.j]), {
-      ...anchor,
-      anchor: true,
-    });
-    from = { i: anchor.i + 1, j: anchor.j + 1 };
-  }
-  steps.push(...aligned(a, b, [from.i, a.length], [from.j, b.length]));
-
-  const changes: TreeChange[] = [];
-  let removed: number[] = [];
-  let added: number[] = [];
-  const flush = (at: number) => {
-    const pairs = Math.min(removed.length, added.length);
-    for (const [n, i] of removed.entries()) {
-      const mine = own.steps[i];
-      if (!mine) continue;
-      const theirsAt = n < pairs ? added[n] : undefined;
-      const proposed = theirsAt === undefined ? undefined : theirs.steps[theirsAt];
-      changes.push(
-        proposed
-          ? {
-              id: `changed:${text(mine)}>${itemId(proposed)}:${text(proposed)}`,
-              kind: "changed",
-              of: "block",
-              address: itemId(mine),
-              proposed: itemId(proposed),
-              item: proposed,
-              at: { stage: own.key, index: i },
-            }
-          : {
-              id: `removed:${itemId(mine)}:${text(mine)}`,
-              kind: "removed",
-              of: "block",
-              address: itemId(mine),
-              proposed: null,
-              item: mine,
-              at: { stage: own.key, index: i },
-            },
-      );
-    }
-    for (const j of added.slice(pairs)) {
-      const proposed = theirs.steps[j];
-      if (!proposed) continue;
-      changes.push({
-        id: `new:${itemId(proposed)}:${text(proposed)}`,
-        kind: "new",
-        of: "block",
-        address: itemId(proposed),
-        proposed: itemId(proposed),
-        item: proposed,
-        at: { stage: own.key, index: at },
-      });
-    }
-    removed = [];
-    added = [];
-  };
-  for (const step of steps) {
-    if (step.i !== undefined && step.j !== undefined) {
-      flush(step.i);
-      // A step taken in that differs from the proposal's since (an edit made outside the
-      // review) is a change of its own.
-      if (a[step.i] === b[step.j]) continue;
-      removed = [step.i];
-      added = [step.j];
-      flush(step.i + 1);
-    } else if (step.i !== undefined) removed.push(step.i);
-    else added.push(step.j);
-  }
-  flush(a.length);
-  return changes;
-}
-
-/** The rejections among the changes `before` lists (the ids in `rejected`), as ids of the
- * changes `after` lists once an edit of the draft is made (`keys`: each item's key after it, as
- * `addressed` gives them): a removal follows its block to its new address, a new or a changed
- * block keeps its place in the proposal, which no edit of the draft moves (a block taken in
- * keeps the review's alignment, `treeChanges`). A rejection whose change the draft no longer
- * differs by is dropped. An accept is never carried: the change it took is no longer listed,
- * and what is left of it (a reference it moved) is a change still to decide. */
-export function decisionsAfter(
-  rejected: ReadonlySet<string>,
-  before: readonly TreeChange[],
-  after: readonly TreeChange[],
-  keys: ReadonlyMap<string, string>,
-): Set<string> {
-  const out = new Set<string>();
-  for (const change of before) {
-    if (!rejected.has(change.id)) continue;
-    const moved = change.kind === "removed" ? keys.get(change.address) : undefined;
-    const now = after.find((next) =>
-      change.kind === "removed"
-        ? next.kind === "removed" && next.of === change.of && next.address === moved
-        : next.kind === change.kind && next.of === change.of && next.proposed === change.proposed,
-    );
-    if (now) out.add(now.id);
-  }
-  return out;
-}
-
-/** What accepting a change of a review does to the draft. */
-export interface Accepted {
-  /** The draft's document after it. */
-  written: Mapping;
-  /** Each item's key after the edit (keys are addresses), from its key before. */
-  keys: Map<string, string>;
-  /** The blocks taken in from the proposal so far, at their keys after the edit. */
-  taken: Map<string, string>;
-}
-
-/** `document` with the change `id` of its review against the proposal's stages `theirs` taken
- * in (`treeChanges(stagesOf(document), theirs, taken)`), or null when the review lists no such
- * change: a new block where the proposal puts it among the draft's blocks, a changed one in the
- * place of the block it changes (nothing else moves, and what read that place reads it), a
- * removed one taken out. A block taken in keeps its ids and references as the proposal wrote
- * them, on this accept and the ones after it: they read the proposal's places, which the draft
- * reaches once the blocks before them are taken too. Every other reference follows its block
- * (`idChanges`). */
-export function acceptChange(
-  document: Mapping,
-  theirs: readonly Item[],
-  taken: Taken,
-  id: string,
-): Accepted | null {
-  const main = stagesOf(document);
-  const change = treeChanges(main, theirs, taken).find((item) => item.id === id);
-  if (!change) return null;
-  const [item] = fresh([change.item], true);
-  if (!item) return null;
-  let next: Item[];
-  if (change.kind === "removed") next = takeFrom(main, change.address, true).rest;
-  else if (change.kind === "new") {
-    next =
-      change.at.stage === null
-        ? insertAt(main, { in: "main" }, Math.min(change.at.index, main.length), [item])
-        : insertAt(main, { in: "stage", owner: change.at.stage }, change.at.index, [item]);
-  } else {
-    const at = locate(main, change.address);
-    if (!at) return null;
-    next = insertAt(takeFrom(main, change.address, true).rest, at.slot, at.index, [item]);
-  }
-  const kept = new Set(taken.keys());
-  if (change.kind !== "removed") kept.add(itemId(item));
-  const plain = treeOf(document, next);
-  const ids = change.kind === "changed" ? new Map<string, string>() : idChanges(main, next);
-  const keys = addressed(next).keys;
-  const after = new Map<string, string>();
-  for (const [key, at] of taken) {
-    const now = keys.get(key);
-    if (now !== undefined) after.set(now, at);
-  }
-  const now = keys.get(itemId(item));
-  if (change.kind !== "removed" && change.proposed !== null && now !== undefined) {
-    after.set(now, change.proposed);
-  }
-  return { written: asWrittenIn(renameRefs(plain, ids), plain, next, kept), keys, taken: after };
-}
-
-/** `renamed` (`plain` with its references renamed) with the stages and the steps of a stage
- * whose key `kept` holds as `plain` writes them (`next` are the stages both are written from). */
-function asWrittenIn(
-  renamed: Mapping,
-  plain: Mapping,
-  next: readonly Item[],
-  kept: ReadonlySet<string>,
-): Mapping {
-  if (renamed === plain || kept.size === 0) return renamed;
-  const was = list(plain.stages);
-  const now = list(renamed.stages);
-  const stages = next.filter(isStage).map((stage, s): Json => {
-    const written = now[s] ?? null;
-    if (kept.has(itemId(stage))) return was[s] ?? written;
-    if (!stage.steps.some((step) => kept.has(itemId(step)))) return written;
-    const wasSteps = list(mapping(was[s]).steps);
-    const nowSteps = list(mapping(written).steps);
-    return {
-      ...mapping(written),
-      steps: stage.steps.map((step, at) =>
-        kept.has(itemId(step)) ? (wasSteps[at] ?? null) : (nowSteps[at] ?? null),
-      ),
-    };
-  });
-  return { ...renamed, stages };
 }
 
 /** The builder's copy of a scenario written as blocks: the file's mapping as it is. */
