@@ -798,6 +798,62 @@ def test_pauses_before_the_next_block_when_a_gate_met_while_stepping_is_answered
     assert [line["command"] for line in commands] == ["step", "step"]
 
 
+# AC-507.14: a debug resume goes on with the pass on the plan it ran, whatever asks are owed now.
+
+
+def test_runs_the_paused_block_and_ends_as_unpaused_when_an_owed_reask_ended_before_the_pause(
+    debug_hub: DebugHub,
+) -> None:
+    debug_hub.order("fetched")
+    started = debug_hub.start("--break", "1.1")
+    # A Continue whose process died while the write of 1.1 ran: its start, no end.
+    killed = [
+        {"ts": "2026-10-25T10:00:00+00:00", "event": "resume"},
+        {"ts": "2026-10-25T10:00:01+00:00", "event": "action_start", "node": "fetch-order--1"}
+        | {"attempt": 1, "poll": 0, "action": "fixture/queue-send", "effect": "write"},
+    ]
+    with (debug_hub.folder / "records.jsonl").open("a") as file:
+        file.writelines(json.dumps(line) + "\n" for line in killed)
+    moved = debug_hub.run("scenario", "break", RUN, "--set", "2.2", "3.5")
+    asked = debug_hub.run("workflow", "run", "--resume", RUN)
+    # The re-ask is owed until 1.1 ends: this pass plans behind its gate and pauses before 2.2.
+    approved = debug_hub.run("workflow", "approve", RUN, "fetch-order--1__ask")
+    debug_hub.order("reviewed")
+    # 1.1 ended, so it owes nothing now: the resume still goes on on the plan its pass ran.
+    continued = debug_hub.run("scenario", "continue", RUN)
+    debug_hub.order("processed")
+    third = debug_hub.run("scenario", "continue", RUN)
+    debug_hub.order("invoiced")
+    invoice = debug_hub.run("workflow", "approve", RUN)
+    debug_hub.order("paid")
+    paid = debug_hub.run("workflow", "approve", RUN)
+
+    assert last_line(started) == f"run {RUN}: paused before 1.1 (breakpoint)", started.output
+    assert moved.exit_code == 0, moved.output
+    assert last_line(asked) == f"run {RUN}: paused at fetch-order--1__ask", asked.output
+    assert last_line(approved) == f"run {RUN}: paused before 2.2 (breakpoint)", approved.output
+    assert last_line(continued) == f"run {RUN}: paused before 3.5 (breakpoint)", continued.output
+    assert last_line(third) == f"run {RUN}: paused at invoice-pdf--1", third.output
+    assert last_line(invoice) == f"run {RUN}: paused at payment--1", invoice.output
+    assert (paid.exit_code, last_line(paid)) == (0, f"run {RUN}: done"), paid.output
+    lines = debug_hub.records()
+    assert passes(lines)[3:5] == [
+        ["fetch-order--1__ask", "fetch-order--1", "fetch-order--2", "review--1"],
+        ["review--2", *(f"switch-carrier--{n}" for n in range(1, 5))],
+    ]
+    # Every block ran once and ended ok, as in a run with no pause, the owed re-ask's gate beside.
+    tree = yaml.safe_load((BLOCKS / "tree" / f"{REFERENCE}.yaml").read_text())
+    unpaused = [node.id for node in plan_workflow(parse_workflow(tree)).all_nodes()]
+    assert sorted(ended(lines)) == sorted([*unpaused, "fetch-order--1__ask"])
+    # Nothing skipped but the reuses of a gate's resume: no block was passed over.
+    assert {
+        (line["status"], line.get("skip_cause"))
+        for line in lines
+        if line["event"] == "step_end" and line["status"] != "ok"
+    } == {("skipped", "prior_success")}
+    assert [line["status"] for line in lines if line["event"] == "end"] == ["done"]
+
+
 def test_records_no_command_when_the_resume_is_refused_by_a_changed_snapshot(
     debug_hub: DebugHub,
 ) -> None:

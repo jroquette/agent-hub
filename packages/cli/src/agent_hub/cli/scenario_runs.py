@@ -362,7 +362,9 @@ def execute(
             environment=environment,
         )
     record_asks(folder, owed.steps)
-    asks = recorded | owed.steps
+    # A resume from a debug pause plans with the asks its pass planned with, so that pass goes
+    # on over the layers it ran on: a re-ask owed then is owed no more once its step ended.
+    asks = recorded | dict(debug.asks if debug is not None else {}) | owed.steps
     plan = _planned(document, includes, asks)
     runner = ActionExecutors(
         hub=hub,
@@ -416,7 +418,10 @@ def execute(
     )
     append_record(folder, {"event": "sessions", "sessions": dict(report.state.sessions)})
     pauses = sum(1 for record in records if record.get("event") == DEBUG_PAUSE)
-    return _reported(folder, header, report, held=held, recorder=recorder, log=log, pauses=pauses)
+    again = {step: ask for step, ask in asks.items() if recorded.get(step) != ask}
+    return _reported(
+        folder, header, report, held=held, recorder=recorder, log=log, pauses=pauses, asks=again
+    )
 
 
 def _prior(records: list[dict[str, JsonValue]], owed: Owed, debug: DebugResume | None) -> RunState:
@@ -454,12 +459,19 @@ def _noted(log: ActionLog, line: dict[str, JsonValue]) -> None:
 
 
 def _debug_paused(
-    folder: Path, state: RunState, *, pause: DebugPause, log: ActionLog, number: int
+    folder: Path,
+    state: RunState,
+    *,
+    pause: DebugPause,
+    log: ActionLog,
+    number: int,
+    asks: Mapping[str, PolicyAsk],
 ) -> int:
-    """Record the run's ``number``-th debug pause, ``state``'s ``pause`` (the pass it stopped in
-    the ``debug.pause`` line; its groups are in the ``held`` line) and its event; exit 0."""
+    """Record the run's ``number``-th debug pause, ``state``'s ``pause`` (the pass it stopped and
+    the ``asks`` it planned with in the ``debug.pause`` line; its groups are in the ``held``
+    line) and its event; exit 0."""
     with log.lock:
-        append_record(folder, debug_pause_line(state, number=number))
+        append_record(folder, debug_pause_line(state, number=number, asks=asks))
         log.events.debug_paused(pause, number=number, at=now())
         log.sink.flush(log.events)
     typer.echo(f"run {folder.name}: paused before {pause.block} ({pause.reason})")
@@ -504,14 +516,19 @@ def _reported(
     recorder: RecordedRun,
     log: ActionLog,
     pauses: int,
+    asks: Mapping[str, PolicyAsk],
 ) -> int:
     """Print how the pass ended (an investigation it opened, or a debug pause, the run's
-    ``pauses + 1``-th, included); its exit code."""
+    ``pauses + 1``-th, with ``asks``, the policy asks its plan held beyond the snapshot's,
+    included); its exit code."""
     run_id = folder.name
     if report.status == "paused":
         append_record(folder, held_record(report.state))
         if (pause := report.state.pause) is not None:
-            return _debug_paused(folder, report.state, pause=pause, log=log, number=pauses + 1)
+            number = pauses + 1
+            return _debug_paused(
+                folder, report.state, pause=pause, log=log, number=number, asks=asks
+            )
         typer.echo(f"run {run_id}: paused at {report.reason}")
         return 0
     if held is not None and held.held is not None and (step := held.held.reason) is not None:
