@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -456,10 +457,12 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
       : asks.length > 0
         ? `ask ${asks.map((gate) => gate.id).join(" ")}`
         : null;
-  const valuesFor =
-    holding === null || ended || production !== false
-      ? null
-      : `${holding} · ${String(run.timeline.filter((entry) => entry.event === "step_end").length)}`;
+  const valuesFor = holding === null || ended || production !== false ? null : holding;
+  // Once per read of the record, not on every tick of the page's clock.
+  const blocksEnded = useMemo(
+    () => run.timeline.filter((entry) => entry.event === "step_end").length,
+    [run.timeline],
+  );
   const heading = useRef<HTMLHeadingElement>(null);
   // An answer recorded here: its toast, and a resuming line until the record moves on (B3).
   const [toast, setToast] = useState<string | null>(null);
@@ -648,7 +651,7 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
         </div>
         <div className="ah-stack" style={{ gap: 16, minWidth: 0 }}>
           <Facts run={run} />
-          <RunValues run={run} pause={valuesFor} />
+          <RunValues run={run} pause={valuesFor} ended={blocksEnded} />
         </div>
       </div>
     </Page>

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { components } from "../../api/schema";
 import {
@@ -35,7 +35,6 @@ export type InvestigationSession = Schemas["InvestigationSession"];
 export type InvestigationAnswered = Schemas["InvestigationAnswered"];
 export type RunAccepted = Schemas["RunAccepted"];
 export type ScenarioMigration = Schemas["ScenarioMigration"];
-export type ScenarioBlock = Schemas["BlockView"];
 export type RunBlock = Schemas["RunBlockView"];
 export type ScenarioRunValues = Schemas["ScenarioRunValues"];
 export type BlockValues = Schemas["BlockValues"];
@@ -118,14 +117,20 @@ export function useScenarioRun(runId: string, live: boolean) {
 
 /** A paused scenario run's values (its inputs, each finished block's), read with the launch
  * cookie (docs/API.md § Scenarios). `pause` names the pause they are read for (null: the run is
- * not paused, nothing is read), so a later pause reads them again. */
-export function useScenarioRunValues(runId: string, pause: string | null) {
+ * not paused, nothing is read), so a later pause reads them again; `ended` counts the blocks
+ * that ended, so one more ending in the same pause reads them again too. */
+export function useScenarioRunValues(runId: string, pause: string | null, ended: number) {
   const path = "/api/v1/scenario-runs/{run_id}/values" as const;
   const params = { path: { run_id: runId } };
+  const key = apiKey(path, params);
   return useQuery<ScenarioRunValues, ApiProblem>({
-    queryKey: [...apiKey(path, params), pause],
+    queryKey: [...key, pause, ended],
     queryFn: ({ signal }) => apiGet(path, params, signal),
     enabled: pause !== null,
+    // A read again in the same pause keeps the shown values until it lands, so what was
+    // opened stays open and focus stays put; another pause never shows this one's.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[key.length] === pause ? keepPreviousData(previous) : undefined,
   });
 }
 
@@ -219,7 +224,7 @@ export function useMigrateScenario(project: string, name: string) {
 
 /** A start: the plan's request, the mode and, for a scenario written as blocks, the
  * breakpoints it starts with (addresses of the tree it pins). */
-export type StartRequest = PlanRequest & { mode: ScenarioMode; breakpoints?: string[] };
+type StartRequest = PlanRequest & { mode: ScenarioMode; breakpoints?: string[] };
 
 export function useStartScenario(project: string, name: string) {
   const client = useQueryClient();

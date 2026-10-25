@@ -23,6 +23,7 @@ import {
   type ScenarioRunDetail,
 } from "../../testing/builders";
 import { ScenarioRunScreen } from ".";
+import { DEBUG_LOCKED } from "./parts";
 
 const PATH = `/scenarios/demo/order-lifecycle/runs/${SCENARIO_RUN}`;
 const RUN = `/api/v1/scenario-runs/${SCENARIO_RUN}`;
@@ -1322,6 +1323,11 @@ describe("ScenarioRunScreen (scenarios run debugging)", () => {
     expect(shown.getByRole("group", { name: "Last poll (3 polls)" })).toHaveTextContent(
       '"order_status": "ON_HOLD"',
     );
+    // A value taller than its box scrolls, so the keyboard reaches it (axe under jsdom has no
+    // layout and cannot see a scroller).
+    for (const name of ["With of 1.2", "Output of 1.2", "Last poll of 1.2"]) {
+      expect(shown.getByLabelText(name)).toHaveAttribute("tabindex", "0");
+    }
     expect(requests.filter((request) => request.url.endsWith("/values"))).toHaveLength(1);
   });
 
@@ -1409,10 +1415,9 @@ describe("ScenarioRunScreen (scenarios run debugging)", () => {
     // Both stay off until the run leaves the pause; the pressed one keeps focus (aria-disabled).
     const continueButton = within(bar).getByRole("button", { name: "Continue" });
     expect(continueButton).toHaveAttribute("aria-disabled", "true");
-    expect(within(bar).getByRole("button", { name: "Step" })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
+    const pressed = within(bar).getByRole("button", { name: "Step" });
+    expect(pressed).toHaveAttribute("aria-disabled", "true");
+    expect(pressed).toHaveFocus();
     await user.click(continueButton);
     await user.click(within(bar).getByRole("button", { name: "Step" }));
     const step = requests.filter(
@@ -1587,6 +1592,11 @@ describe("ScenarioRunScreen (scenarios run debugging)", () => {
     expect(within(finished).getByRole("group", { name: "Last poll (2 polls)" })).toHaveTextContent(
       '{ "status": "OPEN" }',
     );
+    // A node with no block is named by its id.
+    expect(within(finished).getByLabelText("Last poll of order-processed")).toHaveAttribute(
+      "tabindex",
+      "0",
+    );
     expect(screen.queryByRole("region", { name: "Blocks" })).toBeNull();
     expect(requests.filter((request) => request.url.endsWith("/values"))).toHaveLength(1);
   });
@@ -1619,8 +1629,12 @@ describe("ScenarioRunScreen (scenarios run debugging)", () => {
       "/api/v1/approvals": aPage([gate(`${SCENARIO_RUN}:review--2__ask:1`, "policy")]),
     });
 
-    await screen.findByRole("list", { name: "Finished blocks" });
+    const user = userEvent.setup();
+    const finished = await screen.findByRole("list", { name: "Finished blocks" });
     expect(requests.filter((request) => request.url.endsWith("/values"))).toHaveLength(1);
+    await user.click(within(finished).getByText(/1\.2 order-state/));
+    const opened = within(finished).getAllByRole("listitem")[1]?.querySelector("details");
+    expect(opened).toHaveAttribute("open");
     ended = true;
     await act(async () => {
       await queryClient.invalidateQueries({ queryKey: ["api", "/api/v1/scenario-runs/{run_id}"] });
@@ -1628,6 +1642,12 @@ describe("ScenarioRunScreen (scenarios run debugging)", () => {
     await waitFor(() => {
       expect(requests.filter((request) => request.url.endsWith("/values"))).toHaveLength(2);
     });
+    await waitFor(() => {
+      expect(queryClient.isFetching()).toBe(0);
+    });
+    // The values read before stay while the new read is on its way: what was opened stays open.
+    expect(opened).toBeInTheDocument();
+    expect(opened).toHaveAttribute("open");
   });
 
   it("scenarios run says its values wait for a pause the server counts", async () => {
@@ -1677,6 +1697,78 @@ describe("ScenarioRunScreen (scenarios run debugging)", () => {
         name: "Redacted credential SHOP_TOKEN",
       }),
     ).toBeInTheDocument();
+  });
+
+  it("scenarios run in the container: breakpoints, Step and the values say what to run instead", async () => {
+    const user = userEvent.setup();
+    const off = aProblem({
+      status: 404,
+      title: "Run control off",
+      type: "urn:agent-hub:problem:run-control-off",
+    });
+    renderRun({
+      ...debugRoutes,
+      [`PUT ${RUN}/breakpoints`]: off,
+      [`POST ${RUN}/step`]: off,
+      [`${RUN}/values`]: off,
+    });
+
+    const values = await screen.findByRole("complementary", { name: "Values while paused" });
+    expect(
+      await within(values).findByText(
+        "Values cannot be read from the agent-hub container: run hub web on your machine.",
+      ),
+    ).toBeInTheDocument();
+    const blocks = screen.getByRole("region", { name: "Blocks" });
+    const toggle = await within(blocks).findByRole("button", {
+      name: "Breakpoint before block 2.2",
+    });
+    await user.click(toggle);
+    expect(await within(blocks).findByText("Could not set the breakpoints")).toBeInTheDocument();
+    expect(blocks).toHaveTextContent(
+      "Breakpoints cannot be set from the agent-hub container. Set them from a terminal:",
+    );
+    expect(
+      within(blocks).getByText(`./hub scenario break ${SCENARIO_RUN} --set 2.1 2.2`),
+    ).toBeInTheDocument();
+    // Nothing was written: the toggle shows the set the run holds.
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    const bar = screen.getByRole("region", { name: "Paused before block 2.1" });
+    await user.click(within(bar).getByRole("button", { name: "Step" }));
+    const alert = await within(bar).findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "Could not send StepStep and Continue cannot be sent from the agent-hub container. Run hub web on your machine, or from a terminal:",
+    );
+    expect(within(alert).getByText(`./hub scenario step ${SCENARIO_RUN}`)).toBeInTheDocument();
+  });
+
+  it("scenarios run says debugging is locked, and why a breakpoint change was refused", async () => {
+    const user = userEvent.setup();
+    const locked = aProblem({ status: 401, title: "Unauthorized" });
+    renderRun({
+      ...debugRoutes,
+      [`PUT ${RUN}/breakpoints`]: aProblem({
+        status: 409,
+        title: "Conflict",
+        detail: "The scenario run ended: its breakpoints can no longer change.",
+      }),
+      [`POST ${RUN}/continue`]: locked,
+      [`${RUN}/values`]: locked,
+    });
+
+    const values = await screen.findByRole("complementary", { name: "Values while paused" });
+    expect(await within(values).findByText(DEBUG_LOCKED)).toBeInTheDocument();
+    const bar = screen.getByRole("region", { name: "Paused before block 2.1" });
+    await user.click(await within(bar).findByRole("button", { name: "Continue" }));
+    expect(await within(bar).findByRole("alert")).toHaveTextContent(
+      `Could not send Continue${DEBUG_LOCKED}`,
+    );
+    const blocks = screen.getByRole("region", { name: "Blocks" });
+    await user.click(within(blocks).getByRole("button", { name: "Breakpoint before block 2.2" }));
+    expect(await within(blocks).findByText("Could not set the breakpoints")).toBeInTheDocument();
+    expect(blocks).toHaveTextContent(
+      "The scenario run ended: its breakpoints can no longer change.",
+    );
   });
 
   it("scenarios run in a debug pause has no serious a11y violation (a11y)", async () => {

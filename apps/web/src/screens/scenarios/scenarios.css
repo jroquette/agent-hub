@@ -169,7 +169,8 @@
   color: var(--text-subtle);
 }
 .sc-break-on {
-  color: var(--waiting);
+  /* A set breakpoint is a pressed toggle, not a status: accent, like a pressed chip. */
+  color: var(--accent);
   font-weight: 600;
 }
 .sc-values-list {

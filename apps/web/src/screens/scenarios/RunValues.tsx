@@ -19,9 +19,12 @@ const STATUS_WORDS: Readonly<Record<string, string>> = {
   skipped: "Skipped",
 };
 
-function Json({ value }: { value: unknown }) {
+/** A value; past its box's height it scrolls, so the keyboard reaches it by `label`. */
+function Json({ value, label }: { value: unknown; label: string }) {
   return (
-    <pre className="ah-mono ah-small sc-value-json">
+    // A scrollable region must be reachable by keyboard.
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+    <pre className="ah-mono ah-small sc-value-json" tabIndex={0} aria-label={label}>
       <MarkedText text={JSON.stringify(value ?? null, null, 2)} />
     </pre>
   );
@@ -43,6 +46,8 @@ function Finished({ run, item }: { run: ScenarioRunDetail; item: BlockValues }) 
   // The record's values (`JsonValue`, a recursive type the linter cannot follow).
   const values = item as { with: unknown; output: unknown; last_poll: unknown };
   const block = item.address === null ? undefined : runBlock(run, item.address);
+  // Its values are named by its block, or by its node when it has none (a graph run).
+  const where = item.address ?? item.node;
   const status = item.status === null ? "—" : (STATUS_WORDS[item.status] ?? item.status);
   const summary = [
     [item.address, block?.label].filter((part) => part !== null && part !== undefined).join(" "),
@@ -58,14 +63,14 @@ function Finished({ run, item }: { run: ScenarioRunDetail; item: BlockValues }) 
         <summary className="ah-small">{summary}</summary>
         <div className="ah-stack" style={{ gap: 6, padding: "6px 0 4px 14px" }}>
           <Labelled label="With">
-            <Json value={values.with} />
+            <Json value={values.with} label={`With of ${where}`} />
           </Labelled>
           <Labelled label="Output">
-            <Json value={values.output} />
+            <Json value={values.output} label={`Output of ${where}`} />
           </Labelled>
           {item.polls > 0 && (
             <Labelled label={`Last poll (${plural(item.polls, "poll")})`}>
-              <Json value={values.last_poll} />
+              <Json value={values.last_poll} label={`Last poll of ${where}`} />
             </Labelled>
           )}
         </div>
@@ -74,9 +79,18 @@ function Finished({ run, item }: { run: ScenarioRunDetail; item: BlockValues }) 
   );
 }
 
-/** The values of `run` while `pause` (null when it is not paused) holds it, off production. */
-export function RunValues({ run, pause }: { run: ScenarioRunDetail; pause: string | null }) {
-  const values = useScenarioRunValues(run.run_id, pause);
+/** The values of `run` while `pause` (null when it is not paused) holds it, off production;
+ * `ended` counts its blocks that ended, so each new one reads them again. */
+export function RunValues({
+  run,
+  pause,
+  ended,
+}: {
+  run: ScenarioRunDetail;
+  pause: string | null;
+  ended: number;
+}) {
+  const values = useScenarioRunValues(run.run_id, pause, ended);
   if (pause === null) return null;
   const error = values.error;
   let body: ReactNode;

@@ -423,7 +423,8 @@ Timeline
   cookie): the run's inputs, environment values included, then each finished block, folded until opened (its address
   and label, node, status and poll count; inside: With, Output and, for a Wait until, Last poll). Captures stay in the
   facts above. Credential marks are `RedactionChip`s. A graph run's nodes show by id. The values are read again
-  once another block has ended.
+  once another block has ended; the values shown stay until that read lands, so what was opened stays open. A
+  value taller than its box (240 px) scrolls inside it.
 - **AC-507.18 Pinned tree.** Given a builder edit while a run is paused, then the run page's blocks, toggles and bar
   are still the pinned tree's: an address the file no longer holds keeps its row and its toggle.
 - **On the scenario page** (Run mode), each step card of a `version: 2` scenario carries a Breakpoint toggle in its
@@ -462,8 +463,11 @@ Not built yet (AGH-458), the target:
 ## Accessibility
 
 Each table has a caption that names its subject. Every status and decision is icon + label. A Breakpoint toggle is a
-button whose name stays the same and whose state is `aria-pressed`; the debug bar, the blocks and the values are
-named regions, and each finished block's values are a `details` disclosure (closed by default). A toggle, Step or
+button whose name stays the same and whose state is `aria-pressed`, in the accent color when pressed (a set
+breakpoint is not a status). The debug bar and the blocks are named regions; the values are a named complementary
+landmark, like the facts. Each finished block's values are a `details` disclosure (closed by default), and each of
+its With, Output and Last poll is focusable and named ("Output of 1.2"; a graph run's "Output of
+order-processed"), since it can scroll. A toggle, Step or
 Continue that is off while a press is on its way is `aria-disabled`, so focus stays on it; when the debug bar leaves,
 focus goes to the page's heading. A refused option's
 reason is linked by `aria-describedby`. The verdict, the pause, the answer and the end are announced once, politely. Dialogs

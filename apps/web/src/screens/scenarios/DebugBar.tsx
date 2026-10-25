@@ -51,7 +51,6 @@ export function DebugBar({
   return (
     <section
       aria-label={`Paused before block ${pause.block}`}
-      className="sc-debug-bar"
       style={{
         background: "var(--waiting-soft)",
         borderLeft: "4px solid var(--waiting)",
