@@ -2376,6 +2376,7 @@ export function aScenarioRunDetail(overrides: Partial<ScenarioRunDetail> = {}): 
     debug: null,
     breakpoints: [],
     stepping: false,
+    blocks: [],
     ...overrides,
   };
 }

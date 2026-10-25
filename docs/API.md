@@ -908,9 +908,16 @@ reads as an option of the CLI, which gets them after `--` (or as `--break=ADDR`)
   empty list, Step, Continue, a start with breakpoints and a values read are 409 `workflow-run-debug-production` and
   nothing is recorded; a start without breakpoints is unchanged.
 - `ScenarioRunDetail` adds `debug` (`null` unless the run is in a debug pause: `block`, `node`, `reason` `breakpoint`
-  or `step`, `number`, `at`), `breakpoints` (the addresses last set) and `stepping` (whether its last debug command was
-  a Step): metadata only, as the rest of it. `ScenarioDetail` adds `version` (`1` or `2`) and, for version 2,
-  `blocks` (`address`, `kind`, `label`, `entry_nodes`) in declaration order.
+  or `step`, `number`, `at`), `breakpoints` (the addresses last set), `stepping` (whether its last debug command was
+  a Step) and `blocks`, the blocks of the tree the run pins (`address`, `kind`, `label`, in declaration order, read
+  from its snapshot as breakpoints are checked, not from the scenario file as it reads now; empty for a version-1 run
+  or a snapshot that cannot be read), and each `timeline` line its `block`: the address of the pinned tree's block
+  that holds its node, as the values read gives it (a gate's is its step's, an included node's its include's; `null`
+  in a version-1 run and on a line about no node): metadata only, as the rest of it. `ScenarioDetail` adds `version`
+  (`1` or `2`) and, for version 2, `blocks` (`address`, `kind`, `label`, `entry_nodes`) in declaration order, read
+  from the file as it reads now; `entry_nodes` are the translated graph's, while a run starts a gated step at its
+  `<step>__ask` gate and an include at the first nodes of what it includes, so a run's lines are put on blocks by
+  their `block`.
 - `GET /api/v1/scenario-runs/{run_id}/values` → 200 `ScenarioRunValues`: `run_id`, `inputs` (the run's effective
   inputs, environment values included) and `blocks`, one per finished node in the order they first ended (`address`
   of the block that holds it: a gate's is its step's, an included node's its include's, `null` in a version-1 run;

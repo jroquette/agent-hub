@@ -2555,6 +2555,48 @@ def test_shows_debug_pause_breakpoints_and_stepping_when_a_paused_run_read(scena
     assert "T-1" not in json.dumps(paused)
 
 
+def test_gives_the_pinned_trees_blocks_and_each_lines_block_when_a_tree_run_read(
+    scenarios: Any,
+) -> None:
+    records = a_debug_run(scenarios.hub)
+    # A gate is its step's block; a line about no node (the start) has no block.
+    asked = [
+        {"event": "step_start", "node": "send--1__ask", "attempt": 1},
+        {"event": "step_end", "node": "send--1__ask", "attempt": 1, "status": "ok"},
+    ]
+    records[3:3] = asked
+    path = scenarios.hub / DEBUG_FOLDER / "records.jsonl"
+    path.write_text("".join(json.dumps(line) + "\n" for line in records), encoding="utf-8")
+    # The file now drops the stage Check (2, 2.1) and adds a third block to Send (1.3).
+    edited = DEBUG_TREE.split("- name: Check\n")[0] + "  - you: Look again.\n"
+    (scenarios.hub / "scenarios" / "demo" / "order-debug.yaml").write_text(edited)
+    write_records(scenarios.hub, a_paused_walk(scenarios.hub, environment="local"))
+
+    run = scenarios.client.get(f"/api/v1/scenario-runs/{DEBUG_RUN}").json()
+    graph = scenarios.client.get(f"/api/v1/scenario-runs/{WALK_RUN}").json()
+
+    assert run["blocks"] == [
+        {"address": "1", "kind": "stage", "label": "Send"},
+        {"address": "1.1", "kind": "do", "label": "send-order"},
+        {"address": "1.2", "kind": "wait_until", "label": "demo/get-order"},
+        {"address": "2", "kind": "stage", "label": "Check"},
+        {"address": "2.1", "kind": "you", "label": "Confirm the hold, then approve."},
+    ]
+    shown = [(entry["event"], entry["node"], entry["block"]) for entry in run["timeline"]]
+    assert shown == [
+        ("start", None, None),
+        ("step_start", "send--1__ask", "1.1"),
+        ("step_end", "send--1__ask", "1.1"),
+        ("step_start", "send--1", "1.1"),
+        ("step_end", "send--1", "1.1"),
+        ("step_start", "send--2", "1.2"),
+        ("step_end", "send--2", "1.2"),
+    ]
+    # A graph run has no block: its lines name nodes only.
+    assert graph["blocks"] == []
+    assert {entry["block"] for entry in graph["timeline"]} == {None}
+
+
 def test_sets_breakpoints_through_the_cli_when_blocks_of_the_pinned_tree_put(
     scenarios: Any,
 ) -> None:

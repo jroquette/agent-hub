@@ -144,6 +144,7 @@ from agent_hub.core.workflows.launch import (
 )
 from agent_hub.core.workflows.nodes import RESERVED_SUFFIXES
 from agent_hub.core.workflows.plan import WorkflowPlan
+from agent_hub.core.workflows.rewrite import SEPARATOR
 from agent_hub.core.workflows.substitution import echo
 from agent_hub.core.workflows.workflow_reads import WorkflowInputView, WorkflowProblemView
 from agent_hub.generator.action_discovery import ActionDiscovery, discover_actions
@@ -302,7 +303,10 @@ class ScenarioActionView(ViewModel):
 
 class BlockView(ViewModel):
     """A block of a scenario written as blocks: its address, kind (``stage``, ``do``, ``if``,
-    ...), label and the nodes it starts with, each id as a run records it."""
+    ...), label and the nodes it starts with in the translated graph (a Repeat body's as
+    ``<group>__<id>``). A run may start it elsewhere: a gated step at its ``<step>__ask`` gate,
+    an include at the roots of what it includes (core's ``BlockMap.run_entries``), so a run's
+    lines are put on blocks by the address its detail gives each line, not by these."""
 
     address: str
     kind: str
@@ -335,9 +339,18 @@ class ScenarioCatalogView(ViewModel):
     problems: tuple[WorkflowProblemView, ...]
 
 
+class RunBlockView(ViewModel):
+    """A block of the tree a scenario run pins: its address, kind and label."""
+
+    address: str
+    kind: str
+    label: str
+
+
 class TimelineEntry(ViewModel):
     """A line of the run's timeline; an investigation read (``agent_action``) names its action
-    and effect."""
+    and effect, and ``block`` is the address of the pinned tree's block that holds its node
+    (``None`` in a version-1 run, or for a line about no block's node)."""
 
     event: str
     node: str | None
@@ -346,6 +359,7 @@ class TimelineEntry(ViewModel):
     at: str | None
     action: str | None = None
     effect: str | None = None
+    block: str | None = None
 
 
 class ActionCallEntry(ViewModel):
@@ -457,8 +471,10 @@ class DebugPauseEntry(ViewModel):
 class ScenarioRunDetail(ViewModel):
     """A scenario run as its record holds it. ``status`` is its end's, ``None`` while it has
     none; ``open_investigation`` is the number of the investigation waiting for an answer;
-    ``debug`` the debug pause it is in, ``breakpoints`` the block addresses last set and
-    ``stepping`` whether its last debug command was a Step."""
+    ``debug`` the debug pause it is in, ``breakpoints`` the block addresses last set,
+    ``stepping`` whether its last debug command was a Step, and ``blocks`` the blocks of the
+    tree it pins (its snapshot's, not the scenario file as it reads now; none for a graph run
+    or a snapshot that cannot be read), in declaration order."""
 
     run_id: str
     project: str
@@ -481,6 +497,7 @@ class ScenarioRunDetail(ViewModel):
     debug: DebugPauseEntry | None = None
     breakpoints: tuple[str, ...] = ()
     stepping: bool = False
+    blocks: tuple[RunBlockView, ...] = ()
 
 
 class BlockValues(ViewModel):
@@ -698,6 +715,8 @@ class ScenarioCatalog:
         view = fold_records(run.records)
         pending = view.open_investigation
         waiting = pending if pending is not None and pending.choice is None else None
+        tree = _pinned_tree(run.folder)
+        addresses = _Addresses.of(tree)
         return ScenarioRunDetail(
             run_id=run_id,
             project=run.project,
@@ -708,7 +727,12 @@ class ScenarioCatalog:
             status=view.status,
             open_investigation=None if waiting is None else waiting.number,
             paused_step=None if waiting is None else waiting.step,
-            timeline=tuple(TimelineEntry.model_validate(_fields(item)) for item in view.timeline),
+            timeline=tuple(
+                TimelineEntry.model_validate(
+                    _fields(item) | {"block": addresses.of_node(item.node)}
+                )
+                for item in view.timeline
+            ),
             polls=tuple(PollEntry.model_validate(_fields(item)) for item in view.polls),
             captures=tuple(CaptureEntry.model_validate(_fields(item)) for item in view.captures),
             decisions=tuple(DecisionEntry.model_validate(_fields(item)) for item in view.decisions),
@@ -722,6 +746,12 @@ class ScenarioCatalog:
             debug=_debug_entry(view),
             breakpoints=view.debug.breakpoints,
             stepping=view.debug.stepping,
+            blocks=()
+            if tree is None
+            else tuple(
+                RunBlockView(address=block.address, kind=block.kind, label=block.label)
+                for block in tree.blocks
+            ),
         )
 
     def on_production(self, hub: str, project: str, environment: str) -> bool:
@@ -751,14 +781,14 @@ class ScenarioCatalog:
             reason = "the run is not paused: its values are shown only while it is paused"
             raise RunConflictError(code="not_paused", reason=reason, run_id=run_id)
         values = fold_values(run.records)
-        tree = _pinned_tree(run.folder)
+        addresses = _Addresses.of(_pinned_tree(run.folder))
         return ScenarioRunValues(
             run_id=run_id,
             inputs=dict(values.inputs),
             blocks=tuple(
                 BlockValues.model_validate(
                     {
-                        "address": _address_of(tree, item.node),
+                        "address": addresses.of_node(item.node),
                         "node": item.node,
                         "attempt": item.attempt,
                         "status": item.status,
@@ -1107,15 +1137,31 @@ def _ordered_blocks(
     return tuple(block.address for block in blocks if block.address in wanted)
 
 
-def _address_of(tree: BlockMap | None, node: str) -> str | None:
-    """The address of the block that holds ``node``, or ``None``: a gate (``<step>__ask``,
-    ``<step>__investigation``) is its step's block, a Repeat body step's gate included, and an
-    included node is its include's."""
-    if tree is None:
-        return None
-    gate = next((suffix for suffix in RESERVED_SUFFIXES if node.endswith(suffix)), "")
-    located = tree.located(node.removesuffix(gate))
-    return None if located is None else located[0]
+@dataclass(frozen=True, slots=True)
+class _Addresses:
+    """The address of the pinned tree's block that holds each node, as ``BlockMap.located``
+    gives it (the innermost block holding the node; an included node is its include's), indexed
+    once so a long record is put on blocks in one pass."""
+
+    held: Mapping[str, str]
+
+    @classmethod
+    def of(cls, tree: BlockMap | None) -> _Addresses:
+        # A container comes before the blocks it holds: the last block holding a node is the
+        # innermost.
+        blocks = () if tree is None else tree.blocks
+        return cls({node: block.address for block in blocks for node in block.nodes})
+
+    def of_node(self, node: str | None) -> str | None:
+        """The address of the block that holds ``node``, or ``None``: a gate (``<step>__ask``,
+        ``<step>__investigation``) is its step's block, a Repeat body step's gate included, and
+        an included node is its include's."""
+        if node is None or not self.held:
+            return None
+        gate = next((suffix for suffix in RESERVED_SUFFIXES if node.endswith(suffix)), "")
+        step = node.removesuffix(gate)
+        found = self.held.get(step)
+        return found if found is not None else self.held.get(step.split(SEPARATOR, 1)[0])
 
 
 def _fields(item: DataclassInstance) -> dict[str, object]:

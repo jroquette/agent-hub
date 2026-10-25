@@ -2788,7 +2788,10 @@ export interface components {
     /**
      * BlockView
      * @description A block of a scenario written as blocks: its address, kind (``stage``, ``do``, ``if``,
-     *     ...), label and the nodes it starts with, each id as a run records it.
+     *     ...), label and the nodes it starts with in the translated graph (a Repeat body's as
+     *     ``<group>__<id>``). A run may start it elsewhere: a gated step at its ``<step>__ask`` gate,
+     *     an include at the roots of what it includes (core's ``BlockMap.run_entries``), so a run's
+     *     lines are put on blocks by the address its detail gives each line, not by these.
      */
     BlockView: {
       /** Address */
@@ -6268,6 +6271,18 @@ export interface components {
     /** @enum {string} */
     RunAction: "start" | "cancel" | "resume" | "abandon" | "step" | "continue";
     /**
+     * RunBlockView
+     * @description A block of the tree a scenario run pins: its address, kind and label.
+     */
+    RunBlockView: {
+      /** Address */
+      address: string;
+      /** Kind */
+      kind: string;
+      /** Label */
+      label: string;
+    };
+    /**
      * RunCaps
      * @description The limits a run started with.
      */
@@ -6626,8 +6641,10 @@ export interface components {
      * ScenarioRunDetail
      * @description A scenario run as its record holds it. ``status`` is its end's, ``None`` while it has
      *     none; ``open_investigation`` is the number of the investigation waiting for an answer;
-     *     ``debug`` the debug pause it is in, ``breakpoints`` the block addresses last set and
-     *     ``stepping`` whether its last debug command was a Step.
+     *     ``debug`` the debug pause it is in, ``breakpoints`` the block addresses last set,
+     *     ``stepping`` whether its last debug command was a Step, and ``blocks`` the blocks of the
+     *     tree it pins (its snapshot's, not the scenario file as it reads now; none for a graph run
+     *     or a snapshot that cannot be read), in declaration order.
      */
     ScenarioRunDetail: {
       /**
@@ -6635,6 +6652,11 @@ export interface components {
        * @default []
        */
       actions: components["schemas"]["ActionCallEntry"][];
+      /**
+       * Blocks
+       * @default []
+       */
+      blocks: components["schemas"]["RunBlockView"][];
       /**
        * Breakpoints
        * @default []
@@ -7801,7 +7823,8 @@ export interface components {
     /**
      * TimelineEntry
      * @description A line of the run's timeline; an investigation read (``agent_action``) names its action
-     *     and effect.
+     *     and effect, and ``block`` is the address of the pinned tree's block that holds its node
+     *     (``None`` in a version-1 run, or for a line about no block's node).
      */
     TimelineEntry: {
       /** Action */
@@ -7810,6 +7833,8 @@ export interface components {
       at: string | null;
       /** Attempt */
       attempt: number | null;
+      /** Block */
+      block?: string | null;
       /** Effect */
       effect?: string | null;
       /** Event */
