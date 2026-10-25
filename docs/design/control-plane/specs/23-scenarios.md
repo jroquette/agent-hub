@@ -281,7 +281,10 @@ other one. The builder never writes YAML: it holds the file's JSON, the server w
   with no stages (a graph's `nodes`) says so in the banner: taken all, it leaves no stage. The banner counts new or
   changed stages (a stage's own change among them) apart from new or changed blocks ("Claude proposes 1 new or
   changed stage, 1 removed, changed inputs"). Under review the blocks shown are the proposal's, so none shows a row
-  of a plan made for the draft; Back to my draft shows them again.
+  of a plan made for the draft; Back to my draft shows them again. For the same reason a proposal's row selected
+  under review is not a block of the draft: Delete, Alt arrows, ⌘D, a block of the Blocks tab (click or Enter), Add to
+  the scenario and Describe's "after" leave the draft as it is, and opening or closing the review clears the
+  selection.
 - **Migrate, for a graph.** More › Migrate to stages of blocks opens a dialog that checks first (`POST
   …/migrate` with `check` and the hash of the file the builder read) and shows the file as blocks, or each step a
   tree cannot hold and why, with nothing written (to change in the builder, then open Migrate again); Migrate writes it over the file the check read (the check's

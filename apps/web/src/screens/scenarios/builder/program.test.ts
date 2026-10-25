@@ -929,6 +929,34 @@ describe("scenario block program, written as blocks (version 2)", () => {
     );
   });
 
+  it("writes the inputs and description a proposal adds where the scenario writer puts them, and keeps a draft's own order otherwise", () => {
+    const draft = { version: 2, kind: "scenario", name: "s", stages: [{ name: "S", steps: [] }] };
+    const proposed = { ...draft, description: "Fetch it", inputs: { ref: { required: true } } };
+    const review = treeReview(draft, proposed);
+    const every = new Set(review.changes.map((change) => change.id));
+
+    expect(Object.keys(applyReview(review, every))).toEqual([
+      "version",
+      "kind",
+      "name",
+      "description",
+      "inputs",
+      "stages",
+    ]);
+    // A draft in an order of its own, which gains no key: its keys stay where they are.
+    const own = {
+      stages: draft.stages,
+      name: "s",
+      kind: "scenario",
+      version: 2,
+      description: "Old",
+    };
+    const again = treeReview(own, { ...own, description: "New" });
+    const keys = Object.keys(own);
+    expect(Object.keys(applyReview(again, new Set(["changed description"])))).toEqual(keys);
+    expect(Object.keys(applyReview(again, new Set()))).toEqual(keys);
+  });
+
   it("gives the draft each decision's order over the list it opened with: everything taken is the proposal, nothing taken the draft (property)", () => {
     for (let seed = 1; seed <= 400; seed += 1) {
       const next = random(seed);

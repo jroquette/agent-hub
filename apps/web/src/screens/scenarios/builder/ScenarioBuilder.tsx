@@ -395,6 +395,11 @@ export function ScenarioBuilder({
   const dismiss = useDismissProposal(scenario.project, scenario.name);
   const offered = proposal.data?.document ? proposal.data : null;
   if (awaiting && offered) setAwaiting(false);
+  // Under review the list shows the proposal, its rows under their own keys: a key there (an
+  // address, written as blocks) can name another block of the draft, so no edit reads the
+  // selection until the review closes.
+  const underReview = reviewing && offered !== null;
+  const editable = underReview ? null : selected;
   useEffect(() => {
     if (toast === null) return;
     const timer = setTimeout(() => {
@@ -538,10 +543,11 @@ export function ScenarioBuilder({
     return stage?.kind === "stage" ? derivedId(stageSlug(stage.name), key) : key;
   };
 
-  // A click on the palette adds after the selected block (in its list), else at the end.
+  // A click on the palette adds after the selected block (in its list), else at the end; nothing
+  // while a proposal is under review.
   const addAtEnd = (made: Item) => {
     const [item] = asNew([made]);
-    if (!item) return;
+    if (!item || underReview) return;
     if (tree) {
       const stage = stageOf(selected);
       if (item.kind === "stage") {
@@ -1010,6 +1016,7 @@ export function ScenarioBuilder({
   ].join(", ");
   const closeReview = () => {
     setReviewing(false);
+    setSelected(null);
     setResolved(new Set());
     setDecided(null);
     dismiss.mutate();
@@ -1124,13 +1131,14 @@ export function ScenarioBuilder({
         </div>
       </section>
     ) : null;
-  const reviewProgram = reviewing
+  const reviewProgram = underReview
     ? (theirStages ?? (proposed ? programOf(proposed.nodes).main : null))
     : null;
 
   // Keys on the builder (never while typing in a field): Delete removes the selected block (with
   // an Undo toast), Alt+↑/↓ moves it in its list, ⌘D duplicates it, ⌘Z/⇧⌘Z undo and redo, ⌘S
-  // saves, Esc clears the selection.
+  // saves, Esc clears the selection. Under review, a selected row is the proposal's: the block
+  // keys leave the draft as it is.
   const onKeys = (event: KeyboardEvent) => {
     const target = event.target as HTMLElement;
     if (!bodyRef.current?.contains(target) && target !== window.document.body) return;
@@ -1151,7 +1159,10 @@ export function ScenarioBuilder({
     if (!selected) return;
     if (event.key === "Escape") {
       setSelected(null);
-    } else if (event.key === "Delete" || event.key === "Backspace") {
+      return;
+    }
+    if (underReview) return;
+    if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
       const stage = findItem(main, selected)?.kind === "stage";
       removeItem(selected);
@@ -1751,6 +1762,8 @@ export function ScenarioBuilder({
                 variant={reviewing ? "primary" : "default"}
                 onClick={() => {
                   setReviewing(!reviewing);
+                  // The draft's and the proposal's rows are other blocks under the same keys.
+                  setSelected(null);
                   setView("blocks");
                 }}
               >
@@ -2038,10 +2051,10 @@ export function ScenarioBuilder({
       {describing && (
         <DescribeDialog
           empty={main.length === 0}
-          after={selected}
+          after={editable}
           tree={tree}
           onSend={(described, scope) => {
-            sendDescription(described, scope, scope === "after" ? selected : null);
+            sendDescription(described, scope, scope === "after" ? editable : null);
           }}
           onClose={() => {
             setDescribing(false);

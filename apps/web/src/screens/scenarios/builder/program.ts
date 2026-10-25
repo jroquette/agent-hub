@@ -788,21 +788,18 @@ function renamedIn(value: Json, ids: ReadonlyMap<string, string>): Json {
 }
 
 /** `items` as new blocks of a scenario written as blocks: no id of their own (their place gives
- * one; with `keepIds`, the ids they give are kept, as a proposal's) and a key no other item has
- * until they are addressed. */
-export function fresh(items: readonly Item[], keepIds = false, prefix = "+"): Item[] {
+ * one) and a key no other item has until they are addressed. */
+export function fresh(items: readonly Item[], prefix = "+"): Item[] {
   return items.map((item, index) => {
     const key = `${prefix}${String(index)}`;
-    const inner = (list: readonly Item[], at: number) =>
-      fresh(list, keepIds, `${key}/${String(at)}.`);
+    const inner = (list: readonly Item[], at: number) => fresh(list, `${key}/${String(at)}.`);
     if (item.kind === "stage") return { ...item, key, steps: inner(item.steps, 0) };
     if (item.kind === "if")
       return { ...item, key, then: inner(item.then, 0), otherwise: inner(item.otherwise, 1) };
     if (item.kind === "parallel")
       return { ...item, key, lanes: item.lanes.map((lane, at) => inner(lane, at)) };
-    const named = keepIds && item.named === true;
-    if (item.kind === "repeat") return { ...item, key, named, body: inner(item.body, 0) };
-    return { ...item, key, named };
+    if (item.kind === "repeat") return { ...item, key, named: false, body: inner(item.body, 0) };
+    return { ...item, key, named: false };
   });
 }
 
@@ -889,8 +886,6 @@ export interface TreeChange {
   /** The block's or stage's address in the draft the review opened on (a new one: in the
    * proposal); "" for the scenario's inputs and description. */
   address: string;
-  /** Its address in the proposal (new and changed blocks and stages), to outline it there. */
-  proposed: string | null;
   /** The proposal's item (new, changed) or the draft's (removed); null for inputs and
    * description. */
   item: Item | null;
@@ -968,7 +963,6 @@ export function treeReview(base: Mapping, proposal: Mapping): TreeReview {
       kind: "changed",
       of: "inputs",
       address: "",
-      proposed: null,
       item: null,
     });
   }
@@ -978,7 +972,6 @@ export function treeReview(base: Mapping, proposal: Mapping): TreeReview {
       kind: "changed",
       of: "description",
       address: "",
-      proposed: null,
       item: null,
     });
   }
@@ -1023,7 +1016,6 @@ export function treeReview(base: Mapping, proposal: Mapping): TreeReview {
             kind: "changed",
             of: "block",
             address: itemId(mineStep),
-            proposed: itemId(theirStep),
             item: theirStep,
           });
         } else {
@@ -1034,7 +1026,6 @@ export function treeReview(base: Mapping, proposal: Mapping): TreeReview {
             kind: "removed",
             of: "block",
             address: itemId(mineStep),
-            proposed: null,
             item: mineStep,
           });
         }
@@ -1049,7 +1040,6 @@ export function treeReview(base: Mapping, proposal: Mapping): TreeReview {
           kind: "new",
           of: "block",
           address: itemId(theirStep),
-          proposed: itemId(theirStep),
           item: theirStep,
         });
       }
@@ -1087,7 +1077,6 @@ export function treeReview(base: Mapping, proposal: Mapping): TreeReview {
             kind: "changed",
             of: "stage",
             address: own.key,
-            proposed: their.key,
             item: their,
           }
         : null;
@@ -1127,7 +1116,6 @@ export function treeReview(base: Mapping, proposal: Mapping): TreeReview {
         kind: "removed",
         of: "stage",
         address: own.key,
-        proposed: null,
         item: own,
       });
     } else {
@@ -1147,7 +1135,6 @@ export function treeReview(base: Mapping, proposal: Mapping): TreeReview {
         kind: "new",
         of: "stage",
         address: their.key,
-        proposed: their.key,
         item: their,
       });
     }
@@ -1350,7 +1337,11 @@ export function applyReview(review: TreeReview, accepted: ReadonlySet<string>): 
       written.description = proposal.description;
     }
   }
-  return written;
+  // A key the draft did not hold goes where the scenario writer puts it (as `treeOf` writes);
+  // otherwise the draft's keys keep their order, so nothing taken gives the draft back as it is.
+  return Object.keys(written).some((key) => !(key in base))
+    ? ordered(written, TREE_ORDER)
+    : written;
 }
 
 /** The decisions `decisions` with each of `ids` (changes the review lists) given `decision`,

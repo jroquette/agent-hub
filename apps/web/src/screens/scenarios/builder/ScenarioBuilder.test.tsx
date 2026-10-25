@@ -363,6 +363,30 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(await seriousViolations(container)).toEqual([]);
   });
 
+  it("scenario builder has no serious a11y violation on a block's editor with its id open, or on Claude's proposal under review (a11y)", async () => {
+    const user = userEvent.setup();
+    const proposed = aTreeDocument("blocks-together") as { stages: { steps: unknown[] }[] };
+    proposed.stages[0]?.steps.unshift({ you: "Check the shipment by hand, then approve." });
+    const { container } = renderTree("blocks-together", {
+      [`${DETAIL}/proposal`]: {
+        path: ".agent-runs/proposals/scenarios/orders/order-lifecycle.yaml",
+        document: proposed,
+        check: { loads: true, yaml: "", problems: [], nodes: [] },
+        problem: null,
+      },
+    });
+
+    await user.click(await screen.findByRole("treeitem", { name: /^Step 1\.3,/ }));
+    const editor = screen.getByRole("region", { name: /^Inspector: Run an action / });
+    await user.click(within(editor).getByRole("button", { name: "More: id" }));
+    expect(within(editor).getByLabelText("Id")).toBeInTheDocument();
+    expect(await seriousViolations(container)).toEqual([]);
+
+    await user.click(screen.getByRole("button", { name: "Review" }));
+    expect(screen.getByRole("region", { name: "Claude's proposal" })).toBeInTheDocument();
+    expect(await seriousViolations(container)).toEqual([]);
+  });
+
   it("scenario builder adds a stage from the Blocks tab, renames, fills, moves and removes it", async () => {
     const user = userEvent.setup();
     const { requests } = renderTree("blocks-together", { [SAVE]: () => SAVED });
@@ -1038,6 +1062,71 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(screen.getByRole("treeitem", { name: /^Step 1\.1,/ })).toHaveTextContent(
       "Would read the order",
     );
+  });
+
+  it("scenario builder's keys and Blocks tab edit nothing when a row of Claude's proposal under review is selected", async () => {
+    const user = userEvent.setup();
+    // The proposal asks for a block first: its 1.2 is the draft's 1.1, its 1.3 the draft's 1.2.
+    const proposed = aTreeDocument("blocks-together") as { stages: { steps: unknown[] }[] };
+    proposed.stages[0]?.steps.unshift({ you: "Check the shipment by hand, then approve." });
+    renderTree("blocks-together", {
+      [`${DETAIL}/proposal`]: {
+        path: ".agent-runs/proposals/scenarios/orders/order-lifecycle.yaml",
+        document: proposed,
+        check: { loads: true, yaml: "", problems: [], nodes: [] },
+        problem: null,
+      },
+      [`POST ${DETAIL}/proposal/dismiss`]: {},
+    });
+    const rows = () =>
+      within(screen.getByRole("group", { name: "Stage 1: Fix shipping" }))
+        .getAllByRole("treeitem")
+        .map((row) => row.getAttribute("aria-label")?.split(":")[0]);
+
+    await screen.findByText("Claude proposes");
+    await user.click(screen.getByRole("treeitem", { name: /^Step 1\.1, Wait until/ }));
+    await user.click(screen.getByRole("button", { name: "Review" }));
+    // The selection made on the draft is gone once the review shows the proposal.
+    expect(screen.queryByRole("treeitem", { selected: true })).not.toBeInTheDocument();
+    const shown = rows();
+    expect(shown.slice(0, 3)).toEqual([
+      "Step 1.1, Ask me",
+      "Step 1.2, Wait until",
+      "Step 1.3, At the same time",
+    ]);
+
+    await user.click(screen.getByRole("treeitem", { name: /^Step 1\.2, Wait until/ }));
+    await user.keyboard("{Delete}");
+    await user.keyboard("{Alt>}{ArrowDown}{/Alt}");
+    await user.keyboard("{Control>}d{/Control}");
+    const blocks = screen.getByRole("complementary", { name: "Blocks, variables and actions" });
+    within(blocks)
+      .getByRole("button", { name: /^Add Pause/ })
+      .focus();
+    await user.keyboard("{Enter}");
+
+    expect(screen.queryByText(/^Deleted /)).not.toBeInTheDocument();
+    expect(screen.queryByText("Unsaved")).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Claude's proposal" })).toBeInTheDocument();
+    expect(rows()).toEqual(shown);
+    // Nor does Describe place new steps after the draft's block at that address.
+    await user.click(screen.getByRole("button", { name: "Describe with Claude" }));
+    const dialog = screen.getByRole("dialog", { name: "Describe it to Claude" });
+    expect(within(dialog).getByText("Steps at the end")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    // Back to the draft: as it was, nothing selected.
+    await user.click(screen.getByRole("button", { name: "Back to my draft" }));
+    expect(screen.queryByRole("treeitem", { selected: true })).not.toBeInTheDocument();
+    expect(rows()).toEqual([
+      "Step 1.1, Wait until",
+      "Step 1.2, At the same time",
+      expect.stringMatching(/^Step 1\.2\.p1\.1, /),
+      expect.stringMatching(/^Step 1\.2\.p2\.1, /),
+      expect.stringMatching(/^Step 1\.2\.p2\.2, /),
+      expect.stringMatching(/^Step 1\.3, /),
+    ]);
+    expect(screen.queryByText("Unsaved")).not.toBeInTheDocument();
   });
 
   it("scenario builder counts a stage Claude's proposal only renames as a changed stage, no block", async () => {
