@@ -35,30 +35,25 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - Scenario run values and environment values: an action input a step leaves out takes the scenario run's input of that
   name, and a run input not given takes the environment's non-secret value of that name (`values` in `hub.json` or
   `hub.local.json`, set with `hub env add|set --value NAME=VALUE` and `--unset-value`) before its default (AGH-521).
-- ADR 0049 (proposed): scenarios as ordered stages of blocks (`version: 2`) translated to the graph at load, and a
-  debugger as engine run control, with its reference fixtures (AGH-508, AGH-521). Built so far: core loads a
-  `version: 2` scenario and translates its stages and blocks to the node graph, each load or plan problem on the
-  tree's key path (AGH-509); the engine takes a run-control port that pauses a run before a node, and the resume goes
-  on with the pass the pause stopped, so a pause never changes what the run does (AGH-510); a run's record folds its
-  debug pause (with the pass it stopped, read back for the resume), breakpoints and Step or Continue commands, and
-  the values a paused run shows, apart from the run view, with the `debug.*` event types (AGH-511); `generator`'s
-  canonical scenario writer writes a tree file back to its own bytes, the builder's API validates and saves a
-  `version: 2` document with it, and a save of an unchanged one writes nothing and keeps its revision (AGH-512);
-  the `hub doctor` rule `scenarios.graph_format` warns on each graph-format (`version: 1`) scenario, its fix naming
-  `hub scenario migrate`, and `hub init` seeds `demo-service-up` as `version: 2`, so a fresh hub has no such warning;
-  until the builder read `version: 2`, hub web's Build view showed such a file read-only (AGH-513); the
-  CLI's debugger, `hub scenario run --break`, `break`, `step` and `continue`, refused on production (AGH-514);
-  `hub scenario migrate [NAME…] [--check]` writes graph scenarios again in place as blocks, or writes nothing and
-  names each node it cannot map and why (AGH-515); hub web's API runs that debugger and migrate: routes for
-  breakpoints, Step and Continue (the CLI's commands as children), breakpoints at a start, the debug pause in the run
-  view, a paused run's values behind the launch cookie, and a migrate route that writes through Save's write step
-  (AGH-516); hub web's builder edits a `version: 2` scenario as its stages of blocks (stage headers to add, rename,
-  move and remove, a Stage block in the Blocks tab, each block numbered by its address, an id only when one is
-  given, the Graph view a picture of how they run, Claude's prompt and proposal review in blocks), writing back the
-  JSON the server read, and offers Migrate for a `version: 1` scenario, which it keeps editing as before (AGH-517);
-  hub web's scenario run page debugs a run written as blocks: the blocks it pinned, each with its state and a
-  breakpoint toggle, Step and Continue in a debug pause, and the run's inputs and each finished block's values while
-  paused, all off production; the scenario page sets breakpoints before a start (AGH-518).
+- Scenarios written as blocks, and a debugger for their runs (ADR 0049, proposed): a scenario may be written as
+  `version: 2`, named stages of ordered blocks (Do, Wait until, You, Wait, Include; Repeat, If/else, At the same
+  time), which core translates to the node graph at load, so the policy, gates, records and fixtures work as before,
+  and each load or plan problem names its block's address and tree key path. `generator` writes a scenario in one
+  canonical form, which `hub scenario migrate` and hub web's Save share. `hub scenario migrate [NAME…] [--check]`
+  writes graph scenarios (`version: 1`) again in place as blocks, or writes nothing and names each node it cannot map
+  and why; `hub doctor` warns (`scenarios.graph_format`) on each graph scenario, which a later release stops reading,
+  and `hub init` seeds `demo-service-up` as `version: 2`. A scenario run written as blocks can be debugged off
+  production: `hub scenario run --break ADDR`, `hub scenario break RUN ADDR… [--off|--set]`, `hub scenario step RUN`
+  and `hub scenario continue RUN` pause it before a block, run the next block, or run to the next breakpoint; no debug
+  command answers an ask, edits a value or changes what the run does, and the `debug.*` events record each pause and
+  command. In hub web, the builder edits a `version: 2` scenario as its stages of blocks (stage headers to add,
+  rename, move and remove, a Stage block in the Blocks tab, each block numbered by its address, the Graph view a
+  picture of how they run, Claude's prompt and proposal review in blocks), and Save of an unchanged file writes
+  nothing; it keeps editing a `version: 1` scenario as before and offers Migrate for it. A scenario run's page lists
+  the blocks the run pinned, each with its state and a breakpoint toggle, offers Step and Continue in a debug pause,
+  and shows the run's inputs and each finished block's values while it is paused; the scenario page sets breakpoints
+  before a start. The API gains the routes for breakpoints, Step, Continue, a paused run's values and migrate
+  (AGH-507).
 
 ### Changed
 
