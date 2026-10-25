@@ -12,8 +12,10 @@ import {
   anInvestigationSession,
   aPage,
   aProblem,
+  aDebugScenarioRun,
   aScenarioDetail,
   aScenarioRunDetail,
+  aScenarioRunValues,
   at,
   renderWithApi,
   SCENARIO_RUN,
@@ -82,6 +84,22 @@ const routes: ApiRoutes = {
   "/api/v1/agent-sessions/capabilities": aCapabilities(),
   [SESSION]: anAgentSession({ id: SESSION_ID, status: "idle", last_seq: 0 }),
   [`${SESSION}/events`]: { items: [], next_after: null },
+  // A graph run's values: its nodes have no block address.
+  [`${RUN}/values`]: aScenarioRunValues({
+    inputs: { external_ref: "T-1" },
+    blocks: [
+      {
+        address: null,
+        node: "order-processed",
+        attempt: 1,
+        status: "failed",
+        with: { ref: "T-1" },
+        output: { status: "OPEN" },
+        polls: 2,
+        last_poll: { status: "OPEN" },
+      },
+    ],
+  }),
 };
 
 function renderRun(extra: ApiRoutes = {}) {
@@ -1260,5 +1278,171 @@ describe("ScenarioRunScreen (scenarios run)", () => {
       expect(within(reopened).getByRole("radio", { name: /o2 ·/ })).toBeChecked();
     });
     expect(screen.getByRole("button", { name: "Pick option o2" })).toBeEnabled();
+  });
+});
+
+/* Debugging a scenario run written as blocks (AGH-507, ADR 0049, spec 23): its pinned blocks with
+ * their breakpoints, Step and Continue in a debug pause, and the values while paused. */
+describe("ScenarioRunScreen (scenarios run debugging)", () => {
+  const debugRoutes: ApiRoutes = {
+    [RUN]: aDebugScenarioRun(),
+    "/api/v1/approvals": aPage([]),
+    [`${RUN}/values`]: aScenarioRunValues(),
+  };
+
+  it("scenarios run shows inputs, captures and outputs while paused", async () => {
+    const user = userEvent.setup();
+    const { requests } = renderRun(debugRoutes);
+
+    const values = await screen.findByRole("complementary", { name: "Values while paused" });
+    expect(await within(values).findByText("shop_order_id")).toBeInTheDocument();
+    expect(values).toHaveTextContent("shop_order_id = T-1");
+    // Environment values are inputs too.
+    expect(values).toHaveTextContent("personal_name = dana-demo");
+    const facts = screen.getByRole("complementary", { name: "Scenario run facts" });
+    expect(facts).toHaveTextContent("order_id = 81234");
+    // Each finished block, its values folded until opened.
+    const finished = within(values).getByRole("list", { name: "Finished blocks" });
+    const items = within(finished).getAllByRole("listitem");
+    expect(items.map((item) => item.querySelector("summary")?.textContent)).toEqual([
+      "1.1 queue-send · fetch-order--1 · Done",
+      "1.2 order-state · fetch-order--2 · Done · 3 polls",
+    ]);
+    const held = items[1]?.querySelector("details");
+    expect(held).not.toHaveAttribute("open");
+    await user.click(within(finished).getByText(/1\.2 order-state/));
+    expect(held).toHaveAttribute("open");
+    const shown = within(held as HTMLElement);
+    expect(shown.getByRole("group", { name: "With" })).toHaveTextContent(
+      '{ "shop_order_id": "T-1" }',
+    );
+    expect(shown.getByRole("group", { name: "Output" })).toHaveTextContent(
+      '{ "order_status": "ON_HOLD", "order_id": "81234" }',
+    );
+    expect(shown.getByRole("group", { name: "Last poll (3 polls)" })).toHaveTextContent(
+      '"order_status": "ON_HOLD"',
+    );
+    expect(requests.filter((request) => request.url.endsWith("/values"))).toHaveLength(1);
+  });
+
+  it("scenarios run toggles a breakpoint; Step and Continue only in a debug pause", async () => {
+    const user = userEvent.setup();
+    // Running, not paused: the breakpoints, no Step or Continue, and no values read.
+    const runningView = renderRun({ ...debugRoutes, [RUN]: aDebugScenarioRun({ debug: null }) });
+    const runningBlocks = await screen.findByRole("region", { name: "Blocks" });
+    // Offered once the hub says the run's environment is not production.
+    expect(
+      await within(runningBlocks).findByRole("button", { name: "Breakpoint before block 2.1" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("button", { name: "Step" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
+    expect(runningView.requests.some((request) => request.url.endsWith("/values"))).toBe(false);
+    runningView.unmount();
+
+    // On a production environment: no breakpoint to set, no Step or Continue.
+    const live = renderRun({ ...debugRoutes, [RUN]: aDebugScenarioRun({ environment: "live" }) });
+    const liveBar = await screen.findByRole("region", { name: "Paused before block 2.1" });
+    await waitFor(() => {
+      expect(liveBar).toHaveTextContent(
+        "Step and Continue are off: live is a production environment.",
+      );
+    });
+    expect(within(liveBar).getByText(`./hub workflow run --resume ${SCENARIO_RUN}`)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Step" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Breakpoint before/ })).toBeNull();
+    expect(screen.getByRole("region", { name: "Blocks" })).toHaveTextContent(
+      "Breakpoints are off: live is a production environment.",
+    );
+    expect(live.requests.some((request) => request.url.endsWith("/values"))).toBe(false);
+    live.unmount();
+
+    // In a debug pause: toggle a breakpoint (by the keyboard), then Step.
+    const { requests } = renderRun({
+      ...debugRoutes,
+      [`PUT ${RUN}/breakpoints`]: { run_id: SCENARIO_RUN, blocks: ["2.1", "2.2"] },
+      [`POST ${RUN}/step`]: { run_id: SCENARIO_RUN, project: "demo", action: "step" },
+    });
+    const blocks = await screen.findByRole("region", { name: "Blocks" });
+    const next = await within(blocks).findByRole("button", { name: "Breakpoint before block 2.2" });
+    const rows = within(blocks).getAllByRole("listitem");
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "1Stage: Fetch orderBreakpoint",
+      "1.1Do: queue-sendDoneBreakpoint",
+      "1.2Wait until: order-stateDoneBreakpoint",
+      "2Stage: ReviewBreakpoint",
+      "2.1Do: queue-sendPaused before itBreakpoint",
+      "2.2You: Check the review, then approve.Not startedBreakpoint",
+    ]);
+    expect(next).toHaveAttribute("aria-pressed", "false");
+    next.focus();
+    await user.keyboard(" ");
+    await waitFor(() => {
+      expect(next).toHaveAttribute("aria-pressed", "true");
+    });
+    const put = requests.find((request) => request.method === "PUT");
+    expect(await put?.clone().json()).toEqual({ blocks: ["2.1", "2.2"] });
+
+    const bar = screen.getByRole("region", { name: "Paused before block 2.1" });
+    expect(bar).toHaveTextContent("Paused before block 2.1 (Do: queue-send), at its breakpoint.");
+    expect(bar).toHaveTextContent(
+      "Step runs the next block and pauses before the one after it; Continue runs to the next breakpoint or the end.",
+    );
+    await user.click(within(bar).getByRole("button", { name: "Step" }));
+    expect(
+      await within(bar).findByText(
+        "Step sent: the scenario run goes on, and its events update this page.",
+      ),
+    ).toBeInTheDocument();
+    expect(within(bar).getByRole("button", { name: "Continue" })).toBeDisabled();
+    const step = requests.filter(
+      (request) => request.method === "POST" && request.url.endsWith("/step"),
+    );
+    expect(step).toHaveLength(1);
+  });
+
+  it("scenarios run continues on the pinned tree after an edit", async () => {
+    const user = userEvent.setup();
+    // The builder removed the stage Review since the run started: the file holds 1 and 1.1.
+    const edited = aScenarioDetail({
+      version: 2,
+      blocks: [
+        { address: "1", kind: "stage", label: "Fetch order", entry_nodes: ["fetch-order--1"] },
+        { address: "1.1", kind: "do", label: "queue-send", entry_nodes: ["fetch-order--1"] },
+      ],
+    });
+    const { requests } = renderRun({
+      ...debugRoutes,
+      "/api/v1/scenarios/demo/order-lifecycle": edited,
+      [`PUT ${RUN}/breakpoints`]: { run_id: SCENARIO_RUN, blocks: ["2.1", "2.2"] },
+      [`POST ${RUN}/continue`]: { run_id: SCENARIO_RUN, project: "demo", action: "continue" },
+    });
+
+    const blocks = await screen.findByRole("region", { name: "Blocks" });
+    expect(blocks).toHaveTextContent(
+      "As this scenario run pinned them when it started: editing the scenario changes none of them.",
+    );
+    await user.click(
+      await within(blocks).findByRole("button", { name: "Breakpoint before block 2.2" }),
+    );
+    const put = requests.find((request) => request.method === "PUT");
+    expect(await put?.clone().json()).toEqual({ blocks: ["2.1", "2.2"] });
+    const bar = screen.getByRole("region", { name: "Paused before block 2.1" });
+    await user.click(within(bar).getByRole("button", { name: "Continue" }));
+    expect(
+      await within(bar).findByText(
+        "Continue sent: the scenario run goes on, and its events update this page.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      requests.filter((request) => request.method === "POST" && request.url.endsWith("/continue")),
+    ).toHaveLength(1);
+  });
+
+  it("scenarios run in a debug pause has no serious a11y violation (a11y)", async () => {
+    const { container } = renderRun(debugRoutes);
+    await screen.findByRole("region", { name: "Paused before block 2.1" });
+    await screen.findByRole("list", { name: "Finished blocks" });
+
+    expect(await seriousViolations(container)).toEqual([]);
   });
 });

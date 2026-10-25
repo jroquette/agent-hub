@@ -8,6 +8,7 @@ import {
   CopyButton,
   Icon,
   PathText,
+  RedactionChip,
   StatusBadge,
   Time,
   type IconName,
@@ -34,6 +35,32 @@ export function Page({ children, label }: { children: ReactNode; label?: string 
     >
       {children}
     </div>
+  );
+}
+
+const CREDENTIAL_MARK = /<credential ([A-Za-z0-9_]+)>/g;
+
+/** A text from a scenario run's record; each `<credential NAME>` mark in it, alone or inside
+ * other text, is a RedactionChip (principle 5, review Q7). */
+export function MarkedText({ text }: { text: string }) {
+  const parts: ReactNode[] = [];
+  let last = 0;
+  for (const match of text.matchAll(CREDENTIAL_MARK)) {
+    if (match.index > last) parts.push(text.slice(last, match.index));
+    parts.push(<RedactionChip key={match.index} kind={`credential ${match[1] ?? ""}`} />);
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return <>{parts}</>;
+}
+
+/** A captured value (or a run's input), its credential marks as RedactionChips. */
+export function CaptureValue({ value }: { value: unknown }) {
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  return (
+    <span className="ah-mono">
+      <MarkedText text={text} />
+    </span>
   );
 }
 

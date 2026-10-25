@@ -56,7 +56,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   move and remove, a Stage block in the Blocks tab, each block numbered by its address, an id only when one is
   given, the Graph view a picture of how they run, Claude's prompt and proposal review in blocks), writing back the
   JSON the server read, and offers Migrate for a `version: 1` scenario, which it keeps editing as before (AGH-517);
-  the rest is not built yet.
+  hub web's scenario run page debugs a run written as blocks: the blocks it pinned, each with its state and a
+  breakpoint toggle, Step and Continue in a debug pause, and the run's inputs and each finished block's values while
+  paused, all off production; the scenario page sets breakpoints before a start (AGH-518).
 
 ### Changed
 

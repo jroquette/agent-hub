@@ -40,17 +40,22 @@ export function useLatestRun(scenario: ScenarioDetail, waiting: readonly Waiting
     data.revision === undefined || data.revision === null || data.revision === scenario.revision;
   const mine = waiting.filter((row) => gateRun(row.gate) === latest.run_id);
   const isLive = data.status === "running";
+  // A run in a debug pause (a scenario written as blocks) still runs: it waits for Step or
+  // Continue on its own page.
+  const pause = isLive ? (record.data?.debug ?? null) : null;
 
   const banner =
     isLive && mine.length === 0 ? (
-      <Banner tone="info" icon="radio" boxed live={false}>
+      <Banner tone="info" icon={pause === null ? "radio" : "circle-pause"} boxed live={false}>
         <span className="ah-row ah-wrap" style={{ gap: 8 }}>
           <span>
-            Scenario run <span className="ah-mono">{shortId(latest.run_id)}</span> is running
-            {latest.environment ? ` in ${latest.environment}` : ""}
-            {latest.mode
-              ? ` · ${latest.mode === "regression" ? "Regression" : "Interactive"}`
-              : ""}{" "}
+            Scenario run <span className="ah-mono">{shortId(latest.run_id)}</span>
+            {pause === null
+              ? ` is running${latest.environment ? ` in ${latest.environment}` : ""}`
+              : ` is paused before block ${pause.block} ${
+                  pause.reason === "step" ? "after a Step" : "at its breakpoint"
+                }${latest.environment ? `, in ${latest.environment}` : ""}`}
+            {latest.mode ? ` · ${latest.mode === "regression" ? "Regression" : "Interactive"}` : ""}{" "}
             · started <Time iso={latest.started_at} />
             {!sameRevision && " · it uses an older revision of the file"}
           </span>
@@ -66,6 +71,9 @@ export function useLatestRun(scenario: ScenarioDetail, waiting: readonly Waiting
 
   const statusOf = (step: ScenarioStep): ReactNode => {
     if (!sameRevision) return null;
+    if (pause !== null && (pause.node === step.id || pause.node === `${step.id}__ask`)) {
+      return <StatusBadge status="waiting" label="Paused before it" />;
+    }
     const gate = mine.find((row) => gateStep(row.gate) === step.id);
     if (gate) {
       return (

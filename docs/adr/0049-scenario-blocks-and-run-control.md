@@ -167,6 +167,14 @@ change, by address: the changes are read once, when the review opens, and the dr
 give from the draft the review opened on and the proposal (every change taken gives the proposal, none the draft).
 A `version: 1` file is edited as AGH-521 shipped it, and More offers Migrate: the check's text, or
 each node it cannot map, shown before anything is written, then the write over the file the check read.
+And hub web's debugger (AGH-518, [screen spec 23](../design/control-plane/specs/23-scenarios.md) § Debugging a run
+written as blocks): a scenario run's page lists the blocks the run pinned (the run view's `blocks`, read from its
+snapshot as breakpoints are checked, and each timeline line's `block`), each with its state in the run and a
+breakpoint toggle that sends the run's whole set; in a debug pause, a bar names the block and why and offers Step and
+Continue; while the run is paused, the Facts column shows its inputs and each finished block's values, folded until
+opened. Breakpoints, Step, Continue and the values are offered only off production. The scenario page's step cards of
+a `version: 2` scenario carry a toggle each, passed as the start's breakpoints. Since everything comes from the run,
+an edit in the builder while a run is paused changes neither the page nor what Continue runs.
 The scenario builder that shipped with AGH-521 is the one the owner validated in the playground, and where it differs
 from the decision above, the validated behavior wins for what the screen shows:
 
@@ -184,9 +192,10 @@ from the decision above, the validated behavior wins for what the screen shows:
   name, and a run input the start does not give takes the environment's non-secret value of that name before its
   declared default (`hub env` sets them). The decision above does not cover them; they live beside it in
   [design/scenarios.md](../design/scenarios.md) and [design/environments.md](../design/environments.md).
-- **Debugger.** The engine's run-control port, core's fold of the debug record lines and values, the CLI's commands
-  and the API's routes (breakpoints, Step, Continue, the values read) are built. hub web's screens do not use them yet:
-  breakpoints, Step and Continue are set and sent from the terminal, or through the API.
+- **Debugger.** The engine's run-control port, core's fold of the debug record lines and values, the CLI's commands,
+  the API's routes (breakpoints, Step, Continue, the values read) and hub web's screens (AGH-518) are built. The
+  screens add no rule of their own: a breakpoint toggle sends the whole set, as `hub scenario break RUN --set` does,
+  and Step and Continue are the CLI's commands, run by the API.
 
 ## More Information
 

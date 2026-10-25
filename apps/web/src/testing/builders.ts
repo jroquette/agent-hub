@@ -2381,6 +2381,88 @@ export function aScenarioRunDetail(overrides: Partial<ScenarioRunDetail> = {}): 
   };
 }
 
+export type ScenarioRunValues = Schemas["ScenarioRunValues"];
+
+/** A scenario run of `order-lifecycle` written as blocks, in a debug pause before block 2.1 (its
+ * breakpoint) once its first stage finished: the blocks are the ones its snapshot pins. */
+export function aDebugScenarioRun(overrides: Partial<ScenarioRunDetail> = {}): ScenarioRunDetail {
+  const line = (event: string, node: string, block: string, seconds: number, status?: string) => ({
+    event,
+    node,
+    attempt: 1,
+    status: status ?? null,
+    at: at(seconds),
+    block,
+  });
+  return aScenarioRunDetail({
+    open_investigation: null,
+    paused_step: null,
+    timeline: [
+      { event: "start", node: null, attempt: null, status: null, at: at(0), block: null },
+      line("step_start", "fetch-order--1", "1.1", 5),
+      line("step_end", "fetch-order--1", "1.1", 10, "ok"),
+      line("step_start", "fetch-order--2", "1.2", 11),
+      line("step_end", "fetch-order--2", "1.2", 40, "ok"),
+    ],
+    polls: [
+      { node: "fetch-order--2", attempt: 1, poll: 1, held: false, at: at(20) },
+      { node: "fetch-order--2", attempt: 1, poll: 2, held: false, at: at(30) },
+      { node: "fetch-order--2", attempt: 1, poll: 3, held: true, at: at(40) },
+    ],
+    captures: [{ node: "fetch-order--2", attempt: 1, name: "order_id", value: "81234" }],
+    decisions: [],
+    findings: [],
+    investigations: [],
+    proposal: null,
+    workarounds: [],
+    actions: [],
+    debug: { block: "2.1", node: "review--1", reason: "breakpoint", number: 1, at: at(41) },
+    breakpoints: ["2.1"],
+    stepping: false,
+    blocks: [
+      { address: "1", kind: "stage", label: "Fetch order" },
+      { address: "1.1", kind: "do", label: "queue-send" },
+      { address: "1.2", kind: "wait_until", label: "order-state" },
+      { address: "2", kind: "stage", label: "Review" },
+      { address: "2.1", kind: "do", label: "queue-send" },
+      { address: "2.2", kind: "you", label: "Check the review, then approve." },
+    ],
+    ...overrides,
+  });
+}
+
+/** What the debug run above shows to inspect while paused: its inputs and its finished nodes. */
+export function aScenarioRunValues(overrides: Partial<ScenarioRunValues> = {}): ScenarioRunValues {
+  const held = { order_status: "ON_HOLD", order_id: "81234" };
+  return {
+    run_id: SCENARIO_RUN,
+    inputs: { shop_order_id: "T-1", personal_name: "dana-demo" },
+    blocks: [
+      {
+        address: "1.1",
+        node: "fetch-order--1",
+        attempt: 1,
+        status: "ok",
+        with: { message: "demo.fetch-orders" },
+        output: { queued: 1 },
+        polls: 0,
+        last_poll: null,
+      },
+      {
+        address: "1.2",
+        node: "fetch-order--2",
+        attempt: 1,
+        status: "ok",
+        with: { shop_order_id: "T-1" },
+        output: held,
+        polls: 3,
+        last_poll: held,
+      },
+    ],
+    ...overrides,
+  };
+}
+
 export function anInvestigationSession(
   overrides: Partial<InvestigationSession> = {},
 ): InvestigationSession {

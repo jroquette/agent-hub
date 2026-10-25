@@ -376,6 +376,69 @@ investigation · investigation reads · proposals · workarounds · end      | S
 | Record too large (422) | "This scenario run's record is too large to read here" / "hub web reads records up to 8 MiB. List its findings from a terminal:" `./hub scenario findings 3f2a91c0` |
 | Not found | "Scenario run 3f2a91c0 not found" / "No scenario run has the id 3f2a91c0 in the registered hubs. It may belong to a hub that is no longer registered." |
 
+### Debugging a run written as blocks (AGH-518)
+
+A scenario run of a `version: 2` scenario ([ADR 0049](../../../adr/0049-scenario-blocks-and-run-control.md),
+[scenarios.md](../../scenarios.md) § Debugging) shows the blocks it pinned when it started, and debugs them. Everything
+on this page comes from the run (`ScenarioRunDetail.blocks`, its snapshot's tree), never from the scenario file as it
+reads now, so an edit in the builder while the run is paused changes none of it, and Continue runs the pinned tree.
+
+```
+Scenario run 3f2a91c0  (hand) Waiting for you   order-lifecycle · personal · Interactive
+(pause) Paused before block 2.1 (Do: queue-send), at its breakpoint.
+        Nothing of this block has run yet.
+        Step runs the next block and pauses before the one after it; Continue runs to the next
+        breakpoint or the end. Neither answers a gate, edits a value, or re-runs or skips a block.
+        [Step] [Continue]
+Blocks                                                          | Scenario run facts
+As this scenario run pinned them when it started: ...           | Values while paused
+1    Stage: Fetch order                          (o) Breakpoint |   Inputs, environment values
+  1.1  Do: queue-send               (v) Done     (o) Breakpoint |   included: shop_order_id = T-1
+  1.2  Wait until: order-state      (v) Done     (o) Breakpoint |   Finished blocks
+2    Stage: Review                               (o) Breakpoint |   > 1.1 queue-send · fetch-order--1 · Done
+  2.1  Do: queue-send   (hand) Paused before it  (•) Breakpoint |   > 1.2 order-state · fetch-order--2 · Done · 3 polls
+  2.2  You: Check the review, then approve.  Not started  (o)   |
+Timeline
+```
+
+- **AC-507.17 Breakpoints.** Given a run's page, then each block row (address, kind and label, its state in the run
+  from the timeline lines' `block`: Done, Running, Failed, Skipped, Not started, or Paused before it) ends with a
+  Breakpoint toggle (a button, `aria-pressed`, named "Breakpoint before block 2.1" whatever its state; Tab reaches it,
+  Space or Enter presses it). A press sends the run's whole set, in the pinned tree's order (`PUT …/breakpoints`); the
+  toggles show the set on its way, then the one the server wrote, and a later pass pauses there (from the next block
+  the run starts). The toggles show only once the hub says the run's environment is not production, and never once
+  the run ended done or cancelled.
+- **Step and Continue** show only in a debug pause, in its bar above the blocks (where the investigation's banner
+  sits): Step (`POST …/step`) runs the next block and pauses before the one after it; Continue (`POST …/continue`)
+  runs to the next breakpoint or the end. After a press: "Step sent: the scenario run goes on, and its events update
+  this page." and both stay off until the run leaves that pause. Cancel stays in the header. The page's announcer
+  says "Scenario run paused before block 2.1" once, and the header badge reads Waiting for you.
+- **AC-507.16 Values while paused.** While the run is paused (a debug pause, an investigation waiting for its answer,
+  an open ask) and off production, the Facts column adds "Values while paused" (`GET …/values`, with the launch
+  cookie): the run's inputs, environment values included, then each finished block, folded until opened (its address
+  and label, node, status and poll count; inside: With, Output and, for a Wait until, Last poll). Captures stay in the
+  facts above. Credential marks are `RedactionChip`s. A graph run's nodes show by id. The values are read again
+  once another block has ended.
+- **AC-507.18 Pinned tree.** Given a builder edit while a run is paused, then the run page's blocks, toggles and bar
+  are still the pinned tree's: an address the file no longer holds keeps its row and its toggle.
+- **On the scenario page** (Run mode), each step card of a `version: 2` scenario carries a Breakpoint toggle in its
+  header, beside its status: the innermost block the card's node starts (`ScenarioDetail.blocks[].entry_nodes`; a
+  stage, an If or a Together has no card of its own). The start passes the toggled blocks the file holds now, in its
+  order (`breakpoints`), and its confirm says "It pauses before block 1.2, its breakpoint."; a production environment
+  offers no toggle and passes none. The live run's banner names a debug pause ("is paused before block 2.1 at its
+  breakpoint, in personal") and its card "Paused before it".
+
+| State | Copy |
+|---|---|
+| Debug pause (breakpoint) | "Paused before block 2.1 (Do: queue-send), at its breakpoint." |
+| Debug pause (step) | "Paused before block 2.2 (You: Check the review, then approve.), after a Step." |
+| Sent | "Step sent: the scenario run goes on, and its events update this page." (or Continue) |
+| Production | Blocks: "Breakpoints are off: live is a production environment." · bar: "Step and Continue are off: live is a production environment. To go on without stopping at breakpoints, resume it from a terminal:" `./hub workflow run --resume 3f2a91c0`; no values are read |
+| Container (404 `run-control-off`) | "Breakpoints cannot be set from the agent-hub container. Set them from a terminal:" `./hub scenario break 3f2a91c0 --set 2.1 2.2` · "Step and Continue cannot be sent from the agent-hub container. Run hub web on your machine, or from a terminal:" `./hub scenario step 3f2a91c0` · "Values cannot be read from the agent-hub container: run hub web on your machine." |
+| Locked (401) | "Debugging is locked in this browser. Open the link hub web printed when it started (it ends with ?token=…) once in this browser." |
+| Refused (409, 422) | "Could not set the breakpoints" / "Could not send Step" and the server's detail |
+| No longer paused (values 409) | "The scenario run is no longer paused." |
+
 ## Responsive
 
 Built: at 1280 and wider nothing hides (the plan tables' cells wrap, so Step and Policy stay in view), the chat and
@@ -393,8 +456,10 @@ Not built yet (AGH-458), the target:
 
 ## Accessibility
 
-Each table has a caption that names its subject. Every status and decision is icon + label. A refused option's reason
-is linked by `aria-describedby`. The verdict, the pause, the answer and the end are announced once, politely. Dialogs
+Each table has a caption that names its subject. Every status and decision is icon + label. A Breakpoint toggle is a
+button whose name stays the same and whose state is `aria-pressed`; the debug bar, the blocks and the values are
+named regions, and each finished block's values are a `details` disclosure (closed by default). A refused option's
+reason is linked by `aria-describedby`. The verdict, the pause, the answer and the end are announced once, politely. Dialogs
 open on their safe button and return focus. axe has no serious or critical violation (`npm test -- -t a11y`).
 
 ## UX principles applied

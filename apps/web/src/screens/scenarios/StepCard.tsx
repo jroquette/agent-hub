@@ -30,6 +30,40 @@ export interface StepStatus {
   node: ReactNode;
 }
 
+/** A breakpoint before block `address` (a scenario written as blocks, ADR 0049): a toggle whose
+ * name stays the same, its state in `aria-pressed`; Tab reaches it, Space or Enter presses it. */
+export function BreakpointToggle({
+  address,
+  on,
+  disabled,
+  onToggle,
+}: {
+  address: string;
+  on: boolean;
+  disabled?: boolean | undefined;
+  onToggle: () => void;
+}) {
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      icon={on ? "circle-dot" : "circle"}
+      className={on ? "sc-break sc-break-on" : "sc-break"}
+      aria-pressed={on}
+      aria-label={`Breakpoint before block ${address}`}
+      title={
+        on
+          ? `The scenario run pauses before block ${address}. Press to remove the breakpoint.`
+          : `Press to pause the scenario run before block ${address}.`
+      }
+      disabled={disabled}
+      onClick={onToggle}
+    >
+      Breakpoint
+    </Button>
+  );
+}
+
 const TONE_COLOR: Readonly<Record<StopLine["tone"], string>> = {
   ok: "var(--done)",
   ask: "var(--waiting)",
@@ -194,6 +228,7 @@ export function ScenarioStepCard({
   mode,
   plan,
   status,
+  breakpoint,
   onOpenAction,
 }: {
   step: ScenarioStep;
@@ -203,6 +238,8 @@ export function ScenarioStepCard({
   mode: ScenarioMode;
   plan: ScenarioPlan | null;
   status?: ReactNode;
+  /** The card's breakpoint toggle, beside its status (a scenario written as blocks). */
+  breakpoint?: ReactNode;
   onOpenAction: (ref: string) => void;
 }) {
   const action = actionOf(step, actions);
@@ -237,6 +274,7 @@ export function ScenarioStepCard({
         {together && <span className="ah-small ah-subtle">Starts at the beginning</span>}
         <span className="ah-grow" />
         {status}
+        {breakpoint}
       </header>
       <div className="ah-stack" style={{ gap: 2 }}>
         {step.description && <span>{step.description}</span>}
@@ -299,6 +337,7 @@ export function Storyline({
   mode,
   plan,
   statusOf,
+  breakpointOf,
   onOpenAction,
 }: {
   name: string;
@@ -307,6 +346,7 @@ export function Storyline({
   mode: ScenarioMode;
   plan: ScenarioPlan | null;
   statusOf?: (step: ScenarioStep) => ReactNode;
+  breakpointOf?: ((step: ScenarioStep) => ReactNode) | undefined;
   onOpenAction: (ref: string) => void;
 }) {
   return (
@@ -333,6 +373,7 @@ export function Storyline({
               mode={mode}
               plan={plan}
               status={statusOf?.(step)}
+              breakpoint={breakpointOf?.(step)}
               onOpenAction={onOpenAction}
             />
           </li>

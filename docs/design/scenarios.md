@@ -151,16 +151,19 @@ A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blo
 
 ### Debugging
 
-**Partly built** ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md), AGH-507): the engine pauses a run
+**Built** ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md), AGH-507): the engine pauses a run
 before a node through its run-control port, and the resume goes on with the pass it stopped
 ([workflow-engine-rules.md](workflow-engine-rules.md) § Run control); core's `run_record` folds the record lines
 below (the run view's debug pause, breakpoints and commands, a `debug.pause` line read back for its resume, and the
 values to inspect). The CLI is built: `breakpoints.json`, `hub scenario run --break`, `break`, `step` and `continue`
 (`cli/scenario_debug.py`, the run control over that file and the record), which write those lines and emit the
 `debug.*` events, and the production refusal. The API is built too: its breakpoints, Step and Continue routes run
-those commands as children, a start takes breakpoints, the run view names the debug pause, and the values read
-([API.md](../API.md) § Scenarios). Proposed, not built yet: hub web's debugger. The builder edits `version: 2` files
-as their stages (§ Tree format) and Save goes through the API (see the ADR's delivery notes).
+those commands as children, a start takes breakpoints, the run view names the debug pause and the blocks the run
+pins, and the values read ([API.md](../API.md) § Scenarios). And hub web's debugger (AGH-518, [screen spec
+23](control-plane/specs/23-scenarios.md) § Debugging a run written as blocks): a scenario run's page lists the
+blocks its snapshot pins, each with its state in the run and a breakpoint toggle, Step and Continue in a debug
+pause, and the values while paused; the scenario page passes breakpoints at a start (see the ADR's delivery
+notes).
 
 A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([ADR
 0049](../adr/0049-scenario-blocks-and-run-control.md)). It is not a gate and Approvals does not list it.
@@ -231,6 +234,14 @@ A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([A
   `resume`, `start` or `end` line follows it: then the debugger is why the run is paused, not a gate an earlier pass
   left open (no investigation is open), and a resume rebuilds the stopped pass from that line, so it goes on exactly
   as the run would have without leaving the process. A `debug.pause` line that cannot be read refuses the resume.
+- hub web reads all of it from the run, never from the scenario file as it reads now: the run view's `blocks` are
+  the pinned tree's (as breakpoints are checked), and each timeline line's `block` is the address of the block that
+  holds its node, as the values read gives it, so an edit in the builder while a run is paused changes neither the
+  page nor what Continue runs. Its breakpoint toggles, Step and Continue show only off production (the environment
+  as the hub reads it now), the toggles not once the run ended `done` or `cancelled`, and Step and Continue only in
+  a debug pause. A toggle sends the run's whole set (`PUT …/breakpoints`). On the scenario page, a `version: 2`
+  scenario's step cards carry a toggle for the innermost block each card's node starts, and the start passes those
+  the file holds now, in its order, as `breakpoints` (none on a production environment).
 - The values to inspect are read from lines the record already holds: the `inputs` line, and for each node with an
   end its last `step_end` (`status`, `output`; a `prior_success` reuse keeps the end it reused), the `inputs` of its
   last `action` line, and for an expect its polls (its `action_start` lines with a `poll`, as the engine counts them)

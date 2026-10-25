@@ -453,7 +453,9 @@ instruction" for actions and for the deterministic nodes of a workflow that decl
   `version: 2`; the CLI's debugger, `hub scenario run --break`, `break`, `step` and `continue`, refused on production;
   `hub scenario migrate`; the API's routes for breakpoints, Step, Continue, a paused run's values and migrate; hub
   web's builder edits a `version: 2` file as its stages, with no loose block, and a `version: 1` file as AGH-521
-  shipped it, with a Migrate action, see the ADR's delivery notes):
+  shipped it, with a Migrate action; hub web's scenario run page debugs a `version: 2` run (the blocks it pinned,
+  each with a breakpoint, Step and Continue in a debug pause, the values while paused), and the scenario page passes
+  breakpoints at a start, see the ADR's delivery notes):
   a scenario may be written as `version: 2`, named stages of ordered blocks (Do, Wait until, You, Wait, Include;
   Repeat, If/else, At the same time), which core translates to the node graph at load, so the policy, gates and
   records are unchanged; hub web's builder edits that file block for block, and Save of an unchanged file writes
@@ -465,7 +467,9 @@ instruction" for actions and for the deterministic nodes of a workflow that decl
 - **In `hub web`** (Scenarios, in the sidebar's Work group after Tickets): the list with each scenario's last
   scenario run, a scenario's steps and its plan for a chosen environment, and a scenario run's page with its timeline
   and, while paused, the investigation chat, the options with their plans and the pick; a policy ask is answered on
-  that page ([screen spec 23](design/control-plane/specs/23-scenarios.md), Layer 2 § Scenarios).
+  that page; a run written as blocks also shows the blocks it pinned, with their breakpoints, Step and Continue in a
+  debug pause, and its values while paused ([screen spec 23](design/control-plane/specs/23-scenarios.md), Layer 2 §
+  Scenarios).
 
 ## Layer 2: control plane and observability
 

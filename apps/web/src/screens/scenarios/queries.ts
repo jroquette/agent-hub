@@ -1,7 +1,15 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { components } from "../../api/schema";
-import { apiCommand, apiKey, apiPost, useApi, type ApiProblem } from "../../lib/api";
+import {
+  apiCommand,
+  apiGet,
+  apiKey,
+  apiPost,
+  apiPut,
+  useApi,
+  type ApiProblem,
+} from "../../lib/api";
 import { useEventStream } from "../../lib/sse";
 import { postEnvironmentEdit } from "../hub-config/environments";
 import type { Approval } from "../approvals/queries";
@@ -27,6 +35,12 @@ export type InvestigationSession = Schemas["InvestigationSession"];
 export type InvestigationAnswered = Schemas["InvestigationAnswered"];
 export type RunAccepted = Schemas["RunAccepted"];
 export type ScenarioMigration = Schemas["ScenarioMigration"];
+export type ScenarioBlock = Schemas["BlockView"];
+export type RunBlock = Schemas["RunBlockView"];
+export type ScenarioRunValues = Schemas["ScenarioRunValues"];
+export type BlockValues = Schemas["BlockValues"];
+export type Breakpoints = Schemas["Breakpoints"];
+export type DebugCommand = "step" | "continue";
 type InputValue = string | number | boolean;
 
 /** The scenario's page. */
@@ -102,6 +116,51 @@ export function useScenarioRun(runId: string, live: boolean) {
   );
 }
 
+/** A paused scenario run's values (its inputs, each finished block's), read with the launch
+ * cookie (docs/API.md § Scenarios). `pause` names the pause they are read for (null: the run is
+ * not paused, nothing is read), so a later pause reads them again. */
+export function useScenarioRunValues(runId: string, pause: string | null) {
+  const path = "/api/v1/scenario-runs/{run_id}/values" as const;
+  const params = { path: { run_id: runId } };
+  return useQuery<ScenarioRunValues, ApiProblem>({
+    queryKey: [...apiKey(path, params), pause],
+    queryFn: ({ signal }) => apiGet(path, params, signal),
+    enabled: pause !== null,
+  });
+}
+
+/** Replaces a scenario run's breakpoints (block addresses of its pinned tree); the run's view
+ * takes the set the server wrote. */
+export function useSetBreakpoints(runId: string) {
+  const client = useQueryClient();
+  return useMutation<Breakpoints, ApiProblem, string[]>({
+    mutationFn: (blocks) =>
+      apiPut("/api/v1/scenario-runs/{run_id}/breakpoints", { blocks }, { path: { run_id: runId } }),
+    onSuccess: (written) => {
+      client.setQueryData<ScenarioRunDetail>(
+        apiKey("/api/v1/scenario-runs/{run_id}", { path: { run_id: runId } }),
+        (run) => (run === undefined ? run : { ...run, breakpoints: written.blocks }),
+      );
+    },
+  });
+}
+
+/** Step or Continue: resumes a scenario run in a debug pause. */
+export function useDebugCommand(runId: string) {
+  const client = useQueryClient();
+  return useMutation<RunAccepted, ApiProblem, DebugCommand>({
+    mutationFn: (command) =>
+      command === "step"
+        ? apiCommand("/api/v1/scenario-runs/{run_id}/step", { path: { run_id: runId } })
+        : apiCommand("/api/v1/scenario-runs/{run_id}/continue", { path: { run_id: runId } }),
+    onSettled: () => {
+      void client.invalidateQueries({
+        queryKey: apiKey("/api/v1/scenario-runs/{run_id}", { path: { run_id: runId } }),
+      });
+    },
+  });
+}
+
 /** Live: the run's stream refetches its record, its run and the open gates. */
 export function useScenarioRunStream(runId: string, live: boolean): void {
   const client = useQueryClient();
@@ -158,9 +217,13 @@ export function useMigrateScenario(project: string, name: string) {
   });
 }
 
+/** A start: the plan's request, the mode and, for a scenario written as blocks, the
+ * breakpoints it starts with (addresses of the tree it pins). */
+export type StartRequest = PlanRequest & { mode: ScenarioMode; breakpoints?: string[] };
+
 export function useStartScenario(project: string, name: string) {
   const client = useQueryClient();
-  return useMutation<RunAccepted, ApiProblem, PlanRequest & { mode: ScenarioMode }>({
+  return useMutation<RunAccepted, ApiProblem, StartRequest>({
     mutationFn: (body) =>
       apiPost("/api/v1/scenarios/{project}/{name}/runs", body, { path: { project, name } }),
     onSuccess: () => {
