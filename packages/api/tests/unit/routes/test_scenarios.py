@@ -2057,6 +2057,31 @@ def test_writes_nothing_when_saved_unchanged(scenarios: Any) -> None:
     assert path.read_text(encoding="utf-8") == TREE
 
 
+# The contract's reference tree and the actions it calls.
+BLOCKS = Path(__file__).resolve().parents[4] / "core/tests/data/scenarios/blocks"
+
+
+def test_writes_nothing_when_reference_tree_saved_unchanged(scenarios: Any) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    actions = scenarios.hub / "actions" / "demo"
+    shutil.copytree(BLOCKS / "actions" / "fixture", actions, dirs_exist_ok=True)
+    reference = (BLOCKS / "tree" / "demo-order-roundtrip.yaml").read_bytes()
+    path = scenarios.hub / "scenarios" / "demo" / "demo-order-roundtrip.yaml"
+    path.write_bytes(reference)
+    detail = scenarios.client.get("/api/v1/scenarios/demo/demo-order-roundtrip").json()
+
+    saved = _put(scenarios, "demo-order-roundtrip", detail["document"], base=detail["content_hash"])
+
+    assert saved.status_code == 200, saved.text
+    body = saved.json()
+    assert (body["changed"], body["versioned"], body["revision"]) == (False, False, 1)
+    assert body["content_hash"] == detail["content_hash"]
+    assert body["yaml"].encode() == reference
+    assert writes.calls == []
+    assert path.read_bytes() == reference
+
+
 def test_keeps_revision_when_graph_saved_again_unchanged(scenarios: Any) -> None:
     writes = _DiskWrites()
     scenarios.wire(item_version_writes=writes)
