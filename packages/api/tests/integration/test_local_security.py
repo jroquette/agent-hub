@@ -8,7 +8,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent_hub.api.app import create_app
-from agent_hub.api.local_security import RUN_READS
 from agent_hub.api.session_token import cookie_name
 from agent_hub.api.settings import ApiSettings
 from agent_hub.core.ingestion.hook_envelope import MAX_BODY_BYTES
@@ -352,7 +351,7 @@ def _pre_existing_reads(wired: Any) -> list[str]:
         if "get" in item
         and not path.startswith("/api/v1/agent-sessions")
         and "/environment-discoveries" not in path
-        and not RUN_READS.fullmatch(path)
+        and path != "/api/v1/scenario-runs/{run_id}/values"
         and not path.endswith("/stream")
     ]
 
