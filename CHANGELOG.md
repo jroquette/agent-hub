@@ -46,14 +46,17 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `version: 2` document with it, and a save of an unchanged one writes nothing and keeps its revision (AGH-512);
   the `hub doctor` rule `scenarios.graph_format` warns on each graph-format (`version: 1`) scenario, its fix naming
   `hub scenario migrate`, and `hub init` seeds `demo-service-up` as `version: 2`, so a fresh hub has no such warning;
-  since the builder edits only `version: 1`, hub web's Build view shows a `version: 2` file, that example among
-  them, read-only (the steps it runs, and its file) instead of an empty step list it could not save (AGH-513); the
+  until the builder read `version: 2`, hub web's Build view showed such a file read-only (AGH-513); the
   CLI's debugger, `hub scenario run --break`, `break`, `step` and `continue`, refused on production (AGH-514);
   `hub scenario migrate [NAME…] [--check]` writes graph scenarios again in place as blocks, or writes nothing and
   names each node it cannot map and why (AGH-515); hub web's API runs that debugger and migrate: routes for
   breakpoints, Step and Continue (the CLI's commands as children), breakpoints at a start, the debug pause in the run
   view, a paused run's values behind the launch cookie, and a migrate route that writes through Save's write step
-  (AGH-516); the rest is not built yet.
+  (AGH-516); hub web's builder edits a `version: 2` scenario as its stages of blocks (stage headers to add, rename,
+  move and remove, a Stage block in the Blocks tab, each block numbered by its address, an id only when one is
+  given, the Graph view a picture of how they run, Claude's prompt and proposal review in blocks), writing back the
+  JSON the server read, and offers Migrate for a `version: 1` scenario, which it keeps editing as before (AGH-517);
+  the rest is not built yet.
 
 ### Changed
 

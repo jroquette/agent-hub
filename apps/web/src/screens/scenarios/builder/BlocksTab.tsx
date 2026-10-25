@@ -4,14 +4,15 @@ import { Icon, type IconName } from "../../../components";
 import { EffectBadge } from "../parts";
 import { kindLook } from "./FlowCanvas";
 import type { BuilderDocument } from "./model";
-import { CATEGORIES, blockItem } from "./palette";
+import { CATEGORIES, STAGE_ENTRY, blockItem } from "./palette";
 import type { Item } from "./program";
 import type { LibraryAction } from "./useScenarioDraft";
 
 /* The Blocks tab (scenario builder v6): the block language a scenario is built from, by hand.
  * The step types (Do, Check, Control, You) and the hub's actions as ready blocks ("Run
- * queue-send", "Wait until with order-state"). Drag a block into the list, where a line shows
- * where it lands, or click it (Enter) to add it after the selected step. */
+ * queue-send", "Wait until with order-state"); a scenario written as blocks also has a Stage
+ * block. Drag a block into the list, where a line shows where it lands, or click it (Enter) to
+ * add it after the selected step. */
 
 /** What a block looks like while it is dragged. */
 export interface BlockLook {
@@ -30,6 +31,9 @@ export interface BlocksTabProps {
   onAdd: (item: Item) => void;
   /** A press that may become a drag; a press without a move is a click. */
   onPress: (event: ReactPointerEvent, make: () => Item, look: BlockLook) => void;
+  /** A scenario written as blocks: its stages' names, and where a click adds a stage ("after
+   * stage 2", "at the end"); null for a graph, which has no stages. */
+  stages?: { names: readonly string[]; where: string } | null;
 }
 
 function Block({
@@ -81,14 +85,43 @@ function Block({
   );
 }
 
-export function BlocksTab({ library, pack, taken, where, onAdd, onPress }: BlocksTabProps) {
+export function BlocksTab({
+  library,
+  pack,
+  taken,
+  where,
+  onAdd,
+  onPress,
+  stages = null,
+}: BlocksTabProps) {
   const refOf = (item: LibraryAction) =>
     item.action.pack === pack ? item.action.name : item.action.ref;
+  const stageLook = kindLook("stage");
   return (
     <div className="sb-left-body">
       <span className="ah-small ah-muted">
         Drag a block into the list, or click one to add it {where}.
       </span>
+      {stages && (
+        <section className="sb-blocks" aria-label="Stages">
+          <h3 className="sb-blocks-title">Stages</h3>
+          <ul>
+            <Block
+              look={{
+                label: STAGE_ENTRY.label,
+                icon: STAGE_ENTRY.icon,
+                tint: stageLook.tint,
+                soft: stageLook.soft,
+              }}
+              hint={STAGE_ENTRY.hint}
+              where={stages.where}
+              make={() => STAGE_ENTRY.make(stages.names)}
+              onAdd={onAdd}
+              onPress={onPress}
+            />
+          </ul>
+        </section>
+      )}
       {CATEGORIES.map((category) => (
         <section key={category.title} className="sb-blocks" aria-label={category.title}>
           <h3 className="sb-blocks-title">{category.title}</h3>

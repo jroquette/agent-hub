@@ -23,7 +23,7 @@ import { DiscussButton, useDiscuss, useDiscussTarget } from "../../shell/discuss
 import { StaleStamp } from "../portfolio/StaleStamp";
 import { InputField, parsed, type InputSpec } from "../runs-list/StartRun";
 import { ActionPanel, FileText } from "./ActionPanel";
-import { isBlocksDocument } from "./builder/model";
+import { isTree } from "./builder/program";
 import { ScenarioBuilder } from "./builder/ScenarioBuilder";
 import { useLatestRun } from "./LiveRun";
 import { SCENARIO_BRIEF } from "./brief";
@@ -832,61 +832,6 @@ function DocumentView({ scenario }: { scenario: ScenarioDetail }) {
   );
 }
 
-/** Build mode for a scenario written as blocks (`version: 2`), which the builder does not read
- * yet: the steps the file runs (core's translation) and the file, read-only, never the file read
- * as an empty graph that no edit could save. */
-function BlocksReadOnly({
-  scenario,
-  view,
-  onView,
-  steps,
-  onRun,
-}: {
-  scenario: ScenarioDetail;
-  view: DetailView;
-  onView: (view: DetailView) => void;
-  /** The storyline of the steps, as the Run mode shows it. */
-  steps: ReactNode;
-  onRun: () => void;
-}) {
-  return (
-    <div className="ah-stack" style={{ gap: 12 }}>
-      <div className="ah-row ah-wrap" style={{ gap: 12 }}>
-        <h1 className="ah-h1 ah-mono">{scenario.name}</h1>
-        <span className="ah-small ah-muted">
-          pack {scenario.pack} · revision {scenario.revision}
-        </span>
-        <span className="ah-grow" />
-        <DiscussButton />
-        <Button icon="play" onClick={onRun}>
-          Run
-        </Button>
-      </div>
-      <Banner tone="info" icon="lock">
-        This scenario is written as blocks (version 2), which the builder cannot edit yet: it edits
-        graph scenarios (version 1). Here are the steps it runs and its file, read-only. Edit the
-        file, or ask Claude, and this page updates.
-      </Banner>
-      <div className="ah-row ah-wrap" style={{ gap: 12 }}>
-        <SegmentedControl
-          label="View"
-          value={view}
-          onChange={(id) => {
-            onView(id === "document" ? "document" : "steps");
-          }}
-          options={[
-            { id: "steps", label: "Steps", icon: "list-checks" },
-            { id: "document", label: "Document", icon: "file-text" },
-          ]}
-        />
-        <span className="ah-grow" />
-        <span className="ah-small ah-muted">{shapeLine(scenario)}</span>
-      </div>
-      {view === "steps" ? steps : <DocumentView scenario={scenario} />}
-    </div>
-  );
-}
-
 /** Build mode: the breadcrumbs, then the builder (its own one-row toolbar) to the bottom. */
 function BuildPage({ scenario, children }: { scenario: ScenarioDetail; children: ReactNode }) {
   useScenarioDiscuss(scenario);
@@ -963,30 +908,13 @@ function DetailBody({ scenario }: { scenario: ScenarioDetail }) {
       }}
     />
   );
-  if (page === "build" && isBlocksDocument(scenario.document)) {
-    return (
-      <BuildPage scenario={scenario}>
-        <WaitingCard rows={mine} named={false} />
-        <BlocksReadOnly
-          scenario={scenario}
-          view={view}
-          onView={(next) => {
-            setParam("view", next === "document" ? "document" : null);
-          }}
-          steps={storyline}
-          onRun={() => {
-            setParam("mode", "run");
-          }}
-        />
-        {actionPanel}
-      </BuildPage>
-    );
-  }
   if (page === "build") {
     return (
       <BuildPage scenario={scenario}>
         <WaitingCard rows={mine} named={false} />
         <ScenarioBuilder
+          // A file migrated to blocks (or written back as a graph) gets a builder of its format.
+          key={isTree(scenario.document) ? "blocks" : "graph"}
           scenario={scenario}
           mode={mode}
           onRun={() => {

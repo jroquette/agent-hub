@@ -163,9 +163,8 @@ wins.
 The scenario page's builder, as the owner validated it in the playground (its v6 and the two commits after it); the
 v1 to v5 layouts (a free block canvas, Scratch-like snapping blocks, sentence blocks, step cards with arrows) were
 rejected and are not built. Its relation to ADR 0049's tree format is in that ADR's delivery notes: the builder edits
-`version: 1` files through the builder API ([API.md](../../../API.md#scenarios)). A file written as blocks
-(`version: 2`, the `hub init` example among them) does not open in the builder yet: Build shows its name, a note that
-the builder cannot edit it yet, the steps it runs (the storyline of the Run mode) or its file, and a Run button.
+`version: 1` files through the builder API ([API.md](../../../API.md#scenarios)) as below, and a file written as
+blocks (`version: 2`, the `hub init` example among them) as its stages (Version 2 in the builder, after this list).
 
 - **AC-521.13.1 Step list.** Given a scenario, then the builder reads it top to bottom as numbered steps, two lines per
   step, that say what each does; groups (Repeat, If paths, At the same time lanes) are indented; a Start row says where
@@ -209,6 +208,50 @@ the builder cannot edit it yet, the steps it runs (the storyline of the Run mode
   writes nothing. Unsaved work is kept in this browser across a reload; while the page is open, a change made outside
   asks whether to load the file's version or keep yours (Keep mine replaces it on save); after a reload, work kept for
   an older version of the file is not restored.
+
+#### Version 2 in the builder (AGH-517)
+
+A scenario written as blocks opens in the same builder, edited as its stages; a graph keeps everything above. The page
+mounts the builder of the file's format, so a file migrated (or edited outside into the other format) opens in the
+other one. The builder never writes YAML: it holds the file's JSON, the server writes the canonical text.
+
+```
+(flag) Starts in personal · Asks for shop_order_id
+(milestone) Stage 1 · Fetch order · 2 steps
+     1.1  (play) Run an action  queue-send · message demo.fetch-orders
+     1.2  (timer) Wait until order_status is ON_HOLD and ...  every 15 s, up to 10 min · keeps order_id
+(milestone) Stage 2 · Review · 2 steps
+     ...
+[+ Add step]  [+ Add stage]
+```
+
+- **AC-507.15 Stages of blocks.** Given a `version: 2` scenario, then the step list shows a header row per stage, in
+  file order, and every block in its stage under it, numbered by its block address (`2`, `2.3`, `2.3.then.1`,
+  `2.3.p2.1`, `4.1.2`), with no loose step; opened and left unchanged, nothing is to save (a block moved away and back
+  writes the same document again), and a change saves the file's JSON with only that change.
+- **AC-507.24 Round trip.** Given any tree document, then the builder reads it into its model and writes back the
+  JSON the server parsed (`program.test.ts` over every tree fixture), its keys in the canonical order, so an edit undone
+  leaves nothing to save.
+- **Stages.** A stage is added from the Blocks tab's Stage block (after the selected step's stage, or at the end), a
+  `+` between stages or Add stage; its header opens its editor (name, what it is for, Delete the stage and its steps,
+  with Undo); it moves by its handle, Alt arrows or its row menu (Move up, Move down, Delete stage). A step goes only
+  into a stage's list (or a group's), a stage only between stages.
+- **A block's editor.** No "Runs after", no "Only if" and no "Runs when": position is order. More: id shows the
+  block's own id, empty when it runs under the one its place gives (`fetch-order--1`, the placeholder); one given is
+  written to the file and the references to the old one follow it.
+- **Graph view.** A picture of how the blocks run (the nodes they translate to, each selected with its block), with
+  nothing to add or move there: "The graph shows how the blocks run: edit them in Blocks."
+- **Claude.** Describe with Claude teaches the tree's keys (stages, `do`, `wait_until`, `you`, `wait`, `include`,
+  `repeat`, `if`, `together`; no `nodes`, `depends_on`, `trigger_rule` or `when`) and names a place by its address;
+  the proposal is reviewed block by block by address (stages matched by name, each stage's blocks aligned), each
+  change accepted or rejected on its own ("Accept block 1.4").
+- **Migrate, for a graph.** More › Migrate to stages of blocks opens a dialog that checks first (`POST
+  …/migrate` with `check`) and shows the file as blocks, or each step a tree cannot hold and why, with nothing
+  written; Migrate writes it over the file the builder read (`base_content_hash`) and the page opens the stages.
+  With unsaved changes it asks to save them first.
+- **Accessibility.** Written as blocks, the tree holds only its items (stage headers, steps, an empty list's item
+  with its button); the "+" in a gap is the pointer's way, and the keys add from a row (`a`), the Blocks tab, Add step
+  and Add stage.
 
 ## Screen 3: Scenario run (`/scenarios/:project/:name/runs/:runId`)
 

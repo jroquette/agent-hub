@@ -75,6 +75,12 @@ export const KIND_LOOK: Readonly<
     tint: "var(--kind-control)",
     soft: "var(--kind-control-soft)",
   },
+  stage: {
+    label: "Stage",
+    icon: "milestone",
+    tint: "var(--kind-control)",
+    soft: "var(--kind-control-soft)",
+  },
 };
 
 export function kindLook(type: string) {

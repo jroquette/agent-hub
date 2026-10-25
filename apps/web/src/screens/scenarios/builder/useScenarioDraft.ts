@@ -4,13 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import type { components } from "../../../api/schema";
 import { apiKey, apiPost, apiPut, useApi, type ApiProblem } from "../../../lib/api";
 import { readStored, removeStored, writeStored } from "../../../lib/storage";
-import { toDocument, type BuilderDocument } from "./model";
+import type { Json, ScenarioDocument } from "./model";
 
-function toDocumentText(text: string): BuilderDocument {
-  return toDocument(JSON.parse(text));
-}
-
-/* The builder's working copy of a scenario: the document as edited, undo and redo, whether it
+/* The builder's working copy of a scenario: the document as edited (a graph, or a scenario
+ * written as blocks: the draft holds either as the file's mapping), undo and redo, whether it
  * differs from the file, the server's check of it (the YAML Save would write, whether it loads,
  * each problem on its block), kept live a moment after each edit, and Save. */
 
@@ -28,9 +25,9 @@ export function useActionLibrary(project: string) {
 }
 
 export interface ScenarioDraft {
-  document: BuilderDocument;
+  document: ScenarioDocument;
   dirty: boolean;
-  edit: (next: BuilderDocument) => void;
+  edit: (next: ScenarioDocument) => void;
   undo: () => void;
   redo: () => void;
   canUndo: boolean;
@@ -42,7 +39,7 @@ export interface ScenarioDraft {
   saving: boolean;
   saveError: ApiProblem | null;
   saved: SaveResult | null;
-  reset: (document: BuilderDocument) => void;
+  reset: (document: ScenarioDocument) => void;
   /** The unsaved changes came back from this browser (kept across Build/Run and reloads). */
   restored: boolean;
   /** Throws the unsaved changes away and shows the file again. */
@@ -57,17 +54,22 @@ export interface ScenarioDraft {
 
 interface Stored {
   base: string | null;
-  document: BuilderDocument;
+  document: ScenarioDocument;
 }
 
 function draftKey(project: string, name: string): string {
   return `ah.builder.draft.${project}/${name}`;
 }
 
-function readDraft(project: string, name: string): Stored | null {
+function readDraft(
+  project: string,
+  name: string,
+  read: (value: unknown) => ScenarioDocument,
+): Stored | null {
   try {
     const value = JSON.parse(readStored(draftKey(project, name)) ?? "null") as Stored | null;
-    return value && Array.isArray(value.document.nodes) ? value : null;
+    const held: Json | undefined = value?.document.nodes ?? value?.document.stages;
+    return value && Array.isArray(held) ? { ...value, document: read(value.document) } : null;
   } catch {
     return null;
   }
@@ -79,22 +81,25 @@ export function useScenarioDraft({
   pack,
   initial,
   contentHash,
+  read,
 }: {
   project: string;
   name: string;
   pack: string;
-  initial: BuilderDocument;
+  initial: ScenarioDocument;
   contentHash: string | null;
+  /** The builder's copy of a mapping read back (a kept draft, the file's text). */
+  read: (value: unknown) => ScenarioDocument;
 }): ScenarioDraft {
   const client = useQueryClient();
-  const [past, setPast] = useState<BuilderDocument[]>([]);
-  const [future, setFuture] = useState<BuilderDocument[]>([]);
+  const [past, setPast] = useState<ScenarioDocument[]>([]);
+  const [future, setFuture] = useState<ScenarioDocument[]>([]);
   // A draft this browser kept for the same file comes back; one for an older file does not.
   const [stored] = useState(() => {
-    const kept = readDraft(project, name);
+    const kept = readDraft(project, name, read);
     return kept?.base === contentHash ? kept : null;
   });
-  const [document, setDocument] = useState<BuilderDocument>(stored?.document ?? initial);
+  const [document, setDocument] = useState<ScenarioDocument>(stored?.document ?? initial);
   const [restored, setRestored] = useState(stored !== null);
   const [base, setBase] = useState<{ text: string; hash: string | null }>({
     text: JSON.stringify(initial),
@@ -127,7 +132,7 @@ export function useScenarioDraft({
   const [check, setCheck] = useState<ValidateResult | null>(null);
   const latest = useRef(0);
 
-  const validate = useMutation<ValidateResult, ApiProblem, BuilderDocument>({
+  const validate = useMutation<ValidateResult, ApiProblem, ScenarioDocument>({
     mutationFn: (body) =>
       apiPost(
         "/api/v1/projects/{project}/scenarios/validate",
@@ -151,7 +156,7 @@ export function useScenarioDraft({
     };
   }, [document, runCheck]);
 
-  const saveMutation = useMutation<SaveResult, ApiProblem, BuilderDocument>({
+  const saveMutation = useMutation<SaveResult, ApiProblem, ScenarioDocument>({
     mutationFn: (body) =>
       apiPut(
         "/api/v1/scenarios/{project}/{name}",
@@ -172,7 +177,7 @@ export function useScenarioDraft({
     },
   });
 
-  const edit = (next: BuilderDocument) => {
+  const edit = (next: ScenarioDocument) => {
     setPast((items) => [...items.slice(-MAX_UNDO + 1), document]);
     setFuture([]);
     setDocument(next);
@@ -183,7 +188,7 @@ export function useScenarioDraft({
     dirty: dirtyNow,
     restored: restored && dirtyNow,
     discard: () => {
-      setDocument(toDocumentText(base.text));
+      setDocument(read(JSON.parse(base.text)));
       setPast([]);
       setFuture([]);
       setRestored(false);

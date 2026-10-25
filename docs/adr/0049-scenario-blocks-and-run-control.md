@@ -73,8 +73,9 @@ Chosen option: 1.
   output) come from lines the run record already holds (already redacted of credential values), through a separate
   read that needs hub web's launch cookie, as the agent-session routes do, and never for a production run. The run
   view itself stays metadata plus the captures it already shows.
-- **Migration.** hub web's builder opens a graph scenario read-only, with a Migrate action; the graph editing of the
-  builder goes. `hub scenario migrate [NAME…] [--check]` writes a graph scenario as a tree (one stage named after
+- **Migration.** hub web's builder keeps editing a graph scenario as it does, and offers a Migrate action for it
+  (a check first, whose result it shows, then the write); a scenario written as blocks it edits as its stages, with
+  no loose block. `hub scenario migrate [NAME…] [--check]` writes a graph scenario as a tree (one stage named after
   the scenario, ids kept where they differ from the derived ones) when its graph is series-parallel with the shapes the
   tree has; otherwise it writes nothing and names each node it cannot map. `hub doctor` warns
   (`scenarios.graph_format`) for each graph-format scenario. The graph format is removed in its own change, two minor
@@ -125,8 +126,8 @@ and Save of an unchanged document writes nothing and keeps its revision (AGH-512
 And doctor's warning: `scenarios.graph_format` warns on each `version: 1` scenario of the hub, at its `version` line,
 with `hub scenario migrate` as its fix ([design/hub-doctor.md](../design/hub-doctor.md));
 `hub init` seeds `demo-service-up` as `version: 2`, so a fresh hub has no such warning, and its `version: 1` text
-stays as a test fixture (AGH-513). Until the builder screen reads `version: 2`, that seed does not open in it: Build
-shows a `version: 2` file read-only (Format below).
+stays as a test fixture (AGH-513). Until the builder screen read `version: 2` (AGH-517), Build showed such a file
+read-only.
 And the CLI's debugger: `hub scenario run --break ADDR`, `hub scenario break RUN ADDR… [--off|--set]`, `hub scenario
 step RUN` and `hub scenario continue RUN` keep a run's breakpoints in `breakpoints.json`, give the engine a run
 control over that file and the record (step mode while the last debug command is a Step), write the debug record
@@ -152,19 +153,24 @@ and never on production; the run view names the debug pause, the breakpoints and
 its version and blocks. `POST /scenarios/{project}/{name}/migrate` migrates one scenario in the server, as the CLI
 does, through the item write step the builder's Save uses, over the bytes the builder last read when it sends their
 hash.
+And hub web's builder on the tree (AGH-517, [screen spec 23](../design/control-plane/specs/23-scenarios.md)): a
+`version: 2` file is edited as its stages. The builder's model reads `stages` straight into its blocks, each keyed by
+its address, and writes them back to the same JSON the server parsed (its keys in the canonical order), so no block
+is left loose and a file opened and saved unchanged writes nothing; a block's id is written only when it gives one
+(without one it runs under the id its place gives). The step list shows a header per stage (added from the Blocks
+tab's Stage block or a "+" between stages, renamed in its editor, moved and removed as a step is), each block
+numbered by its address; a block's editor has no "runs after", no `when` and no join rule; the Graph view draws how
+the blocks run and edits nothing; Claude's prompt teaches the tree's keys, and its proposal is reviewed block by
+block, by address. A `version: 1` file is edited as AGH-521 shipped it, and More offers Migrate: the check's text, or
+each node it cannot map, shown before anything is written.
 The scenario builder that shipped with AGH-521 is the one the owner validated in the playground, and where it differs
 from the decision above, the validated behavior wins for what the screen shows:
 
-- **Format.** The builder reads and writes `version: 1` graph scenarios. Its step list shows the graph as ordered
-  steps with groups (Repeat, If, At the same time) and a Start row, which is the shape `version: 2` stores; core
-  translates a `version: 2` file at load, with its block map, and the API's validate and Save take one, but the
-  builder screen does not read one yet, and it has no Migrate action yet (`hub scenario migrate` is the CLI's). A
-  `version: 2` file, the
-  `demo-service-up` example `hub init` seeds among them, opens in Build read-only: the steps core translates it to
-  and its file, with a note that the builder cannot edit it yet, and a Run button; it is edited as text or with
-  Claude. Read as a graph, it would open as an empty step list that no edit could save. A graph that is not nested
-  paths still opens and can be edited (not read-only, as Migration above says): what the list cannot show stays as
-  loose steps under it, and a Graph view and the YAML are a tab away.
+- **Format.** The builder reads and writes `version: 1` graph scenarios as it shipped: its step list shows the graph
+  as ordered steps with groups (Repeat, If, At the same time) and a Start row, which is the shape `version: 2`
+  stores, and since AGH-517 it edits a `version: 2` file as its stages (above), and offers Migrate for a graph. A
+  graph that is not nested paths still opens and can be edited (as Migration above says): what the list cannot show
+  stays as loose steps under it, and a Graph view and the YAML are a tab away.
 - **Canonical writer.** The builder shipped with its writer in the API's builder (`api/scenario_builder.py`); since
   AGH-512 Save still goes through the API, but writes with `generator`'s scenario writer
   (`generator/scenario_yaml.py`), as decided, and an unchanged document writes nothing.

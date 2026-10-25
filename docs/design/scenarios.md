@@ -38,11 +38,11 @@ scenario and translates it to the node graph at load, with its block map and its
 builder routes use: validate and Save take a `version: 2` document as well as a `version: 1` one, and Save of an
 unchanged document writes nothing. Built too: doctor's `scenarios.graph_format` warning, `hub init` seeds its
 example as `version: 2`, and `hub scenario migrate`, which that warning's fix names (core's `tree_migrate`), and the
-API's migrate route (`POST /scenarios/{project}/{name}/migrate`, [API.md](../API.md) § Scenarios). Proposed, not built
-yet: a builder screen that edits `version: 2`, and its Migrate action. Hub web's builder reads
-and writes `version: 1` files only, so a `version: 2` file, the seeded example among them, opens in Build read-only
-(the steps core translates it to, and its file) and is edited as text or with Claude until the builder reads
-`version: 2` (see the ADR's delivery notes).
+API's migrate route (`POST /scenarios/{project}/{name}/migrate`, [API.md](../API.md) § Scenarios). And hub web's
+builder (AGH-517): it edits a `version: 2` file as its stages, each block read straight from `stages` and keyed by
+its address, and writes the same JSON back (its keys in the canonical order below), so nothing is loose and a file
+opened and saved unchanged is unchanged; a `version: 1` file it edits as AGH-521 shipped it, and offers Migrate
+(screen spec 23, the ADR's delivery notes).
 
 A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md)):
 `version: 2` and `stages:` in place of `nodes:`, with `kind: scenario` (a version-2 document without it fails at
@@ -139,7 +139,8 @@ A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blo
   does the same for one scenario in the server (the item write step Save uses; with `check` it writes nothing, and
   the file must still hold the `base_content_hash` it is sent, checked against the bytes it read, a JSON file's
   included; a link is never read, so its refusal is the answer), returning the tree's text and each problem on its node;
-  hub web's builder is to offer it as Migrate for a graph scenario (not built yet).
+  hub web's builder offers it as Migrate for a graph scenario: a check first, whose text (or each node it cannot map)
+  it shows, then the write, both with the hash of the file the builder read.
 
 ### Debugging
 
@@ -151,8 +152,8 @@ values to inspect). The CLI is built: `breakpoints.json`, `hub scenario run --br
 (`cli/scenario_debug.py`, the run control over that file and the record), which write those lines and emit the
 `debug.*` events, and the production refusal. The API is built too: its breakpoints, Step and Continue routes run
 those commands as children, a start takes breakpoints, the run view names the debug pause, and the values read
-([API.md](../API.md) § Scenarios). Proposed, not built yet: hub web's debugger. Today's builder reads and writes `version: 1` files and Save goes through the API
-(see the ADR's delivery notes).
+([API.md](../API.md) § Scenarios). Proposed, not built yet: hub web's debugger. The builder edits `version: 2` files
+as their stages (§ Tree format) and Save goes through the API (see the ADR's delivery notes).
 
 A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([ADR
 0049](../adr/0049-scenario-blocks-and-run-control.md)). It is not a gate and Approvals does not list it.

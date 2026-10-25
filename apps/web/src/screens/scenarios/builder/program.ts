@@ -4,10 +4,17 @@
  * the condition negated, and the blocks after it joining with `none_failed_min_one_success`) and
  * At the same time (sibling paths that start together, joined by the next block).
  *
- * It is a reading of the document, not a second format: `programOf` reads the `nodes` of a
- * scenario into a program, `nodesOf` writes a program back to `nodes`, and nothing else is stored.
- * What the blocks cannot show (a graph that is not nested paths) stays as loose blocks, as
- * written. */
+ * A graph scenario (`version: 1`): the program is a reading of the document, not a second
+ * format: `programOf` reads the `nodes` of a scenario into a program, `nodesOf` writes a program
+ * back to `nodes`, and nothing else is stored. What the blocks cannot show (a graph that is not
+ * nested paths) stays as loose blocks, as written.
+ *
+ * A scenario written as blocks (`version: 2`, docs/design/scenarios.md § Tree format): its
+ * `stages` are the program itself. `stagesOf` reads each stage and each step straight into an
+ * item keyed by its block address (`2`, `2.3`, `2.3.then.1`, `2.3.p2.1`, `4.1.2`), and `treeOf`
+ * writes them back, so no block is left loose and the same file gives the same keys. A block's
+ * node carries the id it runs under: its own `id`, or the one its place gives
+ * (`<stage slug>--<address in the stage>`), which is never written. */
 
 import {
   dependsOn,
@@ -16,13 +23,28 @@ import {
   without,
   type BuilderNode,
   type ConditionRow,
+  type Json,
 } from "./model";
 
+/** A block of a program. In a scenario written as blocks every item has a `key` (its address),
+ * `named` says whether a node's id is the block's own (written) or its place's, and `extra` holds
+ * the keys of an If, a Together or a stage the builder does not edit (a `description`). */
 export type Item =
-  | { kind: "block"; node: BuilderNode }
-  | { kind: "repeat"; node: BuilderNode; body: Item[] }
-  | { kind: "if"; key: string; condition: string; then: Item[]; otherwise: Item[] }
-  | { kind: "parallel"; key: string; lanes: Item[][] };
+  | { kind: "block"; node: BuilderNode; key?: string; named?: boolean }
+  | { kind: "repeat"; node: BuilderNode; body: Item[]; key?: string; named?: boolean }
+  | {
+      kind: "if";
+      key: string;
+      condition: string;
+      then: Item[];
+      otherwise: Item[];
+      extra?: Record<string, Json>;
+    }
+  | { kind: "parallel"; key: string; lanes: Item[][]; extra?: Record<string, Json> }
+  | { kind: "stage"; key: string; name: string; steps: Item[]; extra?: Record<string, Json> };
+
+/** A stage of a scenario written as blocks. */
+export type StageItem = Extract<Item, { kind: "stage" }>;
 
 export interface Program {
   main: Item[];
@@ -205,6 +227,9 @@ function write(
       out.push({ ...place(item.node, tails, pending), nodes: body });
       tails = [item.node.id];
       pending = { when: null, join: false };
+    } else if (item.kind === "stage") {
+      tails = write(item.steps, tails, pending, out);
+      pending = { when: null, join: false };
     } else if (item.kind === "if") {
       const negated = negateCondition(item.condition);
       const thenTails =
@@ -230,21 +255,37 @@ function write(
 
 /* ---------- Edits on a program (paths address a list inside the tree) ---------- */
 
-/** Where a list of items is: the main stack, a repeat's body, an If path or a lane. */
+/** Where a list of items is: the main stack (in a scenario written as blocks, its stages), a
+ * repeat's body, an If path, a lane or a stage's steps. */
 export type Slot =
   | { in: "main" }
   | { in: "body"; owner: string }
   | { in: "then" | "otherwise"; owner: string }
-  | { in: "lane"; owner: string; lane: number };
+  | { in: "lane"; owner: string; lane: number }
+  | { in: "stage"; owner: string };
 
 export function itemId(item: Item): string {
-  return item.kind === "block" || item.kind === "repeat" ? item.node.id : item.key;
+  return item.kind === "block" || item.kind === "repeat" ? (item.key ?? item.node.id) : item.key;
+}
+
+/** The lists an item holds, in order (a stage's steps, a body, an If's two paths, the lanes). */
+export function listsOf(item: Item): readonly (readonly Item[])[] {
+  if (item.kind === "stage") return [item.steps];
+  if (item.kind === "repeat") return [item.body];
+  if (item.kind === "if") return [item.then, item.otherwise];
+  if (item.kind === "parallel") return item.lanes;
+  return [];
 }
 
 function mapLists(items: Item[], slot: Slot, fn: (list: Item[]) => Item[]): Item[] {
   if (slot.in === "main") return fn(items);
   return items.map((item) => {
     const id = itemId(item);
+    if (item.kind === "stage") {
+      const steps =
+        slot.in === "stage" && id === slot.owner ? fn(item.steps) : mapLists(item.steps, slot, fn);
+      return { ...item, steps };
+    }
     if (item.kind === "repeat") {
       const body =
         id === (slot as { owner: string }).owner && slot.in === "body"
@@ -279,6 +320,7 @@ export function listAt(items: readonly Item[], slot: Slot): readonly Item[] | nu
   if (slot.in === "main") return items;
   const owner = findItem(items, slot.owner);
   if (!owner) return null;
+  if (owner.kind === "stage" && slot.in === "stage") return owner.steps;
   if (owner.kind === "repeat" && slot.in === "body") return owner.body;
   if (owner.kind === "if" && slot.in === "then") return owner.then;
   if (owner.kind === "if" && slot.in === "otherwise") return owner.otherwise;
@@ -306,6 +348,7 @@ export function takeFrom(
       return alone ? [...list.slice(0, index), ...list.slice(index + 1)] : list.slice(0, index);
     }
     return list.map((item) => {
+      if (item.kind === "stage") return { ...item, steps: visit(item.steps) };
       if (item.kind === "repeat") return { ...item, body: visit(item.body) };
       if (item.kind === "if")
         return { ...item, then: visit(item.then), otherwise: visit(item.otherwise) };
@@ -321,6 +364,7 @@ export function takeFrom(
 export function replaceItem(items: Item[], id: string, next: Item): Item[] {
   return items.map((item) => {
     if (itemId(item) === id) return next;
+    if (item.kind === "stage") return { ...item, steps: replaceItem(item.steps, id, next) };
     if (item.kind === "repeat") return { ...item, body: replaceItem(item.body, id, next) };
     if (item.kind === "if")
       return {
@@ -338,14 +382,10 @@ export function replaceItem(items: Item[], id: string, next: Item): Item[] {
 export function findItem(items: readonly Item[], id: string): Item | null {
   for (const item of items) {
     if (itemId(item) === id) return item;
-    const inner =
-      item.kind === "repeat"
-        ? findItem(item.body, id)
-        : item.kind === "if"
-          ? (findItem(item.then, id) ?? findItem(item.otherwise, id))
-          : item.kind === "parallel"
-            ? item.lanes.reduce<Item | null>((found, lane) => found ?? findItem(lane, id), null)
-            : null;
+    const inner = listsOf(item).reduce<Item | null>(
+      (found, list) => found ?? findItem(list, id),
+      null,
+    );
     if (inner) return inner;
   }
   return null;
@@ -356,8 +396,7 @@ export function programNodes(items: readonly Item[]): BuilderNode[] {
   return items.flatMap((item) => {
     if (item.kind === "block") return [item.node];
     if (item.kind === "repeat") return [item.node, ...programNodes(item.body)];
-    if (item.kind === "if") return [...programNodes(item.then), ...programNodes(item.otherwise)];
-    return item.lanes.flatMap(programNodes);
+    return listsOf(item).flatMap(programNodes);
   });
 }
 
@@ -368,7 +407,9 @@ export function locate(items: readonly Item[], id: string, slot: Slot = { in: "m
   for (const [index, item] of items.entries()) {
     if (itemId(item) === id) return { slot, index };
     let inner: Located = null;
-    if (item.kind === "repeat") inner = locate(item.body, id, { in: "body", owner: item.node.id });
+    if (item.kind === "stage") inner = locate(item.steps, id, { in: "stage", owner: item.key });
+    else if (item.kind === "repeat")
+      inner = locate(item.body, id, { in: "body", owner: itemId(item) });
     else if (item.kind === "if") {
       const owner = itemId(item);
       inner =
@@ -387,28 +428,535 @@ export function locate(items: readonly Item[], id: string, slot: Slot = { in: "m
 }
 
 /** The step numbers the gutter shows: 1, 2, 3, then 3.1, 3.2 … inside a C-block, counting on
- * across an If's two paths and across lanes, so each block has its own number. */
+ * across an If's two paths and across lanes, so each block has its own number. In a scenario
+ * written as blocks, a block's number is its address. */
 export function stepNumbers(items: readonly Item[], prefix = ""): Map<string, string> {
   const out = new Map<string, string>();
+  if (items.some((item) => item.kind === "stage")) {
+    const all = (list: readonly Item[]): void => {
+      for (const item of list) {
+        out.set(itemId(item), itemId(item));
+        for (const inner of listsOf(item)) all(inner);
+      }
+    };
+    all(items);
+    return out;
+  }
   const walk = (list: readonly Item[], head: string, start: number): number => {
     let n = start;
     for (const item of list) {
       n += 1;
       const label = `${head}${String(n)}`;
       out.set(itemId(item), label);
-      const inner =
-        item.kind === "repeat"
-          ? [item.body]
-          : item.kind === "if"
-            ? [item.then, item.otherwise]
-            : item.kind === "parallel"
-              ? item.lanes
-              : [];
       let m = 0;
-      for (const body of inner) m = walk(body, `${label}.`, m);
+      for (const body of listsOf(item)) m = walk(body, `${label}.`, m);
     }
     return n;
   };
   walk(items, prefix, 0);
   return out;
+}
+
+/* ---------- A scenario written as blocks (version 2) ---------- */
+
+/** A step's kind key and the node type it becomes (`wait`, `repeat`, `if` and `together` apart). */
+const LEAVES: Readonly<Record<string, { type: string; key: string }>> = {
+  do: { type: "action", key: "action" },
+  wait_until: { type: "expect", key: "action" },
+  you: { type: "approval", key: "message" },
+  include: { type: "include", key: "include" },
+};
+const STEP_KINDS = ["do", "wait_until", "you", "wait", "include", "repeat", "if", "together"];
+/** A node's type, back to its step's kind key. */
+const KIND_OF: Readonly<Record<string, string>> = {
+  action: "do",
+  expect: "wait_until",
+  approval: "you",
+  include: "include",
+};
+/** A node that holds a step the builder cannot read (no kind key, or two), written as it is. */
+const UNREAD = "unread";
+// The canonical key order (generator's scenario writer): a canonical file's mapping written back
+// reads as the same JSON, key for key, so an edit undone leaves nothing to save.
+const TREE_ORDER = ["version", "kind", "name", "revision", "description", "inputs", "stages"];
+const STAGE_ORDER = ["name", "description", "steps"];
+const STEP_ORDER = [
+  ...STEP_KINDS,
+  "id",
+  "description",
+  "with",
+  "until",
+  "every",
+  "timeout",
+  "decisions",
+  "capture_response",
+  "then",
+  "else",
+  "capture",
+  "retry",
+];
+const REPEAT_ORDER = ["max", "until", "steps"];
+const WAIT_ORDER = ["duration", "until", "attention", "options"];
+
+/** `mapping` with the keys `order` names first, in that order, then the rest as given. */
+function ordered(mapping: Mapping, order: readonly string[]): Mapping {
+  const out: Mapping = {};
+  for (const key of order) {
+    const value = mapping[key];
+    if (value !== undefined) out[key] = value;
+  }
+  for (const [key, value] of Object.entries(mapping)) if (!(key in out)) out[key] = value;
+  return out;
+}
+
+type Mapping = Record<string, Json>;
+
+function mapping(value: Json | undefined): Mapping {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : {};
+}
+
+function list(value: Json | undefined): Json[] {
+  return Array.isArray(value) ? value : [];
+}
+
+/** Whether a scenario file's mapping is written as blocks (`version: 2`, stages of blocks). */
+export function isTree(document: unknown): boolean {
+  return (
+    typeof document === "object" &&
+    document !== null &&
+    !Array.isArray(document) &&
+    (document as Record<string, unknown>).version === 2
+  );
+}
+
+/** A stage name's slug, as core makes it: lowercase, each run of other characters one `-`. */
+export function stageSlug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+}
+
+/** The id a block without one runs under: `<stage slug>--<its address in the stage>`. */
+export function derivedId(slug: string, address: string): string {
+  const inStage = address.split(".").slice(1).join("-");
+  return `${slug}--${inStage}`;
+}
+
+/** The stages of a scenario written as blocks, as items keyed by their block address. */
+export function stagesOf(document: Mapping): Item[] {
+  const stages = list(document.stages).map((stage): Item => {
+    const { name, steps, ...extra } = mapping(stage);
+    const item: Item = {
+      kind: "stage",
+      key: "",
+      name: typeof name === "string" ? name : "",
+      steps: list(steps).map(stepItem),
+    };
+    return Object.keys(extra).length > 0 ? { ...item, extra } : item;
+  });
+  return addressed(stages).items;
+}
+
+function stepItem(value: Json): Item {
+  const step = mapping(value);
+  const kinds = STEP_KINDS.filter((kind) => kind in step);
+  const [kind] = kinds;
+  if (kinds.length !== 1 || kind === undefined) {
+    return { kind: "block", key: "", named: false, node: { id: "", type: UNREAD, step } };
+  }
+  const { id, ...rest } = step;
+  const named = id !== undefined;
+  const nodeId = typeof id === "string" ? id : "";
+  if (kind === "if") {
+    const { if: condition, then, else: otherwise, ...extra } = rest;
+    const item: Item = {
+      kind: "if",
+      key: "",
+      condition: typeof condition === "string" ? condition : "",
+      then: list(then).map(stepItem),
+      otherwise: list(otherwise).map(stepItem),
+    };
+    return Object.keys(extra).length > 0 ? { ...item, extra } : item;
+  }
+  if (kind === "together") {
+    const { together, ...extra } = rest;
+    const item: Item = {
+      kind: "parallel",
+      key: "",
+      lanes: list(together).map((lane) => list(lane).map(stepItem)),
+    };
+    return Object.keys(extra).length > 0 ? { ...item, extra } : item;
+  }
+  if (kind === "repeat") {
+    const { repeat, ...own } = rest;
+    const { max, until, steps } = mapping(repeat);
+    let node: BuilderNode = { ...own, id: nodeId, type: "loop_group" };
+    if (max !== undefined) node = { ...node, max_iterations: max };
+    if (until !== undefined) node = { ...node, until_when: until };
+    return { kind: "repeat", key: "", named, node, body: list(steps).map(stepItem) };
+  }
+  if (kind === "wait") {
+    const { wait, ...own } = rest;
+    return {
+      kind: "block",
+      key: "",
+      named,
+      node: { ...own, ...mapping(wait), id: nodeId, type: "wait" },
+    };
+  }
+  const leaf = LEAVES[kind] ?? { type: kind, key: kind };
+  const { [kind]: main, until, ...own } = rest;
+  let node: BuilderNode = { ...own, id: nodeId, type: leaf.type };
+  if (main !== undefined) node = { ...node, [leaf.key]: main };
+  if (until !== undefined)
+    node = { ...node, [kind === "wait_until" ? "until_when" : "until"]: until };
+  return { kind: "block", key: "", named, node };
+}
+
+/** `document` with its stages written from `stages` (every other key kept as it is), its keys
+ * in the canonical order. */
+export function treeOf(document: Mapping, stages: readonly Item[]): Mapping {
+  return ordered({ ...document, stages: stages.filter(isStage).map(stageOf) }, TREE_ORDER);
+}
+
+function isStage(item: Item): item is Extract<Item, { kind: "stage" }> {
+  return item.kind === "stage";
+}
+
+function stageOf(stage: Extract<Item, { kind: "stage" }>): Json {
+  return ordered({ name: stage.name, ...stage.extra, steps: stage.steps.map(stepOf) }, STAGE_ORDER);
+}
+
+function stepOf(item: Item): Json {
+  const step = writtenStep(item);
+  if (typeof step !== "object" || step === null || Array.isArray(step)) return step;
+  const out = ordered(step, STEP_ORDER);
+  const repeat = out.repeat;
+  if (typeof repeat === "object" && repeat !== null && !Array.isArray(repeat)) {
+    out.repeat = ordered(repeat, REPEAT_ORDER);
+  }
+  const wait = out.wait;
+  if (typeof wait === "object" && wait !== null && !Array.isArray(wait)) {
+    out.wait = ordered(wait, WAIT_ORDER);
+  }
+  return out;
+}
+
+function writtenStep(item: Item): Json {
+  if (item.kind === "stage") return stageOf(item);
+  if (item.kind === "if") {
+    const written: Mapping = { if: item.condition, then: item.then.map(stepOf) };
+    if (item.otherwise.length > 0) written.else = item.otherwise.map(stepOf);
+    return { ...written, ...item.extra };
+  }
+  if (item.kind === "parallel") {
+    return { together: item.lanes.map((lane) => lane.map(stepOf)), ...item.extra };
+  }
+  const { id, type, ...own } = item.node;
+  const named: Mapping = item.named === true ? { id } : {};
+  if (type === UNREAD) return mapping(own.step);
+  if (item.kind === "repeat") {
+    const { max_iterations: max, until_when: until, ...rest } = own;
+    const repeat: Mapping = {};
+    if (max !== undefined) repeat.max = max;
+    if (until !== undefined) repeat.until = until;
+    return { repeat: { ...repeat, steps: item.body.map(stepOf) }, ...named, ...rest };
+  }
+  if (type === "wait") {
+    const { description, ...wait } = own;
+    const written: Mapping = { wait, ...named };
+    return description === undefined ? written : { ...written, description };
+  }
+  const kind = KIND_OF[type] ?? type;
+  const leaf = LEAVES[kind] ?? { type, key: kind };
+  const { [leaf.key]: main, until_when: until, ...rest } = own;
+  const written: Mapping = { [kind]: main ?? "", ...named, ...rest };
+  if (until !== undefined) written[kind === "wait_until" ? "until" : "until_when"] = until;
+  return written;
+}
+
+/** `items` keyed again by their place (each block's address, and the id a block without one
+ * runs under), with the key each item had before: after an edit, what was selected follows. */
+export function addressed(items: readonly Item[]): { items: Item[]; keys: Map<string, string> } {
+  const keys = new Map<string, string>();
+  const walk = (list: readonly Item[], address: string, slug: string): Item[] =>
+    list.map((item, index) => {
+      const key = `${address}.${String(index + 1)}`;
+      keys.set(itemId(item), key);
+      if (item.kind === "stage") return item;
+      if (item.kind === "if") {
+        return {
+          ...item,
+          key,
+          then: walk(item.then, `${key}.then`, slug),
+          otherwise: walk(item.otherwise, `${key}.else`, slug),
+        };
+      }
+      if (item.kind === "parallel") {
+        return {
+          ...item,
+          key,
+          lanes: item.lanes.map((lane, at) => walk(lane, `${key}.p${String(at + 1)}`, slug)),
+        };
+      }
+      const node = item.named === true ? item.node : { ...item.node, id: derivedId(slug, key) };
+      if (item.kind === "repeat") return { ...item, key, node, body: walk(item.body, key, slug) };
+      return { ...item, key, node };
+    });
+  const stages = items.map((item, index): Item => {
+    const key = String(index + 1);
+    keys.set(itemId(item), key);
+    if (item.kind !== "stage") return item;
+    return { ...item, key, steps: walk(item.steps, key, stageSlug(item.name)) };
+  });
+  return { items: stages, keys };
+}
+
+/** `items` as new blocks of a scenario written as blocks: no id of their own (their place gives
+ * one; with `keepIds`, the ids they give are kept, as a proposal's) and a key no other item has
+ * until they are addressed. */
+export function fresh(items: readonly Item[], keepIds = false, prefix = "+"): Item[] {
+  return items.map((item, index) => {
+    const key = `${prefix}${String(index)}`;
+    const inner = (list: readonly Item[], at: number) =>
+      fresh(list, keepIds, `${key}/${String(at)}.`);
+    if (item.kind === "stage") return { ...item, key, steps: inner(item.steps, 0) };
+    if (item.kind === "if")
+      return { ...item, key, then: inner(item.then, 0), otherwise: inner(item.otherwise, 1) };
+    if (item.kind === "parallel")
+      return { ...item, key, lanes: item.lanes.map((lane, at) => inner(lane, at)) };
+    const named = keepIds && item.named === true;
+    if (item.kind === "repeat") return { ...item, key, named, body: inner(item.body, 0) };
+    return { ...item, key, named };
+  });
+}
+
+/** The keys of `item` and of every item it holds. */
+export function keysOf(item: Item): string[] {
+  return [itemId(item), ...listsOf(item).flatMap((list) => list.flatMap(keysOf))];
+}
+
+/** A new empty stage, named `Stage <n>` with a slug no stage of `names` has. */
+export function newStage(names: readonly string[]): StageItem {
+  const taken = new Set(names.map(stageSlug));
+  let n = names.length + 1;
+  while (taken.has(stageSlug(`Stage ${String(n)}`))) n += 1;
+  return { kind: "stage", key: "+stage", name: `Stage ${String(n)}`, steps: [] };
+}
+
+/** Every item of `items` with each node passed through `fn` (a Repeat's too). */
+export function mapNodes(items: readonly Item[], fn: (node: BuilderNode) => BuilderNode): Item[] {
+  return items.map((item) => {
+    if (item.kind === "stage") return { ...item, steps: mapNodes(item.steps, fn) };
+    if (item.kind === "if")
+      return { ...item, then: mapNodes(item.then, fn), otherwise: mapNodes(item.otherwise, fn) };
+    if (item.kind === "parallel")
+      return { ...item, lanes: item.lanes.map((lane) => mapNodes(lane, fn)) };
+    if (item.kind === "repeat")
+      return { ...item, node: fn(item.node), body: mapNodes(item.body, fn) };
+    return { ...item, node: fn(item.node) };
+  });
+}
+
+/** The stages as one chain of nodes (each stage's first block after the last block before it),
+ * as the translation runs them: the graph the Graph view draws and value pickers read. */
+export function treeNodes(stages: readonly Item[]): BuilderNode[] {
+  return nodesOf(stages.flatMap((stage) => (stage.kind === "stage" ? stage.steps : [stage])));
+}
+
+/** The key path of the block at `address`: `2.3.p2.1` is `stages[1].steps[2].together[1][0]`. */
+export function keyPathOf(address: string): string {
+  const [stage, ...rest] = address.split(".");
+  let path = `stages[${String(Number(stage) - 1)}]`;
+  let list = "steps";
+  for (const part of rest) {
+    if (part === "then" || part === "else") list = part;
+    else if (/^p\d+$/.test(part)) list = `together[${String(Number(part.slice(1)) - 1)}]`;
+    else {
+      path += `.${list}[${String(Number(part) - 1)}]`;
+      list = "repeat.steps";
+    }
+  }
+  return path;
+}
+
+/** The address of the block a problem's key path is on (`stages[0].steps[1].until` is on
+ * `1.2`), or null for a key of the document's own. */
+export function addressOfKey(key: string | null | undefined): string | null {
+  const head = /^stages\[(\d+)\]/.exec(key ?? "");
+  if (!head) return null;
+  let address = String(Number(head[1]) + 1);
+  let rest = (key ?? "").slice(head[0].length);
+  const STEP = /^\.(steps|then|else|repeat\.steps)\[(\d+)\]|^\.together\[(\d+)\]\[(\d+)\]/;
+  for (let match = STEP.exec(rest); match; match = STEP.exec(rest)) {
+    const [whole, owner, at, path, inPath] = match;
+    if (path !== undefined)
+      address += `.p${String(Number(path) + 1)}.${String(Number(inPath) + 1)}`;
+    else if (owner === "then" || owner === "else") address += `.${owner}.${String(Number(at) + 1)}`;
+    else address += `.${String(Number(at) + 1)}`;
+    rest = rest.slice(whole.length);
+  }
+  return address;
+}
+
+/** A change Claude's proposal makes to a scenario written as blocks, by block address. */
+export interface TreeChange {
+  /** What changes, not where: a decision on it holds while other changes are accepted. */
+  id: string;
+  kind: "new" | "changed" | "removed";
+  /** A stage, or a block of a stage's steps (with what it holds). */
+  of: "stage" | "block";
+  /** The block's address in the draft (a new one: in the proposal). */
+  address: string;
+  /** Its address in the proposal (new and changed), to outline it there. */
+  proposed: string | null;
+  /** The proposal's item (new, changed) or the draft's (removed). */
+  item: Item;
+  /** Where a new one goes: the draft's stage (its key; null for a new stage) and index. */
+  at: { stage: string | null; index: number };
+}
+
+/** The changes from `mine` to `theirs`: stages matched by their slug, then each matched
+ * stage's steps aligned by what they write (a run of removed and new steps between two kept
+ * ones pairs up as changed). */
+export function treeChanges(mine: readonly Item[], theirs: readonly Item[]): TreeChange[] {
+  const stagesOfMine = mine.filter(isStage);
+  const stagesOfTheirs = theirs.filter(isStage);
+  const bySlug = new Map(stagesOfMine.map((stage) => [stageSlug(stage.name), stage]));
+  const kept = new Set(stagesOfTheirs.map((stage) => stageSlug(stage.name)));
+  const changes: TreeChange[] = [];
+  const text = (item: Item) => JSON.stringify(stepOf(item));
+  for (const [index, stage] of stagesOfTheirs.entries()) {
+    const slug = stageSlug(stage.name);
+    const own = bySlug.get(slug);
+    if (!own) {
+      changes.push({
+        id: `new:${text(stage)}`,
+        kind: "new",
+        of: "stage",
+        address: stage.key,
+        proposed: stage.key,
+        item: stage,
+        at: { stage: null, index },
+      });
+      continue;
+    }
+    changes.push(...stepChanges(own, stage, text));
+  }
+  for (const stage of stagesOfMine) {
+    if (kept.has(stageSlug(stage.name))) continue;
+    changes.push({
+      id: `removed:${text(stage)}`,
+      kind: "removed",
+      of: "stage",
+      address: stage.key,
+      proposed: null,
+      item: stage,
+      at: { stage: null, index: 0 },
+    });
+  }
+  return changes;
+}
+
+function stepChanges(
+  own: Extract<Item, { kind: "stage" }>,
+  theirs: Extract<Item, { kind: "stage" }>,
+  text: (item: Item) => string,
+): TreeChange[] {
+  const a = own.steps.map(text);
+  const b = theirs.steps.map(text);
+  // The longest common subsequence, by suffix lengths.
+  const lcs = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i -= 1) {
+    for (let j = b.length - 1; j >= 0; j -= 1) {
+      const row = lcs[i] ?? [];
+      row[j] =
+        a[i] === b[j]
+          ? (lcs[i + 1]?.[j + 1] ?? 0) + 1
+          : Math.max(lcs[i + 1]?.[j] ?? 0, row[j + 1] ?? 0);
+    }
+  }
+  const changes: TreeChange[] = [];
+  let removed: number[] = [];
+  let added: number[] = [];
+  const flush = (at: number) => {
+    const pairs = Math.min(removed.length, added.length);
+    for (const [n, i] of removed.entries()) {
+      const mine = own.steps[i];
+      if (!mine) continue;
+      const theirsAt = n < pairs ? added[n] : undefined;
+      const proposed = theirsAt === undefined ? undefined : theirs.steps[theirsAt];
+      changes.push(
+        proposed
+          ? {
+              id: `changed:${text(mine)}>${text(proposed)}`,
+              kind: "changed",
+              of: "block",
+              address: itemId(mine),
+              proposed: itemId(proposed),
+              item: proposed,
+              at: { stage: own.key, index: i },
+            }
+          : {
+              id: `removed:${text(mine)}`,
+              kind: "removed",
+              of: "block",
+              address: itemId(mine),
+              proposed: null,
+              item: mine,
+              at: { stage: own.key, index: i },
+            },
+      );
+    }
+    for (const j of added.slice(pairs)) {
+      const proposed = theirs.steps[j];
+      if (!proposed) continue;
+      changes.push({
+        id: `new:${text(proposed)}`,
+        kind: "new",
+        of: "block",
+        address: itemId(proposed),
+        proposed: itemId(proposed),
+        item: proposed,
+        at: { stage: own.key, index: at },
+      });
+    }
+    removed = [];
+    added = [];
+  };
+  let i = 0;
+  let j = 0;
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) {
+      flush(i);
+      i += 1;
+      j += 1;
+    } else if (
+      j >= b.length ||
+      (i < a.length && (lcs[i + 1]?.[j] ?? 0) >= (lcs[i]?.[j + 1] ?? 0))
+    ) {
+      removed.push(i);
+      i += 1;
+    } else {
+      added.push(j);
+      j += 1;
+    }
+  }
+  flush(i);
+  return changes;
+}
+
+/** The builder's copy of a scenario written as blocks: the file's mapping as it is. */
+export function toTreeDocument(value: unknown): Record<string, Json> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, Json>)
+    : {};
+}
+
+/** Every item of `items` that holds a node (a block, a Repeat), in reading order. */
+export function nodeItems(
+  items: readonly Item[],
+): Extract<Item, { kind: "block" } | { kind: "repeat" }>[] {
+  return items.flatMap((item) => [
+    ...(item.kind === "block" || item.kind === "repeat" ? [item] : []),
+    ...listsOf(item).flatMap(nodeItems),
+  ]);
 }

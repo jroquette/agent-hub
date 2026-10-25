@@ -26,6 +26,7 @@ export type FindingNote = Schemas["FindingNote"];
 export type InvestigationSession = Schemas["InvestigationSession"];
 export type InvestigationAnswered = Schemas["InvestigationAnswered"];
 export type RunAccepted = Schemas["RunAccepted"];
+export type ScenarioMigration = Schemas["ScenarioMigration"];
 type InputValue = string | number | boolean;
 
 /** The scenario's page. */
@@ -133,6 +134,29 @@ export function usePlanScenario(project: string, name: string) {
   return useMutation<ScenarioPlan, ApiProblem, PlanRequest>({
     mutationFn: (body) =>
       apiPost("/api/v1/scenarios/{project}/{name}/plan", body, { path: { project, name } }),
+  });
+}
+
+export interface MigrateRequest {
+  check: boolean;
+  /** The hash of the file the builder read: a file changed since is not migrated (409). */
+  base_content_hash: string | null;
+}
+
+/** Writes a graph scenario (`version: 1`) again as blocks (`version: 2`), or checks it first
+ * (`check`): the scenario's page reads the file again once it is written. */
+export function useMigrateScenario(project: string, name: string) {
+  const client = useQueryClient();
+  return useMutation<ScenarioMigration, ApiProblem, MigrateRequest>({
+    mutationFn: (body) =>
+      apiPost("/api/v1/scenarios/{project}/{name}/migrate", body, { path: { project, name } }),
+    onSuccess: (result) => {
+      if (!result.written) return;
+      void client.invalidateQueries({
+        queryKey: apiKey("/api/v1/scenarios/{project}/{name}", { path: { project, name } }),
+      });
+      void client.invalidateQueries({ queryKey: apiKey("/api/v1/scenarios") });
+    },
   });
 }
 

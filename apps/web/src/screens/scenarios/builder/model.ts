@@ -9,6 +9,8 @@ export interface BuilderDocument {
   [key: string]: Json;
   nodes: BuilderNode[];
 }
+/** A scenario file's mapping as the builder holds it: a graph (`nodes`) or blocks (`stages`). */
+export type ScenarioDocument = Record<string, Json>;
 
 export type BlockKind = "action" | "expect" | "approval" | "wait" | "loop_group" | "include";
 
@@ -21,12 +23,6 @@ export function toDocument(value: unknown): BuilderDocument {
   const record = isRecord(value) ? value : {};
   const nodes = Array.isArray(record.nodes) ? record.nodes.filter(isNode) : [];
   return { ...record, nodes };
-}
-
-/** Whether a scenario file's mapping is written as blocks (`version: 2`, stages of blocks):
- * this builder edits the graph format (`version: 1`, `nodes`) only, so it does not read one. */
-export function isBlocksDocument(value: unknown): boolean {
-  return isRecord(value) && value.version === 2;
 }
 
 function isNode(value: unknown): value is BuilderNode {
@@ -109,24 +105,29 @@ export function withoutRunRepeats(document: BuilderDocument): {
   let dropped = 0;
   const clean = (nodes: readonly BuilderNode[]): BuilderNode[] =>
     nodes.map((node) => {
-      let next: BuilderNode = node;
-      const given = node.with;
-      if (typeof given === "object" && given !== null && !Array.isArray(given)) {
-        const kept = Object.entries(given).filter(([name, value]) => {
-          const repeat = passesRunValue(name, value);
-          if (repeat) dropped += 1;
-          return !repeat;
-        });
-        if (kept.length !== Object.keys(given).length) {
-          next =
-            kept.length > 0 ? { ...node, with: Object.fromEntries(kept) } : without(node, "with");
-        }
-      }
+      const own = withoutRunRepeatsOf(node);
+      dropped += own.dropped;
+      let next = own.node;
       if (Array.isArray(node.nodes)) next = { ...next, nodes: clean(node.nodes.filter(isNode)) };
       return next;
     });
   const nodes = clean(document.nodes);
   return { document: { ...document, nodes }, dropped };
+}
+
+/** One node without the `with` values that only repeat a run value (its own, not a body's). */
+export function withoutRunRepeatsOf(node: BuilderNode): { node: BuilderNode; dropped: number } {
+  const given = node.with;
+  if (typeof given !== "object" || given === null || Array.isArray(given)) {
+    return { node, dropped: 0 };
+  }
+  const kept = Object.entries(given).filter(([name, value]) => !passesRunValue(name, value));
+  const dropped = Object.keys(given).length - kept.length;
+  if (dropped === 0) return { node, dropped };
+  return {
+    node: kept.length > 0 ? { ...node, with: Object.fromEntries(kept) } : without(node, "with"),
+    dropped,
+  };
 }
 
 const BASE_ID: Readonly<Record<BlockKind, string>> = {

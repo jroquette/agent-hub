@@ -1159,3 +1159,22 @@ textarea.sb-json-text {
   width: 100%;
   min-width: 0;
 }
+
+/* A scenario written as blocks: the Graph view is a picture of how its blocks run. */
+.sb-graph-picture {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+.sb-graph-picture > [role="note"] {
+  padding: var(--space-3) var(--space-4) 0;
+}
+
+/* Migrate: what a graph scenario cannot be written as blocks with, step by step. */
+.sb-migrate-problems {
+  margin: 0;
+  padding-left: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}

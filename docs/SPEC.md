@@ -442,8 +442,7 @@ instruction" for actions and for the deterministic nodes of a workflow that decl
   scenario run.
 - **Seed:** `hub init` writes one example, the read action `demo-get-status` (with its Python script) and the
   scenario `demo-service-up` that uses it (written as blocks, `version: 2`, so a fresh hub has no
-  `scenarios.graph_format` warning; until hub web's builder reads `version: 2`, its Build view shows the example
-  read-only, its steps and file, and the file is edited as text or with Claude), each file only where absent. They
+  `scenarios.graph_format` warning; hub web's builder edits it as its stage of blocks), each file only where absent. They
   are the project's files: `hub sync` never adds them and `hub.lock` does not list them, so a hub without
   `scenarios/`, `actions/` and `environments` renders and syncs as before.
 - **Blocks and debugging** ([ADR 0049](adr/0049-scenario-blocks-and-run-control.md), AGH-507, proposed; built so far:
@@ -452,8 +451,9 @@ instruction" for actions and for the deterministic nodes of a workflow that decl
   canonical writer gives the API's builder validate and Save for a `version: 2` document, writing nothing for an
   unchanged one, and `hub doctor` warns on each graph-format scenario, with `hub init` seeding its example as
   `version: 2`; the CLI's debugger, `hub scenario run --break`, `break`, `step` and `continue`, refused on production;
-  `hub scenario migrate`; the API's routes for breakpoints, Step, Continue, a paused run's values and migrate; the
-  builder screen AGH-521 shipped edits `version: 1` files, see the ADR's delivery notes):
+  `hub scenario migrate`; the API's routes for breakpoints, Step, Continue, a paused run's values and migrate; hub
+  web's builder edits a `version: 2` file as its stages, with no loose block, and a `version: 1` file as AGH-521
+  shipped it, with a Migrate action, see the ADR's delivery notes):
   a scenario may be written as `version: 2`, named stages of ordered blocks (Do, Wait until, You, Wait, Include;
   Repeat, If/else, At the same time), which core translates to the node graph at load, so the policy, gates and
   records are unchanged; hub web's builder edits that file block for block, and Save of an unchanged file writes

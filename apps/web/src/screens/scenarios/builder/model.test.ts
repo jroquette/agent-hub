@@ -7,7 +7,6 @@ import {
   formatCondition,
   insertAfter,
   insertBranch,
-  isBlocksDocument,
   layersOf,
   newBlock,
   parseCondition,
@@ -131,14 +130,6 @@ describe("scenario builder model", () => {
     expect(groups).toHaveLength(2);
     expect(formatCondition(groups ?? [])).toBe(text);
     expect(conditionWords(text)).toBe("status is ON_HOLD and review is PENDING or code is above 2");
-  });
-
-  it("tells a file written as blocks (version 2) from a graph it reads", () => {
-    expect(isBlocksDocument({ version: 2, kind: "scenario", stages: [] })).toBe(true);
-    expect(isBlocksDocument(chain())).toBe(false);
-    // A file the page could not read is not one in blocks: the builder starts it empty.
-    expect(isBlocksDocument(null)).toBe(false);
-    expect(isBlocksDocument({ kind: "scenario", stages: [] })).toBe(false);
   });
 
   it("reads a comparison with an empty text as set or empty", () => {
