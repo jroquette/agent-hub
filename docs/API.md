@@ -739,10 +739,12 @@ is absent.
 The hubs' scenarios and their scenario runs ([design](design/scenarios.md), AGH-350 plan T12, AC-350.21, .22, .23,
 .30). A scenario run is a WorkflowRun labelled `scenario:<name>`: `GET /api/v1/workflow-runs?kind=scenario|workflow`
 keeps one kind (absent: both, as before; `WorkflowRun.kind` says which), and its events and gates are a run's.
-The reads need no cookie; every `POST` below is a strict write ([Local security](#local-security)) that needs the
-launch cookie and answers 404 `urn:agent-hub:problem:run-control-off` in the container. The CLI does the work as a
-child, as for the [run commands](#workflow-run-commands) (`python -I -m agent_hub.cli …`, argv only, in the hub
-folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its output.
+The reads need no cookie but for a run's values; every `POST` below is a strict write ([Local
+security](#local-security)) that needs the launch cookie and, as that values read, answers 404
+`urn:agent-hub:problem:run-control-off` in the container, except the builder's save, dismiss and action writes and a
+migrate, which answer 409 `hub_read_only` there. The CLI does the work as a child, as for the [run
+commands](#workflow-run-commands) (`python -I -m agent_hub.cli …`, argv only, in the hub folder, the server's
+environment minus `LINEAR_API_KEY`); no problem quotes its output.
 
 - `GET /api/v1/scenarios[?project=…]` → `ScenarioCatalogView`: `items` (each `project`, `name`, `pack`, `description`,
   `revision`, `node_count`, `inputs` and `last_run`: `{run_id, status, started_at, ended_at, environment, mode}` of
@@ -947,7 +949,7 @@ Problems:
 | 400 | "Invalid request parameter" | `run_id` does not match `^[a-z0-9][a-z0-9-]{0,31}$`, or `finding_id` does not match `^f[0-9]{1,6}$` |
 | 401 · 403 · 415 | as in [Local security](#local-security) | a `POST` or `PUT` (but `POST …/scenarios/validate`), or the values `GET`, without the launch cookie · a foreign `Origin` or fetch site · a body that is not JSON |
 | 404 | `about:blank` | no registered hub holds the run (or its record), the run is not a scenario run, an unknown project, scenario or finding, or the hub has no workdir |
-| 404 | `urn:agent-hub:problem:run-control-off` | a run write in the container (`AGENT_HUB_IN_CONTAINER=1`); the builder's save, dismiss and action writes answer 409 `hub_read_only` there instead, and its `POST …/scenarios/validate` needs no cookie |
+| 404 | `urn:agent-hub:problem:run-control-off` | a run write or a run's values read in the container (`AGENT_HUB_IN_CONTAINER=1`); the builder's save, dismiss and action writes and a scenario's migrate answer 409 `hub_read_only` there instead, and its `POST …/scenarios/validate` needs no cookie |
 | 409 | `workflow-run-undeclared-environment` · `-denied` (`steps`) · `-plan-problem` | a start whose plan may not start; no run is created |
 | 409 | `workflow-run-not-paused` | not a scenario run, or not paused at an open, unanswered investigation (an answer); not paused at all (a values read) |
 | 409 | `workflow-run-pick-refused` | a pick of no option of the latest proposal, of one holding a `deny` or a draft action, or of one whose plan changed since it was shown |
@@ -960,7 +962,7 @@ Problems:
 | 409 | `urn:agent-hub:problem:hub-registry-unreadable` (`hub_registry_unreadable`) | the hub registry cannot be read |
 | 409 | `urn:agent-hub:problem:hub-local-invalid` (`hub_local_invalid`) | the hub's `hub.local.json` cannot be read or conflicts with `hub.json` (it loosens an environment's access, for example), so its env files, credential names and environments are unknown (an investigation session, a plan, a start, a pick or an issue's create) |
 | 422 | `workflow-run-invalid-inputs` · the body's | inputs that do not fit the scenario's · a body outside its model |
-| 422 | `record_too_large` · `record_unreadable` | the run's record is over 8 MiB · a line before its last is not one JSON object |
+| 422 | `record_too_large` · `record_unreadable` | the run's record is over 8 MiB · a line before its last is not one JSON object, or (Step and Continue) the run's `debug.pause` line cannot be read back |
 | 502 | `workflow-run-launch-failed` · `-resume-failed` · `-decision-unknown` · `scenario-run-issue-failed` | a child that cannot start or finish · the answer is recorded, the resume did not start · `hub workflow decide` outlasted 60 s · the tracker's create failed |
 | 409 · 429 · 503 | the agent-session problems | the investigation session cannot start ([Agent sessions](#agent-sessions)) |
 
