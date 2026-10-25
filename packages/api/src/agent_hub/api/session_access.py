@@ -31,6 +31,7 @@ The token, the cookie and the query string are never logged or echoed in a probl
 """
 
 import re
+from typing import Final
 from urllib.parse import parse_qsl, quote, urlencode
 
 from starlette.datastructures import Headers
@@ -102,14 +103,24 @@ def session_cookie(name: str, token: str) -> str:
     return f"{name}={token}; HttpOnly; SameSite=Strict; Path=/"
 
 
-def read_refusal(headers: Headers) -> tuple[int, str, str] | None:
-    """Why a read under the prefix is refused (L1), or None."""
+SESSION_READS: Final = "Agent sessions are read only from this server's pages."
+VALUES_READS: Final = "A scenario run's values are read only from this server's pages."
+SESSION_COOKIE_DETAIL: Final = (
+    "Open the address hub web printed (with its token) to drive sessions."
+)
+VALUES_COOKIE_DETAIL: Final = (
+    "Open the address hub web printed (with its token) to read a scenario run's values."
+)
+
+
+def read_refusal(headers: Headers, *, detail: str = SESSION_READS) -> tuple[int, str, str] | None:
+    """Why a read under the prefix is refused (L1), or None; ``detail`` says what is read."""
     origin = headers.get("origin")
     if origin is not None and origin != f"http://{headers.get('host')}":
-        return 403, "Forbidden origin", "Agent sessions are read only from this server's pages."
+        return 403, "Forbidden origin", detail
     site = headers.get("sec-fetch-site")
     if site is not None and site not in OWN_FETCH_SITES:
-        return 403, "Forbidden fetch site", "Agent sessions are read only from this server's pages."
+        return 403, "Forbidden fetch site", detail
     return None
 
 
@@ -207,8 +218,8 @@ class SessionAccessMiddleware:
                 members={"type": RUNS_OFF_PROBLEM_TYPE},
             )
         if not self._has_cookie(headers):
-            return self._unauthorized(instance)
-        refusal = read_refusal(headers)
+            return self._unauthorized(instance, detail=VALUES_COOKIE_DETAIL)
+        refusal = read_refusal(headers, detail=VALUES_READS)
         if refusal is None:
             return None
         status, title, detail = refusal
@@ -228,11 +239,11 @@ class SessionAccessMiddleware:
             return None
         return self._unauthorized(instance)
 
-    def _unauthorized(self, instance: str) -> Response:
+    def _unauthorized(self, instance: str, *, detail: str = SESSION_COOKIE_DETAIL) -> Response:
         response = problem(
             401,
             title="Session cookie required",
-            detail="Open the address hub web printed (with its token) to drive sessions.",
+            detail=detail,
             instance=instance,
             members={"type": UNAUTHORIZED_PROBLEM_TYPE},
         )

@@ -671,3 +671,68 @@ def test_turns_check_run_off_when_sessions_off(api_settings: ApiSettings, web_di
 
     assert response.status_code == 404
     assert response.json()["type"] == "urn:agent-hub:problem:run-control-off"
+
+
+# Starlette's router matches a path against ``^…$``, whose ``$`` also matches before a trailing
+# newline, while the classifiers above fullmatch it: a path holding a control character is
+# refused before anything reads it, so no route is reached without its checks.
+@pytest.mark.parametrize("suffix", ["%0A", "%0D", "%0D%0A", "%00", "%09", "%1B", "%7F", "%C2%85"])
+def test_answers_not_found_when_path_holds_a_control_character(
+    client: TestClient, suffix: str
+) -> None:
+    response = client.get(f"/api/v1/openapi.json{suffix}")
+    web = client.get(f"/sessions{suffix}")
+
+    for refused in (response, web):
+        assert refused.status_code == 404
+        assert refused.headers["content-type"] == "application/problem+json"
+        assert refused.json()["title"] == "Not Found"
+        assert "control character" in refused.json()["detail"]
+
+
+NEWLINE_ROUTES = (
+    *(("POST", path) for path in RUN_WRITES),
+    ("PUT", BREAKPOINTS),
+    ("GET", "/api/v1/scenario-runs/walk-1/values"),
+    *(("POST", path) for path in ITEM_WRITES),
+    *BUILDER_WRITES,
+    *PLAYGROUND_HUB_WRITES,
+    ("POST", CHECK_RUN),
+    ("POST", "/api/v1/hubs"),
+    ("DELETE", "/api/v1/hubs/hub-1"),
+    ("POST", "/api/v1/agent-sessions"),
+    ("GET", "/api/v1/agent-sessions"),
+    ("POST", "/api/v1/projects/demo/environment-discoveries"),
+)
+
+
+@pytest.mark.parametrize(("method", "path"), NEWLINE_ROUTES)
+def test_refuses_a_checked_route_without_its_checks_when_its_path_ends_with_a_newline(
+    client: TestClient, method: str, path: str
+) -> None:
+    client.cookies.clear()
+
+    response = client.request(method, f"{path}%0A", content=b"{}")
+
+    assert response.status_code == 404, response.text
+    assert "control character" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        *(("POST", path) for path in RUN_WRITES),
+        ("PUT", BREAKPOINTS),
+        ("GET", "/api/v1/scenario-runs/walk-1/values"),
+        ("POST", "/api/v1/scenarios/demo/walk/migrate"),
+    ],
+)
+def test_refuses_a_run_command_when_its_path_ends_with_a_newline_and_sessions_off(
+    api_settings: ApiSettings, web_dist: Path, *, method: str, path: str
+) -> None:
+    app = create_app(replace(api_settings, sessions_off=True), web_dist=web_dist)
+    with TestClient(app, base_url="http://127.0.0.1:7420") as off:
+        response = off.request(method, f"{path}%0A", content=b"{}", headers=OWN_JSON)
+
+    assert response.status_code == 404, response.text
+    assert "control character" in response.json()["detail"]

@@ -511,7 +511,8 @@ Cost is estimated from transcript usage times a dated price table and always lab
 are not connected in this version and their cells say so, and Linear is read only for a feature's tickets (AGH-136
 below). Actions (approving, starting, retrying, snoozing a learning) appear only as disabled, phase-tagged buttons;
 accepting and rejecting a learning are the exception below.
-The server is local only: loopback bind, `Host` and `Origin` checks, 1 MiB request bodies (160 MiB for
+The server is local only: loopback bind, `Host` and `Origin` checks, a path holding a control character refused
+before any other check, 1 MiB request bodies (160 MiB for
 `POST /agent-sessions` and `POST /agent-sessions/{id}/messages`, which may carry up to ten images and ten PDF or
 text files attached in the chat), no CORS, and a CSP that keeps the app on its own origin.
 It reaches the network in two documented cases only: the learning decisions' explicit

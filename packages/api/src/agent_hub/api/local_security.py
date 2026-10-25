@@ -10,7 +10,10 @@ refused too, A11: a registered hub is a folder sessions may start in), bodies st
 (160 MiB for ``POST /agent-sessions`` and its messages, which may carry images and files), API
 answers are never cached, a CSP keeps the app to its own origin, and no CORS header is ever
 sent. No route speaks WebSocket (ADR 0031, D3): any ``websocket`` scope is closed with 1008
-before it is accepted, so an upgrade never skips these checks (P7, AC-165.54).
+before it is accepted, so an upgrade never skips these checks (P7, AC-165.54). A path holding a
+control character answers 404 before any check reads it: the router matches ``^…$``, whose ``$``
+also matches before a trailing newline (``%0A``), while the classifiers below fullmatch the
+path, so such a path would reach a route without the checks that route needs.
 
 ``AGENT_HUB_ALLOWED_HOSTS`` (read by ``hub web``, parsed here) may add exact ``host[:port]``
 names, for example the host port a container publishes; never a wildcard.
@@ -67,6 +70,8 @@ ITEM_WRITES = re.compile(
 # action inputs and outputs), which no other local process may read; off in the container.
 RUN_READS = re.compile(rf"^{re.escape(API_PREFIX)}/scenario-runs/[^/]+/values$")
 READ_METHODS = frozenset({"GET", "HEAD"})
+# A control character (C0, DEL, C1) in a request's path, as the server decoded it.
+CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 STRICT_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/learnings/[^/]+/(accept|reject)$|{RUN_WRITES.pattern}"
     rf"|{ITEM_WRITES.pattern}"
@@ -267,6 +272,8 @@ class LocalSecurityMiddleware:
         headers = Headers(scope=scope)
         if headers.get("host") not in self._hosts:
             return 403, "Forbidden host", "This server answers only on its loopback address."
+        if CONTROL_CHARACTER.search(str(scope["path"])) is not None:
+            return 404, "Not Found", "No route has a path holding a control character."
         origin = headers.get("origin")
         if (
             scope["method"] in STATE_CHANGING_METHODS
@@ -274,14 +281,9 @@ class LocalSecurityMiddleware:
             and origin not in self._origins
         ):
             return 403, "Forbidden origin", "Changes are accepted only from this server's pages."
-        if is_strict_write(scope["method"], scope["path"]):
-            strict = strict_refusal(headers)
-            if strict is not None:
-                return strict
-        if is_hub_registry_write(scope["method"], scope["path"]):
-            strict = strict_refusal(headers, needs_json=scope["method"] == "POST")
-            if strict is not None:
-                return strict
+        strict = _strict_refusal(str(scope["method"]), str(scope["path"]), headers)
+        if strict is not None:
+            return strict
         length = headers.get("content-length")
         cap = self._body_cap(scope)
         if length is not None and (not length.isdigit() or int(length) > cap):
@@ -329,6 +331,17 @@ class LocalSecurityMiddleware:
                 instance=scope["path"],
             )
             await response(scope, receive, secured_send)
+
+
+def _strict_refusal(method: str, path: str, headers: Headers) -> tuple[int, str, str] | None:
+    """Why a strict write or a hub registry write is refused (``strict_refusal``), or None."""
+    if is_strict_write(method, path):
+        strict = strict_refusal(headers)
+        if strict is not None:
+            return strict
+    if is_hub_registry_write(method, path):
+        return strict_refusal(headers, needs_json=method == "POST")
+    return None
 
 
 def _too_large_detail(cap: int) -> str:

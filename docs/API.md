@@ -886,9 +886,10 @@ reads as an option of the CLI, which gets them after `--` (or as `--break=ADDR`)
   pinned tree, as [design](design/scenarios.md) § Tree format writes them) → 200 `Breakpoints` (`run_id`, `blocks`, in
   the pinned tree's declaration order, each once): replaces the run's breakpoints through `hub scenario break RUN --set
   -- ADDR…`, waited for (at most 60 s); one set while the run runs takes effect at its next layer of nodes, so the
-  run's child may be running. An address the pinned tree (the run snapshot's document, not the scenario file as it
-  reads now) does not hold, any address of a version-1 run included, is 422 `workflow-run-unknown-block` naming it
-  (`block`); a run that ended `done` or
+  run's child may be running. An address the pinned tree (the run snapshot's document, read up to 1 MiB and never
+  through a link, not the scenario file as it reads now) does not hold, any address of a version-1 run included, is 422
+  `workflow-run-unknown-block` naming it (`block`); its `detail` says when the snapshot cannot be read (missing, a
+  link, over 1 MiB or no longer a tree) rather than that the run is a version-1 one; a run that ended `done` or
   `cancelled` is 409 `workflow-run-ended`. An empty list clears them, also on production. The CLI refusing after these
   checks (another command changing the run's breakpoints, a version-1 run asked to clear) is 409
   `workflow-run-refused`; one that cannot start or finish in time, 502 `workflow-run-launch-failed`.
@@ -962,7 +963,10 @@ record problems are `urn:agent-hub:problem:scenario-run-record-too-large` and `-
 ## Local security
 
 `hub web` binds `127.0.0.1` only. It refuses a `Host` header other than `127.0.0.1:<port>`, `localhost:<port>` or
-`[::1]:<port>` (403, against DNS rebinding) and a `POST` or `DELETE` whose `Origin` is not its own (403); it sends no
+`[::1]:<port>` (403, against DNS rebinding), a path holding a control character once decoded (404 "Not Found", before
+any other check: the router's `$` also matches before a trailing newline, so `…/values%0A` would reach the route
+while the checks below, which match the whole path, would not apply) and a `POST` or `DELETE` whose `Origin` is not
+its own (403); it sends no
 CORS headers, `Cache-Control: no-store` on `/api`, and a CSP that limits scripts, styles, fonts and connections to
 `'self'`. The web app requests no other host; Linear is read by the server only ([Feature tickets](#feature-tickets)).
 A `GET` with a foreign `Origin` is served, the knowledge `GET`s included: their only write is the sync of derived

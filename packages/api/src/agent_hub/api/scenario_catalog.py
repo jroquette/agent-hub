@@ -183,8 +183,11 @@ MAX_ADDRESS_CHARS: Final = 64
 MAX_BREAKPOINTS: Final = 512
 OFF_PRODUCTION: Final = "debugging runs only off production"
 NO_ADDRESSES: Final = "only a scenario written as blocks (version 2) has block addresses"
+SNAPSHOT_UNREADABLE: Final = (
+    "cannot be read from the run's snapshot (missing, a link, over 1 MiB or no longer a tree)"
+)
 # The record lines that start, pause or end a pass: a pause is the run's while it is the last.
-_PASS_LINES: Final = frozenset({"start", "resume", "held", "end"})
+_PASS_BOUNDS: Final = frozenset({"start", "resume", "held", "end"})
 
 type ScenarioMode = Literal["interactive", "regression"]
 type Choice = Literal["pick", "retry", "stop"]
@@ -485,7 +488,7 @@ class BlockValues(ViewModel):
     version-1 run), its last end's status and output, the inputs its last action call rendered
     (``with``) and, for a Wait until, its polls and the last poll's output."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     address: str | None
     node: str
@@ -1025,7 +1028,7 @@ def _paused(records: Sequence[Mapping[str, JsonValue]], view: ScenarioRunView) -
     """Whether the run's last pass paused (a debug pause or a gate: its ``held`` line is the
     last pass line) or it waits for an investigation's answer; never once it ended."""
     last = next(
-        (event for record in reversed(records) if (event := record.get("event")) in _PASS_LINES),
+        (event for record in reversed(records) if (event := record.get("event")) in _PASS_BOUNDS),
         None,
     )
     if last == "end":
@@ -1036,34 +1039,63 @@ def _paused(records: Sequence[Mapping[str, JsonValue]], view: ScenarioRunView) -
     return pending is not None and pending.choice is None
 
 
-def _pinned_tree(folder: Path) -> BlockMap | None:
-    """The block map of the tree a scenario run pins (its snapshot's document, read up to
-    ``SNAPSHOT_BYTES``, never through a link); ``None`` for a graph run, or one whose snapshot
-    cannot be read or translated."""
+@dataclass(frozen=True, slots=True)
+class _Pinned:
+    """What a scenario run's snapshot pins: its tree's block map, or ``None`` for a graph run
+    (``readable``) or a snapshot that cannot be read (not ``readable``)."""
+
+    tree: BlockMap | None
+    readable: bool = True
+
+
+_UNREADABLE: Final = _Pinned(tree=None, readable=False)
+
+
+def _pinned(folder: Path) -> _Pinned:
+    """The tree a scenario run pins: its snapshot's document, read up to ``SNAPSHOT_BYTES``,
+    never through a link, a version-2 one translated to its block map."""
     snapshot = folder / SNAPSHOT_DOCUMENT.parent
     if snapshot.is_symlink():
-        return None
+        return _UNREADABLE
     data = _read_bytes(folder / SNAPSHOT_DOCUMENT, SNAPSHOT_BYTES)
     if data is None or len(data) > SNAPSHOT_BYTES:
-        return None
+        return _UNREADABLE
     try:
         content = json.loads(data)
     except ValueError, RecursionError:
-        return None
+        return _UNREADABLE
+    if not isinstance(content, dict):
+        return _UNREADABLE
     if not is_tree(content):
-        return None
+        return _Pinned(tree=None)
     try:
-        return block_map(content)
+        return _Pinned(tree=block_map(content))
     except WorkflowLoadError:
-        return None
+        return _UNREADABLE
+
+
+def _pinned_tree(folder: Path) -> BlockMap | None:
+    """The block map of the tree a scenario run pins; ``None`` for a graph run, or one whose
+    snapshot cannot be read or translated."""
+    return _pinned(folder).tree
 
 
 def _ordered_blocks(
-    tree: BlockMap | None, given: Sequence[str], *, whose: str, run_id: str | None = None
+    tree: BlockMap | None,
+    given: Sequence[str],
+    *,
+    whose: str,
+    run_id: str | None = None,
+    readable: bool = True,
 ) -> tuple[str, ...]:
     """``given`` in the tree's declaration order, each once; 422 ``unknown_block`` naming the
-    first address ``tree`` (``whose``: the run's pinned tree, or the scenario) does not hold."""
+    first address ``tree`` (``whose``: the run's pinned tree, or the scenario) does not hold,
+    and, when ``tree`` is ``None``, why it has none: not ``readable`` (a run's snapshot), or not
+    written as blocks."""
     for address in given:
+        if tree is None and not readable:
+            reason = f"{whose} {SNAPSHOT_UNREADABLE}, so it has no block {echo(address)}"
+            raise UnknownBlockError(block=address, reason=reason, run_id=run_id)
         if tree is None:
             reason = f"{whose} has no block {echo(address)}: {NO_ADDRESSES}"
             raise UnknownBlockError(block=address, reason=reason, run_id=run_id)
@@ -1475,8 +1507,14 @@ class ScenarioCommands:
                 reason = f"the run already ended {status}"
                 raise RunConflictError(code="ended", reason=reason, run_id=run_id)
             whose = f"the run {run_id}'s pinned tree"
-            tree = _pinned_tree(run.folder)
-            blocks = _ordered_blocks(tree, request.blocks, whose=whose, run_id=run_id)
+            pinned = _pinned(run.folder)
+            blocks = _ordered_blocks(
+                pinned.tree,
+                request.blocks,
+                whose=whose,
+                run_id=run_id,
+                readable=pinned.readable,
+            )
             if blocks:
                 self._catalog.refuse_on_production(run, what="setting breakpoints")
             self._launcher.set_breakpoints(run.hub, run_id, blocks)

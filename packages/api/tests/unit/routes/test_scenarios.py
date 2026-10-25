@@ -45,6 +45,7 @@ from agent_hub.core.testing.hub_fakes import FakeHub, FakeHubFileReader, InMemor
 from agent_hub.core.testing.read_model_builders import WORKDIR_ID
 from agent_hub.core.testing.session_driver_fakes import InMemorySessionDriver
 from agent_hub.core.workflows.gates import GateAnswer
+from agent_hub.core.workflows.launch import RunConflictError, RunLaunchError
 from agent_hub.generator.action_discovery import discover_actions
 from agent_hub.generator.finding_issues import HeldIssue as HeldFindingIssue
 from agent_hub.generator.finding_issues import IssueMarked, marked_issue, retake_issue
@@ -2616,11 +2617,104 @@ def test_pins_debug_bounds_when_the_routes_are_built() -> None:
     assert scenario_catalog.SNAPSHOT_BYTES == 1024 * 1024
 
 
+def test_enforces_the_address_bound_at_the_body_when_an_address_fits_the_grammar(
+    scenarios: Any,
+) -> None:
+    a_debug_run(scenarios.hub)
+    route = f"/scenario-runs/{DEBUG_RUN}/breakpoints"
+    longest = "11" + ".1" * 31
+    over = "1" + ".1" * 32
+
+    at_bound = _put_json(scenarios, route, {"blocks": [longest]})
+    past_bound = _put_json(scenarios, route, {"blocks": [over]})
+
+    assert (len(longest), len(over)) == (64, 65)
+    # The longest address reaches the pinned tree, which does not hold it; one past is the body's.
+    assert (at_bound.status_code, at_bound.json()["code"]) == (422, "unknown_block")
+    assert past_bound.status_code == 422, past_bound.text
+    assert past_bound.json().get("code") != "unknown_block"
+    assert scenarios.launcher.calls == []
+
+
+def test_names_the_unreadable_snapshot_when_breakpoints_put_on_a_tree_run_without_one(
+    scenarios: Any,
+) -> None:
+    a_debug_run(scenarios.hub)
+    snapshot = scenarios.hub / DEBUG_FOLDER / "snapshot" / "workflow.json"
+    route = f"/scenario-runs/{DEBUG_RUN}/breakpoints"
+
+    snapshot.write_text("{not json", encoding="utf-8")
+    broken = _put_json(scenarios, route, {"blocks": ["2.1"]})
+    snapshot.unlink()
+    missing = _put_json(scenarios, route, {"blocks": ["2.1"]})
+
+    for refused in (broken, missing):
+        assert (refused.status_code, refused.json()["code"]) == (422, "unknown_block")
+        assert "pinned tree cannot be read" in refused.json()["detail"]
+        assert "version 2" not in refused.json()["detail"]
+    assert scenarios.launcher.calls == []
+
+
+class RefusingBreakLauncher(FakeScenarioLauncher):
+    def set_breakpoints(self, hub_path: str, run_id: str, addresses: tuple[str, ...]) -> None:
+        super().set_breakpoints(hub_path, run_id, addresses)
+        reason = "hub scenario break refused the breakpoints"
+        raise RunConflictError(code="refused", reason=reason, run_id=run_id)
+
+
+class StalledBreakLauncher(FakeScenarioLauncher):
+    def set_breakpoints(self, hub_path: str, run_id: str, addresses: tuple[str, ...]) -> None:
+        super().set_breakpoints(hub_path, run_id, addresses)
+        raise RunLaunchError("hub scenario break did not finish: TimeoutExpired")
+
+
+@pytest.mark.parametrize(
+    ("launcher", "status", "code"),
+    [(RefusingBreakLauncher, 409, "refused"), (StalledBreakLauncher, 502, "launch-failed")],
+)
+def test_gives_the_clis_refusal_when_hub_scenario_break_refuses_or_stalls(
+    scenarios: Any, *, launcher: type[FakeScenarioLauncher], status: int, code: str
+) -> None:
+    a_debug_run(scenarios.hub)
+    scenarios.launcher = launcher(scenarios.hub)
+    rewire_tracker(scenarios, lambda _config, _hub: None)
+
+    refused = _put_json(scenarios, f"/scenario-runs/{DEBUG_RUN}/breakpoints", {"blocks": ["2"]})
+
+    assert refused.status_code == status, refused.text
+    assert refused.json()["type"] == f"urn:agent-hub:problem:workflow-run-{code}"
+    assert scenarios.launcher.calls == [("break", (DEBUG_RUN, ("2",)))]
+
+
+@pytest.mark.parametrize("command", ["step", "continue"])
+def test_refuses_step_and_continue_when_the_debug_pause_line_cannot_be_read(
+    scenarios: Any, command: str
+) -> None:
+    records = a_debug_run(scenarios.hub, paused=False)
+    unreadable = {key: value for key, value in DEBUG_PAUSE.items() if key != "pass"}
+    lines = [*records, {"event": "held", "groups": {}}, unreadable]
+    path = scenarios.hub / DEBUG_FOLDER / "records.jsonl"
+    path.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
+    before = _recorded(scenarios.hub)
+
+    refused = _post(scenarios, f"/scenario-runs/{DEBUG_RUN}/{command}", {})
+
+    assert (refused.status_code, refused.json()["code"]) == (422, "record_unreadable")
+    assert scenarios.launcher.calls == []
+    assert _recorded(scenarios.hub) == before
+
+
 def test_refuses_breakpoints_when_the_run_ended_or_is_a_graph_run(scenarios: Any) -> None:
     a_debug_run(scenarios.hub)
     with (scenarios.hub / DEBUG_FOLDER / "records.jsonl").open("a", encoding="utf-8") as file:
         file.write(json.dumps({"event": "end", "status": "done"}) + "\n")
     write_records(scenarios.hub, a_paused_walk(scenarios.hub))
+    # The graph run pins its version-1 document, as every run pins its scenario.
+    walk = (scenarios.hub / "scenarios" / "demo" / "order-walk.yaml").read_bytes()
+    pinned = load_workflow_bytes(walk, source="order-walk.yaml").document
+    snapshot = scenarios.hub / WALK_RECORDS.parent / "snapshot"
+    snapshot.mkdir(parents=True, exist_ok=True)
+    (snapshot / "workflow.json").write_text(json.dumps(dict(pinned)), encoding="utf-8")
 
     ended = _put_json(scenarios, f"/scenario-runs/{DEBUG_RUN}/breakpoints", {"blocks": ["2.1"]})
     graph = _put_json(scenarios, f"/scenario-runs/{WALK_RUN}/breakpoints", {"blocks": ["1"]})
@@ -2815,10 +2909,41 @@ def test_needs_the_launch_cookie_and_own_origin_when_values_read(scenarios: Any)
     view = scenarios.client.get(f"/api/v1/scenario-runs/{DEBUG_RUN}")
 
     assert foreign.status_code == 403
+    assert "scenario run's values" in foreign.json()["detail"]
     assert unsigned.status_code == 401
     assert unsigned.json()["type"] == "urn:agent-hub:problem:agent-session-unauthorized"
+    assert "scenario run's values" in unsigned.json()["detail"]
     # The run view itself needs no cookie.
     assert view.status_code == 200
+
+
+def test_refuses_debug_routes_and_migrate_without_the_cookie_when_a_path_ends_with_a_newline(
+    scenarios: Any,
+) -> None:
+    a_debug_run(scenarios.hub)
+    scenarios.wire(item_version_writes=_DiskWrites())
+    before = _recorded(scenarios.hub)
+    walk = (scenarios.hub / "scenarios" / "demo" / "order-walk.yaml").read_bytes()
+    run = f"/api/v1/scenario-runs/{DEBUG_RUN}"
+    scenarios.client.cookies.clear()
+    origin = _origin(scenarios)
+
+    refused = (
+        scenarios.client.get(f"{run}/values%0A"),
+        scenarios.client.put(f"{run}/breakpoints%0A", json={"blocks": ["1"]}, headers=origin),
+        scenarios.client.post(f"{run}/step%0A", headers=origin),
+        scenarios.client.post(f"{run}/continue%0A", headers=origin),
+        scenarios.client.post(
+            "/api/v1/scenarios/demo/order-walk/migrate%0A", json={}, headers=origin
+        ),
+    )
+
+    for response in refused:
+        assert response.status_code == 404, response.text
+        assert "T-1" not in response.text
+    assert scenarios.launcher.calls == []
+    assert _recorded(scenarios.hub) == before
+    assert (scenarios.hub / "scenarios" / "demo" / "order-walk.yaml").read_bytes() == walk
 
 
 def test_starts_with_breakpoints_in_tree_order_when_a_tree_run_asked(scenarios: Any) -> None:
