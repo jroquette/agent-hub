@@ -710,6 +710,61 @@ export function addressed(items: readonly Item[]): { items: Item[]; keys: Map<st
   return { items: stages, keys };
 }
 
+/** How an edit from `before` to `next` changes the ids blocks run under, as the references to
+ * them must follow so that each still reads the block it read: a block with no id of its own
+ * that `next` puts at another place, or in a stage of another name, from its old place's id to
+ * its new one; a removed block, from its id to `<id>-removed`, an id no place gives, so that no
+ * block now at its place reads as it (only when it had no id of its own, or another block now
+ * runs under it). Items are matched by their key (`next` keeps the keys of `before`). An id two
+ * blocks share, before or after, is left out: no reference to it can be told apart. */
+export function idChanges(before: readonly Item[], next: readonly Item[]): Map<string, string> {
+  const count = (ids: readonly string[]) => {
+    const seen = new Map<string, number>();
+    for (const id of ids) seen.set(id, (seen.get(id) ?? 0) + 1);
+    return seen;
+  };
+  const was = nodeItems(before);
+  const idOf = new Map(was.map((item) => [itemId(item), item.node.id]));
+  const oldIds = count(was.map((item) => item.node.id));
+  const moved = nodeItems(next);
+  const placed = nodeItems(addressed(next).items);
+  const newIds = count(placed.map((item) => item.node.id));
+  const changes = new Map<string, string>();
+  const kept = new Set<string>();
+  for (const [index, item] of moved.entries()) {
+    const from = idOf.get(itemId(item));
+    if (from === undefined) continue;
+    kept.add(itemId(item));
+    const to = placed[index]?.node.id;
+    if (to === undefined || to === from) continue;
+    if (oldIds.get(from) === 1 && newIds.get(to) === 1) changes.set(from, to);
+  }
+  for (const item of was) {
+    const id = item.node.id;
+    if (kept.has(itemId(item)) || oldIds.get(id) !== 1) continue;
+    if (item.named !== true || newIds.has(id)) changes.set(id, `${id}-removed`);
+  }
+  return changes;
+}
+
+// A block's output read in a value: `$<id>.output…` or `$LOOP_PREV.<id>.output…` (`$$` is a
+// written dollar, not a reference).
+const OUTPUT_REF = /\$(?:\$|(LOOP_PREV\.)?([A-Za-z0-9_-]+)\.output(?![A-Za-z0-9_]))/g;
+
+/** `document` with each reference in its stages to a block whose id `ids` maps written with the
+ * id it maps to, all at once (so two blocks that swap places swap their references too). */
+export function renameRefs(document: Mapping, ids: ReadonlyMap<string, string>): Mapping {
+  if (ids.size === 0 || document.stages === undefined) return document;
+  const text = JSON.stringify(document.stages).replace(
+    OUTPUT_REF,
+    (whole: string, prev: string | undefined, id: string | undefined) => {
+      const to = id === undefined ? undefined : ids.get(id);
+      return to === undefined ? whole : `$${prev ?? ""}${to}.output`;
+    },
+  );
+  return { ...document, stages: JSON.parse(text) as Json };
+}
+
 /** `items` as new blocks of a scenario written as blocks: no id of their own (their place gives
  * one; with `keepIds`, the ids they give are kept, as a proposal's) and a key no other item has
  * until they are addressed. */
@@ -799,7 +854,9 @@ export function addressOfKey(key: string | null | undefined): string | null {
 
 /** A change Claude's proposal makes to a scenario written as blocks, by block address. */
 export interface TreeChange {
-  /** What changes, not where: a decision on it holds while other changes are accepted. */
+  /** What changes, and where the proposal puts it (its address there, which stays as other
+   * changes are accepted): a decision on it holds while they are, and two blocks the proposal
+   * adds alike are two changes. */
   id: string;
   kind: "new" | "changed" | "removed";
   /** A stage, or a block of a stage's steps (with what it holds). */
@@ -829,7 +886,7 @@ export function treeChanges(mine: readonly Item[], theirs: readonly Item[]): Tre
     const own = bySlug.get(slug);
     if (!own) {
       changes.push({
-        id: `new:${text(stage)}`,
+        id: `new:${stage.key}:${text(stage)}`,
         kind: "new",
         of: "stage",
         address: stage.key,
@@ -887,7 +944,7 @@ function stepChanges(
       changes.push(
         proposed
           ? {
-              id: `changed:${text(mine)}>${text(proposed)}`,
+              id: `changed:${text(mine)}>${itemId(proposed)}:${text(proposed)}`,
               kind: "changed",
               of: "block",
               address: itemId(mine),
@@ -910,7 +967,7 @@ function stepChanges(
       const proposed = theirs.steps[j];
       if (!proposed) continue;
       changes.push({
-        id: `new:${text(proposed)}`,
+        id: `new:${itemId(proposed)}:${text(proposed)}`,
         kind: "new",
         of: "block",
         address: itemId(proposed),

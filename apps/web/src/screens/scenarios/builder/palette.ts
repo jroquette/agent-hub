@@ -108,14 +108,13 @@ export const CATEGORIES: readonly { title: string; entries: readonly PaletteEntr
   },
 ];
 
-/** The Stage block of a scenario written as blocks: a named part, its steps run in order. */
-export const STAGE_ENTRY: Omit<PaletteEntry, "make"> & {
+/** The Stage block of a scenario written as blocks: a named part, its steps run in order (it
+ * looks as `kindLook("stage")` does). */
+export const STAGE_ENTRY: Pick<PaletteEntry, "label" | "hint" | "icon"> & {
   make: (names: readonly string[]) => Item;
 } = {
-  key: "stage",
   label: "Stage",
   hint: "A named part, run in order",
   icon: "milestone",
-  tint: kindLook("stage").tint,
   make: (names) => newStage(names),
 };

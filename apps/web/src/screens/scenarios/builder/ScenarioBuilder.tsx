@@ -76,6 +76,7 @@ import {
   derivedId,
   findItem,
   fresh as freshItems,
+  idChanges,
   insertAt,
   isTree,
   keyPathOf,
@@ -92,6 +93,7 @@ import {
   nodesOf,
   programNodes,
   programOf,
+  renameRefs,
   replaceItem,
   takeFrom,
   toTreeDocument,
@@ -395,18 +397,22 @@ export function ScenarioBuilder({
   const kept: BuilderNode[] = tree ? [] : program.kept;
 
   /* Writes the list back: a graph's nodes (steps the list cannot place stay as written), or the
-   * stages of a scenario written as blocks. `focus` is what to select after (by its key now);
-   * the answer gives an item's key after the edit (written as blocks, keys are addresses). */
+   * stages of a scenario written as blocks, where each reference to a block whose place id the
+   * edit changes follows it (`idChanges`; `asWritten` keeps them, for a proposal's block taken in
+   * at the place of the one it changes). `focus` is what to select after (by its key now); the
+   * answer gives an item's key after the edit (written as blocks, keys are addresses). */
   const commit = (
     next: Item[],
     keptNext: BuilderNode[] = kept,
     focus?: string | null,
+    asWritten = false,
   ): ((key: string) => string) => {
     if (tree) {
       const { keys } = addressed(next);
       const follow = focus === undefined ? selected : focus;
       setSelected(follow === null ? null : (keys.get(follow) ?? null));
-      const written = treeOf(raw, next);
+      const ids = asWritten ? new Map<string, string>() : idChanges(main, next);
+      const written = renameRefs(treeOf(raw, next), ids);
       if (JSON.stringify(written) !== JSON.stringify(raw)) draft.edit(written);
       return (key) => keys.get(key) ?? key;
     }
@@ -588,10 +594,7 @@ export function ScenarioBuilder({
     const to = named ? next.id : placeIdOf(key);
     const node = { ...without(next, "nodes"), id: to };
     const edited: Item = { ...current, node, named };
-    const written = JSON.stringify(treeOf(raw, replaceItem(main, key, edited)))
-      .split(`$${from}.output`)
-      .join(`$${to}.output`);
-    draft.edit(JSON.parse(written) as ScenarioDocument);
+    draft.edit(renameRefs(treeOf(raw, replaceItem(main, key, edited)), new Map([[from, to]])));
   };
 
   const onGraphAdd = (choice: AddChoice, after: string | null, group: string | null) => {
@@ -724,6 +727,7 @@ export function ScenarioBuilder({
           mode={mode}
           number={stepNumbers(main).get(key)}
           placeId={tree ? placeIdOf(key) : undefined}
+          named={selectedItem.named === true}
           libraryError={library.isError}
           openerRef={selectedCard}
           tab={stepTab}
@@ -925,7 +929,14 @@ export function ScenarioBuilder({
     } else {
       const at = locate(main, change.address);
       if (!at) return;
-      commit(insertAt(takeFrom(main, change.address, true).rest, at.slot, at.index, taken_));
+      // In the place of the block it changes: no other block moves, and what read that place
+      // reads the proposal's block there.
+      commit(
+        insertAt(takeFrom(main, change.address, true).rest, at.slot, at.index, taken_),
+        kept,
+        undefined,
+        true,
+      );
     }
     finish(new Set([...resolved, id]));
   };
@@ -957,8 +968,10 @@ export function ScenarioBuilder({
   const acceptProposal = () => {
     const from = proposedTree ?? proposed;
     if (!from) return;
+    // Written as blocks, the proposal's stages, as the review listed them (none: every stage
+    // of the draft removed).
     const next: ScenarioDocument = proposedTree
-      ? { ...raw, stages: proposedTree.stages ?? raw.stages ?? [] }
+      ? { ...raw, stages: proposedTree.stages ?? [] }
       : { ...document, nodes: proposed?.nodes ?? [] };
     if (from.inputs !== undefined) next.inputs = from.inputs;
     if (typeof from.description === "string") next.description = from.description;

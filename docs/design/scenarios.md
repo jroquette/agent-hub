@@ -41,7 +41,9 @@ example as `version: 2`, and `hub scenario migrate`, which that warning's fix na
 API's migrate route (`POST /scenarios/{project}/{name}/migrate`, [API.md](../API.md) § Scenarios). And hub web's
 builder (AGH-517): it edits a `version: 2` file as its stages, each block read straight from `stages` and keyed by
 its address, and writes the same JSON back (its keys in the canonical order below), so nothing is loose and a file
-opened and saved unchanged is unchanged; a `version: 1` file it edits as AGH-521 shipped it, and offers Migrate
+opened and saved unchanged is unchanged; an edit that gives a block with no `id` another place (or its stage another
+name) rewrites each `$<id>.output` reference to it to the new derived id, and one to a removed block to `<id>-removed`,
+so no reference starts reading another block; a `version: 1` file it edits as AGH-521 shipped it, and offers Migrate
 (screen spec 23, the ADR's delivery notes).
 
 A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md)):
@@ -139,8 +141,9 @@ A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blo
   does the same for one scenario in the server (the item write step Save uses; with `check` it writes nothing, and
   the file must still hold the `base_content_hash` it is sent, checked against the bytes it read, a JSON file's
   included; a link is never read, so its refusal is the answer), returning the tree's text and each problem on its node;
-  hub web's builder offers it as Migrate for a graph scenario: a check first, whose text (or each node it cannot map)
-  it shows, then the write, both with the hash of the file the builder read.
+  hub web's builder offers it as Migrate for a graph scenario: a check first, with the hash of the file the builder
+  read, whose text (or each node it cannot map) it shows, then the write, with the hash of the file the check read, so
+  a file changed since is refused and checked again.
 
 ### Debugging
 

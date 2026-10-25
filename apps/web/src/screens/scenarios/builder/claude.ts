@@ -1,4 +1,4 @@
-import { SCENARIO_BRIEF } from "../brief";
+import { scenarioBrief } from "../brief";
 import type { LibraryAction } from "./useScenarioDraft";
 
 /* What the builder asks Claude, through the Discuss panel (the owner's click sends it; nothing
@@ -38,7 +38,7 @@ export function describeMessage({
   text: string;
   scope: DescribeScope;
   /** The block the new steps go after (scope "after"): a step's id in a graph, a block's
-   * address in a scenario written as blocks; null for the end. */
+   * address in a scenario written as blocks (a stage's: at its end); null for the end. */
   after: string | null;
   scenario: string;
   pack: string;
@@ -48,9 +48,12 @@ export function describeMessage({
   /** The scenario is written as blocks (`version: 2`, stages), not as a graph of nodes. */
   tree?: boolean;
 }): string {
+  // Written as blocks, an address with no dot is a stage's: the new steps go at its end.
   const at = after
     ? tree
-      ? `right after block ${after}`
+      ? after.includes(".")
+        ? `right after block ${after}`
+        : `at the end of stage ${after}`
       : `right after the step \`${after}\``
     : "at the end";
   const where =
@@ -78,7 +81,7 @@ export function describeMessage({
     "",
     `Write your proposal, the WHOLE scenario document ${tree ? "(version: 2, kind: scenario, name, description, inputs, stages)" : "(version, kind: scenario, name, description, inputs, nodes)"}, to \`${proposalPath}\` in this hub folder. Do NOT write \`scenarios/${pack}/${scenario}.yaml\`: I review your proposal in the builder, block by block, and save it myself. Then answer in a few lines: the steps you made, the actions you reused, and the new draft actions you wrote (they need a commit before they can run).`,
     "",
-    SCENARIO_BRIEF,
+    scenarioBrief(tree),
   ].join("\n");
 }
 

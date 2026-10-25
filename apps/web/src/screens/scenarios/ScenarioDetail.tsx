@@ -26,7 +26,7 @@ import { ActionPanel, FileText } from "./ActionPanel";
 import { isTree } from "./builder/program";
 import { ScenarioBuilder } from "./builder/ScenarioBuilder";
 import { useLatestRun } from "./LiveRun";
-import { SCENARIO_BRIEF } from "./brief";
+import { scenarioBrief } from "./brief";
 import { Page, ScenarioRunBadge, shortId, useWaitingRows, WaitingCard } from "./parts";
 import {
   scenarioRunHref,
@@ -748,7 +748,7 @@ function useScenarioDiscuss(scenario: ScenarioDetail) {
     title: scenario.name,
     path: scenario.path ?? null,
     brief: [
-      SCENARIO_BRIEF,
+      scenarioBrief(isTree(scenario.document)),
       `This conversation is about the scenario \`${scenario.path ?? `scenarios/${scenario.pack}/${scenario.name}.yaml`}\`${
         actions.length > 0 ? ` and the actions it calls (${actions.join(", ")})` : ""
       }. Read them before you answer.`,

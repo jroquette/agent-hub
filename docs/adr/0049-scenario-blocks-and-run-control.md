@@ -157,12 +157,13 @@ And hub web's builder on the tree (AGH-517, [screen spec 23](../design/control-p
 `version: 2` file is edited as its stages. The builder's model reads `stages` straight into its blocks, each keyed by
 its address, and writes them back to the same JSON the server parsed (its keys in the canonical order), so no block
 is left loose and a file opened and saved unchanged writes nothing; a block's id is written only when it gives one
-(without one it runs under the id its place gives). The step list shows a header per stage (added from the Blocks
+(without one it runs under the id its place gives, and an edit that gives it another place rewrites the references
+to it, so no reference starts reading another block). The step list shows a header per stage (added from the Blocks
 tab's Stage block or a "+" between stages, renamed in its editor, moved and removed as a step is), each block
 numbered by its address; a block's editor has no "runs after", no `when` and no join rule; the Graph view draws how
 the blocks run and edits nothing; Claude's prompt teaches the tree's keys, and its proposal is reviewed block by
 block, by address. A `version: 1` file is edited as AGH-521 shipped it, and More offers Migrate: the check's text, or
-each node it cannot map, shown before anything is written.
+each node it cannot map, shown before anything is written, then the write over the file the check read.
 The scenario builder that shipped with AGH-521 is the one the owner validated in the playground, and where it differs
 from the decision above, the validated behavior wins for what the screen shows:
 

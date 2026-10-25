@@ -697,6 +697,7 @@ export function BlockInspector({
   onTab,
   environment,
   placeId,
+  named = false,
 }: {
   document: BuilderDocument;
   node: BuilderNode;
@@ -726,11 +727,13 @@ export function BlockInspector({
    * when it has none of its own (its position is its order, so it has no `when`, no "runs
    * after" and no join rule). Undefined for a step of a graph. */
   placeId?: string | undefined;
+  /** Written as blocks: whether the block gives its id (even one equal to its place's). */
+  named?: boolean;
 }) {
   const look = kindLook(node.type);
   const tree = placeId !== undefined;
   // A block written as blocks shows its own id only; empty, it runs under its place's.
-  const ownId = tree && node.id === placeId ? "" : node.id;
+  const ownId = tree && !named ? "" : node.id;
   const [overridden, setOverridden] = useState<string[]>([]);
   const [id, setId] = useState(ownId);
   const [shownFor, setShownFor] = useState(node.id);
@@ -1313,7 +1316,7 @@ export function BlockInspector({
               <Disclosure label="More: id">
                 <Field
                   label="Id"
-                  help={`Optional, kebab-case. Without one it runs as ${placeId}, from its place; give one when a later step reads its output, so a move keeps it. Renaming updates what reads it.`}
+                  help={`Optional, kebab-case. Without one it runs as ${placeId}, from its place, and what reads its output follows it when it moves. Renaming updates what reads it.`}
                 >
                   {(fieldId) => (
                     <input

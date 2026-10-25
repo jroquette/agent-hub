@@ -239,16 +239,27 @@ other one. The builder never writes YAML: it holds the file's JSON, the server w
 - **A block's editor.** No "Runs after", no "Only if" and no "Runs when": position is order. More: id shows the
   block's own id, empty when it runs under the one its place gives (`fetch-order--1`, the placeholder); one given is
   written to the file and the references to the old one follow it.
+- **References follow their block.** No edit changes which block a `$<id>.output` (or `$LOOP_PREV.<id>.output`)
+  reference reads: when a block with no id of its own gets another place id (a block inserted, moved or removed before
+  it, a move to another stage, its stage renamed), every reference to it is rewritten to the new one, all at once; a
+  reference to a removed block is written `<id>-removed`, an id no place gives, so the check names it rather than a
+  block now at that place reading as it. An id two blocks share (two stages of one slug) is not rewritten. A
+  proposal's block accepted in place of the one it changes keeps the references to that place.
 - **Graph view.** A picture of how the blocks run (the nodes they translate to, each selected with its block), with
   nothing to add or move there: "The graph shows how the blocks run: edit them in Blocks."
 - **Claude.** Describe with Claude teaches the tree's keys (stages, `do`, `wait_until`, `you`, `wait`, `include`,
-  `repeat`, `if`, `together`; no `nodes`, `depends_on`, `trigger_rule` or `when`) and names a place by its address;
-  the proposal is reviewed block by block by address (stages matched by name, each stage's blocks aligned), each
-  change accepted or rejected on its own ("Accept block 1.4").
+  `repeat`, `if`, `together`; no `nodes`, `depends_on`, `trigger_rule` or `when`), and the format brief after them is
+  the tree's (no graph header, node types or `until_when`; the page's Discuss brief too); it names a place by its
+  address (a stage's: at its end); the proposal is reviewed block by block by address (stages matched by name, each
+  stage's blocks aligned), each change accepted or rejected on its own ("Accept block 1.4"), and Accept all takes the
+  proposal's stages as the review listed them.
 - **Migrate, for a graph.** More › Migrate to stages of blocks opens a dialog that checks first (`POST
-  …/migrate` with `check`) and shows the file as blocks, or each step a tree cannot hold and why, with nothing
-  written; Migrate writes it over the file the builder read (`base_content_hash`) and the page opens the stages.
-  With unsaved changes it asks to save them first.
+  …/migrate` with `check` and the hash of the file the builder read) and shows the file as blocks, or each step a
+  tree cannot hold and why, with nothing written; Migrate writes it over the file the check read (the check's
+  `content_hash` as `base_content_hash`) and the page opens the stages. A file changed since the check is refused
+  (409 `stale_document`, shown in the dialog with Check again, which checks the file as the builder reads it now); a
+  write that migrates nothing lists its own problems and offers no Migrate. With unsaved changes it asks to save them
+  first.
 - **Accessibility.** Written as blocks, the tree holds only its items (stage headers, steps, an empty list's item
   with its button); the "+" in a gap is the pointer's way, and the keys add from a row (`a`), the Blocks tab, Add step
   and Add stage.

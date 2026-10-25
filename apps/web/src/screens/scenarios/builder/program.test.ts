@@ -5,6 +5,7 @@ import { dependsOn, toDocument, type BuilderNode, type Json } from "./model";
 import {
   JOIN_RULE,
   addressOfKey,
+  idChanges,
   insertAt,
   isTree,
   itemId,
@@ -12,8 +13,11 @@ import {
   negateCondition,
   nodesOf,
   programOf,
+  renameRefs,
+  replaceItem,
   stagesOf,
   takeFrom,
+  treeChanges,
   treeNodes,
   treeOf,
   type Item,
@@ -186,6 +190,81 @@ const ADDRESSED = (items: readonly Item[]): unknown =>
     return { [`${key} together`]: item.lanes.map(ADDRESSED) };
   });
 
+// A synthetic tree holding the step keys the fixtures leave out, in the canonical key order.
+const EVERY_KEY: Record<string, Json> = {
+  version: 2,
+  kind: "scenario",
+  name: "every-key",
+  revision: 3,
+  description: "Every step key of the tree format",
+  inputs: { order_id: { required: true } },
+  stages: [
+    {
+      name: "Every key",
+      description: "Each step with its optional keys",
+      steps: [
+        {
+          do: "order-get",
+          id: "get-order",
+          description: "Reads the order",
+          with: { order_id: "$INPUTS.order_id" },
+          timeout: "5m",
+          capture: { status: "$self.output.status" },
+          retry: { max_attempts: 3, delay: "5s", on_error: "all" },
+        },
+        {
+          wait_until: "order-state",
+          until: "$self.output.status == 'DONE'",
+          every: "15s",
+          timeout: "10m",
+          retry: { max_attempts: 1 },
+        },
+        {
+          you: "Approve the order, or reject it.",
+          description: "A person decides",
+          decisions: [
+            { id: "approve", label: "Approve" },
+            { id: "reject", label: "Reject" },
+          ],
+          capture_response: true,
+        },
+        { wait: { until: "2030-01-01T00:00:00Z" } },
+        {
+          wait: {
+            attention: "Pick a carrier",
+            options: [
+              { id: "fast", label: "Fast" },
+              { id: "slow", label: "Slow" },
+            ],
+          },
+          id: "pick-carrier",
+          description: "Waits for a choice",
+        },
+        {
+          include: "blocks-repeat",
+          description: "Polls the review",
+          with: { shop_order_id: "$INPUTS.order_id" },
+        },
+        {
+          if: "$CTX.status == 'DONE'",
+          description: "Only when done",
+          then: [{ wait: { duration: "1m" } }],
+        },
+        { together: [[{ do: "order-a" }], [{ do: "order-b" }]], description: "Both at once" },
+        {
+          repeat: {
+            max: 3,
+            until: "$get-order.output.status == 'DONE'",
+            steps: [{ do: "order-c" }],
+          },
+          id: "again",
+          description: "Tries again",
+        },
+      ],
+    },
+  ],
+};
+
 describe("scenario block program, written as blocks (version 2)", () => {
   it.each(TREE_FIXTURES)(
     "round-trips the tree fixture %s: the document written back equals the server's parse",
@@ -196,6 +275,11 @@ describe("scenario block program, written as blocks (version 2)", () => {
       expect(treeOf(document, stagesOf(document))).toStrictEqual(tree(name));
     },
   );
+
+  it("round-trips a tree holding every step key the fixtures leave out", () => {
+    expect(treeOf(EVERY_KEY, stagesOf(EVERY_KEY))).toStrictEqual(EVERY_KEY);
+    expect(JSON.stringify(treeOf(EVERY_KEY, stagesOf(EVERY_KEY)))).toBe(JSON.stringify(EVERY_KEY));
+  });
 
   it("reads the reference scenario's stages straight into blocks, in file order", () => {
     const stages = stagesOf(tree("demo-order-roundtrip"));
@@ -308,6 +392,139 @@ describe("scenario block program, written as blocks (version 2)", () => {
         ],
       },
     ]);
+  });
+
+  it("follows each block a reference reads to its new place id when an edit moves the blocks", () => {
+    const document: Record<string, Json> = {
+      version: 2,
+      kind: "scenario",
+      name: "refs",
+      stages: [
+        {
+          name: "Fetch order",
+          steps: [
+            { do: "get-order" },
+            { do: "get-shipment" },
+            {
+              do: "use-order",
+              with: {
+                order_id: "$fetch-order--1.output.order_id",
+                shipment: "$fetch-order--2.output",
+                price: "$$fetch-order--1.output",
+              },
+            },
+          ],
+        },
+        { name: "Ship", steps: [{ do: "ship", with: { at: "$LOOP_PREV.fetch-order--2.output" } }] },
+      ],
+    };
+    const stages = stagesOf(document);
+    const written = (next: Item[]) =>
+      (
+        renameRefs(treeOf(document, next), idChanges(stages, next)).stages as {
+          steps: Record<string, Json>[];
+        }[]
+      ).map((stage) => stage.steps.map((step) => step.with ?? null));
+
+    // Two blocks that swap places swap the references to them; a `$$` is no reference.
+    const { rest, taken } = takeFrom(stages, "1.1", true);
+    const swapped = insertAt(rest, { in: "stage", owner: "1" }, 1, taken);
+    expect(idChanges(stages, swapped)).toEqual(
+      new Map([
+        ["fetch-order--2", "fetch-order--1"],
+        ["fetch-order--1", "fetch-order--2"],
+      ]),
+    );
+    expect(written(swapped)).toEqual([
+      [
+        null,
+        null,
+        {
+          order_id: "$fetch-order--2.output.order_id",
+          shipment: "$fetch-order--1.output",
+          price: "$$fetch-order--1.output",
+        },
+      ],
+      [{ at: "$LOOP_PREV.fetch-order--1.output" }],
+    ]);
+
+    // A block removed before the read ones: they follow, and a reference to it reads no block.
+    const removed = takeFrom(stages, "1.1", true).rest;
+    expect(written(removed)).toEqual([
+      [
+        null,
+        {
+          order_id: "$fetch-order--1-removed.output.order_id",
+          shipment: "$fetch-order--1.output",
+          price: "$$fetch-order--1.output",
+        },
+      ],
+      [{ at: "$LOOP_PREV.fetch-order--1.output" }],
+    ]);
+
+    // A block moved to another stage, and a renamed stage: its blocks run under the new slug.
+    const [, second] = stages;
+    const moved = takeFrom(stages, "1.2", true);
+    const renamed =
+      second?.kind === "stage"
+        ? replaceItem(moved.rest, "2", {
+            ...second,
+            name: "Dispatch",
+            steps: [...moved.taken, ...second.steps],
+          })
+        : moved.rest;
+    expect(idChanges(stages, renamed)).toEqual(
+      new Map([
+        ["fetch-order--2", "dispatch--1"],
+        ["fetch-order--3", "fetch-order--2"],
+        ["ship--1", "dispatch--2"],
+      ]),
+    );
+  });
+
+  it("leaves a block's own id and an id two blocks share out of what an edit changes", () => {
+    const document = tree("blocks-repeat");
+    const stages = stagesOf(document);
+    // `poll` keeps its own id wherever it goes; the blocks after the moved one follow.
+    const { rest, taken } = takeFrom(stages, "1.2.2", true);
+    expect(idChanges(stages, insertAt(rest, { in: "stage", owner: "1" }, 0, taken))).toEqual(
+      new Map([
+        ["poll-review--1", "poll-review--2"],
+        ["poll-review--2", "poll-review--3"],
+        ["poll-review--2-1", "poll-review--3-1"],
+      ]),
+    );
+    // A removed block with its own id leaves the references to it as written.
+    expect(idChanges(stages, takeFrom(stages, "1.2.2", true).rest)).toEqual(new Map());
+    // Two stages of one slug give two blocks one id: no reference to it can follow either.
+    const two = stagesOf({
+      version: 2,
+      kind: "scenario",
+      name: "two",
+      stages: [
+        { name: "Poll", steps: [{ do: "a" }] },
+        { name: "Poll review", steps: [{ do: "b" }, { do: "c" }] },
+      ],
+    });
+    const [, review] = two;
+    const same =
+      review?.kind === "stage" ? replaceItem(two, "2", { ...review, name: "Poll" }) : two;
+    expect(idChanges(two, same)).toEqual(new Map([["poll-review--2", "poll--2"]]));
+  });
+
+  it("lists two blocks a proposal adds alike as two changes, each where the proposal puts it", () => {
+    const mine = stagesOf(tree("blocks-together"));
+    const proposed = tree("blocks-together");
+    const [stage] = proposed.stages as { steps: Json[] }[];
+    stage?.steps.push({ wait: { duration: "30s" } }, { wait: { duration: "30s" } });
+
+    const changes = treeChanges(mine, stagesOf(proposed));
+
+    expect(changes.map((change) => [change.kind, change.address])).toEqual([
+      ["new", "1.4"],
+      ["new", "1.5"],
+    ]);
+    expect(new Set(changes.map((change) => change.id)).size).toBe(2);
   });
 
   it("draws the stages as one chain of nodes: a stage's first block runs after the last one before it", () => {

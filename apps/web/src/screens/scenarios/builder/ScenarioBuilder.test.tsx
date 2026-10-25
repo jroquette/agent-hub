@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -73,6 +73,24 @@ const library = {
     },
   ],
   problems: [],
+};
+
+// A scenario written as blocks whose second block reads the first one's output under the id
+// the first one's place gives it.
+const REFERRING = {
+  version: 2,
+  kind: "scenario",
+  name: "order-lifecycle",
+  revision: 1,
+  stages: [
+    {
+      name: "Fetch order",
+      steps: [
+        { do: "get-order-by-ref" },
+        { do: "send-queue-message", with: { order_id: "$fetch-order--1.output.order_id" } },
+      ],
+    },
+  ],
 };
 
 // What migrate gives for the graph scenario above, checked (nothing written).
@@ -334,6 +352,17 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(await seriousViolations(container)).toEqual([]);
   });
 
+  it("scenario builder has no serious a11y violation on nested blocks and an empty stage (a11y)", async () => {
+    const user = userEvent.setup();
+    const { container } = renderTree("blocks-nested");
+    await screen.findByRole("treeitem", { name: /^Stage 1: Route order/ });
+    const blocks = screen.getByRole("complementary", { name: "Blocks, variables and actions" });
+    await user.click(within(blocks).getByRole("button", { name: "Add Stage at the end" }));
+    await screen.findByRole("treeitem", { name: /^Stage 2: Stage 2, 0 steps/ });
+
+    expect(await seriousViolations(container)).toEqual([]);
+  });
+
   it("scenario builder adds a stage from the Blocks tab, renames, fills, moves and removes it", async () => {
     const user = userEvent.setup();
     const { requests } = renderTree("blocks-together", { [SAVE]: () => SAVED });
@@ -416,6 +445,70 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(sent.stages[0]?.steps.map((step) => step.id ?? null)).toEqual(["fetch", null]);
   });
 
+  it("scenario builder rewrites what reads a block written as blocks when its own id is renamed", async () => {
+    const user = userEvent.setup();
+    const { requests } = renderTree("blocks-repeat", { [SAVE]: () => SAVED });
+
+    await user.click(await screen.findByRole("treeitem", { name: /^Step 1\.2\.2,/ }));
+    const editor = screen.getByRole("region", { name: "Inspector: Wait until poll" });
+    await user.click(within(editor).getByRole("button", { name: "More: id" }));
+    const id = within(editor).getByLabelText("Id");
+    expect(id).toHaveValue("poll");
+    await user.clear(id);
+    await user.type(id, "review-poll");
+    await user.tab();
+    expect(
+      await screen.findByRole("region", { name: "Inspector: Wait until review-poll" }),
+    ).toBeInTheDocument();
+
+    await save(user);
+    const sent = (await savedDocument(requests)) as {
+      stages: { steps: { repeat?: { until: string; steps: { id?: string }[] } }[] }[];
+    };
+    const repeat = sent.stages[0]?.steps[1]?.repeat;
+    expect(repeat?.until).toBe("$review-poll.output.review_status == 'APPROVED'");
+    expect(repeat?.steps.map((step) => step.id ?? null)).toEqual([null, "review-poll"]);
+  });
+
+  it("scenario builder keeps a reference on the block it reads when a block goes before it and its stage is renamed", async () => {
+    const user = userEvent.setup();
+    const { requests } = renderBuilder({
+      [DETAIL]: aScenarioDetail({ document: REFERRING, content_hash: "sha256:aaa", version: 2 }),
+      [SAVE]: () => SAVED,
+    });
+
+    // A Pause added after block 1.1, then moved above it: the block read is now 1.2.
+    await user.click(await screen.findByRole("treeitem", { name: /^Step 1\.1,/ }));
+    const blocks = screen.getByRole("complementary", { name: "Blocks, variables and actions" });
+    await user.click(within(blocks).getByRole("button", { name: "Add Pause after step 1.1" }));
+    expect(await screen.findByRole("treeitem", { name: /^Step 1\.2, Pause/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await user.keyboard("{Alt>}{ArrowUp}{/Alt}");
+    expect(await screen.findByRole("treeitem", { name: /^Step 1\.1, Pause/ })).toBeInTheDocument();
+    // The stage renamed, letter by letter.
+    await user.click(screen.getByRole("treeitem", { name: /^Stage 1: Fetch order/ }));
+    const nameField = within(
+      screen.getByRole("region", { name: "Inspector: Stage 1" }),
+    ).getByLabelText("Name");
+    await user.clear(nameField);
+    await user.type(nameField, "Get order");
+
+    await save(user);
+    const sent = (await savedDocument(requests)) as { stages: unknown[] };
+    expect(sent.stages).toStrictEqual([
+      {
+        name: "Get order",
+        steps: [
+          { wait: { duration: "30s" } },
+          { do: "get-order-by-ref" },
+          { do: "send-queue-message", with: { order_id: "$get-order--2.output.order_id" } },
+        ],
+      },
+    ]);
+  });
+
   it("scenario builder's Graph view of a scenario written as blocks is a picture with nothing to add", async () => {
     const user = userEvent.setup();
     renderTree("blocks-together");
@@ -492,6 +585,105 @@ describe("ScenarioBuilder (scenario builder)", () => {
       { check: true, base_content_hash: "sha256:aaa" },
       { check: false, base_content_hash: "sha256:aaa" },
     ]);
+  });
+
+  it("scenario builder's Migrate writes over the file it checked: one changed since is refused and checked again", async () => {
+    const user = userEvent.setup();
+    let hash = "sha256:aaa";
+    let migrated = false;
+    let calls = 0;
+    const { requests, queryClient } = renderBuilder({
+      [DETAIL]: () =>
+        migrated
+          ? aScenarioDetail({ document: REFERRING, content_hash: hash, version: 2 })
+          : aScenarioDetail({ document, content_hash: hash }),
+      [MIGRATE]: () => {
+        calls += 1;
+        if (calls === 2) {
+          return aProblem({
+            status: 409,
+            title: "Conflict",
+            detail: "the scenario file changed since the builder read it",
+          });
+        }
+        if (calls === 3) return { ...MIGRATION, content_hash: "sha256:ddd" };
+        return calls === 1
+          ? MIGRATION
+          : { ...MIGRATION, written: true, content_hash: "sha256:eee" };
+      },
+    });
+
+    await screen.findByRole("treeitem", { name: CHECK });
+    await user.click(screen.getByRole("button", { name: "More" }));
+    await user.click(screen.getByRole("button", { name: "Migrate to stages of blocks" }));
+    const dialog = screen.getByRole("dialog", { name: "Migrate to stages of blocks" });
+    await within(dialog).findByLabelText("The scenario as blocks");
+    // The file is changed outside (an editor) while the check shows: the builder reads it again.
+    hash = "sha256:ddd";
+    await act(() => queryClient.refetchQueries());
+    await user.click(within(dialog).getByRole("button", { name: "Migrate" }));
+
+    expect(
+      await within(dialog).findByText("the scenario file changed since the builder read it"),
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Migrate" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("The scenario as blocks")).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Check again" }));
+    await within(dialog).findByLabelText("The scenario as blocks");
+    await user.click(within(dialog).getByRole("button", { name: "Migrate" }));
+
+    expect(
+      await screen.findByText(/Migrated: order-lifecycle is now written as blocks/),
+    ).toBeInTheDocument();
+    const sent = requests.filter((request) => request.url.endsWith("/migrate"));
+    expect(await Promise.all(sent.map((request) => request.clone().json()))).toEqual([
+      { check: true, base_content_hash: "sha256:aaa" },
+      { check: false, base_content_hash: "sha256:aaa" },
+      { check: true, base_content_hash: "sha256:ddd" },
+      { check: false, base_content_hash: "sha256:ddd" },
+    ]);
+    // The file read again is written as blocks: the page opens its stages.
+    migrated = true;
+    hash = "sha256:eee";
+    await act(() => queryClient.refetchQueries());
+    expect(
+      await screen.findByRole("treeitem", { name: /^Stage 1: Fetch order/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("scenario builder's Migrate lists what the write could not migrate and offers no Migrate", async () => {
+    const user = userEvent.setup();
+    let calls = 0;
+    renderBuilder({
+      [MIGRATE]: () => {
+        calls += 1;
+        return calls === 1
+          ? MIGRATION
+          : {
+              ...MIGRATION,
+              yaml: null,
+              problems: [
+                { node: "order-on-hold", message: "its trigger_rule one_success has no block" },
+              ],
+            };
+      },
+    });
+
+    await screen.findByRole("treeitem", { name: CHECK });
+    await user.click(screen.getByRole("button", { name: "More" }));
+    await user.click(screen.getByRole("button", { name: "Migrate to stages of blocks" }));
+    const dialog = screen.getByRole("dialog", { name: "Migrate to stages of blocks" });
+    await within(dialog).findByLabelText("The scenario as blocks");
+    await user.click(within(dialog).getByRole("button", { name: "Migrate" }));
+
+    expect(
+      await within(dialog).findByText("its trigger_rule one_success has no block"),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole("list", { name: "What blocks cannot hold" })).toHaveTextContent(
+      "order-on-hold",
+    );
+    expect(within(dialog).queryByRole("button", { name: "Migrate" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("The scenario as blocks")).not.toBeInTheDocument();
   });
 
   it("scenario builder's Migrate names each step a graph cannot hold and writes nothing", async () => {
