@@ -176,7 +176,9 @@ class FakeHubFileReader:
     ) -> DoctorSnapshot:
         """A snapshot of the hub's ``files``, every one listed; no repo checkout, no hooks; the
         item leftovers only when a selected rule reads the item folders, and the scenario folders
-        only when one reads the scenarios, as the real reader."""
+        only when one reads the scenarios, as the real reader. Unlike the real reader, it gives
+        no scenario source (``scenarios`` stays ``None``), so a rule that reads the scenarios
+        themselves, such as ``scenarios.graph_format``, finds none through it."""
         reads = {read for rule in selection.rules for read in rule.reads}
         item_folders = Read.ITEM_FOLDERS in reads
         scenarios = Read.SCENARIOS in reads

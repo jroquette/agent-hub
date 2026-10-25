@@ -4,7 +4,7 @@
 import json
 import random
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -366,6 +366,73 @@ def test_pauses_before_the_group_when_a_breakpoint_holds_its_node() -> None:
     assert first.state.pause == DebugPause("g", "1.2", "breakpoint")
     assert (first.state.groups, started) == ({}, ["a"])
     assert (last.status, run.ran[1]) == ("done", ["g__w", "g__x"])
+
+
+@dataclass
+class ReleasesFirst(Breakpoints):
+    """``Breakpoints`` that releases ``released`` on its own, as the CLI's run control does: it
+    answers ``None`` at that node's first ask."""
+
+    released: str = ""
+
+    def pause_before(self, node: str) -> PauseReason | None:
+        first = node not in self.asked
+        stop = super().pause_before(node)
+        return None if first and node == self.released else stop
+
+
+@dataclass
+class SetLater(Breakpoints):
+    """``Breakpoints`` set while the pass runs: none holds until ``on()`` is true."""
+
+    on: Callable[[], bool] = field(default=lambda: True)
+
+    def debugging(self) -> bool:
+        return self.on() and super().debugging()
+
+
+def test_pauses_in_the_next_iteration_when_the_port_released_the_resumed_body_node_itself() -> None:
+    plan = a_plan(REPEAT)
+    run = Passes(plan, ScriptedRunner({"g__x": ["again", "again", "done"]}))
+
+    first = run.next(Breakpoints({"g__w": "1.1"}))
+    second = run.next(ReleasesFirst({"g__w": "1.1"}, released="g__w"))
+    last = run.next(ReleasesFirst({"g__w": "1.1"}, released="g__w"))
+
+    assert first.state.pause == DebugPause("g__w", "1.1", "breakpoint")
+    assert (second.reason, second.state.groups["g"].iteration) == ("g__w", 2)
+    assert second.state.pause == DebugPause("g__w", "1.1", "breakpoint")
+    assert run.ran[:2] == [[], ["g__w", "g__x"]]
+    assert (last.reason, last.state.groups["g"].iteration) == ("g__w", 3)
+
+
+def test_pauses_in_the_next_iteration_when_the_resumed_body_node_ran_with_no_breakpoint_on() -> (
+    None
+):
+    plan = a_plan(REPEAT)
+    run = Passes(plan, ScriptedRunner({"g__x": ["again", "again", "done"]}))
+    first = run.next(Breakpoints({"g__w": "1.1"}))
+    # Set again once the resumed iteration's last body node has run.
+    control = SetLater({"g__w": "1.1"}, on=lambda: "g__x" in run.runner.ran())
+
+    second = run.next(control)
+
+    assert first.state.pause == DebugPause("g__w", "1.1", "breakpoint")
+    assert (second.reason, second.state.groups["g"].iteration) == ("g__w", 2)
+    assert run.ran[1] == ["g__w", "g__x"]
+    assert control.asked == ["g__w"]
+
+
+def test_pauses_at_the_next_layer_when_a_breakpoint_is_set_while_the_pass_runs() -> None:
+    plan = a_plan(shell("a"), shell("b", "a"), shell("c", "b"))
+    run = Passes(plan)
+    control = SetLater({"a": "1.1", "b": "1.2"}, on=lambda: "a" in run.runner.ran())
+
+    report = run.next(control)
+
+    assert (report.reason, report.state.pause) == ("b", DebugPause("b", "1.2", "breakpoint"))
+    assert run.ran == [["a"]]
+    assert control.asked == ["b"]
 
 
 def test_opens_the_ask_and_waits_for_its_answer_when_a_breakpoint_before_it_is_continued() -> None:

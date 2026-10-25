@@ -7,9 +7,12 @@ layer starts (a ``loop_group`` body's included), and only while ``debugging()``:
 a node to pause at runs one node at a time in declaration order and stops before that node, so
 nothing of it starts and nothing is recorded for it. The report is ``paused`` with the node as
 ``reason``, its ``DebugPause`` in ``RunState.pause`` and the stopped pass in
-``RunState.paused_pass``, which the resume goes on with. Mapping a block to the nodes it
-enters by (a ``<step>__ask`` gate in front of a gated step among them), and knowing which blocks
-are leaves for Step, are the port's: the engine knows only nodes.
+``RunState.paused_pass``, which the resume goes on with. The first visit, in the resumed
+process, of the node that pause stopped before (or of a node the port names the same block for)
+takes it up once: the engine runs it even when the port answers a stop, and a port that answers
+``None`` for that visit has taken it up too. Mapping a block to the nodes it enters by (a
+``<step>__ask`` gate in front of a gated step among them), and knowing which blocks are leaves
+for Step, are the port's: the engine knows only nodes.
 """
 
 from dataclasses import dataclass
@@ -40,7 +43,9 @@ class RunControl(Protocol):
     """A debugging run's breakpoints and step mode, read as the run goes."""
 
     def debugging(self) -> bool:
-        """Whether a breakpoint or step mode is on; while neither is, nothing else is asked."""
+        """Whether to ask about the nodes of the layer starting: a breakpoint or step mode is on
+        (a port may also stay on all through a resume from a debug pause, so it is asked at
+        every visit); while it is off, nothing else is asked."""
         ...
 
     def pause_before(self, node: str) -> PauseReason | None:

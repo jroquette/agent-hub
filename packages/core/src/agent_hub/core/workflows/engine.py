@@ -37,7 +37,9 @@ The resume from a debug pause goes on with that pass, as if the process had neve
 restores the pass's ends, its changed and stale nodes and the gate it left open, and visits the
 rest of the stopped layer, then the layers after it. Nothing the pass already handled is visited
 again. The first visit of the node it stopped before runs, and so does that of any node paused
-for the same block (an If's or a Together's other entry nodes).
+for the same block (an If's or a Together's other entry nodes): once per node and process,
+whether or not the port was asked then or released that visit itself, so the node's next visit
+(a body node's in the next iteration) pauses again.
 
 A ``loop_group`` is one step around its body's: each iteration runs the body's layers (body ids
 as recorded, ``<group>__<id>``, each visit a new attempt), with ``$LOOP_PREV`` reading the
@@ -231,10 +233,10 @@ class _Run:
         # The groups paused around that gate, and the gates a resume already took up once.
         self.held: dict[str, HeldGroup] = {}
         self.taken: set[str] = set()
-        # The first node run control stopped this pass before, and the nodes whose first visit
-        # took up the debug pause the run resumes from.
+        # The first node run control stopped this pass before, and, while the run resumes from a
+        # debug pause, the nodes visited so far: only a node's first visit takes up that pause.
         self.debug: DebugPause | None = None
-        self.released: set[str] = set()
+        self.visited: set[str] = set()
         # The layer this pass starts at: past 0 when it goes on with a pass a debug pause stopped.
         self.first_layer = 0
         # The gate that pass opened and left open: it is not visited again.
@@ -376,16 +378,22 @@ class _Run:
     def _stops(self, nodes: Sequence[Node]) -> dict[str, PauseReason]:
         """The nodes of a layer run control pauses before, with why: none unless it is
         debugging, never one whose end or open state from before this pass takes as is, nor the
-        first visit of a node taking up the pause the run resumes from."""
+        first visit of a node taking up the pause the run resumes from. That visit is the first
+        whether or not the port is asked about it or answers a stop for it (a port may release
+        it on its own), so a later one, such as a body node's in the next iteration, pauses."""
         control = self.ports.control
-        if control is None or not control.debugging():
+        if control is None:
+            return {}
+        debugging = control.debugging()
+        if not debugging and self.prior.pause is None:
             return {}
         stops: dict[str, PauseReason] = {}
         for node in nodes:
             if self._taken_as_is(node):
                 continue
-            stop = control.pause_before(node.id)
-            if stop is not None and not self._takes_up_pause(node, stop):
+            first = self._first_visit(node)
+            stop = control.pause_before(node.id) if debugging else None
+            if stop is not None and not (first and self._takes_up_pause(node, stop)):
                 stops[node.id] = stop
         return stops
 
@@ -404,18 +412,22 @@ class _Run:
         skipped_again = before.state == "skipped" and node.id not in self.stale
         return skipped_again or self._reusable(node)
 
-    def _takes_up_pause(self, node: Node, stop: PauseReason) -> bool:
-        """Whether this visit takes up the debug pause the run resumes from: the first visit of
-        the node it stopped before, or of a node paused for the same block (an If's or a
-        Together's other entry nodes)."""
-        resumed = self.prior.pause
-        if resumed is None or (node.id != resumed.node and stop.block != resumed.block):
+    def _first_visit(self, node: Node) -> bool:
+        """Whether this is the node's first visit while the run resumes from a debug pause,
+        recording it; always false in a run that resumes from none."""
+        if self.prior.pause is None:
             return False
         with self.lock:
-            if node.id in self.released:
-                return False
-            self.released.add(node.id)
-            return True
+            first = node.id not in self.visited
+            self.visited.add(node.id)
+        return first
+
+    def _takes_up_pause(self, node: Node, stop: PauseReason) -> bool:
+        """Whether a node's first visit takes up the debug pause the run resumes from: it is
+        the node that pause stopped before, or the port names the same block for it (an If's or
+        a Together's other entry nodes)."""
+        resumed = self.prior.pause
+        return resumed is not None and (node.id == resumed.node or stop.block == resumed.block)
 
     def _pause_before(self, node: Node, stop: PauseReason) -> None:
         """End the pass before ``node``: nothing of it starts or is recorded."""

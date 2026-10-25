@@ -96,7 +96,9 @@ only nodes: the run-control port maps blocks to the nodes they enter by, and dec
   the stopped layer, then the layers after it; nothing the pass already handled is visited again, so a failure is not
   run again and a stale node runs as that pass would have run it. The first visit of the node it stopped before runs,
   and so does the first visit of each node the port names the same block for (an If's or a Together's other entry
-  nodes).
+  nodes). That is each node's first visit in the resumed process, once, whether or not the port is asked then and
+  whether it answers a stop or releases that visit itself; a later visit (a body node's in the next iteration) is
+  asked and pauses as any other.
 - A gate that opened in the stopped pass stays open: the report is the debug pause, the gate is in the run state, and
   its answer is not read again in that pass. Once the stopped layer ends, the pass pauses on the gate, as it does with
   no breakpoint, and the resume after it takes up the answer. What an earlier pass left open that the stopped pass
