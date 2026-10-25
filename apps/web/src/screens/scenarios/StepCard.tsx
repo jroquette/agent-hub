@@ -31,16 +31,18 @@ export interface StepStatus {
 }
 
 /** A breakpoint before block `address` (a scenario written as blocks, ADR 0049): a toggle whose
- * name stays the same, its state in `aria-pressed`; Tab reaches it, Space or Enter presses it. */
+ * name stays the same, its state in `aria-pressed`; Tab reaches it, Space or Enter presses it.
+ * While `busy` (a change on its way) a press does nothing, and the toggle keeps focus
+ * (`aria-disabled`, not `disabled`). */
 export function BreakpointToggle({
   address,
   on,
-  disabled,
+  busy,
   onToggle,
 }: {
   address: string;
   on: boolean;
-  disabled?: boolean | undefined;
+  busy?: boolean | undefined;
   onToggle: () => void;
 }) {
   return (
@@ -56,8 +58,10 @@ export function BreakpointToggle({
           ? `The scenario run pauses before block ${address}. Press to remove the breakpoint.`
           : `Press to pause the scenario run before block ${address}.`
       }
-      disabled={disabled}
-      onClick={onToggle}
+      aria-disabled={busy === true || undefined}
+      onClick={() => {
+        if (!busy) onToggle();
+      }}
     >
       Breakpoint
     </Button>

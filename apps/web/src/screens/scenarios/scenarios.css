@@ -133,7 +133,7 @@
   overflow: auto;
 }
 
-/* A scenario run written as blocks (AGH-507): its pinned blocks, one row each, indented by depth,
+/* A scenario run written as blocks (ADR 0049): its pinned blocks, one row each, indented by depth,
  * with a breakpoint toggle at the end; the values a paused run shows, folded per block. */
 .sc-blocks {
   list-style: none;

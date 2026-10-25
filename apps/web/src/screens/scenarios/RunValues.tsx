@@ -2,15 +2,16 @@ import { useId, type ReactNode } from "react";
 
 import { Skeleton } from "../../components";
 import { isRunControlOff } from "./Investigation";
-import { CaptureValue, MarkedText } from "./parts";
-import { DEBUG_LOCKED, runBlock } from "./RunBlocks";
+import { CaptureValue, DEBUG_LOCKED, MarkedText } from "./parts";
+import { runBlock } from "./RunBlocks";
 import { plural } from "./timeline";
 import { useScenarioRunValues, type BlockValues, type ScenarioRunDetail } from "./queries";
 
-/* What a paused scenario run shows to inspect (AGH-507 D-5, ADR 0049, spec 23): its inputs, the
- * environment's values included, and for each finished block its rendered inputs, status and
- * last output, read from its record with the launch cookie (`GET …/values`), only while it is
- * paused and never on a production environment. Each block's values stay folded until opened. */
+/* What a paused scenario run shows to inspect (ADR 0049, spec 23 § Debugging a run written as
+ * blocks): its inputs, the environment's values included, and for each finished block its
+ * rendered inputs, status and last output, read from its record with the launch cookie
+ * (`GET …/values`), only while it is paused and never on a production environment. Each block's
+ * values stay folded until opened. */
 
 const STATUS_WORDS: Readonly<Record<string, string>> = {
   ok: "Done",
@@ -89,7 +90,7 @@ export function RunValues({ run, pause }: { run: ScenarioRunDetail; pause: strin
           : error.status === 401
             ? DEBUG_LOCKED
             : error.status === 409 && error.code === "not_paused"
-              ? "The scenario run is no longer paused."
+              ? "The scenario run is not paused right now: its values show while it is paused."
               : `Could not read the values: ${error.detail ?? error.title}`}
       </span>
     );

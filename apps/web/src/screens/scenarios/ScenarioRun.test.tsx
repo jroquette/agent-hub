@@ -1281,7 +1281,7 @@ describe("ScenarioRunScreen (scenarios run)", () => {
   });
 });
 
-/* Debugging a scenario run written as blocks (AGH-507, ADR 0049, spec 23): its pinned blocks with
+/* Debugging a scenario run written as blocks (ADR 0049, spec 23): its pinned blocks with
  * their breakpoints, Step and Continue in a debug pause, and the values while paused. */
 describe("ScenarioRunScreen (scenarios run debugging)", () => {
   const debugRoutes: ApiRoutes = {
@@ -1357,9 +1357,14 @@ describe("ScenarioRunScreen (scenarios run debugging)", () => {
     live.unmount();
 
     // In a debug pause: toggle a breakpoint (by the keyboard), then Step.
+    const written = [
+      ["2.1", "2.2"],
+      ["1.2", "2.1", "2.2"],
+    ];
+    let puts = 0;
     const { requests } = renderRun({
       ...debugRoutes,
-      [`PUT ${RUN}/breakpoints`]: { run_id: SCENARIO_RUN, blocks: ["2.1", "2.2"] },
+      [`PUT ${RUN}/breakpoints`]: () => ({ run_id: SCENARIO_RUN, blocks: written[puts++] }),
       [`POST ${RUN}/step`]: { run_id: SCENARIO_RUN, project: "demo", action: "step" },
     });
     const blocks = await screen.findByRole("region", { name: "Blocks" });
@@ -1381,6 +1386,14 @@ describe("ScenarioRunScreen (scenarios run debugging)", () => {
     });
     const put = requests.find((request) => request.method === "PUT");
     expect(await put?.clone().json()).toEqual({ blocks: ["2.1", "2.2"] });
+    // An earlier block goes in its place in the pinned tree's order, not at the end.
+    const earlier = within(blocks).getByRole("button", { name: "Breakpoint before block 1.2" });
+    await user.click(earlier);
+    await waitFor(() => {
+      expect(earlier).toHaveAttribute("aria-pressed", "true");
+    });
+    const second = requests.filter((request) => request.method === "PUT")[1];
+    expect(await second?.clone().json()).toEqual({ blocks: ["1.2", "2.1", "2.2"] });
 
     const bar = screen.getByRole("region", { name: "Paused before block 2.1" });
     expect(bar).toHaveTextContent("Paused before block 2.1 (Do: queue-send), at its breakpoint.");
@@ -1393,11 +1406,20 @@ describe("ScenarioRunScreen (scenarios run debugging)", () => {
         "Step sent: the scenario run goes on, and its events update this page.",
       ),
     ).toBeInTheDocument();
-    expect(within(bar).getByRole("button", { name: "Continue" })).toBeDisabled();
+    // Both stay off until the run leaves the pause; the pressed one keeps focus (aria-disabled).
+    const continueButton = within(bar).getByRole("button", { name: "Continue" });
+    expect(continueButton).toHaveAttribute("aria-disabled", "true");
+    expect(within(bar).getByRole("button", { name: "Step" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    await user.click(continueButton);
+    await user.click(within(bar).getByRole("button", { name: "Step" }));
     const step = requests.filter(
       (request) => request.method === "POST" && request.url.endsWith("/step"),
     );
     expect(step).toHaveLength(1);
+    expect(requests.some((request) => request.url.endsWith("/continue"))).toBe(false);
   });
 
   it("scenarios run continues on the pinned tree after an edit", async () => {
@@ -1436,6 +1458,225 @@ describe("ScenarioRunScreen (scenarios run debugging)", () => {
     expect(
       requests.filter((request) => request.method === "POST" && request.url.endsWith("/continue")),
     ).toHaveLength(1);
+  });
+
+  it("scenarios run offers no Step, Continue or breakpoint while its environment is unknown", async () => {
+    // The scenario still reads: the hub has not said yet whether the environment is production.
+    const { requests } = renderRun({
+      ...debugRoutes,
+      "/api/v1/scenarios/demo/order-lifecycle": "pending",
+    });
+
+    const bar = await screen.findByRole("region", { name: "Paused before block 2.1" });
+    expect(bar).toHaveTextContent("Nothing of this block has run yet.");
+    await screen.findByRole("region", { name: "Blocks" });
+    expect(within(bar).queryByRole("button", { name: "Step" })).toBeNull();
+    expect(within(bar).queryByRole("button", { name: "Continue" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Breakpoint before/ })).toBeNull();
+    expect(requests.some((request) => request.url.endsWith("/values"))).toBe(false);
+  });
+
+  it("scenarios run still offers Continue when the edited scenario no longer reads", async () => {
+    // An edit left the file broken: the server's production refusal still stands (409).
+    renderRun({
+      ...debugRoutes,
+      "/api/v1/scenarios/demo/order-lifecycle": aProblem({
+        status: 422,
+        title: "Invalid scenario",
+      }),
+    });
+
+    const bar = await screen.findByRole("region", { name: "Paused before block 2.1" });
+    expect(await within(bar).findByRole("button", { name: "Continue" })).not.toHaveAttribute(
+      "aria-disabled",
+    );
+    expect(screen.getByRole("button", { name: "Breakpoint before block 2.2" })).toBeInTheDocument();
+  });
+
+  it("scenarios run clears a refused Step once the run pauses again", async () => {
+    const user = userEvent.setup();
+    let moved = false;
+    const { queryClient } = renderRun({
+      ...debugRoutes,
+      [RUN]: () =>
+        aDebugScenarioRun(
+          moved
+            ? {
+                debug: { block: "2.2", node: "review--2", reason: "step", number: 2, at: at(60) },
+                stepping: true,
+              }
+            : {},
+        ),
+      [`POST ${RUN}/step`]: aProblem({
+        status: 409,
+        title: "Conflict",
+        detail: "Another debug command of this scenario run is still running.",
+      }),
+    });
+
+    const bar = await screen.findByRole("region", { name: "Paused before block 2.1" });
+    await user.click(await within(bar).findByRole("button", { name: "Step" }));
+    expect(await within(bar).findByRole("alert")).toHaveTextContent(
+      "Could not send StepAnother debug command of this scenario run is still running.",
+    );
+    // The run paused again (the other command ran): the refusal was about the pause before.
+    moved = true;
+    await act(async () => {
+      await queryClient.invalidateQueries();
+    });
+    const next = await screen.findByRole("region", { name: "Paused before block 2.2" });
+    expect(next).toHaveTextContent("after a Step.");
+    expect(within(next).queryByRole("alert")).toBeNull();
+    expect(within(next).getByRole("button", { name: "Step" })).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("scenarios run puts focus on its heading when the debug pause it was in ends", async () => {
+    const user = userEvent.setup();
+    let stepped = false;
+    renderRun({
+      ...debugRoutes,
+      [RUN]: () => aDebugScenarioRun(stepped ? { debug: null } : {}),
+      [`POST ${RUN}/step`]: () => {
+        stepped = true;
+        return { run_id: SCENARIO_RUN, project: "demo", action: "step" };
+      },
+    });
+
+    const bar = await screen.findByRole("region", { name: "Paused before block 2.1" });
+    const step = await within(bar).findByRole("button", { name: "Step" });
+    step.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => {
+      expect(screen.queryByRole("region", { name: "Paused before block 2.1" })).toBeNull();
+    });
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+  });
+
+  it("scenarios run sets no breakpoint once it ended done or cancelled", async () => {
+    // A failed scenario run can be resumed: its toggles stay.
+    const failed = renderRun({
+      ...debugRoutes,
+      [RUN]: aDebugScenarioRun({ status: "failed", debug: null }),
+    });
+    expect(
+      await screen.findByRole("button", { name: "Breakpoint before block 2.1" }),
+    ).toBeInTheDocument();
+    failed.unmount();
+
+    for (const status of ["done", "cancelled"] as const) {
+      const view = renderRun({ ...debugRoutes, [RUN]: aDebugScenarioRun({ status, debug: null }) });
+      const blocks = await screen.findByRole("region", { name: "Blocks" });
+      await waitFor(() => {
+        expect(view.queryClient.isFetching()).toBe(0);
+      });
+      expect(within(blocks).queryByRole("button", { name: /^Breakpoint before/ })).toBeNull();
+      expect(blocks).not.toHaveTextContent("A breakpoint pauses the scenario run");
+      view.unmount();
+    }
+  });
+
+  it("scenarios run shows a graph run's values by node id while an investigation waits", async () => {
+    // The default run: a graph run (no blocks) paused at an investigation.
+    const user = userEvent.setup();
+    const { requests } = renderRun();
+
+    const values = await screen.findByRole("complementary", { name: "Values while paused" });
+    const finished = await within(values).findByRole("list", { name: "Finished blocks" });
+    expect(within(finished).getByText("order-processed · Failed · 2 polls")).toBeInTheDocument();
+    await user.click(within(finished).getByText("order-processed · Failed · 2 polls"));
+    expect(within(finished).getByRole("group", { name: "Last poll (2 polls)" })).toHaveTextContent(
+      '{ "status": "OPEN" }',
+    );
+    expect(screen.queryByRole("region", { name: "Blocks" })).toBeNull();
+    expect(requests.filter((request) => request.url.endsWith("/values"))).toHaveLength(1);
+  });
+
+  it("scenarios run reads its values again once another block ended in the same pause", async () => {
+    // A Together: one path waits at an ask while another goes on and ends a block.
+    let ended = false;
+    const askRun = () =>
+      aDebugScenarioRun({
+        debug: null,
+        timeline: [
+          ...aDebugScenarioRun().timeline,
+          ...(ended
+            ? [
+                {
+                  event: "step_end",
+                  node: "review--1",
+                  attempt: 1,
+                  status: "ok",
+                  at: at(70),
+                  block: "2.1",
+                },
+              ]
+            : []),
+        ],
+      });
+    const { requests, queryClient } = renderRun({
+      ...debugRoutes,
+      [RUN]: askRun,
+      "/api/v1/approvals": aPage([gate(`${SCENARIO_RUN}:review--2__ask:1`, "policy")]),
+    });
+
+    await screen.findByRole("list", { name: "Finished blocks" });
+    expect(requests.filter((request) => request.url.endsWith("/values"))).toHaveLength(1);
+    ended = true;
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ["api", "/api/v1/scenario-runs/{run_id}"] });
+    });
+    await waitFor(() => {
+      expect(requests.filter((request) => request.url.endsWith("/values"))).toHaveLength(2);
+    });
+  });
+
+  it("scenarios run says its values wait for a pause the server counts", async () => {
+    renderRun({
+      ...debugRoutes,
+      [`${RUN}/values`]: aProblem({ status: 409, title: "Conflict", code: "not_paused" }),
+    });
+
+    const values = await screen.findByRole("complementary", { name: "Values while paused" });
+    expect(
+      await within(values).findByText(
+        "The scenario run is not paused right now: its values show while it is paused.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("scenarios run shows a credential mark in a finished block's values as a chip", async () => {
+    const user = userEvent.setup();
+    renderRun({
+      ...debugRoutes,
+      [`${RUN}/values`]: aScenarioRunValues({
+        blocks: [
+          {
+            address: "1.1",
+            node: "fetch-order--1",
+            attempt: 1,
+            status: "ok",
+            with: { token: "Bearer <credential SHOP_TOKEN>" },
+            output: { echoed: "<credential SHOP_TOKEN>" },
+            polls: 0,
+            last_poll: null,
+          },
+        ],
+      }),
+    });
+
+    const finished = await screen.findByRole("list", { name: "Finished blocks" });
+    await user.click(within(finished).getByText(/1\.1 queue-send/));
+    const withValues = within(finished).getByRole("group", { name: "With" });
+    expect(
+      within(withValues).getByRole("note", { name: "Redacted credential SHOP_TOKEN" }),
+    ).toBeInTheDocument();
+    expect(withValues).toHaveTextContent(/"token": "Bearer \[redacted: credential SHOP_TOKEN\]/);
+    expect(withValues).not.toHaveTextContent("<credential");
+    expect(
+      within(within(finished).getByRole("group", { name: "Output" })).getByRole("note", {
+        name: "Redacted credential SHOP_TOKEN",
+      }),
+    ).toBeInTheDocument();
   });
 
   it("scenarios run in a debug pause has no serious a11y violation (a11y)", async () => {

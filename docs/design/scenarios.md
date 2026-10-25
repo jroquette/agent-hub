@@ -238,8 +238,9 @@ A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([A
   the pinned tree's (as breakpoints are checked), and each timeline line's `block` is the address of the block that
   holds its node, as the values read gives it, so an edit in the builder while a run is paused changes neither the
   page nor what Continue runs. Its breakpoint toggles, Step and Continue show only off production (the environment
-  as the hub reads it now), the toggles not once the run ended `done` or `cancelled`, and Step and Continue only in
-  a debug pause. A toggle sends the run's whole set (`PUT …/breakpoints`). On the scenario page, a `version: 2`
+  as the hub reads it now; a scenario that no longer reads, or whose environments do not name the run's, leaves it to
+  the server's refusal, so a paused run keeps its Continue), the toggles not once the run ended `done` or
+  `cancelled`, and Step and Continue only in a debug pause. A toggle sends the run's whole set (`PUT …/breakpoints`). On the scenario page, a `version: 2`
   scenario's step cards carry a toggle for the innermost block each card's node starts, and the start passes those
   the file holds now, in its order, as `breakpoints` (none on a production environment).
 - The values to inspect are read from lines the record already holds: the `inputs` line, and for each node with an

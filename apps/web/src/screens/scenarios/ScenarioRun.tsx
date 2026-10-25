@@ -439,7 +439,9 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
   const asks = useOpenPolicyAsks(run);
   const debugPaused = (run.debug ?? null) !== null && !ended;
   // The run's environment as the hub reads it now (null until known): debugging and the values
-  // read are off production. A scenario that no longer reads leaves it to the server's refusal.
+  // read are off production. A scenario that no longer reads (an edit broke it), or whose
+  // environments do not name the run's, leaves it to the server's refusal (409 on production), so
+  // a paused run always has a Continue.
   const production = scenario.data
     ? scenario.data.environments.some((env) => env.name === run.environment && env.production)
     : scenario.isError
@@ -514,6 +516,14 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
     if (wasPaused.current && !paused) heading.current?.focus();
     wasPaused.current = paused;
   }, [paused]);
+  // The debug bar leaves once the run resumes: focus that left with it goes to the heading.
+  const wasDebugPaused = useRef(debugPaused);
+  useEffect(() => {
+    const active = document.activeElement;
+    const lost = active === null || active === document.body || !active.isConnected;
+    if (wasDebugPaused.current && !debugPaused && lost) heading.current?.focus();
+    wasDebugPaused.current = debugPaused;
+  }, [debugPaused]);
   // A new investigation (a failed workaround reopened one) starts with nothing picked, even
   // when its proposal reuses the ids, and focus on the heading (review round 4, F1, F3).
   const [params, setParams] = useSearchParams();

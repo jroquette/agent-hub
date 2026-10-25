@@ -1,12 +1,15 @@
+import { useMemo } from "react";
+
 import { Banner, CodeBlock, StatusBadge } from "../../components";
 import { isRunControlOff } from "./Investigation";
+import { DEBUG_LOCKED } from "./parts";
 import { BreakpointToggle } from "./StepCard";
 import { useSetBreakpoints, type RunBlock, type ScenarioRunDetail } from "./queries";
 
-/* The blocks a scenario run written as blocks pinned when it started (AGH-507, ADR 0049, spec
- * 23): each one's address, kind and label, its state in this run and, off production, its
- * breakpoint. The blocks come from the run, never from the scenario file as it reads now, so an
- * edit in the builder changes none of them. */
+/* The blocks a scenario run written as blocks pinned when it started (ADR 0049, spec 23): each
+ * one's address, kind and label, its state in this run and, off production, its breakpoint. The
+ * blocks come from the run, never from the scenario file as it reads now, so an edit in the
+ * builder changes none of them. */
 
 const KIND_WORDS: Readonly<Record<string, string>> = {
   stage: "Stage",
@@ -41,20 +44,31 @@ function depthOf(address: string): number {
 }
 
 type BlockState = "paused" | "running" | "done" | "failed" | "skipped" | "waiting" | null;
+type TimelineLine = ScenarioRunDetail["timeline"][number];
 
-/** A block's state in the run, from its own lines (a gate's lines are its step's, but neither
- * starts nor ends the step); `waiting` for a block of its own nodes not started yet. */
-function stateOf(run: ScenarioRunDetail, block: RunBlock): BlockState {
+/** Each block's last start or end line of its own, in one pass over the timeline (a gate's
+ * lines are its step's, but neither starts nor ends the step). */
+function lastLines(timeline: readonly TimelineLine[]): ReadonlyMap<string, TimelineLine> {
+  const last = new Map<string, TimelineLine>();
+  for (const entry of timeline) {
+    if (entry.block === null || entry.block === undefined) continue;
+    if (entry.event !== "step_start" && entry.event !== "step_end") continue;
+    if (GATE_SUFFIXES.some((suffix) => (entry.node ?? "").endsWith(suffix))) continue;
+    last.set(entry.block, entry);
+  }
+  return last;
+}
+
+/** A block's state in the run, from its last line of its own; `waiting` for a block of its own
+ * nodes not started yet. */
+function stateOf(
+  run: ScenarioRunDetail,
+  block: RunBlock,
+  lines: ReadonlyMap<string, TimelineLine>,
+): BlockState {
   if (run.debug?.block === block.address) return "paused";
   if (!OWN_NODES.has(block.kind)) return null;
-  const last = run.timeline
-    .filter(
-      (entry) =>
-        entry.block === block.address &&
-        (entry.event === "step_start" || entry.event === "step_end") &&
-        !GATE_SUFFIXES.some((suffix) => (entry.node ?? "").endsWith(suffix)),
-    )
-    .at(-1);
+  const last = lines.get(block.address);
   if (last === undefined) return run.status === null ? "waiting" : null;
   if (last.event === "step_start") return "running";
   if (last.status === "failed") return "failed";
@@ -72,10 +86,6 @@ function State({ state }: { state: BlockState }) {
   return null;
 }
 
-/** A debug write or the values read without the launch cookie (401). */
-export const DEBUG_LOCKED =
-  "Debugging is locked in this browser. Open the link hub web printed when it started (it ends with ?token=…) once in this browser.";
-
 /** The run's blocks. `production` is the run environment's flag as the hub reads it now (null
  * while unknown): breakpoints are set only off production, and never once the run ended done
  * or cancelled. */
@@ -87,6 +97,8 @@ export function RunBlocks({
   production: boolean | null;
 }) {
   const set = useSetBreakpoints(run.run_id);
+  // Once per read of the record, not on every tick of the page's clock.
+  const lines = useMemo(() => lastLines(run.timeline), [run.timeline]);
   const ended = run.status === "done" || run.status === "cancelled";
   const settable = !ended && production === false;
   // While a change is on its way, its set shows; then the one the server wrote.
@@ -128,12 +140,12 @@ export function RunBlocks({
               {blockWords(block)}
             </span>
             <span className="ah-grow" />
-            <State state={stateOf(run, block)} />
+            <State state={stateOf(run, block, lines)} />
             {settable && (
               <BreakpointToggle
                 address={block.address}
                 on={shown.includes(block.address)}
-                disabled={set.isPending}
+                busy={set.isPending}
                 onToggle={() => {
                   toggle(block.address);
                 }}

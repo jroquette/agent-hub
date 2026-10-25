@@ -64,6 +64,15 @@ export function CaptureValue({ value }: { value: unknown }) {
   );
 }
 
+/** A debug write or the values read without the launch cookie (401). */
+export const DEBUG_LOCKED =
+  "Debugging is locked in this browser. Open the link hub web printed when it started (it ends with ?token=…) once in this browser.";
+
+/** Why a scenario run is in a debug pause, in words (`reason` of its `debug`). */
+export function debugReasonWords(reason: string): string {
+  return reason === "step" ? "after a Step" : "at its breakpoint";
+}
+
 /** The short id of a scenario run (its id is already 8 hex digits). */
 export function shortId(runId: string): string {
   return runId.replace(/-/g, "").slice(0, 8);

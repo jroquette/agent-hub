@@ -172,7 +172,8 @@ written as blocks): a scenario run's page lists the blocks the run pinned (the r
 snapshot as breakpoints are checked, and each timeline line's `block`), each with its state in the run and a
 breakpoint toggle that sends the run's whole set; in a debug pause, a bar names the block and why and offers Step and
 Continue; while the run is paused, the Facts column shows its inputs and each finished block's values, folded until
-opened. Breakpoints, Step, Continue and the values are offered only off production. The scenario page's step cards of
+opened. Breakpoints, Step, Continue and the values are offered only off production (a scenario that no longer
+reads leaves it to the server's refusal, so a paused run keeps its Continue). The scenario page's step cards of
 a `version: 2` scenario carry a toggle each, passed as the start's breakpoints. Since everything comes from the run,
 an edit in the builder while a run is paused changes neither the page nor what Continue runs.
 The scenario builder that shipped with AGH-521 is the one the owner validated in the playground, and where it differs

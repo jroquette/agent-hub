@@ -406,12 +406,17 @@ Timeline
   Breakpoint toggle (a button, `aria-pressed`, named "Breakpoint before block 2.1" whatever its state; Tab reaches it,
   Space or Enter presses it). A press sends the run's whole set, in the pinned tree's order (`PUT …/breakpoints`); the
   toggles show the set on its way, then the one the server wrote, and a later pass pauses there (from the next block
-  the run starts). The toggles show only once the hub says the run's environment is not production, and never once
-  the run ended done or cancelled.
+  the run starts). The toggles show only once the hub says the run's environment is not production (hidden while the
+  scenario reads), and never once the run ended done or cancelled. A scenario that no longer reads (an edit broke the
+  file) or whose environments do not name the run's offers them, and Step and Continue, leaving it to the server's
+  refusal (409 `workflow-run-debug-production` on production), so a paused run always has a Continue. While a change
+  is on its way, the toggles are off but keep focus (`aria-disabled`).
 - **Step and Continue** show only in a debug pause, in its bar above the blocks (where the investigation's banner
-  sits): Step (`POST …/step`) runs the next block and pauses before the one after it; Continue (`POST …/continue`)
-  runs to the next breakpoint or the end. After a press: "Step sent: the scenario run goes on, and its events update
-  this page." and both stay off until the run leaves that pause. Cancel stays in the header. The page's announcer
+  sits), under the toggles' production rule: Step (`POST …/step`) runs the next block and pauses before the one after
+  it; Continue (`POST …/continue`) runs to the next breakpoint or the end. After a press: "Step sent: the scenario
+  run goes on, and its events update this page." and both stay off (`aria-disabled`, so the pressed one keeps focus)
+  until the run leaves that pause; a refusal shows only in the pause it was sent from. When the bar leaves (the run
+  resumed), focus that left with it goes to the page's heading. Cancel stays in the header. The page's announcer
   says "Scenario run paused before block 2.1" once, and the header badge reads Waiting for you.
 - **AC-507.16 Values while paused.** While the run is paused (a debug pause, an investigation waiting for its answer,
   an open ask) and off production, the Facts column adds "Values while paused" (`GET …/values`, with the launch
@@ -437,7 +442,7 @@ Timeline
 | Container (404 `run-control-off`) | "Breakpoints cannot be set from the agent-hub container. Set them from a terminal:" `./hub scenario break 3f2a91c0 --set 2.1 2.2` · "Step and Continue cannot be sent from the agent-hub container. Run hub web on your machine, or from a terminal:" `./hub scenario step 3f2a91c0` · "Values cannot be read from the agent-hub container: run hub web on your machine." |
 | Locked (401) | "Debugging is locked in this browser. Open the link hub web printed when it started (it ends with ?token=…) once in this browser." |
 | Refused (409, 422) | "Could not set the breakpoints" / "Could not send Step" and the server's detail |
-| No longer paused (values 409) | "The scenario run is no longer paused." |
+| Not paused (values 409, the server's rule: an ask counts once its pass is held) | "The scenario run is not paused right now: its values show while it is paused." |
 
 ## Responsive
 
@@ -458,7 +463,9 @@ Not built yet (AGH-458), the target:
 
 Each table has a caption that names its subject. Every status and decision is icon + label. A Breakpoint toggle is a
 button whose name stays the same and whose state is `aria-pressed`; the debug bar, the blocks and the values are
-named regions, and each finished block's values are a `details` disclosure (closed by default). A refused option's
+named regions, and each finished block's values are a `details` disclosure (closed by default). A toggle, Step or
+Continue that is off while a press is on its way is `aria-disabled`, so focus stays on it; when the debug bar leaves,
+focus goes to the page's heading. A refused option's
 reason is linked by `aria-describedby`. The verdict, the pause, the answer and the end are announced once, politely. Dialogs
 open on their safe button and return focus. axe has no serious or critical violation (`npm test -- -t a11y`).
 
@@ -468,7 +475,10 @@ Human decides (principle 2): the pause and the answer bar sit above the fold, wa
 confirmed with its environment. Show only what the record shows (principle 3): run-time values stay placeholders, and
 a gate's kind comes from the record. Privacy (principle 5): credential marks are `RedactionChip`s. Honest limits: the
 agent's limits sit beside its chat, and the best-effort sentence sits on Run detail. Plain language: each line names
-the step, the environment and the reason.
+the step, the environment and the reason. The debugger (§ Debugging a run written as blocks) shows the run's own
+record: the blocks it pinned, never the file as it reads now, and its values with credential marks as
+`RedactionChip`s; it decides nothing for the person (Step and Continue answer no gate, edit no value), and it is off
+on production, where the bar names the terminal command instead.
 
 ## Decisions (AGH-364)
 

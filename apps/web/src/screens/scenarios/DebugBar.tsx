@@ -2,25 +2,22 @@ import { useState } from "react";
 
 import { Button, CodeBlock, Icon } from "../../components";
 import { isRunControlOff } from "./Investigation";
-import { blockWords, DEBUG_LOCKED, runBlock } from "./RunBlocks";
+import { DEBUG_LOCKED, debugReasonWords } from "./parts";
+import { blockWords, runBlock } from "./RunBlocks";
 import { useDebugCommand, type DebugCommand, type ScenarioRunDetail } from "./queries";
 
-/* A scenario run in a debug pause (AGH-507, ADR 0049, spec 23): the block it paused before and
- * why, and, off production, Step and Continue. Neither answers a gate, edits a value, re-runs or
- * skips a block: each is a resume the CLI records with who sent it. */
+/* A scenario run in a debug pause (ADR 0049, spec 23 § Debugging a run written as blocks): the
+ * block it paused before and why, and, off production, Step and Continue. Neither answers a gate,
+ * edits a value, re-runs or skips a block: each is a resume the CLI records with who sent it. */
 
 const COMMAND_WORDS: Readonly<Record<DebugCommand, string>> = {
   step: "Step",
   continue: "Continue",
 };
 
-/** Why the run paused there, in words. */
-function reasonWords(reason: string): string {
-  return reason === "step" ? "after a Step" : "at its breakpoint";
-}
-
-/** The debug pause of `run` (nothing when it is in none). `production` is the run environment's flag as the
- * hub reads it now (null while unknown): Step and Continue only off production. */
+/** The debug pause of `run` (nothing when it is in none). `production` is the run environment's
+ * flag as the hub reads it now (null while unknown): Step and Continue show only once it is
+ * false. */
 export function DebugBar({
   run,
   production,
@@ -29,24 +26,28 @@ export function DebugBar({
   production: boolean | null;
 }) {
   const command = useDebugCommand(run.run_id);
-  // The command sent from this pause: the bar waits until the run leaves it.
-  const [sent, setSent] = useState<{ command: DebugCommand; number: number } | null>(null);
+  // The pause the last command was pressed in: its answer (sent, or refused) shows only there.
+  const [pressed, setPressed] = useState<number | null>(null);
   const pause = run.debug ?? null;
   if (pause === null) return null;
-  if (sent !== null && sent.number !== pause.number) {
+  if (pressed !== null && pressed !== pause.number) {
     // The run moved on to another pause (state adjusted while rendering).
-    setSent(null);
+    setPressed(null);
   }
+  const here = pressed === pause.number;
   const block = runBlock(run, pause.block);
   const words = blockWords(block);
+  // Once sent, the bar waits until the run leaves this pause.
+  const sent = here && command.isSuccess ? command.variables : null;
+  const failed =
+    here && command.isError ? { error: command.error, which: command.variables } : null;
+  // Off, but focusable: the pressed button keeps focus (aria-disabled, not disabled).
+  const busy = command.isPending || sent !== null;
   const send = (which: DebugCommand) => {
-    command.mutate(which, {
-      onSuccess: () => {
-        setSent({ command: which, number: pause.number });
-      },
-    });
+    if (busy) return;
+    setPressed(pause.number);
+    command.mutate(which);
   };
-  const error = command.error;
   return (
     <section
       aria-label={`Paused before block ${pause.block}`}
@@ -65,7 +66,7 @@ export function DebugBar({
       <div className="ah-stack" style={{ gap: 6 }}>
         <b>
           Paused before block {pause.block}
-          {words && ` (${words})`}, {reasonWords(pause.reason)}.
+          {words && ` (${words})`}, {debugReasonWords(pause.reason)}.
         </b>
         <span>Nothing of this block has run yet.</span>
         {production === true ? (
@@ -76,7 +77,7 @@ export function DebugBar({
             </span>
             <CodeBlock code={`./hub workflow run --resume ${run.run_id}`} />
           </>
-        ) : (
+        ) : production === false ? (
           <>
             <span>
               Step runs the next block and pauses before the one after it; Continue runs to the next
@@ -87,7 +88,7 @@ export function DebugBar({
               <Button
                 variant="primary"
                 icon="corner-down-right"
-                disabled={production === null || command.isPending || sent !== null}
+                aria-disabled={busy || undefined}
                 onClick={() => {
                   send("step");
                 }}
@@ -96,7 +97,7 @@ export function DebugBar({
               </Button>
               <Button
                 icon="play"
-                disabled={production === null || command.isPending || sent !== null}
+                aria-disabled={busy || undefined}
                 onClick={() => {
                   send("continue");
                 }}
@@ -106,28 +107,32 @@ export function DebugBar({
             </div>
             {sent !== null && (
               <span role="status" className="ah-small">
-                {COMMAND_WORDS[sent.command]} sent: the scenario run goes on, and its events update
-                this page.
+                {COMMAND_WORDS[sent]} sent: the scenario run goes on, and its events update this
+                page.
               </span>
             )}
-            {error !== null && (
+            {failed !== null && (
               <span role="alert" className="ah-stack" style={{ gap: 4 }}>
-                <b>Could not send {COMMAND_WORDS[command.variables]}</b>
-                {isRunControlOff(error) ? (
+                <b>Could not send {COMMAND_WORDS[failed.which]}</b>
+                {isRunControlOff(failed.error) ? (
                   <>
                     <span>
                       Step and Continue cannot be sent from the agent-hub container. Run hub web on
                       your machine, or from a terminal:
                     </span>
-                    <CodeBlock code={`./hub scenario ${command.variables} ${run.run_id}`} />
+                    <CodeBlock code={`./hub scenario ${failed.which} ${run.run_id}`} />
                   </>
                 ) : (
-                  <span>{error.status === 401 ? DEBUG_LOCKED : (error.detail ?? error.title)}</span>
+                  <span>
+                    {failed.error.status === 401
+                      ? DEBUG_LOCKED
+                      : (failed.error.detail ?? failed.error.title)}
+                  </span>
                 )}
               </span>
             )}
           </>
-        )}
+        ) : null}
       </div>
     </section>
   );

@@ -16,6 +16,7 @@ import {
   aScenarioPlanRow,
   aScenarioRunRef,
   aTreeDocument,
+  at,
   renderWithApi,
   SCENARIO_RUN,
   type ApiRoutes,
@@ -674,6 +675,56 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
       "href",
       `${PATH}/runs/${SCENARIO_RUN}`,
     );
+  });
+
+  it("scenarios detail marks the step card a scenario run's debug pause holds", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    renderDetail({
+      [DETAIL]: aScenarioDetail({ runs: [aScenarioRunRef({ status: "running" })] }),
+      [`/api/v1/workflow-runs/${SCENARIO_RUN}`]: aRun({
+        id: SCENARIO_RUN,
+        kind: "scenario",
+        workflow: "scenario:order-lifecycle",
+        content_hash: "sha256:5f0c2e1d",
+        revision: 1,
+        status: "running",
+        steps: [],
+      }),
+      [`/api/v1/scenario-runs/${SCENARIO_RUN}`]: aDebugScenarioRun({
+        debug: { block: "1.2", node: "order-on-hold", reason: "step", number: 2, at: at(41) },
+      }),
+    });
+
+    expect(
+      await screen.findByText(/is paused before block 1\.2 after a Step, in personal/),
+    ).toBeInTheDocument();
+    const held = screen.getByRole("article", { name: "Step 2: order-on-hold" });
+    expect(within(held).getByText("Paused before it")).toBeInTheDocument();
+    const other = screen.getByRole("article", { name: "Step 1: fetch-order" });
+    expect(within(other).queryByText("Paused before it")).toBeNull();
+  });
+
+  it("scenarios detail has no serious a11y violation with breakpoint toggles (a11y)", async () => {
+    const { container } = renderDetail({
+      [DETAIL]: aScenarioDetail({
+        version: 2,
+        blocks: [
+          { address: "1", kind: "stage", label: "Fetch", entry_nodes: ["fetch-order"] },
+          { address: "1.1", kind: "do", label: "send-queue-message", entry_nodes: ["fetch-order"] },
+          {
+            address: "1.2",
+            kind: "wait_until",
+            label: "get-order-by-ref",
+            entry_nodes: ["order-on-hold"],
+          },
+        ],
+      }),
+    });
+    const toggle = await screen.findByRole("button", { name: "Breakpoint before block 1.2" });
+    await userEvent.setup().click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+    expect(await seriousViolations(container)).toEqual([]);
   });
 
   it("scenarios detail breaks long ids only after a slash or a dash", async () => {

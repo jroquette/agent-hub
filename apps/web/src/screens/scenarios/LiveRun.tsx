@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { AppLink, Banner, Icon, StatusBadge, Time } from "../../components";
 import { RunCommands } from "../run-detail/RunCommands";
 import { useRun } from "../run-detail/queries";
-import { shortId, type WaitingRow } from "./parts";
+import { debugReasonWords, shortId, type WaitingRow } from "./parts";
 import {
   gateRun,
   gateStep,
@@ -52,9 +52,9 @@ export function useLatestRun(scenario: ScenarioDetail, waiting: readonly Waiting
             Scenario run <span className="ah-mono">{shortId(latest.run_id)}</span>
             {pause === null
               ? ` is running${latest.environment ? ` in ${latest.environment}` : ""}`
-              : ` is paused before block ${pause.block} ${
-                  pause.reason === "step" ? "after a Step" : "at its breakpoint"
-                }${latest.environment ? `, in ${latest.environment}` : ""}`}
+              : ` is paused before block ${pause.block} ${debugReasonWords(pause.reason)}${
+                  latest.environment ? `, in ${latest.environment}` : ""
+                }`}
             {latest.mode ? ` · ${latest.mode === "regression" ? "Regression" : "Interactive"}` : ""}{" "}
             · started <Time iso={latest.started_at} />
             {!sameRevision && " · it uses an older revision of the file"}
