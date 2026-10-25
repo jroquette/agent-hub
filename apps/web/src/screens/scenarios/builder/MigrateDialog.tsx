@@ -56,6 +56,14 @@ export function MigrateDialog({
   // A write refused (the file changed since the check, or into one blocks cannot hold), or a
   // check that failed: the next check reads the file as it is now.
   const again = !check.isPending && (problem !== null || (wrote !== null && !written));
+  // Where the dialog has got to, read out as it goes (the banners below are not live regions).
+  let status = "";
+  if (written) status = "Done: the file is written as blocks.";
+  else if (problem) status = `Not migrated: ${problem.detail ?? problem.title}`;
+  else if (refused.length > 0) status = "Checked: some steps cannot be written as blocks yet.";
+  else if (write.isPending) status = "Writing the file as blocks.";
+  else if (!unsaved && check.isPending) status = "Checking the file.";
+  else if (canWrite) status = "Checked: it can be written as blocks.";
   return (
     <Dialog
       title="Migrate to stages of blocks"
@@ -85,6 +93,9 @@ export function MigrateDialog({
       }
     >
       <div className="ah-stack" style={{ gap: 10 }}>
+        <span className="ah-sr" role="status" aria-live="polite">
+          {status}
+        </span>
         <span className="ah-small ah-muted">
           This scenario is a graph (version 1). Migrate writes it again as stages of blocks (version
           2), as <span className="ah-mono">./hub scenario migrate</span> does: one stage named after

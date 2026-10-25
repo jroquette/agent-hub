@@ -409,6 +409,13 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(screen.queryByRole("treeitem", { name: /^Stage 1: Ship/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Undo" }));
     expect(await screen.findByRole("treeitem", { name: /^Stage 1: Ship/ })).toBeInTheDocument();
+    // The Delete key removes it too, and says so as the editor's button does.
+    await user.click(screen.getByRole("treeitem", { name: /^Stage 1: Ship/ }));
+    await user.keyboard("{Delete}");
+    expect(screen.queryByRole("treeitem", { name: /^Stage 1: Ship/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Deleted stage 1 and its steps.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByRole("treeitem", { name: /^Stage 1: Ship/ })).toBeInTheDocument();
 
     // Save sends the stages as the list holds them: the new one first, its step with no id.
     await save(user);
@@ -509,6 +516,124 @@ describe("ScenarioBuilder (scenario builder)", () => {
     ]);
   });
 
+  it("scenario builder keeps each reference on the block it reads when a block's id is renamed into another block's and out again", async () => {
+    const user = userEvent.setup();
+    const { requests } = renderBuilder({
+      [DETAIL]: aScenarioDetail({
+        document: {
+          ...REFERRING,
+          stages: [
+            {
+              name: "Ship",
+              steps: [
+                { do: "get-order-by-ref", id: "fetch" },
+                { do: "send-queue-message" },
+                { do: "get-order-by-ref", with: { order_id: "$fetch.output.order_id" } },
+                { do: "send-queue-message", with: { status: "$ship--3.output.status" } },
+              ],
+            },
+          ],
+        },
+        content_hash: "sha256:aaa",
+        version: 2,
+      }),
+      [SAVE]: () => SAVED,
+    });
+
+    await user.click(await screen.findByRole("treeitem", { name: /^Step 1\.2,/ }));
+    await user.click(
+      within(screen.getByRole("region", { name: "Inspector: Run an action ship--2" })).getByRole(
+        "button",
+        { name: "More: id" },
+      ),
+    );
+    // Block 1.2 given the id block 1.1 has, then the id block 1.3's place gives, each fixed after.
+    for (const [from, to] of [
+      ["ship--2", "fetch"],
+      ["fetch", "fetch-2"],
+      ["fetch-2", "ship--3"],
+      ["ship--3", "ship-two"],
+    ] as const) {
+      const editor = screen.getByRole("region", { name: `Inspector: Run an action ${from}` });
+      const id = within(editor).getByLabelText("Id");
+      await user.clear(id);
+      await user.type(id, to);
+      await user.tab();
+      expect(
+        await screen.findByRole("region", { name: `Inspector: Run an action ${to}` }),
+      ).toBeInTheDocument();
+    }
+
+    await save(user);
+    const sent = (await savedDocument(requests)) as { stages: unknown[] };
+    expect(sent.stages).toStrictEqual([
+      {
+        name: "Ship",
+        steps: [
+          { do: "get-order-by-ref", id: "fetch" },
+          { do: "send-queue-message", id: "ship-two" },
+          { do: "get-order-by-ref", with: { order_id: "$fetch.output.order_id" } },
+          { do: "send-queue-message", with: { status: "$ship--3.output.status" } },
+        ],
+      },
+    ]);
+  });
+
+  it("scenario builder keeps a reference on its block when the block's stage is renamed through another stage's name", async () => {
+    const user = userEvent.setup();
+    const { requests } = renderBuilder({
+      [DETAIL]: aScenarioDetail({
+        document: {
+          ...REFERRING,
+          stages: [
+            { name: "Order", steps: [{ do: "get-order-by-ref" }] },
+            {
+              name: "Pay",
+              steps: [
+                { do: "get-order-by-ref" },
+                {
+                  do: "send-queue-message",
+                  with: { order_id: "$pay--1.output.order_id", status: "$order--1.output.status" },
+                },
+              ],
+            },
+          ],
+        },
+        content_hash: "sha256:aaa",
+        version: 2,
+      }),
+      [SAVE]: () => SAVED,
+    });
+
+    // Typed letter by letter, the name passes through "Order", the first stage's: two blocks
+    // then run as order--1 for a moment.
+    await user.click(await screen.findByRole("treeitem", { name: /^Stage 2: Pay/ }));
+    const nameField = within(
+      screen.getByRole("region", { name: "Inspector: Stage 2" }),
+    ).getByLabelText("Name");
+    await user.clear(nameField);
+    await user.type(nameField, "Order pay");
+
+    await save(user);
+    const sent = (await savedDocument(requests)) as { stages: unknown[] };
+    expect(sent.stages).toStrictEqual([
+      { name: "Order", steps: [{ do: "get-order-by-ref" }] },
+      {
+        name: "Order pay",
+        steps: [
+          { do: "get-order-by-ref" },
+          {
+            do: "send-queue-message",
+            with: {
+              order_id: "$order-pay--1.output.order_id",
+              status: "$order--1.output.status",
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
   it("scenario builder's Graph view of a scenario written as blocks is a picture with nothing to add", async () => {
     const user = userEvent.setup();
     renderTree("blocks-together");
@@ -528,7 +653,8 @@ describe("ScenarioBuilder (scenario builder)", () => {
       stages: { steps: Record<string, unknown>[] }[];
     };
     proposed.stages[0]?.steps.push({ you: "Check the shipment by hand, then approve." });
-    renderTree("blocks-together", {
+    const { requests } = renderTree("blocks-together", {
+      [SAVE]: () => SAVED,
       [`${DETAIL}/proposal`]: {
         path: ".agent-runs/proposals/scenarios/orders/order-lifecycle.yaml",
         document: proposed,
@@ -553,6 +679,22 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(screen.getByRole("treeitem", { name: /^Step 1\.4, Ask me/ })).not.toHaveAttribute(
       "data-suggested",
     );
+    // The accepted block is the stage's fourth, and the only change Save sends.
+    expect(
+      within(screen.getByRole("group", { name: "Stage 1: Fix shipping" }))
+        .getAllByRole("treeitem")
+        .map((row) => row.getAttribute("aria-label")?.split(",")[0]),
+    ).toEqual([
+      "Step 1.1",
+      "Step 1.2",
+      "Step 1.2.p1.1",
+      "Step 1.2.p2.1",
+      "Step 1.2.p2.2",
+      "Step 1.3",
+      "Step 1.4",
+    ]);
+    await save(user);
+    expect(await savedDocument(requests)).toStrictEqual(proposed);
   });
 
   it("scenario builder offers Migrate for a graph scenario: it checks first, shows the blocks, then writes", async () => {
@@ -575,16 +717,43 @@ describe("ScenarioBuilder (scenario builder)", () => {
       "stages:",
     );
     expect(dialog).toHaveTextContent("Nothing is written until you migrate.");
+    // What the dialog says as it goes is read out too.
+    const status = within(dialog).getByRole("status");
+    expect(status).toHaveTextContent("Checked: it can be written as blocks.");
     await user.click(within(dialog).getByRole("button", { name: "Migrate" }));
 
     expect(
       await screen.findByText(/Migrated: order-lifecycle is now written as blocks/),
     ).toBeInTheDocument();
+    expect(status).toHaveTextContent("Done: the file is written as blocks.");
     const sent = requests.filter((request) => request.url.endsWith("/migrate"));
     expect(await Promise.all(sent.map((request) => request.clone().json()))).toEqual([
       { check: true, base_content_hash: "sha256:aaa" },
       { check: false, base_content_hash: "sha256:aaa" },
     ]);
+  });
+
+  it("scenario builder's Migrate asks to save unsaved changes first and checks nothing", async () => {
+    const user = userEvent.setup();
+    const { requests } = renderBuilder({ [MIGRATE]: () => MIGRATION });
+
+    await user.click(await screen.findByRole("treeitem", { name: CHECK }));
+    const field = within(
+      screen.getByRole("region", { name: "Inspector: Wait until order-on-hold" }),
+    ).getByLabelText("Give up after");
+    await user.clear(field);
+    await user.type(field, "10m");
+    expect(await screen.findByText("Unsaved")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "More" }));
+    await user.click(screen.getByRole("button", { name: "Migrate to stages of blocks" }));
+    const dialog = screen.getByRole("dialog", { name: "Migrate to stages of blocks" });
+
+    expect(dialog).toHaveTextContent(
+      "Save your changes first: Migrate rewrites the file as it is saved.",
+    );
+    expect(within(dialog).queryByRole("button", { name: "Migrate" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Check again" })).not.toBeInTheDocument();
+    expect(requests.filter((request) => request.url.endsWith("/migrate"))).toEqual([]);
   });
 
   it("scenario builder's Migrate writes over the file it checked: one changed since is refused and checked again", async () => {
@@ -606,7 +775,8 @@ describe("ScenarioBuilder (scenario builder)", () => {
             detail: "the scenario file changed since the builder read it",
           });
         }
-        if (calls === 3) return { ...MIGRATION, content_hash: "sha256:ddd" };
+        // The file changed once more before this check read it: it answers that file's hash.
+        if (calls === 3) return { ...MIGRATION, content_hash: "sha256:fff" };
         return calls === 1
           ? MIGRATION
           : { ...MIGRATION, written: true, content_hash: "sha256:eee" };
@@ -640,7 +810,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
       { check: true, base_content_hash: "sha256:aaa" },
       { check: false, base_content_hash: "sha256:aaa" },
       { check: true, base_content_hash: "sha256:ddd" },
-      { check: false, base_content_hash: "sha256:ddd" },
+      { check: false, base_content_hash: "sha256:fff" },
     ]);
     // The file read again is written as blocks: the page opens its stages.
     migrated = true;
@@ -1169,6 +1339,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
 
     await user.keyboard("{Delete}");
     expect(screen.queryByRole("treeitem", { name: CHECK })).not.toBeInTheDocument();
+    expect(screen.getByText("Deleted step order-on-hold.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Undo" }));
     expect(await screen.findByRole("treeitem", { name: CHECK })).toBeInTheDocument();
   });

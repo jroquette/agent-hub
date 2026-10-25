@@ -5,6 +5,7 @@ import { dependsOn, toDocument, type BuilderNode, type Json } from "./model";
 import {
   JOIN_RULE,
   addressOfKey,
+  findItem,
   idChanges,
   insertAt,
   isTree,
@@ -273,6 +274,8 @@ describe("scenario block program, written as blocks (version 2)", () => {
 
       expect(isTree(document)).toBe(true);
       expect(treeOf(document, stagesOf(document))).toStrictEqual(tree(name));
+      // Its keys too, in the canonical order the fixtures are written in.
+      expect(JSON.stringify(treeOf(document, stagesOf(document)))).toBe(JSON.stringify(tree(name)));
     },
   );
 
@@ -496,6 +499,19 @@ describe("scenario block program, written as blocks (version 2)", () => {
     );
     // A removed block with its own id leaves the references to it as written.
     expect(idChanges(stages, takeFrom(stages, "1.2.2", true).rest)).toEqual(new Map());
+    // A block given the id another block has, then another id: no reference follows either.
+    const given = (items: Item[], id: string) => {
+      const block = findItem(items, "1.1");
+      return block?.kind === "block"
+        ? replaceItem(items, "1.1", { ...block, named: true, node: { ...block.node, id } })
+        : items;
+    };
+    const shared = given(stages, "poll");
+    expect(idChanges(stages, shared)).toEqual(new Map());
+    expect(idChanges(shared, given(shared, "poll-first"))).toEqual(new Map());
+    expect(idChanges(stages, given(stages, "poll-first"))).toEqual(
+      new Map([["poll-review--1", "poll-first"]]),
+    );
     // Two stages of one slug give two blocks one id: no reference to it can follow either.
     const two = stagesOf({
       version: 2,

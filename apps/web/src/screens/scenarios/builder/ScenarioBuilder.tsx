@@ -354,6 +354,14 @@ export function ScenarioBuilder({
   } | null>(null);
   const [actionPanel, setActionPanel] = useState<string | null>(null);
   const actionOpener = useRef<HTMLElement | null>(null);
+  // A stage being renamed: its key, the stages and the draft before the rename began, and the
+  // draft the rename wrote last.
+  const renaming = useRef<{
+    key: string;
+    main: Item[];
+    raw: ScenarioDocument;
+    wrote: ScenarioDocument;
+  } | null>(null);
   const { ask } = useDiscuss();
   const navigate = useNavigate();
   const saveValue = useSaveEnvironmentValue(scenario.project);
@@ -585,16 +593,38 @@ export function ScenarioBuilder({
     ? document
     : { ...document, nodes: [...nodesOf(main), ...kept] };
 
-  /* Written as blocks, a block's id changed in its editor: its own (references to the id it ran
-   * under follow it), or none (it runs under its place's again). */
-  const renameBlock = (key: string, from: string, next: BuilderNode) => {
+  /* Written as blocks, a block's id changed in its editor: its own, or none (it runs under its
+   * place's again). The references to the id it ran under follow it as any edit's do
+   * (`idChanges`): not when another block ran under that id, or runs under the new one. */
+  const renameBlock = (key: string, next: BuilderNode) => {
     const current = findItem(main, key);
     if (current?.kind !== "block" && current?.kind !== "repeat") return;
     const named = next.id !== "";
-    const to = named ? next.id : placeIdOf(key);
-    const node = { ...without(next, "nodes"), id: to };
-    const edited: Item = { ...current, node, named };
-    draft.edit(renameRefs(treeOf(raw, replaceItem(main, key, edited)), new Map([[from, to]])));
+    const node = { ...without(next, "nodes"), id: named ? next.id : placeIdOf(key) };
+    commit(replaceItem(main, key, { ...current, node, named }));
+  };
+
+  /* Written as blocks, a stage's name or description changed in its editor, letter by letter.
+   * Its blocks' references follow them from the ids they ran under before the rename began, so
+   * a name that passes through another stage's slug (two blocks then share an id, which no
+   * reference can follow) loses none of them. The rename goes on from there as long as nothing
+   * else edits the draft (`renaming`). */
+  const editStage = (key: string, change: { name: string; description: string }) => {
+    const held = renaming.current;
+    const base = held?.key === key && held.wrote === raw ? held : { key, main, raw };
+    const stage = findItem(base.main, key);
+    if (stage?.kind !== "stage") return;
+    const extra = without(stage.extra ?? {}, "description");
+    const edited: Item = {
+      ...stage,
+      name: change.name,
+      extra: change.description === "" ? extra : { ...extra, description: change.description },
+    };
+    const next = replaceItem(base.main, key, edited);
+    const written = renameRefs(treeOf(base.raw, next), idChanges(base.main, next));
+    const changed = JSON.stringify(written) !== JSON.stringify(raw);
+    renaming.current = { ...base, wrote: changed ? written : raw };
+    if (changed) draft.edit(written);
   };
 
   const onGraphAdd = (choice: AddChoice, after: string | null, group: string | null) => {
@@ -680,13 +710,7 @@ export function ScenarioBuilder({
           description={typeof description === "string" ? description : ""}
           problems={problemsOf(key)}
           onChange={(next) => {
-            const extra = without(selectedItem.extra ?? {}, "description");
-            const edited: Item = {
-              ...selectedItem,
-              name: next.name,
-              extra: next.description === "" ? extra : { ...extra, description: next.description },
-            };
-            editItem(key, edited);
+            editStage(key, next);
           }}
           onClose={() => {
             setSelected(null);
@@ -766,7 +790,7 @@ export function ScenarioBuilder({
           onChange={(next) => {
             if (next.id !== node.id) {
               if (tree) {
-                renameBlock(key, node.id, next);
+                renameBlock(key, next);
                 return;
               }
               draft.edit(updateBlock(serialized, node.id, next));
@@ -1057,8 +1081,9 @@ export function ScenarioBuilder({
       setSelected(null);
     } else if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
+      const stage = findItem(main, selected)?.kind === "stage";
       removeItem(selected);
-      setToast(`Deleted ${selected}.`);
+      setToast(stage ? `Deleted stage ${selected} and its steps.` : `Deleted step ${selected}.`);
     } else if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
       event.preventDefault();
       const at = locate(main, selected);

@@ -243,8 +243,12 @@ other one. The builder never writes YAML: it holds the file's JSON, the server w
   reference reads: when a block with no id of its own gets another place id (a block inserted, moved or removed before
   it, a move to another stage, its stage renamed), every reference to it is rewritten to the new one, all at once; a
   reference to a removed block is written `<id>-removed`, an id no place gives, so the check names it rather than a
-  block now at that place reading as it. An id two blocks share (two stages of one slug) is not rewritten. A
-  proposal's block accepted in place of the one it changes keeps the references to that place.
+  block now at that place reading as it. An id two blocks share (two stages of one slug) is not rewritten, before the
+  edit or after it: a block given in More: id the id another block has, or another block's place id, keeps the
+  references to either as written, and so does the id it is given after. A stage name is written as it is typed, and
+  its blocks' references follow them from the ids they ran under before the rename began, so a name typed through
+  another stage's ("Order" on the way to "Order pay") loses none. A proposal's block accepted in place of the one it
+  changes keeps the references to that place.
 - **Graph view.** A picture of how the blocks run (the nodes they translate to, each selected with its block), with
   nothing to add or move there: "The graph shows how the blocks run: edit them in Blocks."
 - **Claude.** Describe with Claude teaches the tree's keys (stages, `do`, `wait_until`, `you`, `wait`, `include`,
@@ -259,7 +263,8 @@ other one. The builder never writes YAML: it holds the file's JSON, the server w
   `content_hash` as `base_content_hash`) and the page opens the stages. A file changed since the check is refused
   (409 `stale_document`, shown in the dialog with Check again, which checks the file as the builder reads it now); a
   write that migrates nothing lists its own problems and offers no Migrate. With unsaved changes it asks to save them
-  first.
+  first, and checks nothing. Where it has got to (checking, checked, refused, written) is read out in a polite live
+  region.
 - **Accessibility.** Written as blocks, the tree holds only its items (stage headers, steps, an empty list's item
   with its button); the "+" in a gap is the pointer's way, and the keys add from a row (`a`), the Blocks tab, Add step
   and Add stage.

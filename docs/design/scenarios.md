@@ -43,7 +43,9 @@ builder (AGH-517): it edits a `version: 2` file as its stages, each block read s
 its address, and writes the same JSON back (its keys in the canonical order below), so nothing is loose and a file
 opened and saved unchanged is unchanged; an edit that gives a block with no `id` another place (or its stage another
 name) rewrites each `$<id>.output` reference to it to the new derived id, and one to a removed block to `<id>-removed`,
-so no reference starts reading another block; a `version: 1` file it edits as AGH-521 shipped it, and offers Migrate
+so no reference starts reading another block (an id another block runs under, before the edit or after it, is left as
+written: the Id rename too; a stage name typed letter by letter follows from the ids before the rename began); a
+`version: 1` file it edits as AGH-521 shipped it, and offers Migrate
 (screen spec 23, the ADR's delivery notes).
 
 A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md)):
