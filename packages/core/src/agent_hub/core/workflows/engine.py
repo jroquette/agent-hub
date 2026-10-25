@@ -39,7 +39,10 @@ rest of the stopped layer, then the layers after it. Nothing the pass already ha
 again. The first visit of the node it stopped before runs, and so does that of any node paused
 for the same block (an If's or a Together's other entry nodes): once per node and process,
 whether or not the port was asked then or released that visit itself, so the node's next visit
-(a body node's in the next iteration) pauses again.
+(a body node's in the next iteration) pauses again. It runs on the plan that pass ran on: a plan
+whose layers do not hold the pass as it ran (a node of an earlier layer with no end in it, or a
+stopped layer without the paused node or its group) is refused (``WorkflowEngineError``), never
+gone on from another layer.
 
 A ``loop_group`` is one step around its body's: each iteration runs the body's layers (body ids
 as recorded, ``<group>__<id>``, each visit a new attempt), with ``$LOOP_PREV`` reading the
@@ -241,8 +244,6 @@ class _Run:
         self.first_layer = 0
         # The gate that pass opened and left open: it is not visited again.
         self.left_open: str | None = None
-        if prior.paused_pass is not None:
-            self._go_on_with(prior.paused_pass)
         # Each body node's group, and each running group's previous iteration.
         self.owner = {
             body.id: node
@@ -250,6 +251,8 @@ class _Run:
             if isinstance(node, LoopGroupNode)
             for body in node.nodes
         }
+        if prior.paused_pass is not None:
+            self._go_on_with(prior.paused_pass)
         self.loop_prevs: dict[str, dict[str, NodeResult]] = {}
         self.lock = threading.Lock()
         self.trace_lock = threading.Lock()
@@ -265,6 +268,7 @@ class _Run:
     def _go_on_with(self, paused: PausedPass) -> None:
         """Restore the pass a debug pause stopped: the resume goes on with it, over the results
         that pass started from."""
+        self._check_fits(paused)
         nodes = {n: result for n, result in self.prior.nodes.items() if n not in paused.ends}
         self.prior = dataclasses.replace(self.prior, nodes=nodes | dict(paused.before))
         self.first_layer = paused.layer
@@ -274,6 +278,22 @@ class _Run:
         if paused.gate is not None:
             self.left_open = paused.gate
             self.paused = (paused.gate, self.prior.gates[paused.gate])
+
+    def _check_fits(self, paused: PausedPass) -> None:
+        """Refuse a paused pass the plan does not hold as that pass ran it: every node of the
+        layers before the stopped one ended in it, and the stopped layer holds the node the pause
+        stopped before (or that node's group). Gone on by a layer index that moved (a plan built
+        with other gates), the pass would never visit that node and the rest of its layer."""
+        pause, layers = self.prior.pause, self.plan.layers
+        node = None if pause is None else pause.node
+        top = self.owner[node].id if node in self.owner else node
+        fits = 0 <= paused.layer < len(layers) and (top is None or top in layers[paused.layer])
+        if not fits or any(n not in paused.ends for layer in layers[: paused.layer] for n in layer):
+            before = "" if node is None else f" before {echo(node)}"
+            raise WorkflowEngineError(
+                f"the run's debug pause{before} cannot go on: the plan no longer has the layers"
+                " its pass ran on"
+            )
 
     def execute(self) -> RunReport:
         nodes = {node.id: node for node in self.plan.document.nodes}

@@ -31,7 +31,9 @@ A debugging run (ADR 0049; docs/design/scenarios.md § Debugging) adds three lin
 
 - ``debug.breakpoints``: ``addresses``, the run's breakpoints as set (the latest line holds them);
 - ``debug.pause``: ``node``, ``block``, ``reason`` and ``number`` (from 1 in the run), with what
-  the resume goes on with (``debug_pause_line``): the stopped ``pass`` and the open ``gates``;
+  the resume goes on with (``debug_pause_line``): the stopped ``pass``, the open ``gates`` and
+  the policy ``asks`` that pass's plan held beyond the snapshot's (a resume's re-asks), so the
+  resume plans the same layers;
 - ``debug.command``: ``command`` (``step`` or ``continue``), ``approver``, and the ``node`` and
   ``number`` of the pause it resumes.
 
@@ -55,7 +57,8 @@ from typing import Final, get_args
 
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.json_form import JsonValue
-from agent_hub.core.scenarios.policy_gates import INVESTIGATION
+from agent_hub.core.scenarios.access_policy import Effect
+from agent_hub.core.scenarios.policy_gates import INVESTIGATION, PolicyAsk
 from agent_hub.core.workflows.failures import FailureKind
 from agent_hub.core.workflows.gates import OpenGate
 from agent_hub.core.workflows.ports import SkipCause
@@ -80,6 +83,7 @@ _PASS_LINES: Final = frozenset({"start", "resume", "end"})
 _NODE_STATES: Final = frozenset(get_args(NodeState.__value__))
 _SKIP_CAUSES: Final = frozenset(get_args(SkipCause.__value__))
 _FAILURE_KINDS: Final = frozenset(get_args(FailureKind.__value__))
+_EFFECTS: Final = frozenset(get_args(Effect))
 _DEBUG_REASONS: Final = frozenset(get_args(DebugReason.__value__))
 TIMELINE_EVENTS: Final = frozenset(
     {
@@ -617,12 +621,15 @@ def fold_values(records: Iterable[Record]) -> RunValues:
 @dataclass(frozen=True)
 class DebugResume:
     """What a run's debug pause leaves for its resume, read back from its ``debug.pause`` line:
-    the pause, the pass it stopped and the gates open then (the pass's own and an earlier
-    pass's it had not reached). The rest of the run's state comes from its other lines."""
+    the pause, the pass it stopped, the gates open then (the pass's own and an earlier pass's it
+    had not reached) and the policy asks that pass's plan held beyond the snapshot's, by step
+    (re-asks owed then): the resume plans with them, so its plan has the layers the pass ran on.
+    The rest of the run's state comes from its other lines."""
 
     pause: DebugPause
     paused_pass: PausedPass
     gates: Mapping[str, OpenGate]
+    asks: Mapping[str, PolicyAsk] = field(default_factory=dict)
 
     def applied_to(self, state: RunState) -> RunState:
         """``state`` (rebuilt from the run's other lines) with this pause, its pass and its
@@ -632,10 +639,13 @@ class DebugResume:
         )
 
 
-def debug_pause_line(state: RunState, *, number: int) -> dict[str, JsonValue]:
+def debug_pause_line(
+    state: RunState, *, number: int, asks: Mapping[str, PolicyAsk] | None = None
+) -> dict[str, JsonValue]:
     """The ``debug.pause`` line of ``state``, a report's state paused by run control: the pause,
-    its ``number`` in the run, the stopped pass and the open gates. Its groups go in the
-    ``held`` line, as a gate pause's do."""
+    its ``number`` in the run, the stopped pass, the open gates and ``asks``, the policy asks the
+    pass's plan held beyond the snapshot's. Its groups go in the ``held`` line, as a gate
+    pause's do."""
     pause, paused = state.pause, state.paused_pass
     if pause is None or paused is None:
         msg = "the state is not paused by run control"
@@ -652,9 +662,14 @@ def debug_pause_line(state: RunState, *, number: int) -> dict[str, JsonValue]:
         node: {"attempt": gate.attempt, "due": None if gate.due is None else gate.due.isoformat()}
         for node, gate in state.gates.items()
     }
+    planned: dict[str, JsonValue] = {
+        step: {"action": ask.action, "effect": ask.effect, "environment": ask.environment}
+        | {"again": ask.again}
+        for step, ask in (asks or {}).items()
+    }
     line: dict[str, JsonValue] = {"event": DEBUG_PAUSE, "node": pause.node}
     line |= {"block": pause.block, "reason": pause.reason, "number": number}
-    return line | {"pass": passing, "gates": gates}
+    return line | {"pass": passing, "gates": gates, "asks": planned}
 
 
 def debug_resume(records: Iterable[Record]) -> DebugResume | None:
@@ -696,7 +711,8 @@ def _resumed(line: Record) -> DebugResume:
         gate=gate,
     )
     opened = {key: _gate_of(value) for key, value in gates.items()}
-    return DebugResume(DebugPause(node, block, reason), paused, opened)  # type: ignore[arg-type]
+    asks = {key: _ask_of(value) for key, value in _object(line["asks"]).items()}
+    return DebugResume(DebugPause(node, block, reason), paused, opened, asks)  # type: ignore[arg-type]
 
 
 def _result_line(result: NodeResult) -> JsonValue:
@@ -735,6 +751,17 @@ def _gate_of(value: JsonValue) -> OpenGate:
     if attempt is None or not (due is None or isinstance(due, str)):
         raise ValueError(attempt)
     return OpenGate(attempt, None if due is None else datetime.fromisoformat(due))
+
+
+def _ask_of(value: JsonValue) -> PolicyAsk:
+    given = _object(value)
+    action, effect = given["action"], given["effect"]
+    environment, again = given["environment"], given["again"]
+    if effect not in _EFFECTS:
+        raise ValueError(effect)
+    if not (isinstance(action, str) and isinstance(environment, str) and isinstance(again, bool)):
+        raise TypeError(action)
+    return PolicyAsk(action=action, effect=effect, environment=environment, again=again)  # type: ignore[arg-type]
 
 
 def _object(value: JsonValue) -> dict[str, JsonValue]:

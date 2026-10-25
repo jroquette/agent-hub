@@ -26,7 +26,7 @@ from agent_hub.core.testing.workflow_fakes import (
     a_plan,
 )
 from agent_hub.core.workflows.document import parse_workflow
-from agent_hub.core.workflows.engine import EnginePorts, run_workflow
+from agent_hub.core.workflows.engine import EnginePorts, WorkflowEngineError, run_workflow
 from agent_hub.core.workflows.failures import NodeFailedError
 from agent_hub.core.workflows.gates import GateAnswer, GateAnswers, OpenGate
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
@@ -565,6 +565,38 @@ def test_goes_on_with_the_paused_pass_when_the_resume_has_no_breakpoint_left() -
     assert last.state.paused_pass is None
     assert run.ran == [["a", "b"], ["c"]]
     assert last.state.attempts == {"a": 1, "b": 1, "c": 1}
+
+
+@pytest.mark.parametrize(
+    ("paused_at", "block", "ran"), [("b", "1.2", ["a"]), ("c", "1.3", ["a", "b"])]
+)
+def test_refuses_the_resume_and_runs_nothing_when_the_plan_moved_the_layer_the_pause_stopped(
+    paused_at: str, block: str, ran: list[str]
+) -> None:
+    # The pass ran behind a policy gate the next plan no longer holds: every later layer moved up
+    # one, so going on by the stopped layer's index would skip the paused node, never run it.
+    document = parse_workflow(
+        {
+            "version": 1,
+            "name": "demo",
+            "revision": 1,
+            "nodes": [shell("a"), shell("b", "a"), shell("c", "b")],
+        }
+    )
+    run = Passes(gated_plan(document, includes=None, asks={"a": ASK}))
+    run.answers[("a__ask", 1)] = APPROVE
+
+    paused = run.next(Breakpoints({paused_at: block}))
+    ends = list(run.recorder.ends)
+    run.plan = plan_workflow(document)
+    with pytest.raises(WorkflowEngineError, match="debug pause") as refused:
+        run.next(None)
+
+    assert paused.state.pause == DebugPause(paused_at, block, "breakpoint")
+    assert f'pause before "{paused_at}"' in str(refused.value)
+    assert run.recorder.ends == ends
+    assert run.recorder.run_ends == []
+    assert run.runner.ran() == ran
 
 
 def test_holds_the_iteration_with_its_open_gate_when_a_body_node_pauses_beside_it() -> None:

@@ -2469,6 +2469,7 @@ DEBUG_PAUSE = {
     "number": 1,
     "pass": {"layer": 2, "ends": {}, "before": {}, "changed": [], "stale": [], "gate": None},
     "gates": {},
+    "asks": {},
 }
 
 

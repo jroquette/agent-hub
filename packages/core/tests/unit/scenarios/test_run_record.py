@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from agent_hub.core.scenarios.policy_gates import PolicyAsk
 from agent_hub.core.scenarios.run_record import (
     RunRecordError,
     debug_pause_line,
@@ -399,6 +400,37 @@ def test_refuses_the_debug_pause_line_when_its_pass_cannot_be_read() -> None:
     _, state = a_paused_run()
     line = round_trip(debug_pause_line(state, number=1))
     line["pass"]["ends"]["a"]["state"] = "running"
+
+    with pytest.raises(RunRecordError):
+        debug_resume([*a_record(), line])
+
+
+def test_reads_back_the_asks_its_pass_planned_with_when_a_debug_pause_line_holds_them() -> None:
+    # The resume plans with them, so the pass goes on over the layers it ran on.
+    _, state = a_paused_run()
+    ask = PolicyAsk(action="demo/queue-send", effect="write", environment="local", again=True)
+
+    asked = debug_resume(
+        [*a_record(), round_trip(debug_pause_line(state, number=1, asks={"a": ask}))]
+    )
+    plain = debug_resume([*a_record(), round_trip(debug_pause_line(state, number=1))])
+
+    assert asked is not None and plain is not None
+    assert asked.asks == {"a": ask}
+    assert plain.asks == {}
+
+
+@pytest.mark.parametrize("broken", [{"effect": "rewrite"}, {"again": "yes"}, None])
+def test_refuses_the_debug_pause_line_when_its_asks_cannot_be_read(
+    broken: dict[str, str] | None,
+) -> None:
+    _, state = a_paused_run()
+    ask = PolicyAsk(action="demo/queue-send", effect="write", environment="local", again=True)
+    line = round_trip(debug_pause_line(state, number=1, asks={"a": ask}))
+    if broken is None:
+        del line["asks"]
+    else:
+        line["asks"]["a"] |= broken
 
     with pytest.raises(RunRecordError):
         debug_resume([*a_record(), line])

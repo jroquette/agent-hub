@@ -231,12 +231,15 @@ A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([A
   the latest line holds the run's breakpoints); `debug.breakpoints_unreadable` (`reason`: why the file counted as no
   breakpoint); `debug.pause` (`node`, `block`, `reason` `breakpoint` or `step`,
   `number` from 1 in the run, then what the resume goes on with: `pass` (`layer`, `ends` and `before` by node with
-  `state`, `output` and an end's `skip_cause`, `origin`, `failure_kind`, `changed`, `stale`, `gate`) and `gates` (each
-  open gate's `attempt` and `due`); held groups stay in the `held` line written beside it); `debug.command` (`command`
-  `step` or `continue`, `approver`, and the `node` and `number` of the pause it resumes). A pause is the run's while no
-  `resume`, `start` or `end` line follows it: then the debugger is why the run is paused, not a gate an earlier pass
-  left open (no investigation is open), and a resume rebuilds the stopped pass from that line, so it goes on exactly
-  as the run would have without leaving the process. A `debug.pause` line that cannot be read refuses the resume.
+  `state`, `output` and an end's `skip_cause`, `origin`, `failure_kind`, `changed`, `stale`, `gate`), `gates` (each
+  open gate's `attempt` and `due`) and `asks` (the policy asks the pass's plan held beyond the snapshot's, by step:
+  `action`, `effect`, `environment`, `again`; a resume's re-asks), which the resume plans with, so it goes on over the
+  layers the pass ran on even when a re-ask is no longer owed; held groups stay in the `held` line written beside
+  it); `debug.command` (`command` `step` or `continue`, `approver`, and the `node` and `number` of the pause it
+  resumes). A pause is the run's while no `resume`, `start` or `end` line follows it: then the debugger is why the run
+  is paused, not a gate an earlier pass left open (no investigation is open), and a resume rebuilds the stopped pass
+  from that line, so it goes on exactly as the run would have without leaving the process. A `debug.pause` line that
+  cannot be read refuses the resume.
 - hub web reads all of it from the run, never from the scenario file as it reads now: the run view's `blocks` are
   the pinned tree's (as breakpoints are checked), and each timeline line's `block` is the address of the block that
   holds its node, as the values read gives it, so an edit in the builder while a run is paused changes neither the

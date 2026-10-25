@@ -58,9 +58,9 @@ Chosen option: 1.
   body holds its iteration as a body gate does). With a breakpoint or step mode on, a layer that holds a node to pause at runs
   its nodes one at a time in declaration order, so "before this block" is exact. The resume is today's resume, except
   that it goes on with the paused pass as if the process had never stopped (the run state keeps that pass: nothing
-  it handled runs again, and the rest runs as it would have), so a pause never changes what a run does; Step and Continue
-  are recorded commands read by the port. Without the port, or with no breakpoint and no step, the engine behaves as
-  before.
+  it handled runs again, and the rest runs as it would have, on the plan that pass ran on), so a pause never changes
+  what a run does; Step and Continue are recorded commands read by the port. Without the port, or with no breakpoint
+  and no step, the engine behaves as before.
 - **Breakpoints are run data.** Block addresses of the run's pinned tree, kept in the run folder, written whole by
   the CLI (hub web runs it as it runs gate decisions), read as each layer of nodes starts. They are never in the
   document, so they change neither the plan nor the `content_hash`.
@@ -118,8 +118,9 @@ This ADR stays proposed. The whole decision above is built (AGH-507), in these p
 - **Run control.** `EnginePorts.control` pauses a run before a node, and the resume goes on with the pass it stopped
   ([design/workflow-engine-rules.md](../design/workflow-engine-rules.md) § Run control).
 - **Record.** `run_record` folds a run's debug pause, breakpoints and commands, reads a `debug.pause` line back so a
-  run rebuilt from its record resumes with the pass it stopped, and folds the values a paused run shows; the
-  `debug.*` event types have their `payload_keys` rows ([design/scenarios.md](../design/scenarios.md) § Debugging).
+  run rebuilt from its record resumes with the pass it stopped (and plans with the policy asks that pass planned
+  with), and folds the values a paused run shows; the `debug.*` event types have their `payload_keys` rows
+  ([design/scenarios.md](../design/scenarios.md) § Debugging).
 - **Canonical writer.** `generator`'s `scenario_yaml.render_document` writes a `version: 2` tree, and a `version: 1`
   graph as before, in the canonical key order ([design/scenarios.md](../design/scenarios.md) § Tree format), so a
   canonical tree file reads back to its own bytes; the API's builder validate and Save use it and take a `version: 2`

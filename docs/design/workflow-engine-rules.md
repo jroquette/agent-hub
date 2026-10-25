@@ -99,6 +99,11 @@ only nodes: the run-control port maps blocks to the nodes they enter by, and dec
   nodes). That is each node's first visit in the resumed process, once, whether or not the port is asked then and
   whether it answers a stop or releases that visit itself; a later visit (a body node's in the next iteration) is
   asked and pauses as any other.
+- The resume runs on the plan the stopped pass ran on, with the same layers: a scenario run's plans with the policy
+  asks that pass planned with, kept in its `debug.pause` line, even a re-ask no longer owed because its step ended
+  since. The stopped pass names its layer by position, so the engine refuses (`WorkflowEngineError`) a plan whose
+  layers do not hold that pass as it ran (a node of an earlier layer with no end in it, or a stopped layer without
+  the paused node or its group); it never goes on from another layer.
 - A gate that opened in the stopped pass stays open: the report is the debug pause, the gate is in the run state, and
   its answer is not read again in that pass. Once the stopped layer ends, the pass pauses on the gate, as it does with
   no breakpoint, and the resume after it takes up the answer. What an earlier pass left open that the stopped pass
