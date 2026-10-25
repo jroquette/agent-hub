@@ -43,7 +43,7 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   writes graph scenarios (`version: 1`) again in place as blocks, or writes nothing and names each node it cannot map
   and why; `hub doctor` warns (`scenarios.graph_format`) on each graph scenario, which a later release stops reading,
   and `hub init` seeds `demo-service-up` as `version: 2`. A scenario run written as blocks can be debugged off
-  production: `hub scenario run --break ADDR`, `hub scenario break RUN ADDR… [--off|--set]`, `hub scenario step RUN`
+  production: `hub scenario run --break ADDR`, `hub scenario break RUN [ADDR]… [--off|--set]`, `hub scenario step RUN`
   and `hub scenario continue RUN` pause it before a block, run the next block, or run to the next breakpoint; no debug
   command answers an ask, edits a value or changes what the run does, and the `debug.*` events record each pause and
   command. In hub web, the builder edits a `version: 2` scenario as its stages of blocks (stage headers to add,
@@ -52,8 +52,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   nothing; it keeps editing a `version: 1` scenario as before and offers Migrate for it. A scenario run's page lists
   the blocks the run pinned, each with its state and a breakpoint toggle, offers Step and Continue in a debug pause,
   and shows the run's inputs and each finished block's values while it is paused; the scenario page sets breakpoints
-  before a start. The API gains the routes for breakpoints, Step, Continue, a paused run's values and migrate
-  (AGH-507).
+  before a start. The API gains the routes for breakpoints, Step, Continue, a paused run's values and migrate, and a
+  scenario run's start takes `breakpoints` (AGH-507).
 
 ### Changed
 
@@ -100,6 +100,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   default message for the request's kind, since Claude's API refuses an empty error tool result (AGH-521).
 - The review's diff colours each hunk on its own, so a string or comment left open in one hunk no longer colours the
   next (AGH-521).
+- `hub web` answers 404 to a request whose path holds a control character (a trailing `%0A` included), before any
+  other check, so no such path reaches a route without the checks its own path gets (AGH-507).
 
 ## [0.23.0] - 2026-10-23
 
