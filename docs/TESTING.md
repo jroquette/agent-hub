@@ -126,8 +126,8 @@ it shows them, and the seeded starter `AGENTS.md` for app repos are checked in b
 `rendered/app_repo_agents/<path>.golden` (`-text`) by `test_rendered_text.py`; `GOLDEN_UPDATE=1` rewrites them (refused
 under `CI`). `apps/web/src/testing/treeDocuments.ts` is the strict loader's parse of each tree fixture under
 `packages/core/tests/data/scenarios/blocks/tree/`, as the API gives it, which the web builder's round trip is checked
-against; `packages/generator/tests/unit/test_workflow_yaml.py` checks it, and `GOLDEN_UPDATE=1` rewrites it (refused
-under `CI`).
+against; `packages/generator/tests/integration/test_web_tree_documents.py` checks it, and `GOLDEN_UPDATE=1` rewrites it
+(refused under `CI`).
 
 ## Layout
 

@@ -1,8 +1,8 @@
 // Generated: the strict loader's parse of each scenario of
 // packages/core/tests/data/scenarios/blocks/tree, as GET /api/v1/scenarios/{project}/{name}
-// gives it as `document`, and the scenario writer's key order. test_workflow_yaml.py
-// (packages/generator/tests/unit) checks it and rewrites it with GOLDEN_UPDATE=1. Tests read
-// it through aTreeDocument and anEveryKeyTree (builders.ts).
+// gives it as `document`, and the scenario writer's key order. test_web_tree_documents.py
+// (packages/generator/tests/integration) checks it and rewrites it with GOLDEN_UPDATE=1. Tests
+// read it through aTreeDocument and anEveryKeyTree (builders.ts).
 export const TREE_DOCUMENTS: Readonly<Record<string, unknown>> = {
   "blocks-if-else": {
     "version": 2,
