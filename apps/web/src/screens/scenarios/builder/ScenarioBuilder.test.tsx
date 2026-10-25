@@ -459,7 +459,28 @@ describe("ScenarioBuilder (scenario builder)", () => {
 
   it("scenario builder writes the id a block's place gives when it is given as its own, and keeps it when a block goes before it", async () => {
     const user = userEvent.setup();
-    const { requests } = renderTree(REFERENCE, { [SAVE]: () => SAVED });
+    // The check as the server makes it: a block put at the pinned block's old place runs under
+    // the same id until one of them has another.
+    let shared = false;
+    const { requests } = renderTree(REFERENCE, {
+      [SAVE]: () => SAVED,
+      [VALIDATE]: () => ({
+        loads: !shared,
+        yaml: "",
+        problems: shared
+          ? [
+              {
+                node: "fetch-order--2",
+                key: "stages[0].steps[2].id",
+                line: null,
+                message: "the id fetch-order--2 is also block 1.2's",
+                severity: "error",
+              },
+            ]
+          : [],
+        nodes: [],
+      }),
+    });
 
     await user.click(await screen.findByRole("treeitem", { name: /^Step 1\.2,/ }));
     const editor = screen.getByRole("region", { name: "Inspector: Wait until fetch-order--2" });
@@ -474,19 +495,30 @@ describe("ScenarioBuilder (scenario builder)", () => {
     // A Pause put before it: the block is 1.3 and runs under the id it was given.
     await user.click(screen.getByRole("treeitem", { name: /^Step 1\.1,/ }));
     const blocks = screen.getByRole("complementary", { name: "Blocks, variables and actions" });
+    shared = true;
     await user.click(within(blocks).getByRole("button", { name: "Add Pause after step 1.1" }));
     await user.click(await screen.findByRole("treeitem", { name: /^Step 1\.3, Wait until/ }));
     const moved = screen.getByRole("region", { name: "Inspector: Wait until fetch-order--2" });
     await user.click(within(moved).getByRole("button", { name: "More: id" }));
     expect(within(moved).getByLabelText("Id")).toHaveValue("fetch-order--2");
+    // The Pause now at 1.2 runs under that id too: the check names it, and Save stays off.
+    expect(await screen.findByText("1 problem")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save scenario" })).toBeDisabled();
 
+    // The Pause given an id of its own: nothing is shared, and the file can be saved.
+    await user.click(screen.getByRole("treeitem", { name: /^Step 1\.2,/ }));
+    const pause = screen.getByRole("region", { name: /^Inspector: .* fetch-order--2$/ });
+    await user.click(within(pause).getByRole("button", { name: "More: id" }));
+    await user.type(within(pause).getByLabelText("Id"), "pause");
+    shared = false;
+    await user.tab();
     await save(user);
     const sent = (await savedDocument(requests)) as { stages: { steps: unknown[] }[] };
     const [fetch, pinned] = (aTreeDocument(REFERENCE) as { stages: { steps: object[] }[] })
       .stages[0]?.steps ?? [{}, {}];
     expect(sent.stages[0]?.steps).toStrictEqual([
       fetch,
-      { wait: { duration: "30s" } },
+      { wait: { duration: "30s" }, id: "pause" },
       { ...pinned, id: "fetch-order--2" },
     ]);
   });
@@ -712,7 +744,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
       "data-suggested",
     );
     const review = screen.getByRole("region", { name: "Claude's proposal" });
-    await user.click(within(review).getByRole("button", { name: "Accept block 1.4" }));
+    await user.click(within(review).getByRole("button", { name: "Accept new block 1.4" }));
 
     expect(await screen.findByText("Unsaved")).toBeInTheDocument();
     expect(screen.getByRole("treeitem", { name: /^Step 1\.4, Ask me/ })).not.toHaveAttribute(
@@ -792,17 +824,21 @@ describe("ScenarioBuilder (scenario builder)", () => {
       within(review)
         .getAllByRole("button", { name: /^Accept / })
         .map((button) => button.getAttribute("aria-label"));
-    expect(listed()).toEqual(["Accept block 7.1", "Accept block 7.3", "Accept block 8.3"]);
+    expect(listed()).toEqual([
+      "Accept removed block 7.1",
+      "Accept removed block 7.3",
+      "Accept removed block 8.3",
+    ]);
 
     // One taken: only that block goes, and its twin (block 7.2 now) is still to decide.
-    await user.click(within(review).getByRole("button", { name: "Accept block 7.1" }));
+    await user.click(within(review).getByRole("button", { name: "Accept removed block 7.1" }));
     await waitFor(() => {
-      expect(listed()).toEqual(["Accept block 7.2", "Accept block 8.3"]);
+      expect(listed()).toEqual(["Accept removed block 7.2", "Accept removed block 8.3"]);
     });
     // One left as it is: the other is still to decide.
-    await user.click(within(review).getByRole("button", { name: "Reject block 7.2" }));
-    expect(listed()).toEqual(["Accept block 8.3"]);
-    await user.click(within(review).getByRole("button", { name: "Accept block 8.3" }));
+    await user.click(within(review).getByRole("button", { name: "Reject removed block 7.2" }));
+    expect(listed()).toEqual(["Accept removed block 8.3"]);
+    await user.click(within(review).getByRole("button", { name: "Accept removed block 8.3" }));
 
     // Every change decided: the review closes and the proposal is dismissed.
     await waitFor(() => {
@@ -813,6 +849,138 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const expected = dropped(6, 0);
     expected.stages[7]?.steps.splice(2, 1);
     expect(await savedDocument(requests)).toStrictEqual(expected);
+  });
+
+  it("scenario builder keeps the other of two alike blocks Claude's proposal adds to decide when the later one is accepted first", async () => {
+    const user = userEvent.setup();
+    const proposed = aTreeDocument("blocks-together") as { stages: { steps: unknown[] }[] };
+    proposed.stages[0]?.steps.push({ wait: { duration: "30s" } }, { wait: { duration: "30s" } });
+    const { requests } = renderTree("blocks-together", {
+      [SAVE]: () => SAVED,
+      [`${DETAIL}/proposal`]: {
+        path: ".agent-runs/proposals/scenarios/orders/order-lifecycle.yaml",
+        document: proposed,
+        check: { loads: true, yaml: "", problems: [], nodes: [] },
+        problem: null,
+      },
+      [`POST ${DETAIL}/proposal/dismiss`]: {},
+    });
+
+    await screen.findByText("Claude proposes");
+    await user.click(screen.getByRole("button", { name: "Review" }));
+    const review = screen.getByRole("region", { name: "Claude's proposal" });
+    const listed = () =>
+      within(review)
+        .getAllByRole("button", { name: /^Accept / })
+        .map((button) => button.getAttribute("aria-label"));
+    expect(listed()).toEqual(["Accept new block 1.4", "Accept new block 1.5"]);
+
+    // The later one taken: the earlier one is still to decide, and the review stays open.
+    await user.click(within(review).getByRole("button", { name: "Accept new block 1.5" }));
+    await waitFor(() => {
+      expect(listed()).toEqual(["Accept new block 1.4"]);
+    });
+    expect(requests.some((request) => request.url.endsWith("/proposal/dismiss"))).toBe(false);
+    await user.click(within(review).getByRole("button", { name: "Accept new block 1.4" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("region", { name: "Claude's proposal" })).not.toBeInTheDocument();
+    });
+    await save(user);
+    expect(await savedDocument(requests)).toStrictEqual(proposed);
+  });
+
+  it("scenario builder takes a proposal's block as Claude wrote it, so the blocks accepted bottom-up give the proposal", async () => {
+    const user = userEvent.setup();
+    const draft = {
+      version: 2,
+      kind: "scenario",
+      name: "order-lifecycle",
+      revision: 1,
+      stages: [
+        { name: "Fetch order", steps: [{ do: "get-order-by-ref" }, { do: "send-queue-message" }] },
+      ],
+    };
+    // Two blocks after the first: the second reads the first by the id its place gives it.
+    const proposed = {
+      ...draft,
+      stages: [
+        {
+          name: "Fetch order",
+          steps: [
+            { do: "get-order-by-ref" },
+            { you: "Find the order's id by hand." },
+            { do: "send-queue-message", with: { order_id: "$fetch-order--2.output.order_id" } },
+            { do: "send-queue-message" },
+          ],
+        },
+      ],
+    };
+    const { requests } = renderBuilder({
+      [DETAIL]: aScenarioDetail({ document: draft, content_hash: "sha256:aaa", version: 2 }),
+      [SAVE]: () => SAVED,
+      [`${DETAIL}/proposal`]: {
+        path: ".agent-runs/proposals/scenarios/orders/order-lifecycle.yaml",
+        document: proposed,
+        check: { loads: true, yaml: "", problems: [], nodes: [] },
+        problem: null,
+      },
+      [`POST ${DETAIL}/proposal/dismiss`]: {},
+    });
+
+    await screen.findByText("Claude proposes");
+    await user.click(screen.getByRole("button", { name: "Review" }));
+    const review = screen.getByRole("region", { name: "Claude's proposal" });
+    const listed = () =>
+      within(review)
+        .getAllByRole("button", { name: /^Accept / })
+        .map((button) => button.getAttribute("aria-label"));
+    expect(listed()).toEqual(["Accept new block 1.2", "Accept new block 1.3"]);
+
+    // The block that reads the other taken first: it keeps reading the place Claude wrote.
+    await user.click(within(review).getByRole("button", { name: "Accept new block 1.3" }));
+    await waitFor(() => {
+      expect(listed()).toEqual(["Accept new block 1.2"]);
+    });
+    await user.click(within(review).getByRole("button", { name: "Accept new block 1.2" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("region", { name: "Claude's proposal" })).not.toBeInTheDocument();
+    });
+    await save(user);
+    expect(await savedDocument(requests)).toStrictEqual(proposed);
+  });
+
+  it("scenario builder says so when Claude's proposal for a scenario written as blocks is a graph", async () => {
+    renderTree("blocks-together", {
+      [`${DETAIL}/proposal`]: {
+        path: ".agent-runs/proposals/scenarios/orders/order-lifecycle.yaml",
+        document: { ...document, name: "blocks-together" },
+        check: { loads: true, yaml: "", problems: [], nodes: [] },
+        problem: null,
+      },
+    });
+
+    const proposes = await screen.findByText("Claude proposes");
+    expect(proposes.parentElement).toHaveTextContent(
+      "it is written as a graph (nodes), not as stages: accepting it all leaves no stage",
+    );
+  });
+
+  it("scenario builder's Describe names the place of a scenario written as blocks as Claude is told it", async () => {
+    const user = userEvent.setup();
+    renderTree(REFERENCE);
+
+    await user.click(await screen.findByRole("treeitem", { name: /^Stage 2: Review/ }));
+    await user.click(screen.getByRole("button", { name: "Describe with Claude" }));
+    let dialog = screen.getByRole("dialog", { name: "Describe it to Claude" });
+    expect(within(dialog).getByText("Steps at the end of stage 2")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    await user.click(screen.getByRole("treeitem", { name: /^Step 1\.2,/ }));
+    await user.click(screen.getByRole("button", { name: "Describe with Claude" }));
+    dialog = screen.getByRole("dialog", { name: "Describe it to Claude" });
+    expect(within(dialog).getByText("Steps after block 1.2")).toBeInTheDocument();
   });
 
   it("scenario builder pins a problem of a scenario written as blocks on its block, the field it names and the Problems list", async () => {
@@ -870,6 +1038,41 @@ describe("ScenarioBuilder (scenario builder)", () => {
       screen.getByRole("region", { name: "Inspector: Run an action check--3" }),
     ).getByLabelText("Action");
     expect(action.closest(".sb-field")).toHaveTextContent("unknown action 'queue-send'");
+  });
+
+  it("scenario builder shows a stage's problem in its editor, one on its steps as one on its name", async () => {
+    const user = userEvent.setup();
+    renderTree("blocks-if-else", {
+      [VALIDATE]: () => ({
+        loads: false,
+        yaml: "",
+        problems: [
+          {
+            node: null,
+            key: "stages[0].steps",
+            line: null,
+            message: "a stage holds at most 64 steps",
+            severity: "error",
+          },
+          {
+            node: null,
+            key: "stages[0].name",
+            line: null,
+            message: "the stage name is also stage 2's",
+            severity: "error",
+          },
+        ],
+        nodes: [],
+      }),
+    });
+
+    expect(await screen.findByText("2 problems")).toBeInTheDocument();
+    await user.click(screen.getByRole("treeitem", { name: /^Stage 1:/ }));
+    const editor = screen.getByRole("region", { name: "Inspector: Stage 1" });
+    expect(editor).toHaveTextContent("a stage holds at most 64 steps");
+    expect(within(editor).getByLabelText("Name").closest(".sb-field")).toHaveTextContent(
+      "the stage name is also stage 2's",
+    );
   });
 
   it("scenario builder offers Migrate for a graph scenario: it checks first, shows the blocks, then writes", async () => {
@@ -1080,6 +1283,9 @@ describe("ScenarioBuilder (scenario builder)", () => {
     ).toBeInTheDocument();
     expect(dialog).toHaveTextContent("order-on-hold");
     expect(within(dialog).queryByRole("button", { name: "Migrate" })).not.toBeInTheDocument();
+    // A check again would read the same file: the steps are changed in the builder first.
+    expect(dialog).toHaveTextContent("Change these steps in the builder, then open Migrate again");
+    expect(within(dialog).queryByRole("button", { name: "Check again" })).not.toBeInTheDocument();
   });
 
   it("scenario builder's Start row says where the scenario starts and what it asks for", async () => {

@@ -14,11 +14,19 @@ import {
   aScenarioPlan,
   aScenarioPlanRow,
   aScenarioRunRef,
+  aTreeDocument,
   renderWithApi,
   SCENARIO_RUN,
   type ApiRoutes,
 } from "../../testing/builders";
+import { DiscussProvider, useDiscuss } from "../../shell/discuss";
 import { ScenarioDetailScreen } from ".";
+
+/** What the Discuss panel would be handed on this page. */
+function BriefProbe() {
+  const { target } = useDiscuss();
+  return <output aria-label="discuss brief">{target?.brief ?? ""}</output>;
+}
 
 const PATH = "/scenarios/demo/order-lifecycle";
 const DETAIL = "/api/v1/scenarios/demo/order-lifecycle";
@@ -318,6 +326,28 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
       screen.getByLabelText("Text of scenarios/orders/order-lifecycle.yaml"),
     ).toHaveTextContent("kind: scenario");
     expect(screen.getByRole("button", { name: "Edit with Claude" })).toBeInTheDocument();
+  });
+
+  it("scenarios detail hands Discuss the brief of the scenario's own format", async () => {
+    const tree = aScenarioDetail({ document: aTreeDocument("blocks-together"), version: 2 });
+    renderWithApi(
+      <DiscussProvider>
+        <ScenarioDetailScreen />
+        <BriefProbe />
+      </DiscussProvider>,
+      {
+        routes: { ...routes, [DETAIL]: tree },
+        path: `${PATH}?mode=run`,
+        route: "/scenarios/:project/:name",
+      },
+    );
+
+    const brief = await screen.findByLabelText("discuss brief");
+    await waitFor(() => {
+      expect(brief).toHaveTextContent("This scenario is written as blocks: `version: 2`");
+    });
+    expect(brief).not.toHaveTextContent("schema v1");
+    expect(brief).not.toHaveTextContent("`nodes`");
   });
 
   describe("states", () => {

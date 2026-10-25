@@ -234,7 +234,7 @@ other one. The builder never writes YAML: it holds the file's JSON, the server w
   leaves nothing to save.
 - **Stages.** A stage is added from the Blocks tab's Stage block (after the selected step's stage, or at the end), a
   `+` between stages or Add stage; its header opens its editor (name, what it is for, Delete the stage and its steps,
-  with Undo); it moves by its handle, Alt arrows or its row menu (Move up, Move down, Delete stage). A step goes only
+  with Undo; a problem on its name shows under the field, one on its steps above it); it moves by its handle, Alt arrows or its row menu (Move up, Move down, Delete stage). A step goes only
   into a stage's list (or a group's), a stage only between stages.
 - **A block's editor.** No "Runs after", no "Only if" and no "Runs when": position is order. More: id shows the
   block's own id, empty when it runs under the one its place gives (`fetch-order--1`, the placeholder); one given is
@@ -250,21 +250,28 @@ other one. The builder never writes YAML: it holds the file's JSON, the server w
   references to either as written, and so does the id it is given after. A stage name is written as it is typed, and
   its blocks' references follow them from the ids they ran under before the rename began, so a name typed through
   another stage's ("Order" on the way to "Order pay") loses none. A proposal's block accepted in place of the one it
-  changes keeps the references to that place.
+  changes keeps the references to that place, and every block taken in from a proposal keeps its references as the
+  proposal wrote them, on later accepts too: they read the proposal's places, which the draft reaches once the blocks
+  before them are taken.
 - **Graph view.** A picture of how the blocks run (the nodes they translate to, each selected with its block), with
   nothing to add or move there: "The graph shows how the blocks run: edit them in Blocks."
 - **Claude.** Describe with Claude teaches the tree's keys (stages, `do`, `wait_until`, `you`, `wait`, `include`,
   `repeat`, `if`, `together`; no `nodes`, `depends_on`, `trigger_rule` or `when`), and the format brief after them is
   the tree's (no graph header, node types or `until_when`; the page's Discuss brief too); it names a place by its
-  address (a stage's: at its end); the proposal is reviewed block by block by address (stages matched by name, each
-  stage's blocks aligned), each change accepted or rejected on its own ("Accept block 1.4"), and Accept all takes the
-  proposal's stages as the review listed them. Each block the proposal removes is a change of its own, even one alike
-  another's (two `queue-send demo.poll` blocks); a decision stays on its block as other changes are accepted (a removal
-  follows its block to its new address, a new or changed block keeps its place in the proposal), and the review closes
-  when every change the draft still differs by is decided, one an accept brings in (a reference it moved) included.
+  address, in the dialog as in the prompt ("Steps after block 1.2", "Steps at the end of stage 2"); the proposal is
+  reviewed block by block by address (stages matched by name, each stage's blocks aligned), each change accepted or
+  rejected on its own, named by its kind ("Accept new block 1.4", "Reject removed block 7.1": a removed block's
+  address is the draft's, a new one's the proposal's), and Accept all takes the proposal's stages as the review listed
+  them. Each block the proposal removes or adds is a change of its own, even one alike another's (two `queue-send
+  demo.poll` blocks). After an accept the review reads the changes again with each block taken in aligned with the
+  proposal's block it came from, so what is listed is what the draft still differs by (one alike block taken, its twin
+  is still listed); a rejection stays on its change (a removal follows its block to its new address, a new or changed
+  block keeps its place in the proposal), and the review closes when the draft holds each block accepted and every
+  change it still differs by is rejected, one an accept brings in (a reference it moved) included. A proposal with no
+  stages (a graph's `nodes`) says so in the banner: taken all, it leaves no stage.
 - **Migrate, for a graph.** More › Migrate to stages of blocks opens a dialog that checks first (`POST
   …/migrate` with `check` and the hash of the file the builder read) and shows the file as blocks, or each step a
-  tree cannot hold and why, with nothing written; Migrate writes it over the file the check read (the check's
+  tree cannot hold and why, with nothing written (to change in the builder, then open Migrate again); Migrate writes it over the file the check read (the check's
   `content_hash` as `base_content_hash`) and the page opens the stages. A file changed since the check is refused
   (409 `stale_document`, shown in the dialog with Check again, which checks the file as the builder reads it now); a
   write that migrates nothing lists its own problems and offers no Migrate. With unsaved changes it asks to save them

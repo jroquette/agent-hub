@@ -71,6 +71,7 @@ import {
   type ScenarioDocument,
 } from "./model";
 import {
+  acceptChange,
   addressOfKey,
   addressed,
   decisionsAfter,
@@ -102,6 +103,7 @@ import {
   treeNodes,
   treeOf,
   type Item,
+  type Taken,
 } from "./program";
 import {
   useActionLibrary,
@@ -349,7 +351,17 @@ export function ScenarioBuilder({
   const [describing, setDescribing] = useState(false);
   const [awaiting, setAwaiting] = useState(false);
   const [reviewing, setReviewing] = useState(false);
+  // The changes of Claude's proposal decided: a graph's accepted and rejected, by block id; for
+  // a scenario written as blocks, the rejected ones (an accept is the draft's own change).
   const [resolved, setResolved] = useState<Set<string>>(() => new Set());
+  // Written as blocks, the blocks taken in from the proposal under review (`Taken`), for the
+  // draft the review wrote last and that proposal's stages: any other edit of the draft lets
+  // them go, and the changes are read again as the draft now differs.
+  const [takenIn, setTakenIn] = useState<{
+    taken: Taken;
+    wrote: ScenarioDocument;
+    from: readonly Item[];
+  } | null>(null);
   const [newAction, setNewAction] = useState<{
     node: string | null;
     readOnly: boolean;
@@ -413,14 +425,10 @@ export function ScenarioBuilder({
   const kept: BuilderNode[] = tree ? [] : program.kept;
 
   /* Written as blocks: the document the stages `next` write, where each reference to a block
-   * whose place id the edit changes follows it (`idChanges`; `asWritten` keeps them, for a
-   * proposal's block taken in at the place of the one it changes), and each item's key after
-   * the edit (keys are addresses). */
-  const treeWrite = (next: readonly Item[], asWritten = false): TreeWrite => ({
-    written: renameRefs(
-      treeOf(raw, next),
-      asWritten ? new Map<string, string>() : idChanges(main, next),
-    ),
+   * whose place id the edit changes follows it (`idChanges`), and each item's key after the
+   * edit (keys are addresses). */
+  const treeWrite = (next: readonly Item[]): TreeWrite => ({
+    written: renameRefs(treeOf(raw, next), idChanges(main, next)),
     keys: addressed(next).keys,
   });
   // Puts a tree write in the draft; `focus` as `commit` takes it.
@@ -438,9 +446,8 @@ export function ScenarioBuilder({
     next: Item[],
     keptNext: BuilderNode[] = kept,
     focus?: string | null,
-    asWritten = false,
   ): ((key: string) => string) => {
-    if (tree) return writeTree(treeWrite(next, asWritten), focus);
+    if (tree) return writeTree(treeWrite(next), focus);
     const nodes = [...nodesOf(next), ...keptNext];
     setProgram({ main: next, kept: keptNext });
     const text = JSON.stringify(nodes);
@@ -813,11 +820,8 @@ export function ScenarioBuilder({
             </>
           }
           onChange={(next) => {
-            if (next.id !== node.id) {
-              if (tree) {
-                renameBlock(key, next);
-                return;
-              }
+            // A graph's id is set here; a block written as blocks gives its id through `onId`.
+            if (!tree && next.id !== node.id) {
               draft.edit(updateBlock(serialized, node.id, next));
               setSelected(next.id);
               return;
@@ -899,8 +903,17 @@ export function ScenarioBuilder({
   const proposed = offered?.document && !tree ? toDocument(offered.document) : null;
   // Written as blocks: the proposal's stages, and its changes by block address.
   const proposedTree = offered?.document && tree ? toTreeDocument(offered.document) : null;
+  // A proposal for a scenario written as blocks that holds no stages (a graph of `nodes`, the
+  // other format): reviewed as it is, every stage is removed.
+  const proposedGraph = proposedTree !== null && !Array.isArray(proposedTree.stages);
   const theirStages = useMemo(() => (proposedTree ? stagesOf(proposedTree) : null), [proposedTree]);
-  const treeChangeList = theirStages ? treeChanges(main, theirStages) : [];
+  const takenFromProposal: Taken =
+    takenIn !== null &&
+    takenIn.from === theirStages &&
+    (takenIn.wrote === raw || JSON.stringify(takenIn.wrote) === JSON.stringify(raw))
+      ? takenIn.taken
+      : new Map();
+  const treeChangeList = theirStages ? treeChanges(main, theirStages, takenFromProposal) : [];
   // The proposal's changes, block by block (a top-level step, a repeat with what it holds): new,
   // changed, or removed; the ones already accepted or rejected drop out.
   const changes: { id: string; kind: "new" | "changed" | "removed"; node: BuilderNode }[] = [];
@@ -930,7 +943,9 @@ export function ScenarioBuilder({
               ? "parallel"
               : (node?.type ?? "stage"),
         );
-        const named = change.of === "stage" ? `stage ${change.address}` : `block ${change.address}`;
+        // The kind in the name too: a removed block is named by its address in the draft, a new
+        // one by its address in the proposal, so two can have the same address.
+        const named = `${change.kind} ${change.of} ${change.address}`;
         return {
           id: change.id,
           kind: change.kind,
@@ -958,41 +973,31 @@ export function ScenarioBuilder({
   const closeReview = () => {
     setReviewing(false);
     setResolved(new Set());
+    setTakenIn(null);
     dismiss.mutate();
   };
   const finish = (next: Set<string>) => {
     if (listed.every((change) => next.has(change.id))) closeReview();
     else setResolved(next);
   };
-  // Written as blocks: a change taken into the draft at its place (a new one where the proposal
-  // puts it, among the draft's blocks), its ids as the proposal gives them. The decisions made
-  // follow their blocks, and the review is done when every change the draft still differs by
-  // is decided (an accept can move what a later block reads).
+  // Written as blocks: a change taken into the draft at its place (`acceptChange`: a new one
+  // where the proposal puts it, among the draft's blocks), as the proposal writes it. The
+  // rejections made follow their blocks; an accept is carried by the blocks taken in, which the
+  // review aligns with the proposal's, so the review is done when the draft holds each block
+  // accepted and every change it still differs by is rejected (an accept can move what a
+  // later block reads: that is a change to decide).
   const acceptTreeChange = (id: string) => {
-    const change = treeChangeList.find((item) => item.id === id);
-    if (!change || !theirStages) return;
-    const taken_ = freshItems([change.item], true);
-    const stage = change.at.stage;
-    let next: Item[];
-    if (change.kind === "removed") next = takeFrom(main, change.address, true).rest;
-    else if (change.kind === "new") {
-      next =
-        stage === null
-          ? insertAt(main, { in: "main" }, Math.min(change.at.index, main.length), taken_)
-          : insertAt(main, { in: "stage", owner: stage }, change.at.index, taken_);
-    } else {
-      const at = locate(main, change.address);
-      if (!at) return;
-      // In the place of the block it changes: no other block moves, and what read that place
-      // reads the proposal's block there.
-      next = insertAt(takeFrom(main, change.address, true).rest, at.slot, at.index, taken_);
+    if (!theirStages) return;
+    const accepted = acceptChange(raw, theirStages, takenFromProposal, id);
+    if (!accepted) return;
+    writeTree(accepted);
+    const left = treeChanges(stagesOf(accepted.written), theirStages, accepted.taken);
+    const rejected = decisionsAfter(resolved, treeChangeList, left, accepted.keys);
+    if (left.every((item) => rejected.has(item.id))) closeReview();
+    else {
+      setResolved(rejected);
+      setTakenIn({ taken: accepted.taken, wrote: accepted.written, from: theirStages });
     }
-    const write = treeWrite(next, change.kind === "changed");
-    writeTree(write);
-    const left = treeChanges(stagesOf(write.written), theirStages);
-    const decided = decisionsAfter(new Set([...resolved, id]), treeChangeList, left, write.keys);
-    if (left.every((item) => decided.has(item.id))) closeReview();
-    else setResolved(decided);
   };
   const acceptOne = (id: string) => {
     if (tree) {
@@ -1693,6 +1698,8 @@ export function ScenarioBuilder({
                 <b>Claude proposes</b> {open.length - removedCount} new or changed{" "}
                 {open.length - removedCount === 1 ? "block" : "blocks"}
                 {removedCount > 0 && `, ${String(removedCount)} removed`}
+                {proposedGraph &&
+                  " · it is written as a graph (nodes), not as stages: accepting it all leaves no stage"}
                 {offered.check
                   ? offered.check.loads
                     ? " · it loads"
@@ -1991,6 +1998,7 @@ export function ScenarioBuilder({
         <DescribeDialog
           empty={main.length === 0}
           after={selected}
+          tree={tree}
           onSend={(described, scope) => {
             sendDescription(described, scope, scope === "after" ? selected : null);
           }}

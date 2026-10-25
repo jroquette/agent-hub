@@ -52,6 +52,7 @@ export function useDismissProposal(project: string, name: string) {
 export function DescribeDialog({
   empty,
   after,
+  tree = false,
   onSend,
   onClose,
 }: {
@@ -59,6 +60,8 @@ export function DescribeDialog({
   empty: boolean;
   /** The selected block: new steps can go after it. */
   after: string | null;
+  /** Written as blocks: `after` is an address, a stage's (no dot) taking them at its end. */
+  tree?: boolean;
   onSend: (text: string, scope: DescribeScope) => void;
   onClose: () => void;
 }) {
@@ -101,7 +104,7 @@ export function DescribeDialog({
               setScope(id === "whole" ? "whole" : "after");
             }}
             options={[
-              { id: "after", label: after ? `Steps after ${after}` : "Steps at the end" },
+              { id: "after", label: placeLabel(after, tree) },
               { id: "whole", label: "The whole scenario" },
             ]}
           />
@@ -123,6 +126,13 @@ export function DescribeDialog({
       </div>
     </Dialog>
   );
+}
+
+/** Where described steps go, in the words the prompt uses (`describeMessage`). */
+function placeLabel(after: string | null, tree: boolean): string {
+  if (after === null) return "Steps at the end";
+  if (!tree) return `Steps after ${after}`;
+  return after.includes(".") ? `Steps after block ${after}` : `Steps at the end of stage ${after}`;
 }
 
 const TEMPLATES: Readonly<Record<"python" | "sh", (name: string) => string>> = {

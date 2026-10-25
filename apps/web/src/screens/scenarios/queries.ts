@@ -137,11 +137,9 @@ export function usePlanScenario(project: string, name: string) {
   });
 }
 
-export interface MigrateRequest {
-  check: boolean;
-  /** The hash of the file the builder read: a file changed since is not migrated (409). */
-  base_content_hash: string | null;
-}
+/** `check`, and the hash of the file the builder read: a file changed since is not migrated
+ * (409). */
+export type MigrateRequest = Schemas["MigrateRequest"];
 
 /** Writes a graph scenario (`version: 1`) again as blocks (`version: 2`), or checks it first
  * (`check`): the scenario's page reads the file again once it is written. */

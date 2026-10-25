@@ -116,8 +116,10 @@ export function MigrateDialog({
         {refused.length > 0 && (
           <>
             <span className="ah-small">
-              It cannot be written as blocks yet. Nothing was written. Change these steps, then
-              check again:
+              It cannot be written as blocks yet. Nothing was written.{" "}
+              {again
+                ? "Change these steps, then check again:"
+                : "Change these steps in the builder, then open Migrate again:"}
             </span>
             <ul className="sb-migrate-problems" aria-label="What blocks cannot hold">
               {refused.map((item, index) => (

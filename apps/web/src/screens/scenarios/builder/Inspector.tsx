@@ -1334,8 +1334,7 @@ export function BlockInspector({
                       onBlur={() => {
                         if (id === ownId) return;
                         if (id !== "" && !/^[a-z][a-z0-9-]*$/.test(id)) setId(ownId);
-                        else if (onId) onId(id);
-                        else onChange({ ...node, id });
+                        else onId?.(id);
                       }}
                     />
                   )}
@@ -1679,9 +1678,11 @@ export function StageInspector({
   footer?: ReactNode;
 }) {
   const look = kindLook("stage");
+  const errors = problems.filter((problem) => problem.severity === "error");
   const problemOf = (key: string) =>
-    problems.find((problem) => problem.severity === "error" && problem.key?.endsWith(`.${key}`))
-      ?.message;
+    errors.find((problem) => problem.key?.endsWith(`.${key}`))?.message;
+  // What is wrong with the stage elsewhere than its name (its steps, as a list).
+  const others = errors.filter((problem) => problem.key?.endsWith(".name") !== true);
   return (
     <FormShell
       icon={look.icon}
@@ -1695,6 +1696,13 @@ export function StageInspector({
       openerRef={openerRef}
       footer={footer}
     >
+      {others.length > 0 && (
+        <Banner tone="error" live={false}>
+          {others.map((problem, index) => (
+            <div key={index}>{problem.message}</div>
+          ))}
+        </Banner>
+      )}
       <Section
         title="Stage"
         help="Its steps run in order, after the stage before it. Without an id of their own, they run under ids made from its name."

@@ -871,10 +871,20 @@ export interface TreeChange {
   at: { stage: string | null; index: number };
 }
 
+/** The blocks and stages of a draft taken in from a proposal under review: each one's key in
+ * the draft, to its address in the proposal. */
+export type Taken = ReadonlyMap<string, string>;
+
 /** The changes from `mine` to `theirs`: stages matched by their slug, then each matched
  * stage's steps aligned by what they write (a run of removed and new steps between two kept
- * ones pairs up as changed). */
-export function treeChanges(mine: readonly Item[], theirs: readonly Item[]): TreeChange[] {
+ * ones pairs up as changed). A block `taken` in from the proposal is aligned with the block it
+ * was taken from, whatever blocks alike either holds, so a review lists what the draft still
+ * differs by after an accept, not another reading of it. */
+export function treeChanges(
+  mine: readonly Item[],
+  theirs: readonly Item[],
+  taken: Taken = new Map(),
+): TreeChange[] {
   const stagesOfMine = mine.filter(isStage);
   const stagesOfTheirs = theirs.filter(isStage);
   const bySlug = new Map(stagesOfMine.map((stage) => [stageSlug(stage.name), stage]));
@@ -896,7 +906,7 @@ export function treeChanges(mine: readonly Item[], theirs: readonly Item[]): Tre
       });
       continue;
     }
-    changes.push(...stepChanges(own, stage, text));
+    changes.push(...stepChanges(own, stage, text, taken));
   }
   for (const stage of stagesOfMine) {
     if (kept.has(stageSlug(stage.name))) continue;
@@ -913,24 +923,100 @@ export function treeChanges(mine: readonly Item[], theirs: readonly Item[]): Tre
   return changes;
 }
 
+/** The most steps a side of a stage is aligned over in full: the nodes a scenario may run as.
+ * Past it, only the steps alike at either end are kept (a proposal may hold more than loads). */
+const MAX_ALIGNED = 512;
+
+/** How two lists of step texts line up: each step of `a` kept as one of `b`, removed, or each
+ * of `b` new, in reading order (the longest common subsequence, by suffix lengths). */
+type Aligned =
+  { i: number; j: number } | { i: number; j?: undefined } | { i?: undefined; j: number };
+
+function aligned(
+  a: readonly string[],
+  b: readonly string[],
+  [i0, i1]: readonly [number, number],
+  [j0, j1]: readonly [number, number],
+): Aligned[] {
+  const out: Aligned[] = [];
+  if (i1 - i0 > MAX_ALIGNED || j1 - j0 > MAX_ALIGNED) {
+    let head = 0;
+    while (i0 + head < i1 && j0 + head < j1 && a[i0 + head] === b[j0 + head]) head += 1;
+    let tail = 0;
+    while (
+      i1 - tail > i0 + head &&
+      j1 - tail > j0 + head &&
+      a[i1 - tail - 1] === b[j1 - tail - 1]
+    ) {
+      tail += 1;
+    }
+    const middle: [[number, number], [number, number]] = [
+      [i0 + head, i1 - tail],
+      [j0 + head, j1 - tail],
+    ];
+    for (let n = 0; n < head; n += 1) out.push({ i: i0 + n, j: j0 + n });
+    if (middle[0][1] - middle[0][0] > MAX_ALIGNED || middle[1][1] - middle[1][0] > MAX_ALIGNED) {
+      // Still too many between them: each removed, then each new (paired up as changed).
+      for (let i = middle[0][0]; i < middle[0][1]; i += 1) out.push({ i });
+      for (let j = middle[1][0]; j < middle[1][1]; j += 1) out.push({ j });
+    } else out.push(...aligned(a, b, ...middle));
+    for (let n = tail; n > 0; n -= 1) out.push({ i: i1 - n, j: j1 - n });
+    return out;
+  }
+  const width = j1 - j0 + 1;
+  const lcs = new Uint16Array((i1 - i0 + 1) * width);
+  const at = (i: number, j: number) => lcs[(i - i0) * width + (j - j0)] ?? 0;
+  for (let i = i1 - 1; i >= i0; i -= 1) {
+    for (let j = j1 - 1; j >= j0; j -= 1) {
+      lcs[(i - i0) * width + (j - j0)] =
+        a[i] === b[j] ? at(i + 1, j + 1) + 1 : Math.max(at(i + 1, j), at(i, j + 1));
+    }
+  }
+  let i = i0;
+  let j = j0;
+  while (i < i1 || j < j1) {
+    if (i < i1 && j < j1 && a[i] === b[j]) {
+      out.push({ i, j });
+      i += 1;
+      j += 1;
+    } else if (j >= j1 || (i < i1 && at(i + 1, j) >= at(i, j + 1))) {
+      out.push({ i });
+      i += 1;
+    } else {
+      out.push({ j });
+      j += 1;
+    }
+  }
+  return out;
+}
+
 function stepChanges(
   own: Extract<Item, { kind: "stage" }>,
   theirs: Extract<Item, { kind: "stage" }>,
   text: (item: Item) => string,
+  taken: Taken,
 ): TreeChange[] {
   const a = own.steps.map(text);
   const b = theirs.steps.map(text);
-  // The longest common subsequence, by suffix lengths.
-  const lcs = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
-  for (let i = a.length - 1; i >= 0; i -= 1) {
-    for (let j = b.length - 1; j >= 0; j -= 1) {
-      const row = lcs[i] ?? [];
-      row[j] =
-        a[i] === b[j]
-          ? (lcs[i + 1]?.[j + 1] ?? 0) + 1
-          : Math.max(lcs[i + 1]?.[j] ?? 0, row[j + 1] ?? 0);
-    }
+  // The steps taken in from the proposal, each with the step it was taken from, in order (one
+  // out of order is left to the alignment); the steps between two are aligned on their own.
+  const inTheirs = new Map(theirs.steps.map((step, j) => [itemId(step), j]));
+  const anchors: { i: number; j: number }[] = [];
+  for (const [i, step] of own.steps.entries()) {
+    const j = inTheirs.get(taken.get(itemId(step)) ?? "");
+    if (j !== undefined && j > (anchors.at(-1)?.j ?? -1)) anchors.push({ i, j });
   }
+  const steps: (Aligned & { anchor?: true })[] = [];
+  let from = { i: 0, j: 0 };
+  for (const anchor of anchors) {
+    steps.push(...aligned(a, b, [from.i, anchor.i], [from.j, anchor.j]), {
+      ...anchor,
+      anchor: true,
+    });
+    from = { i: anchor.i + 1, j: anchor.j + 1 };
+  }
+  steps.push(...aligned(a, b, [from.i, a.length], [from.j, b.length]));
+
   const changes: TreeChange[] = [];
   let removed: number[] = [];
   let added: number[] = [];
@@ -979,42 +1065,38 @@ function stepChanges(
     removed = [];
     added = [];
   };
-  let i = 0;
-  let j = 0;
-  while (i < a.length || j < b.length) {
-    if (i < a.length && j < b.length && a[i] === b[j]) {
-      flush(i);
-      i += 1;
-      j += 1;
-    } else if (
-      j >= b.length ||
-      (i < a.length && (lcs[i + 1]?.[j] ?? 0) >= (lcs[i]?.[j + 1] ?? 0))
-    ) {
-      removed.push(i);
-      i += 1;
-    } else {
-      added.push(j);
-      j += 1;
-    }
+  for (const step of steps) {
+    if (step.i !== undefined && step.j !== undefined) {
+      flush(step.i);
+      // A step taken in that differs from the proposal's since (an edit made outside the
+      // review) is a change of its own.
+      if (a[step.i] === b[step.j]) continue;
+      removed = [step.i];
+      added = [step.j];
+      flush(step.i + 1);
+    } else if (step.i !== undefined) removed.push(step.i);
+    else added.push(step.j);
   }
-  flush(i);
+  flush(a.length);
   return changes;
 }
 
-/** The decisions on the changes `before` lists (the ids in `decided`), as ids of the changes
- * `after` lists once an edit of the draft is made (`keys`: each item's key after it, as
+/** The rejections among the changes `before` lists (the ids in `rejected`), as ids of the
+ * changes `after` lists once an edit of the draft is made (`keys`: each item's key after it, as
  * `addressed` gives them): a removal follows its block to its new address, a new or a changed
- * block keeps its place in the proposal, which no edit of the draft moves. A decision whose
- * change the draft no longer differs by is dropped. */
+ * block keeps its place in the proposal, which no edit of the draft moves (a block taken in
+ * keeps the review's alignment, `treeChanges`). A rejection whose change the draft no longer
+ * differs by is dropped. An accept is never carried: the change it took is no longer listed,
+ * and what is left of it (a reference it moved) is a change still to decide. */
 export function decisionsAfter(
-  decided: ReadonlySet<string>,
+  rejected: ReadonlySet<string>,
   before: readonly TreeChange[],
   after: readonly TreeChange[],
   keys: ReadonlyMap<string, string>,
 ): Set<string> {
   const out = new Set<string>();
   for (const change of before) {
-    if (!decided.has(change.id)) continue;
+    if (!rejected.has(change.id)) continue;
     const moved = change.kind === "removed" ? keys.get(change.address) : undefined;
     const now = after.find((next) =>
       change.kind === "removed"
@@ -1024,6 +1106,91 @@ export function decisionsAfter(
     if (now) out.add(now.id);
   }
   return out;
+}
+
+/** What accepting a change of a review does to the draft. */
+export interface Accepted {
+  /** The draft's document after it. */
+  written: Mapping;
+  /** Each item's key after the edit (keys are addresses), from its key before. */
+  keys: Map<string, string>;
+  /** The blocks taken in from the proposal so far, at their keys after the edit. */
+  taken: Map<string, string>;
+}
+
+/** `document` with the change `id` of its review against the proposal's stages `theirs` taken
+ * in (`treeChanges(stagesOf(document), theirs, taken)`), or null when the review lists no such
+ * change: a new block where the proposal puts it among the draft's blocks, a changed one in the
+ * place of the block it changes (nothing else moves, and what read that place reads it), a
+ * removed one taken out. A block taken in keeps its ids and references as the proposal wrote
+ * them, on this accept and the ones after it: they read the proposal's places, which the draft
+ * reaches once the blocks before them are taken too. Every other reference follows its block
+ * (`idChanges`). */
+export function acceptChange(
+  document: Mapping,
+  theirs: readonly Item[],
+  taken: Taken,
+  id: string,
+): Accepted | null {
+  const main = stagesOf(document);
+  const change = treeChanges(main, theirs, taken).find((item) => item.id === id);
+  if (!change) return null;
+  const [item] = fresh([change.item], true);
+  if (!item) return null;
+  let next: Item[];
+  if (change.kind === "removed") next = takeFrom(main, change.address, true).rest;
+  else if (change.kind === "new") {
+    next =
+      change.at.stage === null
+        ? insertAt(main, { in: "main" }, Math.min(change.at.index, main.length), [item])
+        : insertAt(main, { in: "stage", owner: change.at.stage }, change.at.index, [item]);
+  } else {
+    const at = locate(main, change.address);
+    if (!at) return null;
+    next = insertAt(takeFrom(main, change.address, true).rest, at.slot, at.index, [item]);
+  }
+  const kept = new Set(taken.keys());
+  if (change.kind !== "removed") kept.add(itemId(item));
+  const plain = treeOf(document, next);
+  const ids = change.kind === "changed" ? new Map<string, string>() : idChanges(main, next);
+  const keys = addressed(next).keys;
+  const after = new Map<string, string>();
+  for (const [key, at] of taken) {
+    const now = keys.get(key);
+    if (now !== undefined) after.set(now, at);
+  }
+  const now = keys.get(itemId(item));
+  if (change.kind !== "removed" && change.proposed !== null && now !== undefined) {
+    after.set(now, change.proposed);
+  }
+  return { written: asWrittenIn(renameRefs(plain, ids), plain, next, kept), keys, taken: after };
+}
+
+/** `renamed` (`plain` with its references renamed) with the stages and the steps of a stage
+ * whose key `kept` holds as `plain` writes them (`next` are the stages both are written from). */
+function asWrittenIn(
+  renamed: Mapping,
+  plain: Mapping,
+  next: readonly Item[],
+  kept: ReadonlySet<string>,
+): Mapping {
+  if (renamed === plain || kept.size === 0) return renamed;
+  const was = list(plain.stages);
+  const now = list(renamed.stages);
+  const stages = next.filter(isStage).map((stage, s): Json => {
+    const written = now[s] ?? null;
+    if (kept.has(itemId(stage))) return was[s] ?? written;
+    if (!stage.steps.some((step) => kept.has(itemId(step)))) return written;
+    const wasSteps = list(mapping(was[s]).steps);
+    const nowSteps = list(mapping(written).steps);
+    return {
+      ...mapping(written),
+      steps: stage.steps.map((step, at) =>
+        kept.has(itemId(step)) ? (wasSteps[at] ?? null) : (nowSteps[at] ?? null),
+      ),
+    };
+  });
+  return { ...renamed, stages };
 }
 
 /** The builder's copy of a scenario written as blocks: the file's mapping as it is. */

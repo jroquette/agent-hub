@@ -162,7 +162,8 @@ to it, so no reference starts reading another block). The step list shows a head
 tab's Stage block or a "+" between stages, renamed in its editor, moved and removed as a step is), each block
 numbered by its address; a block's editor has no "runs after", no `when` and no join rule; the Graph view draws how
 the blocks run and edits nothing; Claude's prompt teaches the tree's keys, and its proposal is reviewed block by
-block, by address. A `version: 1` file is edited as AGH-521 shipped it, and More offers Migrate: the check's text, or
+block, by address, each block accepted taken in as the proposal writes it and aligned with the block it came from
+when the review reads what is left. A `version: 1` file is edited as AGH-521 shipped it, and More offers Migrate: the check's text, or
 each node it cannot map, shown before anything is written, then the write over the file the check read.
 The scenario builder that shipped with AGH-521 is the one the owner validated in the playground, and where it differs
 from the decision above, the validated behavior wins for what the screen shows:
