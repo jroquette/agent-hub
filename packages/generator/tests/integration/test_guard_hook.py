@@ -5058,7 +5058,7 @@ def test_denies_read_when_listed_file_contents_hold_word(decide: Decide, blocked
     # the whole reason: it names the file, never a line of it
     assert verdicts == [
         blocked_word(word, f"the contents of {rel}", layer) for rel, _, word, layer in LISTED_FILES
-    ] + [blocked_word("prod", f"the contents of {absolute}")]
+    ] + [blocked_word("prod", f"the contents of {cut(absolute)}")]
 
 
 def test_passes_read_when_contents_or_name_not_listed(decide: Decide, blocked_hub: Path) -> None:
