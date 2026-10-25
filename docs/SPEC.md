@@ -776,7 +776,10 @@ decisions, findings, workarounds, investigations and the actions' draft state, r
 strict local writes ([ADR 0040](adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md)) that go
 through the CLI: `POST …/plan` (a `hub scenario plan --json` child), `POST …/runs` (plans first; a deny answers 409
 and starts nothing), `POST /scenario-runs/{id}/investigation` (one read-only session per investigation gate),
-`POST …/answer` (pick, retry or stop) and a finding's issue (created at most once) or inbox note. `GET /workflow-runs`
+`POST …/answer` (pick, retry or stop) and a finding's issue (created at most once) or inbox note; a run written as
+blocks adds its breakpoints, Step and Continue (run writes through `hub scenario break|step|continue`), a paused
+run's values (a read behind the launch cookie) and a scenario's migrate (an item write), see
+[API.md § Scenarios](API.md#scenarios) (Debugging and migration). `GET /workflow-runs`
 takes `kind=workflow|scenario`, and the Workflow runs screen asks for workflow runs only. The screens are Scenarios
 (`/scenarios`), a scenario (`/scenarios/:project/:name`: steps, the plan for a chosen environment, Start) and a
 scenario run (`/scenarios/:project/:name/runs/:runId`); `/runs/:id` of a scenario run redirects there
@@ -866,8 +869,8 @@ default); `repo`, `agent`, `workflow` and `step` are optional. Unknown fields ar
   `context.capture`, `action.start`, `action.end`, `policy.decision`, `finding`, `workaround.start` and
   `workaround.end` ([ADR 0041](adr/0041-scenarios-actions-and-enforced-access.md); a standalone `hub action run`
   emits its `policy.decision` and `action.*` events under the session `action:<uuid>`), and a debugging scenario
-  run's `debug.pause`, `debug.command` and `debug.breakpoints` ([ADR 0049](adr/0049-scenario-blocks-and-run-control.md);
-  nothing emits them until the debug commands are built).
+  run's `debug.pause`, `debug.command` and `debug.breakpoints` ([ADR 0049](adr/0049-scenario-blocks-and-run-control.md):
+  `hub scenario run --break`, `break`, `step` and `continue` emit them, metadata only).
 - `source` is a closed list: `claude_code`, `transcript`, `otel`, `executor`, `github`, `linear` and `control_plane`
   (an action the user took in `hub web`, added by AGH-201: a learning decision). Widening either list later is a
   compatible change.
