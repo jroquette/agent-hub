@@ -39,8 +39,8 @@ stages:
       message: demo.review-orders
       order_id: $CTX.order_id
   - wait_until: order-state
-    until: $self.output.review_status == 'REVIEWED' && $self.output.payment_status == 'CONFIRMED'
-      && $self.output.open_tasks > 0
+    until: $self.output.review_status == 'REVIEWED' && $self.output.payment_status == 'CONFIRMED' && $self.output.open_tasks
+      > 0
     every: 15s
     timeout: 10m
 - name: Switch carrier
@@ -83,8 +83,7 @@ stages:
       message: demo.invoice
       order_id: $CTX.order_id
   - wait_until: order-state
-    until: $self.output.invoice_status == 'SENT' && $self.output.invoice_update_job_id
-      != ''
+    until: $self.output.invoice_status == 'SENT' && $self.output.invoice_update_job_id != ''
     every: 15s
     timeout: 10m
 - name: Approval

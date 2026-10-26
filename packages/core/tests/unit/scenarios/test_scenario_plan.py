@@ -13,6 +13,7 @@ from agent_hub.core.json_form import JsonValue
 from agent_hub.core.scenarios.action_catalog import ActionEntry
 from agent_hub.core.scenarios.action_document import parse_action
 from agent_hub.core.scenarios.scenario_plan import ScenarioPlan, plan_scenario
+from agent_hub.core.scenarios.tree_translate import block_map
 from agent_hub.core.testing.builders import an_environments_document
 from agent_hub.core.workflows.document import parse_workflow
 from agent_hub.core.workflows.plan import plan_workflow
@@ -461,3 +462,95 @@ def test_gives_parent_run_value_when_included_step_leaves_input_out() -> None:
     by_step = {row.step: row.args.get("ref") for row in plan.rows}
     assert plan.problems == ()
     assert by_step == {"inc__send-order": "T-1", "inc__check-order": "T-9"}
+
+
+def a_tree(*steps: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "version": 2,
+        "kind": "scenario",
+        "name": "order-walk",
+        "revision": 1,
+        "inputs": {"ref": {"type": "string", "required": True}},
+        "stages": [{"name": "Send", "steps": list(steps)}],
+    }
+
+
+def planned_tree(content: dict[str, Any], *, environment: str = "local") -> ScenarioPlan:
+    return plan_scenario(
+        plan_workflow(parse_workflow(content)),
+        pack="demo",
+        actions=ACTIONS,
+        view=a_view(),
+        environment=environment,
+        inputs={"ref": "T-1"},
+        blocks=block_map(content),
+    )
+
+
+def test_names_the_block_address_and_tree_key_when_a_tree_step_has_a_problem() -> None:
+    held = {
+        "wait_until": "demo/get-order",
+        "with": {"target": "api"},
+        "until": "$self.output.state == 'ON_HOLD'",
+        "every": "10s",
+        "timeout": "5m",
+        "capture": {"order_id": "$self.output.order_ref"},
+    }
+    content = a_tree(
+        {"do": "send-order", "with": {"target": "api"}},
+        held,
+        {"do": "billing/send-order", "with": {"target": "api"}},
+        {"do": "get-order", "with": {"target": "orders"}},
+    )
+
+    plan = planned_tree(content)
+
+    assert plan.problems == (
+        "block 1.3 (stages[0].steps[2]): unknown action 'billing/send-order'",
+        "block 1.4 (stages[0].steps[3]): input target: service orders has no endpoint in"
+        " environment local",
+        'block 1.2 (stages[0].steps[1].until): the path "state" is not in the output of'
+        " demo/get-order",
+        'block 1.2 (stages[0].steps[1].capture.order_id): the path "order_ref" is not in the'
+        " output of demo/get-order",
+    )
+
+
+def test_names_both_blocks_when_unordered_gates_are_paths_of_a_tree() -> None:
+    send = {"do": "send-order", "with": {"target": "api"}}
+    content = a_tree({"together": [[send], [send | {"id": "send-again"}]]})
+
+    plan = planned_tree(content, environment="staging")
+
+    assert plan.problems == (
+        "blocks 1.1.p1.1 (stages[0].steps[0].together[0][0]) and 1.1.p2.1"
+        " (stages[0].steps[0].together[1][0]) both need a gate and have no order between"
+        " them: one must come after the other",
+    )
+
+
+def test_names_the_if_once_when_its_condition_reads_a_path_not_in_the_output() -> None:
+    send = {"do": "send-order", "id": "send", "with": {"target": "api"}}
+    get = {"do": "get-order", "with": {"target": "api"}}
+    content = a_tree(send, {"if": "$send.output.state == 'X'", "then": [get], "else": [get]})
+
+    plan = planned_tree(content)
+
+    assert plan.problems == (
+        'block 1.2 (stages[0].steps[1].if): the path "state" is not in the output of'
+        " demo/send-order",
+    )
+
+
+def test_names_the_inner_if_when_a_nested_condition_reads_a_path_not_in_the_output() -> None:
+    send = {"do": "send-order", "id": "send", "with": {"target": "api"}}
+    get = {"do": "get-order", "with": {"target": "api"}}
+    inner = {"if": "$send.output.state == 'X'", "then": [get], "else": [get]}
+    content = a_tree(send, {"if": "$send.output.status == 'A'", "then": [inner], "else": [get]})
+
+    plan = planned_tree(content)
+
+    assert plan.problems == (
+        'block 1.2.then.1 (stages[0].steps[1].then[0].if): the path "state" is not in the'
+        " output of demo/send-order",
+    )

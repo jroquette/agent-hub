@@ -18,6 +18,12 @@ into an action's output that its ``output_format`` does not name (``$<node>.outp
 ``$self.output.<path>``, the check core's planner leaves to the action, E-6); two steps that both
 need a gate (a policy ``ask``, an ``approval`` or a ``wait``) with no order between them
 (AC-350.42). A plan is ``denied`` when it has a problem or a ``deny`` row.
+
+A problem names its step as ``step <node id>``; a scenario written as blocks (``version: 2``,
+whose ``BlockMap`` the caller passes) names the block instead, by its address and its key path
+in the tree (``block 2.1 (stages[1].steps[0].capture.order_id)``), never a generated node id; a
+problem on an If's condition names the If once (``block 1.2 (stages[0].steps[1].if)``), though
+the condition is on each branch's first node.
 """
 
 from collections.abc import Iterator, Mapping, Sequence
@@ -25,6 +31,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict
 
+from agent_hub.core.features.output_shape import output_path
 from agent_hub.core.hub_config.effective_environments import EffectiveEnvironments
 from agent_hub.core.hub_config.environments import Access
 from agent_hub.core.json_form import JsonValue
@@ -43,6 +50,7 @@ from agent_hub.core.scenarios.action_call import (
     with_run_values,
 )
 from agent_hub.core.scenarios.action_catalog import ActionEntry, ActionRefError, resolve_action
+from agent_hub.core.scenarios.tree_translate import BlockMap
 from agent_hub.core.workflows.document import Loc
 from agent_hub.core.workflows.nodes import (
     ActionNode,
@@ -73,6 +81,10 @@ from agent_hub.core.workflows.substitution import (
 UNORDERED_GATES = (
     "steps {first} and {second} both need a gate and have no order between them:"
     " one must depend on the other"
+)
+UNORDERED_BLOCKS = (
+    "blocks {first} and {second} both need a gate and have no order between them:"
+    " one must come after the other"
 )
 
 
@@ -129,8 +141,11 @@ def plan_scenario(
     view: EffectiveEnvironments,
     environment: str,
     inputs: Mapping[str, JsonValue],
+    blocks: BlockMap | None = None,
 ) -> ScenarioPlan:
-    """The plan of the scenario ``plan`` (of ``pack``) in ``environment`` with ``inputs``."""
+    """The plan of the scenario ``plan`` (of ``pack``) in ``environment`` with ``inputs``; its
+    problems name blocks of ``blocks``, the block map of a scenario written as blocks."""
+    names = _Names(blocks)
     declared = find_environment(view, environment)
     problems = [] if declared is not None else [f"environment {environment} is not declared"]
     entries: dict[str, ActionEntry] = {}
@@ -141,7 +156,7 @@ def plan_scenario(
         try:
             entry = resolve_action(actions, node.action, pack=pack)
         except ActionRefError as error:
-            problems.append(f"step {node.id}: {error}")
+            problems.append(f"{names.of(node.id)}: {error}")
             continue
         entries[node.id] = entry
         decision = decide(declared, entry.document.effect, "author", draft=entry.draft)
@@ -153,10 +168,11 @@ def plan_scenario(
         )
         rows.append(row)
         if problem is not None:
-            problems.append(f"step {node.id}: {problem}")
-    problems += _path_problems(plan, entries)
+            problems.append(f"{names.of(node.id)}: {problem}")
+    # An If's condition is on each entry node of its branches: its problem is named once.
+    problems += dict.fromkeys(_path_problems(plan, entries, names))
     asks = frozenset(row.step for row in rows if row.decision == "ask")
-    problems += _unordered_gates(plan.document.nodes, asks)
+    problems += (names.unordered(*pair) for pair in _unordered_gates(plan.document.nodes, asks))
     return ScenarioPlan(
         scenario=plan.document.name,
         environment=environment,
@@ -165,6 +181,28 @@ def plan_scenario(
         rows=tuple(rows),
         problems=tuple(problems),
     )
+
+
+@dataclass(frozen=True)
+class _Names:
+    """How a problem names a step: by its node id, or by its block in a tree (``blocks``)."""
+
+    blocks: BlockMap | None
+
+    def of(self, node: str, loc: Loc = (), *, ref: Ref | None = None) -> str:
+        """``step <id>[: <key>]``, or ``block <address> (<tree key path>)`` (a problem about
+        ``ref`` on a ``when`` names the If whose condition reads it)."""
+        found = None if self.blocks is None else self.blocks.located(node, loc, ref=ref)
+        if found is None:
+            return f"step {node}" + (f": {_key(loc)}" if loc else "")
+        address, key = found
+        return f"block {address} ({output_path(key)})"
+
+    def unordered(self, first: str, second: str) -> str:
+        if self.blocks is None:
+            return UNORDERED_GATES.format(first=first, second=second)
+        shown = (self.of(node).removeprefix("block ") for node in (first, second))
+        return UNORDERED_BLOCKS.format(first=next(shown), second=next(shown))
 
 
 @dataclass(frozen=True)
@@ -292,7 +330,9 @@ def _placeholders(
     return rewrite_refs(value, shown, scenario=True)
 
 
-def _path_problems(plan: WorkflowPlan, entries: Mapping[str, ActionEntry]) -> Iterator[str]:
+def _path_problems(
+    plan: WorkflowPlan, entries: Mapping[str, ActionEntry], names: _Names
+) -> Iterator[str]:
     """Each path into an action step's output that its action's ``output_format`` lacks."""
     for node in plan.all_nodes():
         own = entries.get(node.id)
@@ -308,12 +348,12 @@ def _path_problems(plan: WorkflowPlan, entries: Mapping[str, ActionEntry]) -> It
                     continue
                 if not schema_has_path(producer.document.output_format, path):
                     yield (
-                        f"step {node.id}: {_key(loc)}: the path {echo('.'.join(path))}"
+                        f"{names.of(node.id, loc, ref=ref)}: the path {echo('.'.join(path))}"
                         f" is not in the output of {producer.ref}"
                     )
 
 
-def _unordered_gates(nodes: Sequence[Node], asks: frozenset[str]) -> Iterator[str]:
+def _unordered_gates(nodes: Sequence[Node], asks: frozenset[str]) -> Iterator[tuple[str, str]]:
     """Two gate-needing steps with no order between them, among ``nodes`` and in each body."""
     upstream = Upstream.of(nodes)
     seen: list[str] = []
@@ -324,7 +364,7 @@ def _unordered_gates(nodes: Sequence[Node], asks: frozenset[str]) -> Iterator[st
             continue
         for earlier in seen:
             if not (upstream.contains(earlier, node.id) or upstream.contains(node.id, earlier)):
-                yield UNORDERED_GATES.format(first=earlier, second=node.id)
+                yield earlier, node.id
                 break
         seen.append(node.id)
 

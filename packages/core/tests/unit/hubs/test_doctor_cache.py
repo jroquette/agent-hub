@@ -160,6 +160,30 @@ def test_watches_at_most_three_levels_when_workflow_paths_nest_deeply() -> None:
     assert "workflows/demo/fixtures/a/b" not in watched
 
 
+def test_watches_scenario_folders_when_hub_has_scenario_packs() -> None:
+    # scenarios.graph_format reads every scenario, so one added, removed or migrated (a rename
+    # in its pack folder) makes the run stale.
+    reader = a_reader(scenario_folders=("scenarios/shop",))
+
+    watched = set(run_doctor(reader, HUB, running_version=RUNNING).watched)
+
+    assert {"scenarios", "scenarios/shop"} <= watched
+
+
+def test_runs_again_when_scenario_pack_folder_changes() -> None:
+    reader = a_reader(
+        scenario_folders=("scenarios/shop",),
+        mtimes={"hub.json": 1, "scenarios": 4, "scenarios/shop": 5},
+    )
+    cache = DoctorCache(reader, running_version=RUNNING, clock=Clock())
+
+    cache.findings(HUB)
+    reader.hubs[HUB].mtimes["scenarios/shop"] = 6
+    cache.findings(HUB)
+
+    assert reader.snapshots == {HUB: 2}
+
+
 def test_runs_again_when_item_folder_changes() -> None:
     # AGH-297: items.leftovers scans the item folders by name, so a temp entry appearing in one
     # (the folder's time) makes the run stale.

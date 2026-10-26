@@ -247,6 +247,9 @@ RUN_WRITES = (
     "/api/v1/scenario-runs/walk-1/answer",
     "/api/v1/scenario-runs/walk-1/findings/f1/issue",
     "/api/v1/scenario-runs/walk-1/findings/f1/inbox",
+    # Step and Continue resume a run in a debug pause through the CLI (ADR 0049).
+    "/api/v1/scenario-runs/walk-1/step",
+    "/api/v1/scenario-runs/walk-1/continue",
 )
 OWN_JSON = {"Origin": "http://127.0.0.1:7420", "Content-Type": "application/json"}
 
@@ -274,6 +277,9 @@ def test_marks_strict_run_write_when_post_to_run_command(path: str) -> None:
         ("GET", "/api/v1/scenario-runs/walk-1"),
         ("POST", "/api/v1/scenarios/demo/order-walk/plan/extra"),
         ("POST", "/api/v1/scenario-runs/walk-1/findings/f1/other"),
+        ("POST", "/api/v1/scenario-runs/walk-1/step/extra"),
+        ("GET", "/api/v1/scenario-runs/walk-1/breakpoints"),
+        ("GET", "/api/v1/scenario-runs/walk-1/values"),
     ],
 )
 def test_keeps_default_checks_when_not_run_command(method: str, path: str) -> None:
@@ -324,6 +330,41 @@ def test_turns_run_commands_off_when_sessions_off(
     assert listed.status_code != 404
 
 
+# A run's breakpoints are a PUT, a run write like the other debug commands (ADR 0049).
+BREAKPOINTS = "/api/v1/scenario-runs/walk-1/breakpoints"
+
+
+@pytest.mark.parametrize(
+    ("headers", "status"),
+    [
+        ({"Content-Type": "application/json"}, 403),
+        ({**OWN_JSON, "Sec-Fetch-Site": "same-site"}, 403),
+        ({**OWN_JSON, "Content-Type": "text/plain"}, 415),
+        (OWN_JSON, 501),
+    ],
+)
+def test_applies_strict_rule_and_cookie_when_breakpoints_put(
+    client: TestClient, *, headers: dict[str, str], status: int
+) -> None:
+    response = client.put(BREAKPOINTS, content=b'{"blocks": []}', headers=headers)
+    client.cookies.clear()
+    unsigned = client.put(BREAKPOINTS, content=b'{"blocks": []}', headers=OWN_JSON)
+
+    assert is_run_write("PUT", BREAKPOINTS)
+    assert is_strict_write("PUT", BREAKPOINTS)
+    assert response.status_code == status
+    assert unsigned.status_code == 401
+
+
+def test_turns_breakpoints_off_when_sessions_off(api_settings: ApiSettings, web_dist: Path) -> None:
+    app = create_app(replace(api_settings, sessions_off=True), web_dist=web_dist)
+    with TestClient(app, base_url="http://127.0.0.1:7420") as off:
+        response = off.put(BREAKPOINTS, content=b'{"blocks": []}', headers=OWN_JSON)
+
+    assert response.status_code == 404
+    assert response.json()["type"] == "urn:agent-hub:problem:run-control-off"
+
+
 ITEM_WRITES = (
     "/api/v1/projects/demo/skills/skill/demo/alpha/versions/0199f0a0-0000-7000-8000-00000000000a/restore",
     "/api/v1/projects/demo/skills/hook/project/pre-tool-use-1/versions/v-1/restore",
@@ -345,6 +386,8 @@ BUILDER_WRITES = (
     ("POST", "/api/v1/scenarios/demo/walk/proposal/dismiss"),
     ("POST", "/api/v1/projects/demo/actions"),
     ("PUT", "/api/v1/projects/demo/actions/demo/send"),
+    # Migrate rewrites the scenario's file as blocks (ADR 0049).
+    ("POST", "/api/v1/scenarios/demo/walk/migrate"),
 )
 
 
@@ -628,3 +671,68 @@ def test_turns_check_run_off_when_sessions_off(api_settings: ApiSettings, web_di
 
     assert response.status_code == 404
     assert response.json()["type"] == "urn:agent-hub:problem:run-control-off"
+
+
+# Starlette's router matches a path against ``^…$``, whose ``$`` also matches before a trailing
+# newline, while the classifiers above fullmatch it: a path holding a control character is
+# refused before anything reads it, so no route is reached without its checks.
+@pytest.mark.parametrize("suffix", ["%0A", "%0D", "%0D%0A", "%00", "%09", "%1B", "%7F", "%C2%85"])
+def test_answers_not_found_when_path_holds_a_control_character(
+    client: TestClient, suffix: str
+) -> None:
+    response = client.get(f"/api/v1/openapi.json{suffix}")
+    web = client.get(f"/sessions{suffix}")
+
+    for refused in (response, web):
+        assert refused.status_code == 404
+        assert refused.headers["content-type"] == "application/problem+json"
+        assert refused.json()["title"] == "Not Found"
+        assert "control character" in refused.json()["detail"]
+
+
+NEWLINE_ROUTES = (
+    *(("POST", path) for path in RUN_WRITES),
+    ("PUT", BREAKPOINTS),
+    ("GET", "/api/v1/scenario-runs/walk-1/values"),
+    *(("POST", path) for path in ITEM_WRITES),
+    *BUILDER_WRITES,
+    *PLAYGROUND_HUB_WRITES,
+    ("POST", CHECK_RUN),
+    ("POST", "/api/v1/hubs"),
+    ("DELETE", "/api/v1/hubs/hub-1"),
+    ("POST", "/api/v1/agent-sessions"),
+    ("GET", "/api/v1/agent-sessions"),
+    ("POST", "/api/v1/projects/demo/environment-discoveries"),
+)
+
+
+@pytest.mark.parametrize(("method", "path"), NEWLINE_ROUTES)
+def test_refuses_a_checked_route_without_its_checks_when_its_path_ends_with_a_newline(
+    client: TestClient, method: str, path: str
+) -> None:
+    client.cookies.clear()
+
+    response = client.request(method, f"{path}%0A", content=b"{}")
+
+    assert response.status_code == 404, response.text
+    assert "control character" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        *(("POST", path) for path in RUN_WRITES),
+        ("PUT", BREAKPOINTS),
+        ("GET", "/api/v1/scenario-runs/walk-1/values"),
+        ("POST", "/api/v1/scenarios/demo/walk/migrate"),
+    ],
+)
+def test_refuses_a_run_command_when_its_path_ends_with_a_newline_and_sessions_off(
+    api_settings: ApiSettings, web_dist: Path, *, method: str, path: str
+) -> None:
+    app = create_app(replace(api_settings, sessions_off=True), web_dist=web_dist)
+    with TestClient(app, base_url="http://127.0.0.1:7420") as off:
+        response = off.request(method, f"{path}%0A", content=b"{}", headers=OWN_JSON)
+
+    assert response.status_code == 404, response.text
+    assert "control character" in response.json()["detail"]

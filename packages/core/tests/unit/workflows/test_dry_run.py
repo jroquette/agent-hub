@@ -1,13 +1,17 @@
-"""The dry run: the real engine over stubbed node results, in memory (AC-213.11)."""
+"""The dry run: the real engine over stubbed node results, in memory (AC-213.11), and the tree
+format's If, Together and Repeat samples run on it (AC-507.3, .4, .5)."""
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from pydantic import ValidationError
 
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.testing.workflow_fakes import KeysOutputs, a_plan
+from agent_hub.core.workflows.document import parse_workflow
 from agent_hub.core.workflows.dry_run import (
     MAX_PLACEHOLDER_ITEMS,
     PLACEHOLDER_BUDGET,
@@ -18,7 +22,8 @@ from agent_hub.core.workflows.dry_run import (
     placeholder,
     skeleton_stub,
 )
-from agent_hub.core.workflows.plan import WorkflowPlan
+from agent_hub.core.workflows.fixtures import parse_fixture, run_fixture
+from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 
 OBJECT = {
     "type": "object",
@@ -26,6 +31,10 @@ OBJECT = {
     "required": ["ok", "delivery"],
 }
 DONE = {"type": "object", "properties": {"done": {"type": "boolean"}}, "required": ["done"]}
+TREES = Path(__file__).parents[2] / "data" / "scenarios" / "blocks" / "tree"
+OK = {"output": {"ok": True}}
+# The tree samples' inputs: synthetic values.
+ORDER_INPUTS = {"shop_order_id": "s-1", "personal_name": "dev-a", "aws_account_id": "0" * 12}
 
 
 def shell(node_id: str, *depends_on: str, **keys: object) -> dict[str, object]:
@@ -375,3 +384,97 @@ def test_reworks_through_the_stub_list_when_a_body_approval_rejects_then_approve
 
     assert report.run.status == "done"
     assert [step.node for step in report.steps].count("g__work") == 2
+
+
+def tree_plan(name: str) -> WorkflowPlan:
+    content = yaml.safe_load((TREES / f"{name}.yaml").read_text(encoding="utf-8"))
+    return plan_workflow(parse_workflow(content))
+
+
+@pytest.mark.parametrize(
+    ("order", "branch"),
+    [
+        ({"order_status": "ON_HOLD", "order_id": "o-1"}, "check--2-then-1"),
+        ({"order_status": "PENDING", "order_id": "o-1"}, "check--2-else-1"),
+        ({"order_status": "ON_HOLD", "order_id": ""}, "check--2-else-1"),
+    ],
+    ids=["then", "else-status", "else-order"],
+)
+def test_takes_the_branch_its_condition_picks_when_an_if_else_tree_runs(
+    order: dict[str, str], branch: str
+) -> None:
+    other = ({"check--2-then-1", "check--2-else-1"} - {branch}).pop()
+
+    report = run(
+        tree_plan("blocks-if-else"),
+        ORDER_INPUTS,
+        **{
+            "check--1": {"output": order},
+            "check--2-then-1": OK,
+            "check--2-else-1": {"decision": "approve", "approver": "Ada"},
+            "check--3": OK,
+        },
+    )
+
+    assert (report.run.status, report.reached) == ("done", ("check--1", branch, "check--3"))
+    assert next(step for step in report.steps if step.node == other).skip_cause == "condition"
+
+
+def test_passes_the_fixture_when_an_if_else_tree_runs_through_run_fixture() -> None:
+    # AC-507.3: a fixture file's checks (stub ids, status, reached) on a translated tree.
+    fixture = parse_fixture(
+        {
+            "workflow": "blocks-if-else",
+            "inputs": ORDER_INPUTS,
+            "stubs": {
+                "check--1": {"output": {"order_status": "PENDING", "order_id": "o-1"}},
+                "check--2-else-1": {"decision": "approve", "approver": "Ada"},
+                "check--3": OK,
+            },
+            "expect": {"status": "done"},
+            "reached": ["check--1", "check--2-else-1", "check--3"],
+        }
+    )
+
+    result = run_fixture(tree_plan("blocks-if-else"), fixture, outputs=KeysOutputs())
+
+    assert (result.problems, result.warnings) == ((), ())
+
+
+def test_runs_every_path_before_the_next_step_when_a_together_tree_runs() -> None:
+    stubs = {
+        "fix-shipping--1": {"output": {"order_id": "o-1"}},
+        "fix-shipping--2-p1-1": OK,
+        "fix-shipping--2-p2-1": OK,
+        "fix-shipping--2-p2-2": OK,
+        "fix-shipping--3": OK,
+    }
+
+    report = run(tree_plan("blocks-together"), ORDER_INPUTS, **stubs)
+    failure = {"fix-shipping--2-p2-1": {"fail": "exec_failed"}}
+    failed = run(tree_plan("blocks-together"), ORDER_INPUTS, **stubs | failure)
+
+    assert (report.run.status, report.reached) == ("done", tuple(stubs))
+    assert failed.run.status == "failed"
+    assert failed.reached == ("fix-shipping--1", "fix-shipping--2-p1-1", "fix-shipping--2-p2-1")
+    assert (
+        next(s for s in failed.steps if s.node == "fix-shipping--3").skip_cause == "upstream_failed"
+    )
+
+
+def test_repeats_the_body_until_its_condition_holds_when_a_repeat_tree_runs() -> None:
+    report = run(
+        tree_plan("blocks-repeat"),
+        ORDER_INPUTS,
+        **{
+            "poll-review--1": {"output": {"order_id": "o-1"}},
+            "poll-review--2__poll-review--2-1": OK,
+            "poll-review--2__poll": [
+                {"output": {"approval_job_id": "j-1", "review_status": "REVIEWED"}},
+                {"output": {"approval_job_id": "j-1", "review_status": "APPROVED"}},
+            ],
+        },
+    )
+
+    assert report.run.status == "done"
+    assert [step.node for step in report.steps].count("poll-review--2__poll") == 2

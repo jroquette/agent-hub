@@ -1,14 +1,16 @@
 # Scenarios, scenario detail and scenario run
 
-**Phase:** P2 with local writes (plan, start, the investigation session, the answer and the finding actions are strict
-writes, [ADR 0040](../../../adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md)) ·
+**Phase:** P2 with local writes (plan, start, the investigation session, the answer and the finding actions, and a
+scenario run's breakpoints, Step and Continue and a scenario's Migrate are strict writes,
+[ADR 0040](../../../adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md)) ·
 **Routes:** `/scenarios`, `/scenarios/:project/:name` (a scenario's name is unique per project only),
 `/scenarios/:project/:name/runs/:runId` · **Answers:** "What will this scenario do in this environment, may it start,
 and when a scenario run stops, what do I decide?"
 
 The contract is [scenarios.md](../../scenarios.md); the decision is
-[ADR 0041](../../../adr/0041-scenarios-actions-and-enforced-access.md). Glossary: a **scenario run** is a WorkflowRun of a
-scenario; the UI always says "scenario run", and "run" alone means a workflow run.
+[ADR 0041](../../../adr/0041-scenarios-actions-and-enforced-access.md), and for scenarios written as blocks and their
+debugger [ADR 0049](../../../adr/0049-scenario-blocks-and-run-control.md). Glossary: a **scenario run** is a
+WorkflowRun of a scenario; the UI always says "scenario run", and "run" alone means a workflow run.
 
 ## Navigation
 
@@ -163,7 +165,8 @@ wins.
 The scenario page's builder, as the owner validated it in the playground (its v6 and the two commits after it); the
 v1 to v5 layouts (a free block canvas, Scratch-like snapping blocks, sentence blocks, step cards with arrows) were
 rejected and are not built. Its relation to ADR 0049's tree format is in that ADR's delivery notes: the builder edits
-`version: 1` files through the builder API ([API.md](../../../API.md#scenarios)).
+`version: 1` files through the builder API ([API.md](../../../API.md#scenarios)) as below, and a file written as
+blocks (`version: 2`, the `hub init` example among them) as its stages (Version 2 in the builder, after this list).
 
 - **AC-521.13.1 Step list.** Given a scenario, then the builder reads it top to bottom as numbered steps, two lines per
   step, that say what each does; groups (Repeat, If paths, At the same time lanes) are indented; a Start row says where
@@ -207,6 +210,105 @@ rejected and are not built. Its relation to ADR 0049's tree format is in that AD
   writes nothing. Unsaved work is kept in this browser across a reload; while the page is open, a change made outside
   asks whether to load the file's version or keep yours (Keep mine replaces it on save); after a reload, work kept for
   an older version of the file is not restored.
+
+#### Version 2 in the builder (AGH-517)
+
+A scenario written as blocks opens in the same builder, edited as its stages; a graph keeps everything above. The page
+mounts the builder of the file's format, so a file migrated (or edited outside into the other format) opens in the
+other one. The builder never writes YAML: it holds the file's JSON, the server writes the canonical text.
+
+```
+(flag) Starts in personal · Asks for shop_order_id
+(milestone) Stage 1 · Fetch order · 2 steps
+     1.1  (play) Run an action  queue-send · message demo.fetch-orders
+     1.2  (timer) Wait until order_status is ON_HOLD and ...  every 15 s, up to 10 min · keeps order_id
+(milestone) Stage 2 · Review · 2 steps
+     ...
+[+ Add step]  [+ Add stage]
+```
+
+- **AC-507.15 Stages of blocks.** Given a `version: 2` scenario, then the step list shows a header row per stage, in
+  file order, and every block in its stage under it, numbered by its block address (`2`, `2.3`, `2.3.then.1`,
+  `2.3.p2.1`, `4.1.2`), with no loose step; opened and left unchanged, nothing is to save (a block moved away and back
+  writes the same document again), and a change saves the file's JSON with only that change.
+- **AC-507.24 Round trip.** Given any tree document, then the builder reads it into its model and writes back the
+  JSON the server parsed (`program.test.ts` over every tree fixture), its keys in the canonical order, so an edit undone
+  leaves nothing to save.
+- **Stages.** A stage is added from the Blocks tab's Stage block (after the selected step's stage, or at the end), a
+  `+` between stages or Add stage; its header opens its editor (name, what it is for, Delete the stage and its steps,
+  with Undo; a problem on its name shows under the field, one on its steps above it); it moves by its handle, Alt
+  arrows or its row menu (Move up, Move down, Delete stage). A step goes only into a stage's list (or a group's), a
+  stage only between stages.
+- **A block's editor.** No "Runs after", no "Only if" and no "Runs when": position is order. More: id shows the
+  block's own id, empty when it runs under the one its place gives (`fetch-order--1`, the placeholder); one given is
+  written to the file and the references to the old one follow it. The placeholder typed in is given too: the block
+  keeps that id when it moves, and a block then put at its old place runs under the same one, which the check refuses
+  on the given `id` until one of them has another. The field refuses `self` (its help says why: `$self.output` reads a
+  block's own output), as it refuses an id that is not kebab-case: the block keeps the id it had.
+- **References follow their block.** No edit changes which block a `$<id>.output` (or `$LOOP_PREV.<id>.output`)
+  reference reads: when a block with no id of its own gets another place id (a block inserted, moved or removed before
+  it, a move to another stage, its stage renamed), every reference to it is rewritten to the new one, all at once; a
+  reference to a removed block is written `<id>-removed`, an id no place gives, so the check names it rather than a
+  block now at that place reading as it. An id two blocks share (two stages of one slug) is not rewritten, before the
+  edit or after it: a block given in More: id the id another block has, or another block's place id, keeps the
+  references to either as written, and so does the id it is given after. A stage name is written as it is typed, and
+  its blocks' references follow them from the ids they ran under before the rename began, so a name typed through
+  another stage's ("Order" on the way to "Order pay") loses none. In the review of Claude's proposal, a block taken
+  from the proposal keeps its references as Claude wrote them (they read the proposal's places, which the draft
+  reaches once the blocks before them are taken too); a block of the draft's alone (its removal or its change
+  rejected) has its references follow the blocks they read, to the block that takes one's place when that change is
+  accepted (a changed block, one Claude gives an id of its own); a block both hold reads the block it reads in both,
+  or the one of its two the draft still holds, and is left as written otherwise. A reference is rewritten only inside
+  a value (never a key) and only to an id a reference can name, spelt as the grammar spells one (`[a-z][a-z0-9_-]*`):
+  one to a block given any other id (a proposal's `k"q`, `CTX`, a file the load refused) stays as written, for the
+  check to name. `$self.output` is a block's own output, never a reference to a block named `self` (an id the check
+  refuses): a rename of that block leaves it as written, and no reference is rewritten to it
+  (`$LOOP_PREV.self.output` does read the block, and follows it).
+- **Graph view.** A picture of how the blocks run (the builder's own reading of the blocks as nodes, a stage's first
+  block after the last one before it, each selected with its block; an If nested in another shows its own condition,
+  not the joined one core's translation runs), with nothing to add or move there: "The graph shows how the blocks
+  run: edit them in Blocks."
+- **Claude.** Describe with Claude teaches the tree's keys (stages, `do`, `wait_until`, `you`, `wait`, `include`,
+  `repeat`, `if`, `together`; no `nodes`, `depends_on`, `trigger_rule` or `when`), and the format brief after them is
+  the tree's (no graph header, node types or `until_when`; the page's Discuss brief too); it names a place by its
+  address, in the dialog as in the prompt ("Steps after block 1.2", "Steps at the end of stage 2"), and the brief
+  says what an address is (stage, then step; `then`/`else`, `p<n>` for a Together's path, a Repeat's steps by their
+  place), as "Ask Claude about this step" does when it names a block by its address. The proposal is
+  reviewed change by change (stages matched by name, each stage's blocks aligned), and the review lists its changes
+  once, when it opens, from the draft as it is then and the proposal: each block or stage added, changed or removed
+  (one alike another's too: two `queue-send demo.poll` blocks removed are two changes), a stage's own change (its
+  name, what it is for, its place among the stages), and the scenario's inputs and description when the proposal
+  gives others. Each change keeps its name until the review closes, its kind in it ("Accept new block 1.4" by its
+  address in the proposal, "Reject removed block 7.1" by its address in the draft the review opened on). The draft is
+  always the one the decisions give, written again from the draft the review opened on and the proposal at each
+  decision, never from the draft the last one gave: every change taken gives the proposal, none the draft as it was.
+  The review closes when every change it listed is decided; Accept all and Reject all decide every change at once
+  (Reject all after an accept gives back the draft the review opened on; Undo brings the accepts back). Any other edit
+  of the draft (Back to my draft, then an edit or Undo) opens the review again on the draft as it then is. A proposal
+  with no stages (a graph's `nodes`) says so in the banner: taken all, it leaves no stage. The banner counts new or
+  changed stages (a stage's own change among them) apart from new or changed blocks ("Claude proposes 1 new or
+  changed stage, 1 removed, changed inputs"). Under review the blocks shown are the proposal's, so none shows a row
+  of a plan made for the draft; Back to my draft shows them again. For the same reason a proposal's row selected
+  under review is not a block of the draft: Delete, Alt arrows, ⌘D, a block of the Blocks tab (click or Enter), Add to
+  the scenario and Describe's "after" leave the draft as it is, and opening or closing the review clears the
+  selection. The Blocks tab says so ("While you review Claude's proposal the draft is not edited: go back to your
+  draft to add a block."), its blocks marked unavailable and named with no place, and the action panel's Add to the
+  scenario is off.
+- **New action.** "Ask Claude to write one" in a block's editor names the block by its address in a scenario written
+  as blocks ("for the block 1.2 of this scenario"), with the brief's line on what an address is, as "Ask Claude about
+  this step" does; a graph's step by its id.
+- **Migrate, for a graph.** More › Migrate to stages of blocks opens a dialog that checks first (`POST
+  …/migrate` with `check` and the hash of the file the builder read) and shows the file as blocks, or each step a
+  tree cannot hold and why, with nothing written (to change in the builder, then open Migrate again); Migrate writes
+  it over the file the check read (the check's `content_hash` as `base_content_hash`) and the page opens the stages.
+  A file changed since the check is refused (409 `stale_document`, shown in the dialog with Check again, which reads
+  the file again first, without waiting for the builder's next read, and checks it with that file's hash); a
+  write that migrates nothing lists its own problems and offers no Migrate. With unsaved changes it asks to save them
+  first, and checks nothing. Where it has got to (checking, checked, refused, written) is read out in a polite live
+  region.
+- **Accessibility.** Written as blocks, the tree holds only its items (stage headers, steps, an empty list's item
+  with its button); the "+" in a gap is the pointer's way, and the keys add from a row (`a`), the Blocks tab, Add step
+  and Add stage.
 
 ## Screen 3: Scenario run (`/scenarios/:project/:name/runs/:runId`)
 
@@ -276,6 +378,75 @@ investigation · investigation reads · proposals · workarounds · end      | S
 | Record too large (422) | "This scenario run's record is too large to read here" / "hub web reads records up to 8 MiB. List its findings from a terminal:" `./hub scenario findings 3f2a91c0` |
 | Not found | "Scenario run 3f2a91c0 not found" / "No scenario run has the id 3f2a91c0 in the registered hubs. It may belong to a hub that is no longer registered." |
 
+### Debugging a run written as blocks (AGH-518)
+
+A scenario run of a `version: 2` scenario ([ADR 0049](../../../adr/0049-scenario-blocks-and-run-control.md),
+[scenarios.md](../../scenarios.md) § Debugging) shows the blocks it pinned when it started, and debugs them. Everything
+on this page comes from the run (`ScenarioRunDetail.blocks`, its snapshot's tree), never from the scenario file as it
+reads now, so an edit in the builder while the run is paused changes none of it, and Continue runs the pinned tree.
+
+```
+Scenario run 3f2a91c0  (hand) Waiting for you   order-lifecycle · personal · Interactive
+(pause) Paused before block 2.1 (Do: queue-send), at its breakpoint.
+        Nothing of this block has run yet.
+        Step runs the next block and pauses before the one after it; Continue runs to the next
+        breakpoint or the end. Neither answers a gate, edits a value, or re-runs or skips a block.
+        [Step] [Continue]
+Blocks                                                          | Scenario run facts
+As this scenario run pinned them when it started: ...           | Values while paused
+1    Stage: Fetch order                          (o) Breakpoint |   Inputs, environment values
+  1.1  Do: queue-send               (v) Done     (o) Breakpoint |   included: shop_order_id = T-1
+  1.2  Wait until: order-state      (v) Done     (o) Breakpoint |   Finished blocks
+2    Stage: Review                               (o) Breakpoint |   > 1.1 queue-send · fetch-order--1 · Done
+  2.1  Do: queue-send   (hand) Paused before it  (•) Breakpoint |   > 1.2 order-state · fetch-order--2 · Done · 3 polls
+  2.2  You: Check the review, then approve.  Not started  (o)   |
+Timeline
+```
+
+- **AC-507.17 Breakpoints.** Given a run's page, then each block row (address, kind and label, its state in the run
+  from the timeline lines' `block`: Done, Running, Failed, Skipped, Not started, or Paused before it) ends with a
+  Breakpoint toggle (a button, `aria-pressed`, named "Breakpoint before block 2.1" whatever its state; Tab reaches it,
+  Space or Enter presses it). A press sends the run's whole set, in the pinned tree's order (`PUT …/breakpoints`); the
+  toggles show the set on its way, then the one the server wrote, and a later pass pauses there (from the next block
+  the run starts). The toggles show only once the hub says the run's environment is not production (hidden while the
+  scenario reads), and never once the run ended done or cancelled. A scenario that no longer reads (an edit broke the
+  file) or whose environments do not name the run's offers them, and Step and Continue, leaving it to the server's
+  refusal (409 `workflow-run-debug-production` on production), so a paused run always has a Continue. While a change
+  is on its way, the toggles are off but keep focus (`aria-disabled`).
+- **Step and Continue** show only in a debug pause, in its bar above the blocks (where the investigation's banner
+  sits), under the toggles' production rule: Step (`POST …/step`) runs the next block and pauses before the one after
+  it; Continue (`POST …/continue`) runs to the next breakpoint or the end. After a press: "Step sent: the scenario
+  run goes on, and its events update this page." and both stay off (`aria-disabled`, so the pressed one keeps focus)
+  until the run leaves that pause; a refusal shows only in the pause it was sent from. When the bar leaves (the run
+  resumed), focus that left with it goes to the page's heading. Cancel stays in the header. The page's announcer
+  says "Scenario run paused before block 2.1" once, and the header badge reads Waiting for you.
+- **AC-507.16 Values while paused.** While the run is paused (a debug pause, an investigation waiting for its answer,
+  an open ask) and off production, the Facts column adds "Values while paused" (`GET …/values`, with the launch
+  cookie): the run's inputs, environment values included, then each finished block, folded until opened (its address
+  and label, node, status and poll count; inside: With, Output and, for a Wait until, Last poll). Captures stay in the
+  facts above. Credential marks are `RedactionChip`s. A graph run's nodes show by id. The values are read again
+  once another block has ended; the values shown stay until that read lands, so what was opened stays open. A
+  value taller than its box (240 px) scrolls inside it.
+- **AC-507.18 Pinned tree.** Given a builder edit while a run is paused, then the run page's blocks, toggles and bar
+  are still the pinned tree's: an address the file no longer holds keeps its row and its toggle.
+- **On the scenario page** (Run mode), each step card of a `version: 2` scenario carries a Breakpoint toggle in its
+  header, beside its status: the innermost block the card's node starts (`ScenarioDetail.blocks[].entry_nodes`; a
+  stage, an If or a Together has no card of its own). The start passes the toggled blocks the file holds now, in its
+  order (`breakpoints`), and its confirm says "It pauses before block 1.2, its breakpoint."; a production environment
+  offers no toggle and passes none. The live run's banner names a debug pause ("is paused before block 2.1 at its
+  breakpoint, in personal") and its card "Paused before it".
+
+| State | Copy |
+|---|---|
+| Debug pause (breakpoint) | "Paused before block 2.1 (Do: queue-send), at its breakpoint." |
+| Debug pause (step) | "Paused before block 2.2 (You: Check the review, then approve.), after a Step." |
+| Sent | "Step sent: the scenario run goes on, and its events update this page." (or Continue) |
+| Production | Blocks: "Breakpoints are off: live is a production environment." · bar: "Step and Continue are off: live is a production environment. To go on without stopping at breakpoints, resume it from a terminal:" `./hub workflow run --resume 3f2a91c0`; no values are read |
+| Container (404 `run-control-off`) | "Breakpoints cannot be set from the agent-hub container. Set them from a terminal:" `./hub scenario break 3f2a91c0 --set 2.1 2.2` · "Step and Continue cannot be sent from the agent-hub container. Run hub web on your machine, or from a terminal:" `./hub scenario step 3f2a91c0` · "Values cannot be read from the agent-hub container: run hub web on your machine." |
+| Locked (401) | "Debugging is locked in this browser. Open the link hub web printed when it started (it ends with ?token=…) once in this browser." |
+| Refused (409, 422) | "Could not set the breakpoints" / "Could not send Step" and the server's detail |
+| Not paused (values 409, the server's rule: an ask counts once its pass is held) | "The scenario run is not paused right now: its values show while it is paused." |
+
 ## Responsive
 
 Built: at 1280 and wider nothing hides (the plan tables' cells wrap, so Step and Policy stay in view), the chat and
@@ -293,8 +464,15 @@ Not built yet (AGH-458), the target:
 
 ## Accessibility
 
-Each table has a caption that names its subject. Every status and decision is icon + label. A refused option's reason
-is linked by `aria-describedby`. The verdict, the pause, the answer and the end are announced once, politely. Dialogs
+Each table has a caption that names its subject. Every status and decision is icon + label. A Breakpoint toggle is a
+button whose name stays the same and whose state is `aria-pressed`, in the accent color when pressed (a set
+breakpoint is not a status). The debug bar and the blocks are named regions; the values are a named complementary
+landmark, like the facts. Each finished block's values are a `details` disclosure (closed by default), and each of
+its With, Output and Last poll is focusable and named ("Output of 1.2"; a graph run's "Output of
+order-processed"), since it can scroll. A toggle, Step or
+Continue that is off while a press is on its way is `aria-disabled`, so focus stays on it; when the debug bar leaves,
+focus goes to the page's heading. A refused option's
+reason is linked by `aria-describedby`. The verdict, the pause, the answer and the end are announced once, politely. Dialogs
 open on their safe button and return focus. axe has no serious or critical violation (`npm test -- -t a11y`).
 
 ## UX principles applied
@@ -303,7 +481,10 @@ Human decides (principle 2): the pause and the answer bar sit above the fold, wa
 confirmed with its environment. Show only what the record shows (principle 3): run-time values stay placeholders, and
 a gate's kind comes from the record. Privacy (principle 5): credential marks are `RedactionChip`s. Honest limits: the
 agent's limits sit beside its chat, and the best-effort sentence sits on Run detail. Plain language: each line names
-the step, the environment and the reason.
+the step, the environment and the reason. The debugger (§ Debugging a run written as blocks) shows the run's own
+record: the blocks it pinned, never the file as it reads now, and its values with credential marks as
+`RedactionChip`s; it decides nothing for the person (Step and Continue answer no gate, edit no value), and it is off
+on production, where the bar names the terminal command instead.
 
 ## Decisions (AGH-364)
 

@@ -48,9 +48,9 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   ([Scenarios](#scenarios)) and the seven AGH-521 added to them (the scenario builder: `POST
   /projects/{project}/scenarios/validate`, `GET|POST /projects/{project}/actions`, `PUT
   /projects/{project}/actions/{pack}/{name}`, `PUT /scenarios/{project}/{name}`, `GET
-  /scenarios/{project}/{name}/proposal` and `POST …/proposal/dismiss`), the five AGH-507 will add (proposed, not built): `PUT /scenario-runs/{run_id}/breakpoints`, `POST
-  /scenario-runs/{run_id}/step|continue`, `GET /scenario-runs/{run_id}/values` and `POST
-  /scenarios/{project}/{name}/migrate`, and the two AGH-393 added (`KNOWLEDGE_PATHS`, both GET):
+  /scenarios/{project}/{name}/proposal` and `POST …/proposal/dismiss`), the five AGH-507 added to them: `PUT
+  /scenario-runs/{run_id}/breakpoints`, `POST /scenario-runs/{run_id}/step|continue`, `GET
+  /scenario-runs/{run_id}/values` and `POST /scenarios/{project}/{name}/migrate`, and the two AGH-393 added (`KNOWLEDGE_PATHS`, both GET):
   `/projects/{project}/knowledge/search` and `/projects/{project}/brain/backlinks` ([Knowledge](#knowledge)). A test
   fails on any other path.
 - A field kept only for compatibility is marked `deprecated` in the document and stays until `/api/v2`: a session's
@@ -739,10 +739,12 @@ is absent.
 The hubs' scenarios and their scenario runs ([design](design/scenarios.md), AGH-350 plan T12, AC-350.21, .22, .23,
 .30). A scenario run is a WorkflowRun labelled `scenario:<name>`: `GET /api/v1/workflow-runs?kind=scenario|workflow`
 keeps one kind (absent: both, as before; `WorkflowRun.kind` says which), and its events and gates are a run's.
-The reads need no cookie; every `POST` below is a strict write ([Local security](#local-security)) that needs the
-launch cookie and answers 404 `urn:agent-hub:problem:run-control-off` in the container. The CLI does the work as a
-child, as for the [run commands](#workflow-run-commands) (`python -I -m agent_hub.cli …`, argv only, in the hub
-folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its output.
+The reads need no cookie but for a run's values; every `POST` below is a strict write ([Local
+security](#local-security)) that needs the launch cookie and, as that values read, answers 404
+`urn:agent-hub:problem:run-control-off` in the container, except the builder's save, dismiss and action writes and a
+migrate, which answer 409 `hub_read_only` there. The CLI does the work as a child, as for the [run
+commands](#workflow-run-commands) (`python -I -m agent_hub.cli …`, argv only, in the hub folder, the server's
+environment minus `LINEAR_API_KEY`); no problem quotes its output.
 
 - `GET /api/v1/scenarios[?project=…]` → `ScenarioCatalogView`: `items` (each `project`, `name`, `pack`, `description`,
   `revision`, `node_count`, `inputs` and `last_run`: `{run_id, status, started_at, ended_at, environment, mode}` of
@@ -763,17 +765,21 @@ folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its 
   `script_truncated`) and `problem` when the action does not load.
 - The scenario builder (AGH-521, hub web's editor of a scenario; `SCENARIO_PATHS` lists its seven paths):
   - `POST /api/v1/projects/{project}/scenarios/validate` with `{pack, document}` → 200 `ValidateResult`: `loads`,
-    `yaml` (the canonical YAML Save would write), `problems` (`error` or `warning`, each on its `node` or the
-    document) and `nodes` (each top-level node's first and last line in `yaml`). It writes nothing.
+    `yaml` (the canonical YAML Save would write, `generator`'s scenario writer), `problems` (`error` or `warning`,
+    each on its `node` or the document) and `nodes` (each top-level node's first and last line in `yaml`). It writes
+    nothing. The document is a `version: 1` graph or a `version: 2` tree (AGH-507): a tree's action references are
+    checked through its translated blocks, each problem on the block's first node with the block's key path
+    (`stages[0].steps[2].do`).
   - `GET /api/v1/projects/{project}/actions` → 200 `ActionLibrary`: the hub's actions, by pack then name, each with
-    its `output_fields` (the paths a reference may read, two levels) and `used_by` (the scenarios that call it), and
-    the `problems` of action files that do not load.
+    its `output_fields` (the paths a reference may read, two levels) and `used_by` (the scenarios that call it, a
+    tree's Do and Wait until blocks included), and the `problems` of action files that do not load.
   - `PUT /api/v1/scenarios/{project}/{name}` with `{pack, document, base_content_hash}` → 200 `SaveResult` (`path`,
     `revision`, `content_hash`, `yaml`, `changed`, `versioned`): writes `scenarios/<pack>/<name>.yaml` through the
     item write step (recorded as a version, never through a link, no git command), only when the document loads (409
     `document_invalid` else) and only over the file the builder last read (409 `stale_document`; `null` for a new
     scenario, 409 `name_taken` when another pack holds the name). The server sets `revision` (the file's plus one);
-    a document whose canonical bytes equal the file's writes nothing (`changed: false`).
+    a document whose canonical bytes with the file's own `revision` equal the file's writes nothing and keeps the
+    revision (`changed: false`), a graph or a tree alike.
   - `GET /api/v1/scenarios/{project}/{name}/proposal` → 200 `ProposalView`: the document Claude wrote for the scenario
     under the hub's ignored `.agent-runs/`, checked as Save would check it; 404 when there is none. `POST
     …/proposal/dismiss` → 204 removes it once the owner accepted it into the draft or rejected it (never through a
@@ -809,10 +815,10 @@ folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its 
   `scenario`, `pack`, `environment`, `mode`, `status` (the end's, `null` while it has none), `open_investigation`
   and `paused_step` (the investigation waiting for an answer), `timeline` (each line's `event`, `node`, `attempt`,
   `status`, `at`, and an investigation read's (`agent_action`) `action` and `effect`), `polls` (an expect's polls:
-  `held`, never the output; outputs only through `…/values`, proposed below), `captures` (`name`, `value`), `decisions` (every gate's answer: `choice`, `text`,
+  `held`, never the output; outputs only through `…/values`, below), `captures` (`name`, `value`), `decisions` (every gate's answer: `choice`, `text`,
   `approver`, `where`), `actions` (each action call's policy facts: `node`, `attempt`, `poll`, `action`, `effect`,
   `origin`, `decision`, `reason_kind`, `content_hash`, `approver`, `status`, `failure_kind`, `at`; never its inputs
-  or output, which only the proposed `…/values` would give), `findings`, `investigations` (each with `agent_session_id`, the session its
+  or output, which only `…/values` gives), `findings`, `investigations` (each with `agent_session_id`, the session its
   `investigation-<n>.session` link names, read never through a link, else `null`), `workarounds` and `proposal`: the latest investigation's latest proposal, each option with its `steps`, its
   `plan` as shown, `needs_acceptance`, `accept_commands` (one per drafted action that is still a draft),
   `pickable` and `refusal`, judged now as an answer would be (only while its investigation waits; `the
@@ -872,58 +878,91 @@ folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its 
   `finding_id` matches `^f[0-9]{1,6}$` (else 400); an unknown finding is a 404 (entity `finding`).
 
 Debugging and migration (AGH-507, [ADR 0049](adr/0049-scenario-blocks-and-run-control.md), [design](design/scenarios.md)
-§ Debugging; proposed, not built yet, so `SCENARIO_PATHS` does not list them): each write runs the CLI as a child and waits for it, as a gate decision does; the writes are run
-writes (`RUN_WRITES`; migrate is an item write, `ITEM_WRITES`) and the values read needs the same cookie
-([Local security](#local-security)).
+§ Debugging): the debug writes run the CLI as a child, as a gate decision does, and are run writes (`RUN_WRITES`);
+migrate runs in the server, as the builder's Save does, and is an item write (`ITEM_WRITES`); the values read needs the
+same cookie ([Local security](#local-security)). A block address in a body must fit the address grammar
+(`^[1-9][0-9]*(\.((then|else|p[1-9][0-9]*)\.)?[1-9][0-9]*)*$`, at most 64 characters; else 422 for the body), so none
+reads as an option of the CLI, which gets them after `--` (or as `--break=ADDR`).
 
 - `PUT /api/v1/scenario-runs/{run_id}/breakpoints` with `{blocks: [<address>…]}` (at most 512 addresses of the run's
-  pinned tree, as [design](design/scenarios.md) § Tree format writes them) → 200 `Breakpoints` (`run_id`, `blocks`):
-  replaces the run's breakpoints through `hub scenario break RUN --set ADDR…`; one set while the run runs takes effect
-  at its next block. An address the pinned tree does not hold is 422 `workflow-run-unknown-block` naming it. An empty
-  list clears them, also on production.
-- `POST /api/v1/scenario-runs/{run_id}/step` and `…/continue` → 202 `RunAccepted` (`action` `step` or `continue`): the
-  run must be in a debug pause (409 `workflow-run-not-debug-paused`; a gate keeps its own paths) and its child must
-  have ended (409 `workflow-run-in-use`); `hub scenario step|continue` records the command with the approver and
-  resumes the run in a detached child.
-- `POST /api/v1/scenarios/{project}/{name}/runs` also takes `breakpoints` (as above, addresses of the tree it pins).
+  pinned tree, as [design](design/scenarios.md) § Tree format writes them) → 200 `Breakpoints` (`run_id`, `blocks`, in
+  the pinned tree's declaration order, each once): replaces the run's breakpoints through `hub scenario break RUN --set
+  -- ADDR…`, waited for (at most 60 s); one set while the run runs takes effect at its next layer of nodes, so the
+  run's child may be running. An address the pinned tree (the run snapshot's document, read up to 1 MiB and never
+  through a link, not the scenario file as it reads now) does not hold, any address of a version-1 run included, is 422
+  `workflow-run-unknown-block` naming it (`block`); its `detail` says when the snapshot cannot be read (missing, a
+  link, over 1 MiB or no longer a tree) rather than that the run is a version-1 one; a run that ended `done` or
+  `cancelled` is 409 `workflow-run-ended`. An empty list clears them, also on production. The CLI refusing after these
+  checks (another command changing the run's breakpoints, a version-1 run asked to clear) is 409
+  `workflow-run-refused`; one that cannot start or finish in time, 502 `workflow-run-launch-failed`.
+- `POST /api/v1/scenario-runs/{run_id}/step` and `…/continue` → 202 `RunAccepted` (`action` `step` or `continue`) and
+  `Location: /api/v1/scenario-runs/{run_id}`: the run must be in a debug pause, as its record says (409
+  `workflow-run-not-debug-paused`; a gate keeps its own paths), its `debug.pause` line must read back (422
+  `record_unreadable`) and its child must have ended (409 `workflow-run-in-use`); then `hub scenario step|continue RUN`
+  runs detached, as a resume does: it records the command with the approver (the account `hub web` runs as) and
+  resumes the run, or refuses on its own (a snapshot that no longer matches its `content_hash`) and records nothing.
+- `POST /api/v1/scenarios/{project}/{name}/runs` also takes `breakpoints` (as above, addresses of the tree the run
+  pins, the scenario's file as read now; 422 `workflow-run-unknown-block` else, a version-1 scenario included), passed
+  as one `--break=ADDR` each. Its plan's problems name a block, `block <address> (<key path>)`, as the CLI's do, and a
+  required input that neither the body nor the environment's values fill is 422 naming the input and the environment,
+  for a plan as well.
 - When the run's environment is `production: true` in the effective config as read then, breakpoints other than an
-  empty list, Step, Continue and a start with breakpoints are 409 `workflow-run-debug-production` and nothing is
-  recorded; a start without breakpoints is unchanged.
-- `ScenarioRunDetail` adds `debug` (`null` unless the run is in a debug pause: `block`, `node`, `reason` `breakpoint` or
-  `step`), `breakpoints` and `stepping`: metadata only, as the rest of it. `ScenarioDetail` adds `version` and, for
-  version 2, `blocks` (`address`, `kind`, `label`, `entry_nodes`).
-- `GET /api/v1/scenario-runs/{run_id}/values` → 200 `ScenarioRunValues`: `inputs` (the run's effective inputs,
-  environment values included) and `blocks`, one per finished block (`address`, `node`, `status`, `with` as rendered,
-  `output`, and for a Wait until `polls` and `last_poll`), from the record (values as it holds them, credential values
-  already redacted). It needs the launch cookie, as the agent-session routes do, so no other local process reads it;
-  the run must be paused (409 `workflow-run-not-paused`) and its environment not production (409
-  `workflow-run-debug-production`). In the container, where no cookie exists, it is 404 `run-control-off`.
-- `POST /api/v1/scenarios/{project}/{name}/migrate` with `{check?}` → 200 `ScenarioMigration` (`path`, `written`,
-  `yaml` (the tree, canonical), `problems` (`node`, `message`)): what `hub scenario migrate NAME [--check]` does; with
-  problems nothing is written (200, `written: false`). A version-2 scenario is 409 `scenario-already-tree`; in the
-  container it is 409 `hub_read_only`.
+  empty list, Step, Continue, a start with breakpoints and a values read are 409 `workflow-run-debug-production` and
+  nothing is recorded; a start without breakpoints is unchanged.
+- `ScenarioRunDetail` adds `debug` (`null` unless the run is in a debug pause: `block`, `node`, `reason` `breakpoint`
+  or `step`, `number`, `at`), `breakpoints` (the addresses last set), `stepping` (whether its last debug command was
+  a Step) and `blocks`, the blocks of the tree the run pins (`address`, `kind`, `label`, in declaration order, read
+  from its snapshot as breakpoints are checked, not from the scenario file as it reads now; empty for a version-1 run
+  or a snapshot that cannot be read), and each `timeline` line its `block`: the address of the pinned tree's block
+  that holds its node, as the values read gives it (a gate's is its step's, an included node's its include's; `null`
+  in a version-1 run and on a line about no node): metadata only, as the rest of it. `ScenarioDetail` adds `version`
+  (`1` or `2`) and, for version 2, `blocks` (`address`, `kind`, `label`, `entry_nodes`) in declaration order, read
+  from the file as it reads now; `entry_nodes` are the translated graph's, while a run starts a gated step at its
+  `<step>__ask` gate and an include at the first nodes of what it includes, so a run's lines are put on blocks by
+  their `block`.
+- `GET /api/v1/scenario-runs/{run_id}/values` → 200 `ScenarioRunValues`: `run_id`, `inputs` (the run's effective
+  inputs, environment values included) and `blocks`, one per finished node in the order they first ended (`address`
+  of the block that holds it: a gate's is its step's, an included node's its include's, `null` in a version-1 run;
+  `node`, `attempt`, `status`, `with` as rendered, `output`,
+  and for a Wait until `polls` and `last_poll`), from the record (values as it holds them, credential values already
+  redacted). It needs the launch cookie and this server's pages (a foreign `Origin` or a `same-site` fetch is 403), as
+  the agent-session routes do, so no other local process reads it; the run must be paused, its last pass ended on a
+  pause (a debug pause or a gate) or waiting for an investigation's answer (409 `workflow-run-not-paused`), and its
+  environment not production (409 `workflow-run-debug-production`). In the container, where no cookie exists, it is
+  404 `run-control-off`.
+- `POST /api/v1/scenarios/{project}/{name}/migrate` with `{check?, base_content_hash?}` → 200 `ScenarioMigration`
+  (`path`, `written`, `yaml` (the tree, canonical; `null` with problems), `content_hash` (the file's after the call)
+  and `problems` (`node`, `message`)): what `hub scenario migrate NAME [--check]` does, in the server: core's
+  `migrate_graph` over the bytes it read once, `generator`'s canonical writer, the text loaded back and translated
+  again, then the item write step Save uses (recorded as a version, never through a link, no git command). With
+  problems (a node a tree cannot hold, a JSON file, a link, a path the writer does not write) nothing is written
+  (200, `written: false`, `node` `null` for the file's own); with `check` nothing is either. When `base_content_hash`
+  is sent, the file must still hold it (409 `stale_document`), so a builder Save between a check and the write is never
+  overwritten: the bytes are read first (never through a link), so a JSON file or a path the writer does not write is
+  checked too and, unchanged, answers its problem; a link is never read, so its problem is the answer whatever hash is
+  sent. A version-2 scenario is 409 `scenario_already_tree`; in the container it is 409 `hub_read_only`.
 
 Problems:
 
 | Status | Type or code | When |
 | --- | --- | --- |
 | 400 | "Invalid request parameter" | `run_id` does not match `^[a-z0-9][a-z0-9-]{0,31}$`, or `finding_id` does not match `^f[0-9]{1,6}$` |
-| 401 · 403 · 415 | as in [Local security](#local-security) | a `POST` or `PUT` (but `POST …/scenarios/validate`), or the proposed values `GET`, without the launch cookie · a foreign `Origin` or fetch site · a body that is not JSON |
+| 401 · 403 · 415 | as in [Local security](#local-security) | a `POST` or `PUT` (but `POST …/scenarios/validate`), or the values `GET`, without the launch cookie · a foreign `Origin` or fetch site · a body that is not JSON |
 | 404 | `about:blank` | no registered hub holds the run (or its record), the run is not a scenario run, an unknown project, scenario or finding, or the hub has no workdir |
-| 404 | `urn:agent-hub:problem:run-control-off` | a run write in the container (`AGENT_HUB_IN_CONTAINER=1`); the builder's save, dismiss and action writes answer 409 `hub_read_only` there instead, and its `POST …/scenarios/validate` needs no cookie |
+| 404 | `urn:agent-hub:problem:run-control-off` | a run write or a run's values read in the container (`AGENT_HUB_IN_CONTAINER=1`); the builder's save, dismiss and action writes and a scenario's migrate answer 409 `hub_read_only` there instead, and its `POST …/scenarios/validate` needs no cookie |
 | 409 | `workflow-run-undeclared-environment` · `-denied` (`steps`) · `-plan-problem` | a start whose plan may not start; no run is created |
-| 409 | `workflow-run-not-paused` | not a scenario run, or not paused at an open, unanswered investigation |
+| 409 | `workflow-run-not-paused` | not a scenario run, or not paused at an open, unanswered investigation (an answer); not paused at all (a values read) |
 | 409 | `workflow-run-pick-refused` | a pick of no option of the latest proposal, of one holding a `deny` or a draft action, or of one whose plan changed since it was shown |
-| 409 | `workflow-run-in-use` · `-refused` | the run's child still runs · `hub workflow decide` refused the answer |
-| 409 | `workflow-run-not-debug-paused` · `-debug-production` · `scenario-already-tree` | Step or Continue outside a debug pause · a debug write, a start with breakpoints or a values read on a production environment · migrate of a version-2 scenario |
-| 422 | `workflow-run-unknown-block` | a breakpoint address the run's pinned tree does not hold |
+| 409 | `workflow-run-in-use` · `-refused` · `-ended` | the run's child still runs · `hub workflow decide` or `hub scenario break` refused · breakpoints of a run that ended `done` or `cancelled` |
+| 409 | `workflow-run-not-debug-paused` · `-debug-production` · `-scenario-already-tree` · `-stale-document` | Step or Continue outside a debug pause · a debug write, a start with breakpoints or a values read on a production environment · migrate of a version-2 scenario · migrate over a file that changed since `base_content_hash` |
+| 422 | `workflow-run-unknown-block` | a breakpoint address the run's pinned tree (or, for a start, the scenario's tree) does not hold; `block` names it |
 | 409 | `workflow-run-issue-exists` · `-tracker-not-connected` · `-note-exists` · `-link-in-path` · `-finding-unusable` | a finding's issue or note cannot be made (see above) |
 | 409 | `workflow-run-link-in-path` | the link file `investigation-<n>.session` is a symbolic link |
 | 409 | `workflow-run-workspace-root` | a read root (the hub or a declared repo) is `/`, the home folder or one of its ancestors, where reads would reach the developer's own credentials |
 | 409 | `urn:agent-hub:problem:hub-registry-unreadable` (`hub_registry_unreadable`) | the hub registry cannot be read |
 | 409 | `urn:agent-hub:problem:hub-local-invalid` (`hub_local_invalid`) | the hub's `hub.local.json` cannot be read or conflicts with `hub.json` (it loosens an environment's access, for example), so its env files, credential names and environments are unknown (an investigation session, a plan, a start, a pick or an issue's create) |
 | 422 | `workflow-run-invalid-inputs` · the body's | inputs that do not fit the scenario's · a body outside its model |
-| 422 | `record_too_large` · `record_unreadable` | the run's record is over 8 MiB · a line before its last is not one JSON object |
+| 422 | `record_too_large` · `record_unreadable` | the run's record is over 8 MiB · a line before its last is not one JSON object, or (Step and Continue) the run's `debug.pause` line cannot be read back |
 | 502 | `workflow-run-launch-failed` · `-resume-failed` · `-decision-unknown` · `scenario-run-issue-failed` | a child that cannot start or finish · the answer is recorded, the resume did not start · `hub workflow decide` outlasted 60 s · the tracker's create failed |
 | 409 · 429 · 503 | the agent-session problems | the investigation session cannot start ([Agent sessions](#agent-sessions)) |
 
@@ -933,7 +972,10 @@ record problems are `urn:agent-hub:problem:scenario-run-record-too-large` and `-
 ## Local security
 
 `hub web` binds `127.0.0.1` only. It refuses a `Host` header other than `127.0.0.1:<port>`, `localhost:<port>` or
-`[::1]:<port>` (403, against DNS rebinding) and a `POST` or `DELETE` whose `Origin` is not its own (403); it sends no
+`[::1]:<port>` (403, against DNS rebinding), a path holding a control character once decoded (404 "Not Found", before
+any other check: the router's `$` also matches before a trailing newline, so `…/values%0A` would reach the route
+while the checks below, which match the whole path, would not apply) and a `POST` or `DELETE` whose `Origin` is not
+its own (403); it sends no
 CORS headers, `Cache-Control: no-store` on `/api`, and a CSP that limits scripts, styles, fonts and connections to
 `'self'`. The web app requests no other host; Linear is read by the server only ([Feature tickets](#feature-tickets)).
 A `GET` with a foreign `Origin` is served, the knowledge `GET`s included: their only write is the sync of derived
@@ -941,12 +983,13 @@ index rows, which a foreign page can trigger but whose answer it cannot read ([K
 The agent-session routes add a cookie and stricter Origin rules ([Agent sessions](#agent-sessions)), and the workflow
 run writes (`RUN_WRITES`: start, cancel, resume and abandon a run, a gate's decision, an AC's check run, a
 change request's decision, and the scenario writes: a plan, a start, an investigation's session and answer, a
-finding's issue and inbox note; and, proposed with AGH-507, a run's breakpoints, Step and Continue), the restores,
-the Publish, the scenario builder's save, proposal dismiss and action writes (AGH-521) and, proposed, a scenario's
-migrate (`ITEM_WRITES`) need that cookie too, as would the proposed read of a scenario run's values ([Workflow run commands](#workflow-run-commands), [Skills](#skills),
+finding's issue and inbox note; and, with AGH-507, a run's breakpoints, Step and Continue), the restores,
+the Publish, the scenario builder's save, proposal dismiss and action writes (AGH-521) and a scenario's migrate
+(AGH-507) (`ITEM_WRITES`) need that cookie too, as does the read of a scenario run's values (`RUN_READS`, with the
+agent-session reads' Origin rules) ([Workflow run commands](#workflow-run-commands), [Skills](#skills),
 [Workflows](#workflows)); every other route is unchanged and needs no cookie. In the container (`AGENT_HUB_IN_CONTAINER=1`, where no token is
-minted and the hubs are mounted read-only) a restore, a publish or a scenario builder write answers 409 `hub_read_only` before the
-cookie is checked.
+minted and the hubs are mounted read-only) a restore, a publish or a scenario builder write (a migrate included) answers 409
+`hub_read_only` before the cookie is checked, and a run write or the values read 404 `run-control-off`.
 
 The two learning decisions, which reach the network, the four workflow run commands and a workflow gate's decision,
 which start or stop processes, and the two restores and the Publish (`ITEM_WRITES`), which write into a hub's tree,

@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -16,7 +17,6 @@ import {
   CodeBlock,
   Icon,
   ProblemError,
-  RedactionChip,
   Skeleton,
   Time,
   TimelineEvent,
@@ -34,7 +34,8 @@ import { useRun } from "../run-detail/queries";
 import { RunCommands } from "../run-detail/RunCommands";
 import { Findings } from "./Findings";
 import { answerDone, answerShort, containerProblem, PausedView } from "./Investigation";
-import { Page, ScenarioRunBadge, shortId } from "./parts";
+import { DebugBar } from "./DebugBar";
+import { CaptureValue, Page, ScenarioRunBadge, shortId } from "./parts";
 import {
   gateNodeOf,
   gateRun,
@@ -47,6 +48,8 @@ import {
   type ScenarioRunDetail,
   type ScenarioStep,
 } from "./queries";
+import { RunBlocks } from "./RunBlocks";
+import { RunValues } from "./RunValues";
 import {
   divergence,
   investigationGates,
@@ -63,23 +66,6 @@ import {
 
 const MAX_INVESTIGATIONS = 10;
 const TOAST_MS = 6000;
-
-const CREDENTIAL_MARK = /<credential ([A-Za-z0-9_]+)>/g;
-
-/** A captured value; each `<credential NAME>` mark in it, alone or inside other text, is a
- * RedactionChip (principle 5, review Q7). */
-function CaptureValue({ value }: { value: unknown }) {
-  const text = typeof value === "string" ? value : JSON.stringify(value);
-  const parts: ReactNode[] = [];
-  let last = 0;
-  for (const match of text.matchAll(CREDENTIAL_MARK)) {
-    if (match.index > last) parts.push(text.slice(last, match.index));
-    parts.push(<RedactionChip key={match.index} kind={`credential ${match[1] ?? ""}`} />);
-    last = match.index + match[0].length;
-  }
-  if (last < text.length) parts.push(text.slice(last));
-  return <span className="ah-mono">{parts}</span>;
-}
 
 function Fact({ k, children }: { k: string; children: ReactNode }) {
   return (
@@ -452,6 +438,31 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
   const steps = scenario.data?.steps;
   const paused = run.open_investigation !== null;
   const asks = useOpenPolicyAsks(run);
+  const debugPaused = (run.debug ?? null) !== null && !ended;
+  // The run's environment as the hub reads it now (null until known): debugging and the values
+  // read are off production. A scenario that no longer reads (an edit broke it), or whose
+  // environments do not name the run's, leaves it to the server's refusal (409 on production), so
+  // a paused run always has a Continue.
+  const production = scenario.data
+    ? scenario.data.environments.some((env) => env.name === run.environment && env.production)
+    : scenario.isError
+      ? false
+      : null;
+  // The pause the values are read for: a debug pause, an investigation or an open ask, each
+  // read again once another block ended.
+  const holding = debugPaused
+    ? `debug ${String(run.debug?.number)}`
+    : paused
+      ? `investigation ${String(run.open_investigation)}`
+      : asks.length > 0
+        ? `ask ${asks.map((gate) => gate.id).join(" ")}`
+        : null;
+  const valuesFor = holding === null || ended || production !== false ? null : holding;
+  // Once per read of the record, not on every tick of the page's clock.
+  const blocksEnded = useMemo(
+    () => run.timeline.filter((entry) => entry.event === "step_end").length,
+    [run.timeline],
+  );
   const heading = useRef<HTMLHeadingElement>(null);
   // An answer recorded here: its toast, and a resuming line until the record moves on (B3).
   const [toast, setToast] = useState<string | null>(null);
@@ -508,6 +519,14 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
     if (wasPaused.current && !paused) heading.current?.focus();
     wasPaused.current = paused;
   }, [paused]);
+  // The debug bar leaves once the run resumes: focus that left with it goes to the heading.
+  const wasDebugPaused = useRef(debugPaused);
+  useEffect(() => {
+    const active = document.activeElement;
+    const lost = active === null || active === document.body || !active.isConnected;
+    if (wasDebugPaused.current && !debugPaused && lost) heading.current?.focus();
+    wasDebugPaused.current = debugPaused;
+  }, [debugPaused]);
   // A new investigation (a failed workaround reopened one) starts with nothing picked, even
   // when its proposal reuses the ids, and focus on the heading (review round 4, F1, F3).
   const [params, setParams] = useSearchParams();
@@ -551,7 +570,9 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
         ? (ENDED_WORDS[run.status] ?? "")
         : paused
           ? `Scenario run paused at ${run.paused_step ?? ""}`
-          : "";
+          : debugPaused
+            ? `Scenario run paused before block ${run.debug?.block ?? ""}`
+            : "";
   // Run control is off in the container: the reads stay, every answer and write is off.
   const [controlOff, setControlOff] = useState(false);
   const markControlOff = useCallback(() => {
@@ -563,7 +584,12 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
     <Page>
       <div className="ah-row ah-wrap" style={{ gap: 12, alignItems: "flex-start" }}>
         <div className="ah-grow">
-          <Header run={run} now={now} waiting={paused || asks.length > 0} heading={heading} />
+          <Header
+            run={run}
+            now={now}
+            waiting={paused || debugPaused || asks.length > 0}
+            heading={heading}
+          />
         </div>
         {workflowRun.data?.status === "running" && !paused && (
           <RunCommands run={workflowRun.data} noun="scenario run" only={["cancel"]} />
@@ -582,6 +608,7 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
         {announcement}
       </div>
       {paused && <PauseBanner run={run} steps={steps} />}
+      {debugPaused && <DebugBar run={run} production={production} />}
       {!paused && answered !== null && (
         // Plain text: the page's announcer says "Answer recorded" once (review N2).
         <div className="ah-row ah-small" style={{ gap: 6 }}>
@@ -618,8 +645,14 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
           alignItems: "start",
         }}
       >
-        <Timeline run={run} steps={steps} />
-        <Facts run={run} />
+        <div className="ah-stack" style={{ gap: 16, minWidth: 0 }}>
+          {run.blocks.length > 0 && <RunBlocks run={run} production={production} />}
+          <Timeline run={run} steps={steps} />
+        </div>
+        <div className="ah-stack" style={{ gap: 16, minWidth: 0 }}>
+          <Facts run={run} />
+          <RunValues run={run} pause={valuesFor} ended={blocksEnded} />
+        </div>
       </div>
     </Page>
   );

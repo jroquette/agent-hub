@@ -69,6 +69,11 @@ BODIES: dict[tuple[str, str], object] = {
     ("post", "/api/v1/scenario-runs/{run_id}/answer"): {"choice": "retry"},
     ("post", "/api/v1/scenario-runs/{run_id}/findings/{finding_id}/issue"): {},
     ("post", "/api/v1/scenario-runs/{run_id}/findings/{finding_id}/inbox"): {},
+    # Debugging a scenario run and migrate (ADR 0049): strict writes, JSON even when bodiless.
+    ("put", "/api/v1/scenario-runs/{run_id}/breakpoints"): {"blocks": []},
+    ("post", "/api/v1/scenario-runs/{run_id}/step"): {},
+    ("post", "/api/v1/scenario-runs/{run_id}/continue"): {},
+    ("post", "/api/v1/scenarios/{project}/{name}/migrate"): {"check": True},
     # A restore and a publish are strict writes too (AGH-295, D13).
     (
         "post",

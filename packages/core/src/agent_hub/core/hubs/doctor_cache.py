@@ -7,8 +7,10 @@ and nothing else runs; an unusable file is ``config.schema`` findings), the hub'
 ``hub doctor --json`` run in that hub. ``DoctorCache`` keeps one run per hub for
 ``DOCTOR_TTL``, or until a watched file's modification time changes (``hub.json``,
 ``hub.lock``, ``hub.local.json``, every path the run looked at, the ``workflows/`` folders
-above them, whose times change when a workflow file is added or removed, and the item folders
-``items.leftovers`` scanned, whose times change when a temp entry appears or goes).
+above them, whose times change when a workflow file is added or removed, ``scenarios/`` and its
+pack folders, whose times change when a scenario is added, removed or rewritten by a rename, and
+the item folders ``items.leftovers`` scanned, whose times change when a temp entry appears or
+goes).
 """
 
 import threading
@@ -26,6 +28,7 @@ from agent_hub.core.hub_config.local_config import LOCAL_FILE
 from agent_hub.core.hub_config.problems import ROOT_PATH, ConfigProblem
 from agent_hub.core.hub_files.hub_lock import HUB_LOCK_PATH
 from agent_hub.core.hubs.hub_registry import HubFileReader, UnreadHubFile
+from agent_hub.core.item_versions.item_units import HUB_SCENARIOS_FOLDER
 from agent_hub.core.workflows.catalog import HUB_WORKFLOWS_FOLDER
 
 DOCTOR_TTL: Final = timedelta(minutes=15)
@@ -73,6 +76,8 @@ def run_doctor(reader: HubFileReader, hub_path: str, *, running_version: str) ->
     folders = {
         HUB_WORKFLOWS_FOLDER,
         *snapshot.workflow_folders,
+        HUB_SCENARIOS_FOLDER,
+        *snapshot.scenario_folders,
         *snapshot.item_folders,
         *_workflow_folders(looked_at),
     }

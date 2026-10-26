@@ -1,6 +1,7 @@
-"""``hub scenario list|plan|run|propose|findings``: the hub's scenarios, listed, planned and
-run, and their scenario runs' findings (docs/design/scenarios.md § Contract, § Plan and modes,
-§ Investigation; ADR 0041).
+"""``hub scenario list|plan|run|break|step|continue|migrate|propose|findings``: the hub's
+scenarios, listed, planned, run, debugged and written as blocks, and their scenario runs'
+findings (docs/design/scenarios.md § Contract, § Tree format, § Debugging, § Plan and modes,
+§ Investigation; ADR 0041, ADR 0049).
 
 ``list`` prints one line per scenario that loads, ``<name>  <pack>  <nodes> nodes
 [<description>]``; each problem is one stderr line, ``<file>[:<line>]: <key>: <message>``, and
@@ -32,7 +33,33 @@ stderr line (an undeclared environment once, not per step) and exits 1 with no s
 Otherwise ``scenario_runs`` starts it: a policy ``ask`` is a ``<step>__ask`` approval, answered
 with ``hub workflow approve|reject``. In ``interactive`` mode, the default, a divergence pauses
 the scenario run at ``<step>__investigation`` and prints where hub web shows it. No option
-removes a gate: ``--yes`` and its kind are unknown options (exit 2).
+removes a gate: ``--yes`` and its kind are unknown options (exit 2). A required input that no
+``--input``, environment value or default fills exits 2 naming the input and ENV. A plan problem
+of a scenario written as blocks (``version: 2``) names its block, ``block <address> (<key
+path>)``, not a generated node id.
+
+``run … --break ADDR`` (repeatable) starts a scenario written as blocks with breakpoints, block
+addresses of its tree (``scenario_debug``; docs/design/scenarios.md § Debugging). ``break RUN
+ADDR... [--off]`` adds or removes a run's breakpoints and ``break RUN --set [ADDR...]`` replaces
+them (none clears them), printing the set written (``run <id>: breakpoints 2, 3.1`` or ``run
+<id>: no breakpoints``); a run that runs takes them at its next layer of nodes. ``step RUN`` and
+``continue RUN`` resume a run in a debug pause, recorded with who sent them. A debug pause prints
+``run <id>: paused before <address> (breakpoint|step)`` and exits 0. Each is refused, exit 1 and
+nothing recorded, on a ``production: true`` environment (clearing excepted), for a version-1
+scenario, which has no addresses, and for an address its tree does not hold.
+
+``migrate [NAME]... [--check]`` writes each graph-format scenario named (``version: 1``; every
+one when none is named) again in place as blocks (``version: 2``, ``scenario_migrate``): one
+stage named after the scenario, each id kept where it differs from the one its address derives,
+in canonical form, the revision kept; it prints ``migrated <file> to blocks (version 2): stage
+<name>, <n> blocks`` per file, or ``no scenario in the graph format (version 1)``. When anything
+cannot be migrated (no such scenario, a file that does not load or plan, one already at
+version 2, a JSON file, a link, a path with a backslash or a control character, a node a tree
+cannot hold, a canonical text that would not load again or would read back as another graph) it
+writes nothing: one stderr line per problem, naming the file and the node, then ``... cannot be
+written as blocks; nothing was written``, exit 1; a folder's problem (a linked pack folder)
+refuses a run with no names, ending ``... nothing was written``. ``--check`` writes nothing and
+prints ``would migrate ...`` instead.
 
 ``propose --run RUN`` records an investigation's findings and options, the fixed schema as JSON
 on stdin (at most 256 KiB, bounds and secret-shape redaction in core's ``investigation``), for
@@ -87,7 +114,17 @@ from agent_hub.cli.effective_config import load_effective_config_or_exit
 from agent_hub.cli.exclusive_write import write_exclusive
 from agent_hub.cli.init_report import shown_path, shown_text
 from agent_hub.cli.run_log import new_run_id, now
+from agent_hub.cli.scenario_debug import (
+    NO_ADDRESSES,
+    Change,
+    DebugCommand,
+    addresses_in,
+    change_breakpoints,
+    refuse_on_production,
+    send_command,
+)
 from agent_hub.cli.scenario_investigation import Planned, option_lines, record_proposal
+from agent_hub.cli.scenario_migrate import MigrationPlan, plan_migration, write_migration
 from agent_hub.cli.scenario_runs import (
     INTERACTIVE,
     MODES,
@@ -133,11 +170,14 @@ from agent_hub.core.scenarios.investigation import (
 from agent_hub.core.scenarios.run_record import FindingView, ScenarioRunView, fold_records
 from agent_hub.core.scenarios.scenario_events import ScenarioEvents
 from agent_hub.core.scenarios.scenario_plan import PlanRow, ScenarioPlan, plan_scenario
+from agent_hub.core.scenarios.tree_translate import BlockMap, block_map
 from agent_hub.core.tracker.tracker_client import Issue, TrackerClient
 from agent_hub.core.workflows.catalog import WorkflowCatalog, check_workflows
+from agent_hub.core.workflows.document import is_tree
 from agent_hub.core.workflows.engine import WorkflowEngineError, start_inputs
 from agent_hub.core.workflows.launch import RunInputError
 from agent_hub.core.workflows.plan import WorkflowPlan
+from agent_hub.core.workflows.substitution import echo
 from agent_hub.generator.action_discovery import ActionDiscovery, discover_actions
 from agent_hub.generator.finding_issues import (
     HeldIssue,
@@ -156,6 +196,9 @@ _PLAN_PREFIX: Final = "hub scenario plan"
 _RUN_PREFIX: Final = "hub scenario run"
 _PROPOSE_PREFIX: Final = "hub scenario propose"
 _FINDINGS_PREFIX: Final = "hub scenario findings"
+_BREAK_PREFIX: Final = "hub scenario break"
+_MIGRATE_PREFIX: Final = "hub scenario migrate"
+NO_GRAPH_SCENARIO: Final = "no scenario in the graph format (version 1)"
 NO_TERMINAL: Final = (
     "no terminal: the issue was not created; run this command on a terminal to create it"
 )
@@ -207,6 +250,7 @@ def plan_command(
         view=view,
         environment=environment,
         inputs=_inputs(plan, texts, view=view, environment=environment),
+        blocks=_blocks(scenario),
     )
     hidden = CredentialNames.of(view)
     summaries = [_summary(row, found, hidden) for row in planned.rows]
@@ -234,6 +278,15 @@ Mode = Annotated[
     ),
 ]
 RunId = Annotated[str | None, typer.Option("--run-id", help="The new scenario run's id.")]
+Breaks = Annotated[
+    list[str] | None,
+    typer.Option(
+        "--break",
+        metavar="ADDR",
+        help="Pause before this block (its address, e.g. 2.1; repeat for more): version 2 only,"
+        " never on production.",
+    ),
+]
 
 
 @scenario_app.command("run")
@@ -244,6 +297,7 @@ def run_command(
     given: Inputs = None,
     mode: Mode = INTERACTIVE,
     run_id: RunId = None,
+    breaks: Breaks = None,
 ) -> None:
     """Run a scenario in ENV once its plan holds no deny; an ask is a gate to approve."""
     if mode not in MODES:
@@ -263,6 +317,7 @@ def run_command(
     if loaded is None:
         fail(f"{_RUN_PREFIX}: no scenario named {shown_path(name)} in {HUB_SCENARIOS}/")
     plan, scenario, included = loaded
+    breakpoints = _start_breakpoints(hub, scenario, breaks or [], environment=environment)
     found = discover_actions(hub)
     effective = load_effective_config_or_exit(hub)
     view = effective_environments(effective.config, effective.local)
@@ -274,6 +329,7 @@ def run_command(
         view=view,
         environment=environment,
         inputs=inputs,
+        blocks=_blocks(scenario),
     )
     if planned.denied:
         _refuse_start(planned)
@@ -285,12 +341,141 @@ def run_command(
         inputs=inputs,
         mode=mode,
         included=included,
+        breakpoints=breakpoints,
     )
     try:
         code = start(hub, run_id or new_run_id(), begin)
     except (WorkflowRunError, WorkflowEngineError) as error:
         fail(f"{_RUN_PREFIX}: {error}")
     raise typer.Exit(code)
+
+
+def _start_breakpoints(
+    hub: Path, scenario: DiscoveredWorkflow, given: list[str], *, environment: str
+) -> tuple[str, ...]:
+    """The breakpoints a start asks, in the tree's order; else exit 1 (no run is created):
+    none on production or on a version-1 scenario, and only addresses of its tree."""
+    if not given:
+        return ()
+    name = shown_path(scenario.name)
+    try:
+        refuse_on_production(hub, environment, what="a start with breakpoints")
+        if not is_tree(scenario.document):
+            raise WorkflowRunError(f"{name} is a version 1 scenario, which {NO_ADDRESSES}")
+        return addresses_in(block_map(scenario.document), given, whose=f"the scenario {name}")
+    except WorkflowRunError as error:
+        fail(f"{_RUN_PREFIX}: {error}; no scenario run was created")
+
+
+def _blocks(scenario: DiscoveredWorkflow) -> BlockMap | None:
+    """The block map of a scenario written as blocks, which its plan's problems name."""
+    return block_map(scenario.document) if is_tree(scenario.document) else None
+
+
+Addresses = Annotated[
+    list[str] | None, typer.Argument(metavar="[ADDR]...", help="Block addresses, e.g. 2 or 2.1.")
+]
+Off = Annotated[bool, typer.Option("--off", help="Remove these breakpoints instead.")]
+Replace = Annotated[
+    bool, typer.Option("--set", help="Replace every breakpoint with these (none clears them).")
+]
+
+
+@scenario_app.command("break")
+def break_command(
+    run: Annotated[str, typer.Argument(metavar="RUN", help="The scenario run.")],
+    addresses: Addresses = None,
+    *,
+    off: Off = False,
+    replace: Replace = False,
+) -> None:
+    """Add breakpoints to a scenario run before the blocks named (--off, --set)."""
+    _run_id(run)
+    given = addresses or []
+    if off and replace:
+        raise typer.BadParameter("give --off or --set, not both", param_hint="--set")
+    if not given and not replace:
+        raise typer.BadParameter("give a block address, or --set alone to clear", param_hint="ADDR")
+    change: Change = "set" if replace else "off" if off else "add"
+    try:
+        written = change_breakpoints(action_hub(), run, given, change=change)
+    except WorkflowRunError as error:
+        fail(f"{_BREAK_PREFIX}: {error}")
+    typer.echo(
+        f"run {run}: " + (f"breakpoints {', '.join(written)}" if written else "no breakpoints")
+    )
+
+
+DebugRun = Annotated[str, typer.Argument(metavar="RUN", help="The run, in a debug pause.")]
+
+
+@scenario_app.command("step")
+def step_command(run: DebugRun) -> None:
+    """Run the next block of a run in a debug pause, then pause before the one after it."""
+    raise typer.Exit(_debug(run, "step"))
+
+
+@scenario_app.command("continue")
+def continue_command(run: DebugRun) -> None:
+    """Run a run in a debug pause to its next breakpoint, or its end."""
+    raise typer.Exit(_debug(run, "continue"))
+
+
+def _debug(run: str, command: DebugCommand) -> int:
+    _run_id(run)
+    hub = action_hub()
+    try:
+        return send_command(hub, run, command)
+    except (WorkflowRunError, WorkflowEngineError) as error:
+        fail(f"hub scenario {command}: {error}")
+
+
+def _run_id(run: str) -> None:
+    if not RUN_ID_PATTERN.fullmatch(run):
+        hint = "use 1 to 32 of a-z 0-9 -, starting with a letter or digit"
+        raise typer.BadParameter(hint, param_hint="RUN")
+
+
+MigrateNames = Annotated[
+    list[str] | None,
+    typer.Argument(
+        metavar="[NAME]...", help="The scenarios (every graph-format one when none is given)."
+    ),
+]
+Check = Annotated[bool, typer.Option("--check", help="Write nothing; say what would be written.")]
+
+
+@scenario_app.command("migrate")
+def migrate_command(names: MigrateNames = None, *, check: Check = False) -> None:
+    """Write graph-format scenarios (version 1) again in place as blocks (version 2)."""
+    hub = action_hub()
+    plan = plan_migration(hub, names or [])
+    if plan.refused:
+        _refuse_migration(plan)
+    if not plan.migrated:
+        typer.echo(NO_GRAPH_SCENARIO)
+        return
+    for item in plan.migrated:
+        if not check:
+            try:
+                write_migration(hub, item)
+            except WorkflowRunError as error:
+                fail(f"{_MIGRATE_PREFIX}: {error}")
+        verb = "would migrate" if check else "migrated"
+        blocks = "1 block" if item.blocks == 1 else f"{item.blocks} blocks"
+        typer.echo(
+            f"{verb} {shown_path(item.file)} to blocks (version 2): stage"
+            f" {shown_text(item.stage)}, {blocks}"
+        )
+
+
+def _refuse_migration(plan: MigrationPlan) -> NoReturn:
+    """Exit 1, naming each problem; nothing was written."""
+    count = sum(1 for refused in plan.refused if refused.name is not None)
+    noun = "scenario" if count == 1 else "scenarios"
+    end = f"{count} {noun} cannot be written as blocks; " if count else ""
+    lines = [f"{_MIGRATE_PREFIX}: {line}" for refused in plan.refused for line in refused.lines]
+    fail(*lines, f"{_MIGRATE_PREFIX}: {end}nothing was written")
 
 
 ProposeRun = Annotated[
@@ -573,7 +758,8 @@ def _inputs(
     environment: str,
 ) -> dict[str, JsonValue]:
     """The scenario's inputs typed as declared, then the environment's values, then the
-    defaults (core's ``with_environment_values``); else exit 2."""
+    defaults (core's ``with_environment_values``); else exit 2, a required input that none
+    gives named with the environment."""
     declared = plan.document.inputs
     typed = {
         key: typed_input(text, declared[key].type if key in declared else "string", key)
@@ -584,6 +770,15 @@ def _inputs(
     except RunInputError as error:
         # A value from hub.json or hub.local.json, not from --input.
         raise typer.BadParameter(str(error), param_hint="--env") from None
+    missing = next(
+        (key for key, spec in declared.items() if spec.required and key not in filled), None
+    )
+    if missing is not None:
+        message = (
+            f"the input {echo(missing)} is required: give it with --input, or as a value of"
+            f" environment {echo(environment)}"
+        )
+        raise typer.BadParameter(message, param_hint="--input")
     try:
         return start_inputs(plan, filled)
     except (RunInputError, WorkflowEngineError) as error:

@@ -78,6 +78,9 @@ hub start ISSUE [--repo DIR]… [--no-agent]   # issue to worktrees, In Progress
 hub brief [--no-network]   # session brief: now, journal, repo/PR/CI state
 hub agent [ARGS…]   # claude with every repo attached (./agent)
 hub next   # the tracker's ready issues, one line each
+hub scenario list|plan|run|propose|findings …   # the hub's scenarios: listed, planned in an environment, run; an investigation's proposal and findings (ADR 0041)
+hub scenario run NAME --env ENV [--break ADDR]… | break RUN [ADDR…] [--off|--set] | step RUN | continue RUN   # debug a version-2 scenario run: breakpoints on block addresses, one block at a time, to the next breakpoint (ADR 0049; refused on production)
+hub scenario migrate [NAME…] [--check]   # writes graph scenarios (version 1) again in place as blocks (version 2), or nothing, naming each node it cannot map (--check: writes nothing)
 hub run ISSUE --repo REPO [--live] [--budget USD] [--from implement|verify] …   # one issue with a complete brief to a PR through the tracker port
 hub ship [ISSUE] [--draft] [--dry-run]   # each changed repo's check, push and PR, PRs linked, the issue to review
 hub step worktree|verdict|commits|pr|report …   # one hub run stage as JSON, for the issue-to-pr workflow's nodes
@@ -438,22 +441,26 @@ instruction" for actions and for the deterministic nodes of a workflow that decl
   view say so. Scenario runs are local only in v1, and a scenario run is a WorkflowRun that is always called a
   scenario run.
 - **Seed:** `hub init` writes one example, the read action `demo-get-status` (with its Python script) and the
-  scenario `demo-service-up` that uses it, each file only where absent. They are the project's files: `hub sync`
-  never adds them and `hub.lock` does not list them, so a hub without `scenarios/`, `actions/` and `environments`
-  renders and syncs as before.
-- **Blocks and debugging** ([ADR 0049](adr/0049-scenario-blocks-and-run-control.md), AGH-507, proposed, not built
-  yet; the builder AGH-521 shipped edits `version: 1` files, see the ADR's delivery notes): a scenario may be
-  written as `version: 2`, named stages of ordered blocks (Do, Wait until, You, Wait, Include; Repeat, If/else, At the
-  same time), which core translates to the node graph at load, so the policy, gates and records are unchanged; hub
-  web's builder edits that file block for block, and Save of an unchanged file writes nothing. A scenario run may pause
-  at breakpoints (block addresses kept with the run, never in the file), run one block at a time (Step) or to the next
-  breakpoint (Continue), and show its inputs, captures and each finished block's inputs and output while paused. A
-  pause never answers an ask, edits a value or rewinds; debugging is refused on a production environment. `hub
-  scenario migrate` converts graph scenarios; `hub doctor` warns on the graph format until it is removed.
+  scenario `demo-service-up` that uses it (written as blocks, `version: 2`, so a fresh hub has no
+  `scenarios.graph_format` warning; hub web's builder edits it as its stage of blocks), each file only where absent.
+  They are the project's files: `hub sync` never adds them and `hub.lock` does not list them, so a hub without
+  `scenarios/`, `actions/` and `environments` renders and syncs as before.
+- **Blocks and debugging** ([ADR 0049](adr/0049-scenario-blocks-and-run-control.md), AGH-507, proposed; built, with
+  hub web's builder still editing a `version: 1` file as AGH-521 shipped it, beside a Migrate action, see the ADR's
+  delivery notes): a scenario may be written as `version: 2`, named stages of ordered blocks (Do, Wait until, You,
+  Wait, Include; Repeat, If/else, At the same time), which core translates to the node graph at load, so the policy,
+  gates and records are unchanged; hub web's builder edits that file block for block, and Save of an unchanged file
+  writes nothing. A scenario run may pause at breakpoints (block addresses kept with the run, never in the file), run
+  one block at a time (Step) or to the next breakpoint (Continue), and show its inputs, captures and each finished
+  block's inputs and output while paused. A pause never answers an ask, edits a value or rewinds; debugging is refused
+  on a production environment. `hub scenario migrate` converts graph scenarios; `hub doctor` warns on the graph format
+  until it is removed.
 - **In `hub web`** (Scenarios, in the sidebar's Work group after Tickets): the list with each scenario's last
   scenario run, a scenario's steps and its plan for a chosen environment, and a scenario run's page with its timeline
   and, while paused, the investigation chat, the options with their plans and the pick; a policy ask is answered on
-  that page ([screen spec 23](design/control-plane/specs/23-scenarios.md), Layer 2 § Scenarios).
+  that page; a run written as blocks also shows the blocks it pinned, with their breakpoints, Step and Continue in a
+  debug pause, and its values while paused ([screen spec 23](design/control-plane/specs/23-scenarios.md), Layer 2 §
+  Scenarios).
 
 ## Layer 2: control plane and observability
 
@@ -499,7 +506,8 @@ Cost is estimated from transcript usage times a dated price table and always lab
 are not connected in this version and their cells say so, and Linear is read only for a feature's tickets (AGH-136
 below). Actions (approving, starting, retrying, snoozing a learning) appear only as disabled, phase-tagged buttons;
 accepting and rejecting a learning are the exception below.
-The server is local only: loopback bind, `Host` and `Origin` checks, 1 MiB request bodies (160 MiB for
+The server is local only: loopback bind, `Host` and `Origin` checks, a path holding a control character refused
+before any other check, 1 MiB request bodies (160 MiB for
 `POST /agent-sessions` and `POST /agent-sessions/{id}/messages`, which may carry up to ten images and ten PDF or
 text files attached in the chat), no CORS, and a CSP that keeps the app on its own origin.
 It reaches the network in two documented cases only: the learning decisions' explicit
@@ -768,7 +776,10 @@ decisions, findings, workarounds, investigations and the actions' draft state, r
 strict local writes ([ADR 0040](adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md)) that go
 through the CLI: `POST …/plan` (a `hub scenario plan --json` child), `POST …/runs` (plans first; a deny answers 409
 and starts nothing), `POST /scenario-runs/{id}/investigation` (one read-only session per investigation gate),
-`POST …/answer` (pick, retry or stop) and a finding's issue (created at most once) or inbox note. `GET /workflow-runs`
+`POST …/answer` (pick, retry or stop) and a finding's issue (created at most once) or inbox note; a run written as
+blocks adds its breakpoints, Step and Continue (run writes through `hub scenario break|step|continue`), a paused
+run's values (a read behind the launch cookie) and a scenario's migrate (an item write), see
+[API.md § Scenarios](API.md#scenarios) (Debugging and migration). `GET /workflow-runs`
 takes `kind=workflow|scenario`, and the Workflow runs screen asks for workflow runs only. The screens are Scenarios
 (`/scenarios`), a scenario (`/scenarios/:project/:name`: steps, the plan for a chosen environment, Start) and a
 scenario run (`/scenarios/:project/:name/runs/:runId`); `/runs/:id` of a scenario run redirects there
@@ -857,7 +868,9 @@ default); `repo`, `agent`, `workflow` and `step` are optional. Unknown fields ar
   summaries), `session.title` ([ADR 0035](adr/0035-session-titles.md)), and a scenario run's `expect.poll`,
   `context.capture`, `action.start`, `action.end`, `policy.decision`, `finding`, `workaround.start` and
   `workaround.end` ([ADR 0041](adr/0041-scenarios-actions-and-enforced-access.md); a standalone `hub action run`
-  emits its `policy.decision` and `action.*` events under the session `action:<uuid>`).
+  emits its `policy.decision` and `action.*` events under the session `action:<uuid>`), and a debugging scenario
+  run's `debug.pause`, `debug.command` and `debug.breakpoints` ([ADR 0049](adr/0049-scenario-blocks-and-run-control.md):
+  `hub scenario run --break`, `break`, `step` and `continue` emit them, metadata only).
 - `source` is a closed list: `claude_code`, `transcript`, `otel`, `executor`, `github`, `linear` and `control_plane`
   (an action the user took in `hub web`, added by AGH-201: a learning decision). Widening either list later is a
   compatible change.
@@ -934,6 +947,7 @@ before anything is appended, and the data stays on the machine in v1:
 | `policy.decision` | `action` or `node`, `environment`, `effect`, `origin`, `decision`, `reason_kind` |
 | `finding` | `finding_id`, `step` (its title, text and evidence stay in the run's record) |
 | `workaround.start`, `workaround.end` | `workaround_id`, `option` (its id), `steps` (count), `status` |
+| `debug.pause`, `debug.command`, `debug.breakpoints` | `node`, `block`, `reason` (`breakpoint` or `step`); `command` (`step` or `continue`), `approver`; `count` (no value of the run) |
 
 Note, spec, plan and brain text is read from the hub on request and never stored or logged; a learning's summary
 (its note's first paragraph) is computed on read.

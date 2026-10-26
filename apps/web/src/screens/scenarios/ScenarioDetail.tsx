@@ -23,9 +23,10 @@ import { DiscussButton, useDiscuss, useDiscussTarget } from "../../shell/discuss
 import { StaleStamp } from "../portfolio/StaleStamp";
 import { InputField, parsed, type InputSpec } from "../runs-list/StartRun";
 import { ActionPanel, FileText } from "./ActionPanel";
+import { isTree } from "./builder/program";
 import { ScenarioBuilder } from "./builder/ScenarioBuilder";
 import { useLatestRun } from "./LiveRun";
-import { SCENARIO_BRIEF } from "./brief";
+import { scenarioBrief } from "./brief";
 import { Page, ScenarioRunBadge, shortId, useWaitingRows, WaitingCard } from "./parts";
 import {
   scenarioRunHref,
@@ -36,8 +37,9 @@ import {
   type ScenarioDetail,
   type ScenarioMode,
   type ScenarioPlan,
+  type ScenarioStep,
 } from "./queries";
-import { Storyline } from "./StepCard";
+import { BreakpointToggle, Storyline } from "./StepCard";
 import { shapeLine } from "./story";
 
 export { pace } from "./story";
@@ -199,7 +201,11 @@ const MODE_LINE: Record<ScenarioMode, string> = {
     "No agent and no token cost. The first step that does not reach its expected state fails the scenario run.",
 };
 
-function confirmBody(plan: ScenarioPlan, mode: ScenarioMode): string {
+function confirmBody(
+  plan: ScenarioPlan,
+  mode: ScenarioMode,
+  breakpoints: readonly string[],
+): string {
   const effects = new Map<string, number>();
   for (const row of plan.rows) effects.set(row.effect, (effects.get(row.effect) ?? 0) + 1);
   const counts = ["read", "write", "destroy"]
@@ -212,6 +218,12 @@ function confirmBody(plan: ScenarioPlan, mode: ScenarioMode): string {
   ];
   if (asks.length > 0)
     parts.push(`${names(asks)} ${asks.length === 1 ? "asks" : "ask"} you before it runs.`);
+  if (breakpoints.length > 0)
+    parts.push(
+      breakpoints.length === 1
+        ? `It pauses before block ${names(breakpoints)}, its breakpoint.`
+        : `It pauses before blocks ${names(breakpoints)}, its breakpoints.`,
+    );
   parts.push(
     mode === "interactive"
       ? "Interactive mode: a step that does not reach its expected state pauses the scenario run for an investigation. Nothing is rewound afterwards."
@@ -243,11 +255,14 @@ function useAfter(ms: number, active: boolean): boolean {
 function PlanCard({
   scenario,
   mode,
+  breakpoints,
   onModeChange,
   onCurrentPlan,
 }: {
   scenario: ScenarioDetail;
   mode: ScenarioMode;
+  /** The breakpoints a start passes (a scenario written as blocks, off production). */
+  breakpoints: readonly string[];
   onModeChange: (mode: ScenarioMode) => void;
   /** The plan the cards lay over: the latest one, while the form still matches it. */
   onCurrentPlan: (plan: ScenarioPlan | null) => void;
@@ -606,7 +621,11 @@ function PlanCard({
           }}
           onConfirm={() => {
             start.mutate(
-              { ...planned.request, mode },
+              {
+                ...planned.request,
+                mode,
+                ...(breakpoints.length > 0 ? { breakpoints: [...breakpoints] } : {}),
+              },
               {
                 onSuccess: (accepted) => {
                   setStartedId(accepted.run_id);
@@ -616,7 +635,7 @@ function PlanCard({
           }}
         >
           <span className="ah-stack" style={{ gap: 8 }}>
-            <span>{confirmBody(shown, mode)}</span>
+            <span>{confirmBody(shown, mode, breakpoints)}</span>
             {start.isPending && <span role="status">Starting the scenario run…</span>}
             {start.isError && (
               <span role="alert" className="ah-stack" style={{ gap: 2, color: "var(--text)" }}>
@@ -747,7 +766,7 @@ function useScenarioDiscuss(scenario: ScenarioDetail) {
     title: scenario.name,
     path: scenario.path ?? null,
     brief: [
-      SCENARIO_BRIEF,
+      scenarioBrief(isTree(scenario.document)),
       `This conversation is about the scenario \`${scenario.path ?? `scenarios/${scenario.pack}/${scenario.name}.yaml`}\`${
         actions.length > 0 ? ` and the actions it calls (${actions.join(", ")})` : ""
       }. Read them before you answer.`,
@@ -850,6 +869,36 @@ function DetailBody({ scenario }: { scenario: ScenarioDetail }) {
   const [plan, setPlan] = useState<ScenarioPlan | null>(null);
   const opener = useRef<HTMLElement | null>(null);
   const latest = useLatestRun(scenario, mine);
+  // Breakpoints a start passes, by block address: a scenario written as blocks, off production
+  // (a start with breakpoints is refused there), only the blocks the file holds now.
+  const [marked, setMarked] = useState<readonly string[]>([]);
+  const environment = params.get("env") ?? "";
+  const onProduction = scenario.environments.some(
+    (env) => env.name === environment && env.production,
+  );
+  const debuggable = scenario.version === 2 && !onProduction;
+  const breakpoints = debuggable
+    ? scenario.blocks.map((block) => block.address).filter((address) => marked.includes(address))
+    : [];
+  // A card is a node of the translated graph: its toggle is the innermost block it starts.
+  const breakpointOf = (step: ScenarioStep) => {
+    const block = scenario.blocks.filter((each) => each.entry_nodes.includes(step.id)).at(-1);
+    if (block === undefined) return null;
+    const on = marked.includes(block.address);
+    return (
+      <BreakpointToggle
+        address={block.address}
+        on={on}
+        onToggle={() => {
+          setMarked((current) =>
+            on
+              ? current.filter((address) => address !== block.address)
+              : [...current, block.address],
+          );
+        }}
+      />
+    );
+  };
   const view: DetailView = params.get("view") === "document" ? "document" : "steps";
   const actionRef = params.get("action");
   const actions = scenario.actions;
@@ -879,11 +928,42 @@ function DetailBody({ scenario }: { scenario: ScenarioDetail }) {
       ]}
     />
   );
+  const storyline = (
+    <Storyline
+      statusOf={latest.statusOf}
+      breakpointOf={debuggable ? breakpointOf : undefined}
+      name={scenario.name}
+      steps={scenario.steps}
+      actions={actions}
+      mode={mode}
+      plan={plan}
+      onOpenAction={(ref) => {
+        opener.current = document.activeElement as HTMLElement | null;
+        setParam("action", ref);
+      }}
+    />
+  );
+  const actionPanel = openAction && (
+    <ActionPanel
+      action={openAction}
+      steps={scenario.steps}
+      openerRef={opener}
+      onClose={() => {
+        setParam("action", null);
+      }}
+      onShowStep={(id) => {
+        setParam("action", null);
+        document.getElementById(`step-${id}`)?.scrollIntoView({ block: "start" });
+      }}
+    />
+  );
   if (page === "build") {
     return (
       <BuildPage scenario={scenario}>
         <WaitingCard rows={mine} named={false} />
         <ScenarioBuilder
+          // A file migrated to blocks (or written back as a graph) gets a builder of its format.
+          key={isTree(scenario.document) ? "blocks" : "graph"}
           scenario={scenario}
           mode={mode}
           onRun={() => {
@@ -919,22 +999,7 @@ function DetailBody({ scenario }: { scenario: ScenarioDetail }) {
               <span className="ah-small ah-muted">{shapeLine(scenario)}</span>
             </div>
             {latest.banner}
-            {view === "steps" ? (
-              <Storyline
-                statusOf={latest.statusOf}
-                name={scenario.name}
-                steps={scenario.steps}
-                actions={actions}
-                mode={mode}
-                plan={plan}
-                onOpenAction={(ref) => {
-                  opener.current = document.activeElement as HTMLElement | null;
-                  setParam("action", ref);
-                }}
-              />
-            ) : (
-              <DocumentView scenario={scenario} />
-            )}
+            {view === "steps" ? storyline : <DocumentView scenario={scenario} />}
           </div>
           <aside
             className="sc-run-panel ah-stack"
@@ -944,6 +1009,7 @@ function DetailBody({ scenario }: { scenario: ScenarioDetail }) {
             <PlanCard
               scenario={scenario}
               mode={mode}
+              breakpoints={breakpoints}
               onModeChange={setMode}
               onCurrentPlan={setPlan}
             />
@@ -951,20 +1017,7 @@ function DetailBody({ scenario }: { scenario: ScenarioDetail }) {
           </aside>
         </div>
       </div>
-      {openAction && (
-        <ActionPanel
-          action={openAction}
-          steps={scenario.steps}
-          openerRef={opener}
-          onClose={() => {
-            setParam("action", null);
-          }}
-          onShowStep={(id) => {
-            setParam("action", null);
-            document.getElementById(`step-${id}`)?.scrollIntoView({ block: "start" });
-          }}
-        />
-      )}
+      {actionPanel}
     </Page>
   );
 }

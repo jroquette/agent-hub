@@ -20,7 +20,7 @@ from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.testing.builders import a_hub_document, a_second_repo
-from agent_hub.core.workflows.catalog import check_workflows
+from agent_hub.core.workflows.catalog import WorkflowFile, check_workflows
 from agent_hub.generator.doctor_snapshot import build_doctor_snapshot, item_leftovers
 
 RUNNING = "4.5.6"
@@ -86,6 +86,8 @@ def test_reads_nothing_when_no_rule_selected(hub_root: Path) -> None:
     assert snapshot.base_hooks is None
     assert snapshot.branch_prefix is None
     assert snapshot.workflows is None
+    assert snapshot.scenarios is None
+    assert snapshot.scenario_folders == ()
     assert called == []
 
 
@@ -445,3 +447,37 @@ def test_lists_draft_leftover_when_draft_removal_interrupted(hub_root: Path) -> 
 
     assert leftovers == (".hub-drafts/.skill-abc123.hub-tmp-0123abcd",)
     assert ".hub-drafts" in folders
+
+
+def test_reads_hub_scenarios_and_pack_folders_when_graph_format_rule_selected(
+    hub_root: Path,
+) -> None:
+    # scenarios.graph_format reads the hub's scenarios as hub scenario does; the cache watches
+    # each pack folder.
+    config = a_config()
+    pack = hub_root / "scenarios" / "shop"
+    pack.mkdir(parents=True)
+    (hub_root / "scenarios" / "empty").mkdir()
+    (pack / "refund.yaml").write_text(
+        "version: 1\nkind: scenario\nname: refund\nrevision: 1\nnodes:\n"
+        "  - id: send\n    type: action\n    action: queue-send\n",
+        encoding="utf-8",
+    )
+
+    snapshot = build_doctor_snapshot(
+        str(hub_root),
+        config=config,
+        running=RUNNING,
+        selection=every_rule(config),
+        local=LocalConfig(),
+        branch_prefix=None,
+    )
+
+    assert snapshot.scenarios is not None
+    files = [
+        (item.file, item.stem)
+        for item in snapshot.scenarios.workflow_files()
+        if isinstance(item, WorkflowFile)
+    ]
+    assert files == [("scenarios/shop/refund.yaml", "refund")]
+    assert snapshot.scenario_folders == ("scenarios/empty", "scenarios/shop")

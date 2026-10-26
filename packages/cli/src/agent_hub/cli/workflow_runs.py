@@ -91,6 +91,10 @@ class WorkflowRunError(CliError):
     """A run folder that cannot be made or read."""
 
 
+class RunInUseError(WorkflowRunError):
+    """A run whose lock another process holds."""
+
+
 def run_folder(hub: Path, run_id: str) -> Path:
     return hub / RUNS_ROOT / run_id
 
@@ -118,7 +122,7 @@ def run_lock(folder: Path) -> Iterator[None]:
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise WorkflowRunError(
+            raise RunInUseError(
                 f"the run {folder.name} is in use by another hub workflow run"
             ) from None
         yield

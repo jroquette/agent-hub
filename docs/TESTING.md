@@ -124,7 +124,10 @@ The text a two-team hub renders where it names the tracker teams, the text a hub
 it shows them, and the seeded starter `AGENTS.md` for app repos are checked in byte-exact under
 `packages/generator/tests/integration/rendered/two_teams/<path>.golden`, `rendered/conventions/<path>.golden` and
 `rendered/app_repo_agents/<path>.golden` (`-text`) by `test_rendered_text.py`; `GOLDEN_UPDATE=1` rewrites them (refused
-under `CI`).
+under `CI`). `apps/web/src/testing/treeDocuments.ts` is the strict loader's parse of each tree fixture under
+`packages/core/tests/data/scenarios/blocks/tree/`, as the API gives it, which the web builder's round trip is checked
+against; `packages/generator/tests/integration/test_web_tree_documents.py` checks it, and `GOLDEN_UPDATE=1` rewrites it
+(refused under `CI`).
 
 ## Layout
 

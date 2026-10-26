@@ -746,6 +746,10 @@
 .sb-pal:active {
   cursor: grabbing;
 }
+.sb-pal[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .sb-pal-tile {
   display: inline-flex;
   flex: none;
@@ -805,4 +809,12 @@
   opacity: 1;
   border-color: var(--accent);
   border-left-color: var(--tile);
+}
+
+/* A scenario written as blocks: a stage is a header row, its steps indented under it. */
+.st-row.st-stage {
+  background: var(--surface-sunken);
+}
+.st-row.st-stage[data-selected="true"] {
+  background: var(--accent-soft);
 }

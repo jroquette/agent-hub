@@ -54,7 +54,8 @@ type InputText = Annotated[
 type InputNumber = Annotated[float, Field(allow_inf_nan=False)]
 type InputValue = StrictBool | StrictInt | InputNumber | InputText
 type InputName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{0,63}$")]
-type RunAction = Literal["start", "cancel", "resume", "abandon"]
+# A scenario run in a debug pause also takes Step and Continue (ADR 0049).
+type RunAction = Literal["start", "cancel", "resume", "abandon", "step", "continue"]
 # How a run started by itself (ADR 0048); a run started by hand has none.
 type RunTrigger = Literal["schedule", "event"]
 RUN_TRIGGERS: Final[tuple[RunTrigger, ...]] = ("schedule", "event")
@@ -99,6 +100,15 @@ class RunConflictError(AgentHubError):
         steps: tuple[str, ...] = (),
     ) -> None:
         self.code, self.reason, self.run_id, self.steps = code, reason, run_id, steps
+        super().__init__(reason)
+
+
+class UnknownBlockError(AgentHubError):
+    """A breakpoint address the tree it is checked against does not hold (answers 422);
+    ``block`` is the address, which only the address grammar's characters can spell."""
+
+    def __init__(self, *, block: str, reason: str, run_id: str | None = None) -> None:
+        self.block, self.reason, self.run_id = block, reason, run_id
         super().__init__(reason)
 
 

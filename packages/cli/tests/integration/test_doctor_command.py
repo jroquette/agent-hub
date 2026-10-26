@@ -2236,3 +2236,32 @@ def test_prints_fix_line_for_schedule_naming_unknown_workflow_when_doctor_runs(
         " Fix: name a workflow that hub workflow list shows, or add it under workflows/",
         ONE_ERROR,
     ]
+
+
+# The scenario hub init wrote in the graph format (version 1) before it seeded blocks.
+GRAPH_SCENARIO = (
+    Path(__file__).resolve().parents[3] / "generator/tests/data/scenarios/demo-service-up.v1.yaml"
+)
+
+
+def test_warns_with_migrate_command_for_graph_scenario_when_doctor_runs(
+    demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    shutil.copyfile(GRAPH_SCENARIO, demo_hub / "scenarios/demo/demo-service-up.yaml")
+    lines = lines_of(run_doctor(demo_hub, "--only", "scenarios.graph_format"), exit_code=0)
+
+    assert lines == [
+        "warning scenarios.graph_format scenarios/demo/demo-service-up.yaml:3: scenario"
+        " demo-service-up is in the graph format (version 1), which a later release removes"
+        " Fix: run hub scenario migrate demo-service-up to write it as blocks (version 2)",
+        "0 errors, 1 warning, 0 infos",
+    ]
+
+
+def test_finds_nothing_for_seeded_tree_scenario_when_doctor_runs(
+    demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    # hub init seeds demo-service-up as blocks (version 2): a fresh hub has nothing to migrate.
+    lines = lines_of(run_doctor(demo_hub, "--only", "scenarios.graph_format"), exit_code=0)
+
+    assert lines == ["0 errors, 0 warnings, 0 infos"]

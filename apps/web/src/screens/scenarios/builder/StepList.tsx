@@ -16,19 +16,25 @@ import { pace } from "../story";
 import { TokenText, ValueToken, cardTitle, tokenOf } from "./CardParts";
 import { kindLook } from "./FlowCanvas";
 import { conditionWords, shown, text, type BuilderNode, type Json } from "./model";
-import { itemId, type Item, type Slot } from "./program";
+import { itemId, listsOf, type Item, type Slot } from "./program";
 import type { BuilderProblem } from "./useScenarioDraft";
 
 /* The step list (scenario builder v6): the scenario read top to bottom like a runbook. Each step
  * is a numbered row of two lines (what it does, then its action and the values it sets itself);
  * Repeat, If and At the same time are indented groups. Order is the only thing a position means,
  * so a step always sits in the list: it moves by its handle, by Alt ↑/↓, or by the row menu, and
- * a "+" in each gap adds one there. Selecting a row opens it in the editor on the right. */
+ * a "+" in each gap adds one there. Selecting a row opens it in the editor on the right. A
+ * scenario written as blocks reads as its stages: a header row per stage (selected, it opens the
+ * stage's editor; it moves and is removed as a step is), its steps indented under it, numbered by
+ * their block address, and a "+" between stages adds one. */
 
 export interface InsertTarget {
   slot: Slot;
   index: number;
 }
+
+/** What a gap takes: a step (in any list of steps) or a stage (between stages). */
+export type GapKind = "step" | "stage";
 
 export interface StepListProps {
   scenarioName: string;
@@ -54,6 +60,8 @@ export interface StepListProps {
   readOnly?: boolean;
   /** Blocks the list cannot place (connected in a way nested paths do not show). */
   loose: readonly BuilderNode[];
+  /** A scenario written as blocks: `items` are its stages; a "+" between them adds one. */
+  onInsertStage?: ((index: number) => void) | undefined;
   onOpenYaml: () => void;
   footer?: ReactNode;
   /** Shown under the list while it holds no step (start from a shape, describe it). */
@@ -77,19 +85,24 @@ const KIND_NAME: Readonly<Record<string, string>> = {
   loop_group: "Repeat",
   if: "If",
   parallel: "At the same time",
+  stage: "Stage",
 };
 
 /** The gap of the list nearest the pointer's height (null when none is within 80 px); `skip`
- * leaves out the gaps inside the step being moved. Shared by a move and a drag from the palette. */
+ * leaves out the gaps inside the step being moved, and only gaps that take `kind` count (a step
+ * never lands between stages, a stage never inside one). Shared by a move and a drag from the
+ * palette. */
 export function nearestGap(
   root: HTMLElement | null,
   y: number,
   skip?: string,
+  kind: GapKind = "step",
 ): InsertTarget | null {
   const gaps = root?.querySelectorAll<HTMLElement>("[data-gap]") ?? [];
   let best: { at: InsertTarget; distance: number } | null = null;
   for (const gap of gaps) {
     if (skip && gap.closest(`[data-item="${CSS.escape(skip)}"]`)) continue;
+    if ((gap.dataset.gapKind ?? "step") !== kind) continue;
     const box = gap.getBoundingClientRect();
     const distance = Math.abs(box.top + box.height / 2 - y);
     if (!best || distance < best.distance) {
@@ -222,9 +235,12 @@ function countSteps(items: readonly Item[]): number {
   return items.reduce((sum, item) => {
     if (item.kind === "block") return sum + 1;
     if (item.kind === "repeat") return sum + 1 + countSteps(item.body);
-    if (item.kind === "if") return sum + countSteps(item.then) + countSteps(item.otherwise);
-    return sum + item.lanes.reduce((n, lane) => n + countSteps(lane), 0);
+    return sum + listsOf(item).reduce((n, list) => n + countSteps(list), 0);
   }, 0);
+}
+
+function plural(count: number, one: string): string {
+  return `${String(count)} ${count === 1 ? one : `${one}s`}`;
 }
 
 const EFFECT_SPOKEN: Readonly<Record<string, string>> = {
@@ -261,13 +277,7 @@ function statusOf(
 
 /** The ids of the rows in reading order (for j / k). */
 function rowIds(items: readonly Item[]): string[] {
-  return items.flatMap((item) => {
-    const id = itemId(item);
-    if (item.kind === "block") return [id];
-    if (item.kind === "repeat") return [id, ...rowIds(item.body)];
-    if (item.kind === "if") return [id, ...rowIds(item.then), ...rowIds(item.otherwise)];
-    return [id, ...item.lanes.flatMap(rowIds)];
-  });
+  return items.flatMap((item) => [itemId(item), ...listsOf(item).flatMap(rowIds)]);
 }
 
 export function StepList(props: StepListProps) {
@@ -291,12 +301,15 @@ export function StepList(props: StepListProps) {
     suggested,
     readOnly = false,
     loose,
+    onInsertStage,
     onOpenYaml,
     footer,
     empty,
     externalTarget = null,
     scrollRef,
   } = props;
+  const stages = items.filter((item) => item.kind === "stage");
+  const tree = onInsertStage !== undefined;
   const ownRef = useRef<HTMLDivElement>(null);
   const listRef = scrollRef ?? ownRef;
   const [focused, setFocused] = useState<string | null>(null);
@@ -386,7 +399,8 @@ export function StepList(props: StepListProps) {
     const origin = { x: event.clientX, y: event.clientY };
     let moved = false;
     let target: InsertTarget | null = null;
-    const nearest = (y: number): InsertTarget | null => nearestGap(listRef.current, y, id);
+    const kind: GapKind = stages.some((stage) => itemId(stage) === id) ? "stage" : "step";
+    const nearest = (y: number): InsertTarget | null => nearestGap(listRef.current, y, id, kind);
     const move = (moving: globalThis.PointerEvent) => {
       if (!moved && Math.hypot(moving.clientX - origin.x, moving.clientY - origin.y) < 4) return;
       moved = true;
@@ -410,13 +424,17 @@ export function StepList(props: StepListProps) {
 
   const gap = (slot: Slot, index: number, after: string | null) => {
     const at: InsertTarget = { slot, index };
+    // Between the stages of a scenario written as blocks, a gap takes a stage.
+    const kind: GapKind = tree && slot.in === "main" ? "stage" : "step";
+    const noun = kind === "stage" ? "stage" : "step";
     const label = after
-      ? `Add a step after step ${numbers.get(after) ?? after}`
-      : "Add a step here";
+      ? `Add a ${noun} after ${noun} ${numbers.get(after) ?? after}`
+      : `Add a ${noun} here`;
     return (
       <div
         className="st-gap"
         data-gap={JSON.stringify(at)}
+        data-gap-kind={kind}
         data-drop={
           (dragging && sameTarget(dragging.target, at)) || sameTarget(externalTarget, at)
             ? "on"
@@ -430,8 +448,12 @@ export function StepList(props: StepListProps) {
             aria-label={label}
             title={label}
             tabIndex={-1}
+            // Written as blocks, the "+" is the pointer's way: a tree holds only its items, and
+            // the keys add from a row ("a"), the Blocks tab and Add step / Add stage below.
+            aria-hidden={tree ? true : undefined}
             onClick={(event) => {
-              onInsert(at, event.currentTarget.getBoundingClientRect(), label);
+              if (kind === "stage") onInsertStage?.(index);
+              else onInsert(at, event.currentTarget.getBoundingClientRect(), label);
             }}
           >
             <Icon name="plus" size="sm" />
@@ -453,9 +475,11 @@ export function StepList(props: StepListProps) {
     right: ReactNode,
     group: boolean,
     spoken = "",
+    stage = false,
   ) => {
     const number = numbers.get(id) ?? "";
     const isSelected = selected === id;
+    const noun = stage ? "stage" : "step";
     return (
       // The tree handles the keys of its rows (roving focus: j / k, Enter, Alt ↑ / ↓).
       // eslint-disable-next-line jsx-a11y/click-events-have-key-events
@@ -466,8 +490,12 @@ export function StepList(props: StepListProps) {
         aria-level={level}
         aria-selected={isSelected}
         aria-expanded={group ? !folded.has(id) : undefined}
-        aria-label={`Step ${number}, ${kindName(kind)}: ${titleText}.${spoken}`}
-        className="st-row"
+        aria-label={
+          stage
+            ? `Stage ${number}: ${titleText}, ${detailText}.`
+            : `Step ${number}, ${kindName(kind)}: ${titleText}.${spoken}`
+        }
+        className={stage ? "st-row st-stage" : "st-row"}
         data-selected={isSelected ? "true" : undefined}
         data-suggested={suggested?.has(id) ? "true" : undefined}
         data-problem={problemsOf(id).some((p) => p.severity === "error") ? "true" : undefined}
@@ -493,7 +521,7 @@ export function StepList(props: StepListProps) {
             className="st-handle"
             role="button"
             tabIndex={-1}
-            aria-label={`Move step ${number}`}
+            aria-label={`Move ${noun} ${number}`}
             title="Drag to move · click for Move up / down"
             onPointerDown={(event) => {
               event.stopPropagation();
@@ -526,14 +554,20 @@ export function StepList(props: StepListProps) {
     );
   };
 
-  const blockRow = (node: BuilderNode, level: number, inner: number, group: boolean) => {
+  const blockRow = (
+    id: string,
+    node: BuilderNode,
+    level: number,
+    inner: number,
+    group: boolean,
+  ) => {
     const action = actionOf(node);
     const lines = nodeLines(node, action, inner);
     if (action?.description && !lines.title.startsWith(action.description.slice(0, 20))) {
       lines.detailText = `${action.description}\n${lines.detailText}`;
     }
-    const plan = planOf(node.id);
-    const status = statusOf(problemsOf(node.id), plan);
+    const plan = planOf(id);
+    const status = statusOf(problemsOf(id), plan);
     const using = variable && usesVariable?.(node);
     const right = (
       <>
@@ -560,7 +594,7 @@ export function StepList(props: StepListProps) {
       lines.detail
     );
     return row(
-      node.id,
+      id,
       level,
       kindLook(node.type),
       node.type,
@@ -582,20 +616,28 @@ export function StepList(props: StepListProps) {
   const list = (list: readonly Item[], slot: Slot, level: number): ReactNode => {
     if (list.length === 0 && slot.in !== "main") {
       const at: InsertTarget = { slot, index: 0 };
+      const add = readOnly ? (
+        <span>Empty.</span>
+      ) : (
+        <button
+          type="button"
+          className="st-empty-add"
+          onClick={(event) => {
+            onInsert(at, event.currentTarget.getBoundingClientRect(), "Add a step here");
+          }}
+        >
+          <Icon name="plus" size="sm" /> Empty. Add a step here.
+        </button>
+      );
       return (
         <div className="st-gap st-empty" data-gap={JSON.stringify(at)}>
-          {readOnly ? (
-            <span>Empty.</span>
+          {tree ? (
+            // Written as blocks, the empty list is an item of the tree, holding its button.
+            <div role="treeitem" aria-level={level} aria-selected={false} aria-label="Empty">
+              {add}
+            </div>
           ) : (
-            <button
-              type="button"
-              className="st-empty-add"
-              onClick={(event) => {
-                onInsert(at, event.currentTarget.getBoundingClientRect(), "Add a step here");
-              }}
-            >
-              <Icon name="plus" size="sm" /> Empty. Add a step here.
-            </button>
+            add
           )}
         </div>
       );
@@ -614,13 +656,45 @@ export function StepList(props: StepListProps) {
   };
 
   const itemView = (item: Item, level: number): ReactNode => {
-    if (item.kind === "block") return blockRow(item.node, level, 0, false);
     const id = itemId(item);
+    if (item.kind === "block") return blockRow(id, item.node, level, 0, false);
     const open = !folded.has(id);
+    if (item.kind === "stage") {
+      const count = plural(item.steps.length, "step");
+      const number = numbers.get(id) ?? id;
+      const look = kindLook("stage");
+      return (
+        <>
+          {row(
+            id,
+            level,
+            look,
+            "stage",
+            item.name || "A stage with no name",
+            item.name || "A stage with no name",
+            count,
+            count,
+            null,
+            true,
+            "",
+            true,
+          )}
+          {open && (
+            <div
+              role="group"
+              className="st-group"
+              aria-label={`Stage ${number}: ${item.name || "A stage with no name"}`}
+            >
+              {list(item.steps, { in: "stage", owner: id }, level + 1)}
+            </div>
+          )}
+        </>
+      );
+    }
     if (item.kind === "repeat") {
       return (
         <>
-          {blockRow(item.node, level, countSteps(item.body), true)}
+          {blockRow(id, item.node, level, countSteps(item.body), true)}
           {open && (
             <div role="group" className="st-group">
               {list(item.body, { in: "body", owner: id }, level + 1)}
@@ -737,7 +811,7 @@ export function StepList(props: StepListProps) {
           {list(items, { in: "main" }, 1)}
         </div>
         {items.length === 0 && empty}
-        {!readOnly && (
+        {!readOnly && !tree && (
           <div className="st-end">
             <Button
               variant="ghost"
@@ -754,6 +828,37 @@ export function StepList(props: StepListProps) {
             </Button>
           </div>
         )}
+        {!readOnly && tree && (
+          <div className="st-end">
+            {(() => {
+              const last = stages.at(-1);
+              return last?.kind === "stage" ? (
+                <Button
+                  variant="ghost"
+                  icon="plus"
+                  onClick={(event) => {
+                    onInsert(
+                      { slot: { in: "stage", owner: last.key }, index: last.steps.length },
+                      event.currentTarget.getBoundingClientRect(),
+                      "Add step",
+                    );
+                  }}
+                >
+                  Add step
+                </Button>
+              ) : null;
+            })()}
+            <Button
+              variant="ghost"
+              icon="milestone"
+              onClick={() => {
+                onInsertStage(items.length);
+              }}
+            >
+              Add stage
+            </Button>
+          </div>
+        )}
         {loose.length > 0 && (
           <section className="st-loose" aria-label="Steps not in the order">
             <span className="ah-overline">Not in the order ({loose.length})</span>
@@ -762,7 +867,7 @@ export function StepList(props: StepListProps) {
             </span>
             {loose.map((node) => (
               <div key={node.id} className="st-item">
-                {blockRow(node, 1, 0, false)}
+                {blockRow(node.id, node, 1, 0, false)}
               </div>
             ))}
             <span>

@@ -4,6 +4,7 @@ import "./steps.css";
 
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -34,10 +35,15 @@ import {
   type ScenarioDetail,
 } from "../queries";
 import { BlocksTab, type BlockLook } from "./BlocksTab";
-import { StepList, nearestGap, scrollNear, type InsertTarget } from "./StepList";
+import { StepList, nearestGap, scrollNear, type GapKind, type InsertTarget } from "./StepList";
 import { VariablesPanel, type KeptValue } from "./VariablesPanel";
 import { InsertMenu } from "./InsertMenu";
-import { createActionMessage, describeMessage, type DescribeScope } from "./claude";
+import {
+  aboutStepMessage,
+  createActionMessage,
+  describeMessage,
+  type DescribeScope,
+} from "./claude";
 import {
   AskActionDialog,
   DescribeDialog,
@@ -46,10 +52,11 @@ import {
   useProposal,
 } from "./ClaudeDialogs";
 import { StartCard } from "./StartCard";
+import { MigrateDialog } from "./MigrateDialog";
 import { ActionPanel } from "../ActionPanel";
 import { blockItem } from "./palette";
 import { FlowCanvas, kindLook, type AddChoice } from "./FlowCanvas";
-import { BlockInspector, GroupInspector, ScenarioSettings } from "./Inspector";
+import { BlockInspector, GroupInspector, ScenarioSettings, StageInspector } from "./Inspector";
 import {
   allNodes,
   dependsOn,
@@ -63,33 +70,71 @@ import {
   valueSources,
   without,
   withoutRunRepeats,
+  withoutRunRepeatsOf,
   type BuilderDocument,
   type BuilderNode,
+  type ScenarioDocument,
 } from "./model";
 import {
+  addressOfKey,
+  addressed,
+  decideReview,
+  derivedId,
   findItem,
+  fresh as freshItems,
+  idChanges,
   insertAt,
+  isTree,
+  keyPathOf,
   listAt,
   itemId,
+  keysOf,
   locate,
+  mapNodes,
+  newStage,
+  nodeItems,
+  stageSlug,
+  stagesOf,
   stepNumbers,
   nodesOf,
   programNodes,
   programOf,
+  renameRefs,
   replaceItem,
   takeFrom,
+  toTreeDocument,
+  treeNodes,
+  treeOf,
+  treeReview,
+  type Decision,
   type Item,
+  type TreeReview,
 } from "./program";
-import { useActionLibrary, useScenarioDraft, type LibraryAction } from "./useScenarioDraft";
+import {
+  useActionLibrary,
+  useScenarioDraft,
+  type BuilderProblem,
+  type LibraryAction,
+} from "./useScenarioDraft";
 
 /* The scenario builder (Build mode of the scenario page, v6). Its main view is the step list:
  * the scenario read top to bottom, a numbered row per step, Repeat / If / At the same time as
  * indented groups. On the left, the Variables (where every value comes from) and the Actions of
  * the hub; on the right, the editor of the selected step. Graph shows the same flow as connected
- * nodes, and YAML the file Save writes. The list is a reading of the document: every edit
- * rewrites the scenario's `nodes`, which the server checks a moment later. */
+ * nodes, and YAML the file Save writes. For a graph (`version: 1`) the list is a reading of the
+ * document: every edit rewrites the scenario's `nodes`, which the server checks a moment later,
+ * and More offers Migrate. A scenario written as blocks (`version: 2`) is edited as its stages:
+ * the list is the file's `stages`, each block keyed by its address, every edit rewrites them,
+ * and the Graph view only draws how they run. The builder never writes YAML: the server does. */
 
 type View = "blocks" | "graph" | "yaml";
+
+/** An edit of a scenario written as blocks: the document it writes, and each item's key after
+ * it. */
+interface TreeWrite {
+  written: ScenarioDocument;
+  keys: Map<string, string>;
+}
 
 const FILE_POLL_MS = 4000;
 const HELP_KEY = "ah.builder.help.v6";
@@ -192,6 +237,39 @@ function everySource(document: BuilderDocument, outputs: (action: string) => rea
   return valueSources(probe, "__probe__", outputs);
 }
 
+// A key of a block written as blocks, as the step editor's field for it names it.
+const FIELD_OF_KEY: Readonly<Record<string, string>> = {
+  do: "action",
+  wait_until: "action",
+  you: "message",
+  "repeat.max": "max_iterations",
+  "repeat.until": "until_when",
+};
+
+/** The problems of the block at `key` of a scenario written as blocks, each keyed as the step
+ * editor's fields are (`until` of a Wait until is `until_when`, a Pause's `wait.duration` is
+ * `duration`), so a problem shows under its field. */
+function inspectorProblems(
+  problems: readonly BuilderProblem[],
+  key: string,
+  type: string,
+): BuilderProblem[] {
+  const prefix = `${keyPathOf(key)}.`;
+  return problems.map((problem) => {
+    if (!problem.key?.startsWith(prefix)) return problem;
+    const rest = problem.key.slice(prefix.length);
+    const named = Object.keys(FIELD_OF_KEY).find(
+      (written) => rest === written || rest.startsWith(`${written}.`),
+    );
+    let field = named ? `${FIELD_OF_KEY[named] ?? named}${rest.slice(named.length)}` : rest;
+    if (rest.startsWith("wait.")) field = rest.slice("wait.".length);
+    else if (type === "expect" && (rest === "until" || rest.startsWith("until."))) {
+      field = `until_when${rest.slice("until".length)}`;
+    }
+    return { ...problem, key: field };
+  });
+}
+
 export function ScenarioBuilder({
   scenario,
   mode,
@@ -206,12 +284,15 @@ export function ScenarioBuilder({
   const items = library.data?.items ?? [];
   // The file read again every few seconds: a change made outside (Claude, an editor) shows here.
   const fresh = useScenario(scenario.project, scenario.name, FILE_POLL_MS).data ?? scenario;
+  // Written as blocks or as a graph: the page mounts a new builder when the file's format changes.
+  const tree = isTree(scenario.document);
   const draft = useScenarioDraft({
     project: scenario.project,
     name: scenario.name,
     pack: scenario.pack,
-    initial: toDocument(fresh.document),
+    initial: tree ? toTreeDocument(fresh.document) : toDocument(fresh.document),
     contentHash: fresh.content_hash ?? null,
+    read: tree ? toTreeDocument : toDocument,
   });
   const { setOpen } = useDiscuss();
   const [selected, setSelected] = useState<string | null>(null);
@@ -222,6 +303,7 @@ export function ScenarioBuilder({
     where: string;
   } | null>(null);
   const [menu, setMenu] = useState<"more" | "problems" | "preview" | null>(null);
+  const [migrating, setMigrating] = useState(false);
   const planner = usePlanScenario(scenario.project, scenario.name);
   const [params, setParams] = useSearchParams();
   const environment =
@@ -274,7 +356,18 @@ export function ScenarioBuilder({
   const [describing, setDescribing] = useState(false);
   const [awaiting, setAwaiting] = useState(false);
   const [reviewing, setReviewing] = useState(false);
+  // The changes of a graph's proposal decided, accepted and rejected, by block id.
   const [resolved, setResolved] = useState<Set<string>>(() => new Set());
+  // Written as blocks, the review under way: its changes (read once, from the draft as it was
+  // when the review opened, `treeReview`), the decisions made on them, and the draft they gave
+  // and the proposal, as text: any other edit of the draft, or another proposal, opens the review
+  // again on the draft as it then is.
+  const [decided, setDecided] = useState<{
+    review: TreeReview;
+    decisions: ReadonlyMap<string, Decision>;
+    wrote: string;
+    proposal: string;
+  } | null>(null);
   const [newAction, setNewAction] = useState<{
     node: string | null;
     readOnly: boolean;
@@ -287,6 +380,14 @@ export function ScenarioBuilder({
   } | null>(null);
   const [actionPanel, setActionPanel] = useState<string | null>(null);
   const actionOpener = useRef<HTMLElement | null>(null);
+  // A stage being renamed: its key, the stages and the draft before the rename began, and the
+  // draft the rename wrote last.
+  const renaming = useRef<{
+    key: string;
+    main: Item[];
+    raw: ScenarioDocument;
+    wrote: ScenarioDocument;
+  } | null>(null);
   const { ask } = useDiscuss();
   const navigate = useNavigate();
   const saveValue = useSaveEnvironmentValue(scenario.project);
@@ -294,6 +395,11 @@ export function ScenarioBuilder({
   const dismiss = useDismissProposal(scenario.project, scenario.name);
   const offered = proposal.data?.document ? proposal.data : null;
   if (awaiting && offered) setAwaiting(false);
+  // Under review the list shows the proposal, its rows under their own keys: a key there (an
+  // address, written as blocks) can name another block of the draft, so no edit reads the
+  // selection until the review closes.
+  const underReview = reviewing && offered !== null;
+  const editable = underReview ? null : selected;
   useEffect(() => {
     if (toast === null) return;
     const timer = setTimeout(() => {
@@ -303,7 +409,16 @@ export function ScenarioBuilder({
       clearTimeout(timer);
     };
   }, [toast]);
-  const document = draft.document;
+  const raw: ScenarioDocument = draft.document;
+  // Written as blocks, the stages are the program, read straight from the draft: the same file
+  // gives the same keys (the block addresses), so nothing needs keeping between edits.
+  const stages = useMemo(() => (tree ? stagesOf(raw) : []), [tree, raw]);
+  // The document as the step editor, the values and the Graph view read it: the graph itself,
+  // or, written as blocks, the nodes the stages run as (read-only: edits go to the stages).
+  const document: BuilderDocument = useMemo(
+    () => (tree ? { ...without(raw, "stages"), nodes: treeNodes(stages) } : toDocument(raw)),
+    [tree, raw, stages],
+  );
 
   // The program, read again whenever the document changes from elsewhere (undo, the graph).
   const [synced, setSynced] = useState("");
@@ -312,26 +427,62 @@ export function ScenarioBuilder({
     kept: [],
   });
   const nodesText = JSON.stringify(document.nodes);
-  if (synced !== nodesText) {
+  if (!tree && synced !== nodesText) {
     const read = programOf(document.nodes);
     setSynced(nodesText);
     setProgram({ main: read.main, kept: read.loose });
   }
+  const main: Item[] = tree ? stages : program.main;
+  const kept: BuilderNode[] = tree ? [] : program.kept;
 
-  // Writes the list back to the scenario's nodes (steps the list cannot place stay as written).
-  const commit = (main: Item[], kept: BuilderNode[] = program.kept) => {
-    const nodes = [...nodesOf(main), ...kept];
-    setProgram({ main, kept });
+  /* Written as blocks: the document the stages `next` write, where each reference to a block
+   * whose place id the edit changes follows it (`idChanges`), and each item's key after the
+   * edit (keys are addresses). */
+  const treeWrite = (next: readonly Item[]): TreeWrite => ({
+    written: renameRefs(treeOf(raw, next), idChanges(main, next)),
+    keys: addressed(next).keys,
+  });
+  // Puts a tree write in the draft; `focus` as `commit` takes it.
+  const writeTree = ({ written, keys }: TreeWrite, focus?: string | null) => {
+    const follow = focus === undefined ? selected : focus;
+    setSelected(follow === null ? null : (keys.get(follow) ?? null));
+    if (JSON.stringify(written) !== JSON.stringify(raw)) draft.edit(written);
+    return (key: string) => keys.get(key) ?? key;
+  };
+
+  /* Writes the list back: a graph's nodes (steps the list cannot place stay as written), or the
+   * stages of a scenario written as blocks (`treeWrite`). `focus` is what to select after (by
+   * its key now); the answer gives an item's key after the edit. */
+  const commit = (
+    next: Item[],
+    keptNext: BuilderNode[] = kept,
+    focus?: string | null,
+  ): ((key: string) => string) => {
+    if (tree) return writeTree(treeWrite(next), focus);
+    const nodes = [...nodesOf(next), ...keptNext];
+    setProgram({ main: next, kept: keptNext });
     const text = JSON.stringify(nodes);
     setSynced(text);
     if (text !== nodesText) draft.edit({ ...document, nodes });
+    if (focus !== undefined) setSelected(focus);
+    return (key) => key;
   };
 
-  const allItems: Item[] = [
-    ...program.main,
-    ...program.kept.map((node): Item => ({ kind: "block", node })),
-  ];
+  const allItems: Item[] = [...main, ...kept.map((node): Item => ({ kind: "block", node }))];
   const taken: BuilderDocument = { ...document, nodes: programNodes(allItems) };
+  // Written as blocks: each block's key and the id its node runs under, both ways.
+  const keyOfNode = new Map<string, string>();
+  const nodeOfKey = new Map<string, string>();
+  for (const node of tree ? nodeItems(main) : []) {
+    keyOfNode.set(node.node.id, itemId(node));
+    nodeOfKey.set(itemId(node), node.node.id);
+  }
+  const keyOf = (id: string) => keyOfNode.get(id) ?? id;
+  const nodeIdOf = (key: string) => nodeOfKey.get(key) ?? key;
+  // What a header edit of a scenario written as blocks keeps: its stages.
+  const editHeader = (next: BuilderDocument) => {
+    draft.edit(tree ? treeOf(without(next, "nodes"), main) : next);
+  };
 
   const findAction = (ref: string) =>
     items.find(
@@ -345,82 +496,172 @@ export function ScenarioBuilder({
     findAction(action)?.output_fields.map((field) => field.path) ?? [];
   const problems = draft.check?.problems ?? [];
   const errors = problems.filter((problem) => problem.severity === "error");
+  // The block a problem is on: by its node in a graph, by its key path written as blocks.
+  const problemAt = (problem: (typeof problems)[number]): string | null =>
+    tree ? addressOfKey(problem.key) : (problem.node ?? null);
+  const problemsOf = (key: string) => problems.filter((problem) => problemAt(problem) === key);
+
+  // Written as blocks, a stage goes only between stages, and a step only into a list of steps.
+  const fits = (moved: readonly Item[], slot: InsertTarget["slot"]) =>
+    !tree || moved.every((item) => (item.kind === "stage") === (slot.in === "main"));
+  // New blocks written as blocks have no id of their own until one is given.
+  const asNew = (made: Item[]): Item[] => (tree ? freshItems(made) : made);
 
   // Puts `moved` at a place of the list.
-  const placeAt = (moved: Item[], target: InsertTarget) => {
+  const placeAt = (made: Item[], target: InsertTarget) => {
+    const moved = asNew(made);
+    if (!fits(moved, target.slot)) return;
     const first = moved[0];
-    if (first) setSelected(itemId(first));
-    commit(insertAt(program.main, target.slot, target.index, moved));
+    commit(
+      insertAt(main, target.slot, target.index, moved),
+      kept,
+      first ? itemId(first) : undefined,
+    );
   };
 
   // Moves the step `id` to a gap of the list (by its handle, or the row menu).
   const moveTo = (id: string, target: InsertTarget) => {
-    const from = locate(program.main, id);
+    const from = locate(main, id);
     if (!from) return;
-    const { rest, taken: moved } = takeFrom(program.main, id, true);
-    if (moved.length === 0) return;
+    const { rest, taken: moved } = takeFrom(main, id, true);
+    if (moved.length === 0 || !fits(moved, target.slot)) return;
     const sameList = JSON.stringify(from.slot) === JSON.stringify(target.slot);
     const index = sameList && target.index > from.index ? target.index - 1 : target.index;
     if (sameList && index === from.index) return;
-    commit(insertAt(rest, target.slot, index, moved));
-    setSelected(id);
-    setAnnounce(`Moved step ${id} to position ${String(index + 1)}.`);
+    const now = commit(insertAt(rest, target.slot, index, moved), kept, id);
+    setAnnounce(
+      `Moved ${moved[0]?.kind === "stage" ? "stage" : "step"} ${now(id)} to position ${String(index + 1)}.`,
+    );
   };
 
-  // A click on the palette adds after the selected block (in its list), else at the end.
-  const addAtEnd = (item: Item) => {
-    const at = selected ? locate(program.main, selected) : null;
-    const main = at
-      ? insertAt(program.main, at.slot, at.index + 1, [item])
-      : [...program.main, item];
-    commit(main);
-    setSelected(itemId(item));
+  // The stage a key is in (the stage itself for a stage), written as blocks.
+  const stageOf = (key: string | null) =>
+    key === null ? null : (main.find((stage) => itemId(stage) === key.split(".")[0]) ?? null);
+  // The id a block written as blocks runs under when it has none of its own.
+  const placeIdOf = (key: string) => {
+    const stage = stageOf(key);
+    return stage?.kind === "stage" ? derivedId(stageSlug(stage.name), key) : key;
+  };
+
+  // A click on the palette adds after the selected block (in its list), else at the end; nothing
+  // while a proposal is under review.
+  const addAtEnd = (made: Item) => {
+    const [item] = asNew([made]);
+    if (!item || underReview) return;
+    if (tree) {
+      const stage = stageOf(selected);
+      if (item.kind === "stage") {
+        const index = stage ? main.indexOf(stage) + 1 : main.length;
+        commit(insertAt(main, { in: "main" }, index, [item]), kept, item.key);
+        return;
+      }
+      const at = selected && stage?.key !== selected ? locate(main, selected) : null;
+      const last = stage ?? main.at(-1);
+      let next: Item[];
+      if (at) next = insertAt(main, at.slot, at.index + 1, [item]);
+      else if (last?.kind === "stage") {
+        next = insertAt(main, { in: "stage", owner: last.key }, last.steps.length, [item]);
+      } else next = [...main, { ...newStage([]), steps: [item] }];
+      commit(next, kept, itemId(item));
+      return;
+    }
+    const at = selected ? locate(main, selected) : null;
+    const next = at ? insertAt(main, at.slot, at.index + 1, [item]) : [...main, item];
+    commit(next, kept, itemId(item));
   };
   const insertHere = (item: Item) => {
     if (!inserting) return;
     placeAt([item], inserting.target);
     setInserting(null);
   };
+  // A new stage at `index` of the stages, selected for its name.
+  const insertStage = (index: number) => {
+    const stage = newStage(main.flatMap((item) => (item.kind === "stage" ? [item.name] : [])));
+    commit(insertAt(main, { in: "main" }, index, [stage]), kept, itemId(stage));
+  };
 
-  const editItem = (id: string, next: Item) => {
+  const editItem = (id: string, edited: Item) => {
+    // Written as blocks, an edited block keeps its key and whether its id is its own.
+    const current = tree ? findItem(main, id) : null;
+    let next = edited;
+    if (
+      current &&
+      (current.kind === "block" || current.kind === "repeat") &&
+      (next.kind === "block" || next.kind === "repeat")
+    ) {
+      next = { ...next, key: itemId(current), named: current.named === true };
+    }
     commit(
-      replaceItem(program.main, id, next),
-      program.kept.map((node) => (node.id === id && next.kind === "block" ? next.node : node)),
+      replaceItem(main, id, next),
+      kept.map((node) => (node.id === id && next.kind === "block" ? next.node : node)),
     );
   };
 
-  const editNode = (node: BuilderNode) => {
-    const current = findItem(allItems, node.id);
-    if (current?.kind === "repeat") editItem(node.id, { ...current, node });
-    else editItem(node.id, { kind: "block", node });
+  const editNode = (key: string, node: BuilderNode) => {
+    const current = findItem(allItems, key);
+    if (current?.kind === "repeat") editItem(key, { ...current, node });
+    else editItem(key, { kind: "block", node });
   };
 
   const removeItem = (id: string) => {
     commit(
-      takeFrom(program.main, id, true).rest,
-      program.kept.filter((node) => node.id !== id),
+      takeFrom(main, id, true).rest,
+      kept.filter((node) => node.id !== id),
+      null,
     );
-    setSelected(null);
   };
 
   // A copy of the step right after it (a fresh id; a group is not copied).
   const duplicate = (id: string) => {
-    const item = findItem(program.main, id);
-    const at = locate(program.main, id);
+    const item = findItem(main, id);
+    const at = locate(main, id);
     if (item?.kind !== "block" || !at) return;
-    const copy: Item = {
-      kind: "block",
-      node: { ...item.node, id: freshId(taken, item.node.id) },
-    };
-    commit(insertAt(program.main, at.slot, at.index + 1, [copy]));
-    setSelected(itemId(copy));
+    const [copy] = asNew([
+      { kind: "block", node: { ...item.node, id: freshId(taken, item.node.id) } },
+    ]);
+    if (!copy) return;
+    commit(insertAt(main, at.slot, at.index + 1, [copy]), kept, itemId(copy));
     setAnnounce(`Duplicated step ${id}.`);
   };
 
   const selectedItem = selected ? findItem(allItems, selected) : null;
-  const serialized: BuilderDocument = {
-    ...document,
-    nodes: [...nodesOf(program.main), ...program.kept],
+  const serialized: BuilderDocument = tree
+    ? document
+    : { ...document, nodes: [...nodesOf(main), ...kept] };
+
+  /* Written as blocks, a block's id given in its editor: its own (written even when it equals its
+   * place's, so that it stays when the block moves), or none (it runs under its place's again).
+   * The references to the id it ran under follow it as any edit's do
+   * (`idChanges`): not when another block ran under that id, or runs under the new one. */
+  const renameBlock = (key: string, next: BuilderNode) => {
+    const current = findItem(main, key);
+    if (current?.kind !== "block" && current?.kind !== "repeat") return;
+    const named = next.id !== "";
+    const node = { ...without(next, "nodes"), id: named ? next.id : placeIdOf(key) };
+    commit(replaceItem(main, key, { ...current, node, named }));
+  };
+
+  /* Written as blocks, a stage's name or description changed in its editor, letter by letter.
+   * Its blocks' references follow them from the ids they ran under before the rename began, so
+   * a name that passes through another stage's slug (two blocks then share an id, which no
+   * reference can follow) loses none of them. The rename goes on from there as long as nothing
+   * else edits the draft (`renaming`). */
+  const editStage = (key: string, change: { name: string; description: string }) => {
+    const held = renaming.current;
+    const base = held?.key === key && held.wrote === raw ? held : { key, main, raw };
+    const stage = findItem(base.main, key);
+    if (stage?.kind !== "stage") return;
+    const extra = without(stage.extra ?? {}, "description");
+    const edited: Item = {
+      ...stage,
+      name: change.name,
+      extra: change.description === "" ? extra : { ...extra, description: change.description },
+    };
+    const next = replaceItem(base.main, key, edited);
+    const written = renameRefs(treeOf(base.raw, next), idChanges(base.main, next));
+    const changed = JSON.stringify(written) !== JSON.stringify(raw);
+    renaming.current = { ...base, wrote: changed ? written : raw };
+    if (changed) draft.edit(written);
   };
 
   const onGraphAdd = (choice: AddChoice, after: string | null, group: string | null) => {
@@ -461,9 +702,7 @@ export function ScenarioBuilder({
         variant="ghost"
         icon="message-square"
         onClick={() => {
-          ask(
-            `About the step \`${id}\` of the scenario \`${scenario.name}\` (the file \`${scenario.path ?? ""}\`): explain in a few lines what it does, what it runs and where it can stop. Change nothing.`,
-          );
+          ask(aboutStepMessage({ id, scenario: scenario.name, path: scenario.path ?? "", tree }));
         }}
       >
         Ask Claude about this step
@@ -487,7 +726,7 @@ export function ScenarioBuilder({
       return settings ? (
         <ScenarioSettings
           document={document}
-          onChange={draft.edit}
+          onChange={editHeader}
           openerRef={hatButton}
           onClose={() => {
             setSettings(false);
@@ -495,21 +734,66 @@ export function ScenarioBuilder({
         />
       ) : null;
     }
+    if (selectedItem.kind === "stage") {
+      const key = itemId(selectedItem);
+      const description = selectedItem.extra?.description;
+      return (
+        <StageInspector
+          key={key}
+          number={key}
+          name={selectedItem.name}
+          description={typeof description === "string" ? description : ""}
+          problems={problemsOf(key)}
+          onChange={(next) => {
+            editStage(key, next);
+          }}
+          onClose={() => {
+            setSelected(null);
+          }}
+          openerRef={selectedCard}
+          footer={
+            <Button
+              variant="ghost"
+              icon="trash"
+              onClick={() => {
+                removeItem(key);
+                setToast(`Deleted stage ${key} and its steps.`);
+              }}
+            >
+              Delete the stage and its steps
+            </Button>
+          }
+        />
+      );
+    }
     if (selectedItem.kind === "block" || selectedItem.kind === "repeat") {
-      // The block as it is written (with the `depends_on` its place in the stack gives it).
-      const written = allNodes(serialized.nodes).find((item) => item.id === selectedItem.node.id);
+      const key = itemId(selectedItem);
+      // The block as it is written (with the `depends_on` its place in the stack gives it); written
+      // as blocks, as it is (its place is its order).
+      const written = tree
+        ? undefined
+        : allNodes(serialized.nodes).find((item) => item.id === selectedItem.node.id);
       const base = written ? { ...selectedItem.node, ...written } : selectedItem.node;
       const node =
         selectedItem.kind === "repeat" ? { ...base, nodes: nodesOf(selectedItem.body) } : base;
       return (
         <BlockInspector
-          key={node.id}
+          key={key}
           document={serialized}
           node={node}
           library={items}
-          problems={problems.filter((problem) => problem.node === node.id)}
+          problems={tree ? inspectorProblems(problemsOf(key), key, node.type) : problemsOf(key)}
           mode={mode}
-          number={stepNumbers(program.main).get(node.id)}
+          number={stepNumbers(main).get(key)}
+          placeId={tree ? placeIdOf(key) : undefined}
+          named={selectedItem.named === true}
+          onId={
+            tree
+              ? (id) => {
+                  renameBlock(key, { ...node, id });
+                }
+              : undefined
+          }
           libraryError={library.isError}
           openerRef={selectedCard}
           tab={stepTab}
@@ -528,7 +812,7 @@ export function ScenarioBuilder({
                 variant="ghost"
                 icon="file-plus"
                 onClick={() => {
-                  setNewAction({ node: node.id, readOnly: node.type === "expect" });
+                  setNewAction({ node: key, readOnly: node.type === "expect" });
                 }}
               >
                 New action
@@ -538,7 +822,8 @@ export function ScenarioBuilder({
                 variant="ghost"
                 icon="message-square"
                 onClick={() => {
-                  setAskingAction({ step: node.id, readOnly: node.type === "expect" });
+                  // Written as blocks, a block is named by its address, as the file holds no id.
+                  setAskingAction({ step: tree ? key : node.id, readOnly: node.type === "expect" });
                 }}
               >
                 Ask Claude to write one
@@ -546,16 +831,17 @@ export function ScenarioBuilder({
             </>
           }
           onChange={(next) => {
-            if (next.id !== node.id) {
+            // A graph's id is set here; a block written as blocks gives its id through `onId`.
+            if (!tree && next.id !== node.id) {
               draft.edit(updateBlock(serialized, node.id, next));
               setSelected(next.id);
               return;
             }
             if (selectedItem.kind === "repeat") {
-              editItem(node.id, { ...selectedItem, node: without(next, "nodes") });
-            } else editItem(node.id, { kind: "block", node: next });
+              editItem(key, { ...selectedItem, node: without(next, "nodes") });
+            } else editItem(key, { kind: "block", node: next });
           }}
-          footer={stepButtons(node.id)}
+          footer={stepButtons(key)}
           onClose={() => {
             setSelected(null);
           }}
@@ -568,7 +854,7 @@ export function ScenarioBuilder({
       <GroupInspector
         key={groupId}
         kind={group.kind}
-        number={stepNumbers(program.main).get(groupId)}
+        number={stepNumbers(main).get(groupId)}
         condition={group.kind === "if" ? group.condition : ""}
         lanes={group.kind === "parallel" ? group.lanes.length : 2}
         fields={everySource(serialized, outputs).map((source) => ({
@@ -590,6 +876,7 @@ export function ScenarioBuilder({
           setSelected(null);
         }}
         openerRef={selectedCard}
+        problems={problemsOf(groupId)}
         footer={
           <Button
             variant="ghost"
@@ -618,12 +905,30 @@ export function ScenarioBuilder({
         draftYaml: draft.check?.yaml ?? "",
         proposalPath: `.agent-runs/proposals/scenarios/${scenario.pack}/${scenario.name}.yaml`,
         actions: items,
+        tree,
       }),
     );
     setAwaiting(true);
     setDescribing(false);
   };
-  const proposed = offered?.document ? toDocument(offered.document) : null;
+  const proposed = offered?.document && !tree ? toDocument(offered.document) : null;
+  // Written as blocks: the proposal's stages, and its changes by block address.
+  const proposedTree = offered?.document && tree ? toTreeDocument(offered.document) : null;
+  // A proposal for a scenario written as blocks that holds no stages (a graph of `nodes`, the
+  // other format): reviewed as it is, every stage is removed.
+  const proposedGraph = proposedTree !== null && !Array.isArray(proposedTree.stages);
+  const theirStages = useMemo(() => (proposedTree ? stagesOf(proposedTree) : null), [proposedTree]);
+  const proposalText = useMemo(() => JSON.stringify(proposedTree), [proposedTree]);
+  const rawText = JSON.stringify(raw);
+  const underway =
+    decided !== null && decided.wrote === rawText && decided.proposal === proposalText
+      ? decided
+      : null;
+  const review = useMemo(
+    () => underway?.review ?? (proposedTree ? treeReview(raw, proposedTree) : null),
+    [underway, proposedTree, raw],
+  );
+  const decisions: ReadonlyMap<string, Decision> = underway?.decisions ?? new Map();
   // The proposal's changes, block by block (a top-level step, a repeat with what it holds): new,
   // changed, or removed; the ones already accepted or rejected drop out.
   const changes: { id: string; kind: "new" | "changed" | "removed"; node: BuilderNode }[] = [];
@@ -641,21 +946,106 @@ export function ScenarioBuilder({
       if (!theirs.has(node.id)) changes.push({ id: node.id, kind: "removed", node });
     }
   }
-  const open = changes.filter((change) => !resolved.has(change.id));
-  const suggestedIds = new Set(
-    open
-      .filter((change) => change.kind !== "removed")
-      .flatMap((change) => allNodes([change.node]).map((node) => node.id)),
+  // Each change as the review lists it: what it is, its name to read, and its line of detail.
+  const listed = tree
+    ? (review?.changes ?? []).map((change) => {
+        const { item } = change;
+        const node = item?.kind === "block" || item?.kind === "repeat" ? item.node : null;
+        const look = kindLook(
+          item?.kind === "if"
+            ? "branch"
+            : item?.kind === "parallel"
+              ? "parallel"
+              : (node?.type ?? "stage"),
+        );
+        // Named by its id, its kind in it: a removed or changed block by its address in the
+        // draft the review opened on, a new one by its address in the proposal, so two can have
+        // the same address.
+        return {
+          id: change.id,
+          kind: change.kind,
+          of: change.of,
+          shown: change.address === "" ? change.of : change.address,
+          name: change.id,
+          detail:
+            item === null
+              ? change.of === "inputs"
+                ? `Inputs · ${Object.keys(proposedTree?.inputs ?? {}).join(", ")}`
+                : `Description · ${typeof proposedTree?.description === "string" ? proposedTree.description : ""}`
+              : item.kind === "stage"
+                ? `Stage · ${item.name}`
+                : `${look.label}${typeof node?.action === "string" ? ` · ${node.action}` : ""}${typeof node?.description === "string" ? ` · ${node.description}` : ""}`,
+          // Outlined in the proposal: a new or changed block with what it holds; a stage's own
+          // change, its header.
+          suggested:
+            item === null || change.kind === "removed"
+              ? []
+              : change.of === "stage" && change.kind === "changed"
+                ? [itemId(item)]
+                : keysOf(item),
+        };
+      })
+    : changes.map((change) => ({
+        id: change.id,
+        kind: change.kind,
+        of: "block" as const,
+        shown: change.id,
+        name: change.id,
+        detail: `${kindLook(change.node.type).label}${typeof change.node.action === "string" ? ` · ${change.node.action}` : ""}${typeof change.node.description === "string" ? ` · ${change.node.description}` : ""}`,
+        suggested: change.kind === "removed" ? [] : allNodes([change.node]).map((node) => node.id),
+      }));
+  const open = listed.filter((change) =>
+    tree ? !decisions.has(change.id) : !resolved.has(change.id),
   );
+  const suggestedIds = new Set(open.flatMap((change) => change.suggested));
   const removedCount = open.filter((change) => change.kind === "removed").length;
+  // What the banner counts: new or changed blocks, and apart from them (written as blocks)
+  // new or changed stages, a stage's own change among them, the inputs and the description.
+  const added = (of: string) =>
+    open.filter((change) => change.of === of && change.kind !== "removed").length;
+  const blocksOpen = added("block");
+  const stagesOpen = added("stage");
+  const inputsOpen = open.some((change) => change.of === "inputs");
+  const descriptionOpen = open.some((change) => change.of === "description");
+  const counted = (n: number, what: string) => `${String(n)} ${what}${n === 1 ? "" : "s"}`;
+  const proposes = [
+    ...(blocksOpen > 0 || stagesOpen === 0 ? [counted(blocksOpen, "new or changed block")] : []),
+    ...(stagesOpen > 0 ? [counted(stagesOpen, "new or changed stage")] : []),
+    ...(removedCount > 0 ? [`${String(removedCount)} removed`] : []),
+    ...(inputsOpen ? ["changed inputs"] : []),
+    ...(descriptionOpen ? ["a changed description"] : []),
+  ].join(", ");
+  const closeReview = () => {
+    setReviewing(false);
+    setSelected(null);
+    setResolved(new Set());
+    setDecided(null);
+    dismiss.mutate();
+  };
   const finish = (next: Set<string>) => {
-    if (changes.every((change) => next.has(change.id))) {
-      setReviewing(false);
-      setResolved(new Set());
-      dismiss.mutate();
-    } else setResolved(next);
+    if (listed.every((change) => next.has(change.id))) closeReview();
+    else setResolved(next);
+  };
+  // Written as blocks: `ids` decided, and the draft written again from the draft the review
+  // opened on, the proposal and every accept made (`decideReview`), never from the draft the
+  // last decision gave. The review is done when every change it listed is decided; Accept all
+  // and Reject all decide them all at once.
+  const decideTree = (ids: readonly string[], decision: Decision) => {
+    if (!review) return;
+    const next = decideReview(review, decisions, ids, decision);
+    const wrote = JSON.stringify(next.draft);
+    if (wrote !== rawText) {
+      draft.edit(next.draft);
+      setSelected(null);
+    }
+    if (next.closed) closeReview();
+    else setDecided({ review, decisions: next.decisions, wrote, proposal: proposalText });
   };
   const acceptOne = (id: string) => {
+    if (tree) {
+      decideTree([id], "accept");
+      return;
+    }
     const change = changes.find((item) => item.id === id);
     if (!change || !proposed) return;
     if (change.kind === "removed") draft.edit(removeBlock(document, id));
@@ -674,20 +1064,28 @@ export function ScenarioBuilder({
     finish(new Set([...resolved, id]));
   };
   const rejectOne = (id: string) => {
-    finish(new Set([...resolved, id]));
+    if (tree) decideTree([id], "reject");
+    else finish(new Set([...resolved, id]));
   };
+  const everyChange = (review?.changes ?? []).map((change) => change.id);
   const acceptProposal = () => {
+    if (tree) {
+      decideTree(everyChange, "accept");
+      return;
+    }
     if (!proposed) return;
-    const next: BuilderDocument = { ...document, nodes: proposed.nodes };
+    const next: ScenarioDocument = { ...document, nodes: proposed.nodes };
     if (proposed.inputs !== undefined) next.inputs = proposed.inputs;
     if (typeof proposed.description === "string") next.description = proposed.description;
     draft.edit(next);
-    setReviewing(false);
-    setResolved(new Set());
-    dismiss.mutate();
+    closeReview();
+  };
+  const rejectProposal = () => {
+    if (tree) decideTree(everyChange, "reject");
+    else closeReview();
   };
   const reviewPanel =
-    reviewing && proposed ? (
+    reviewing && (proposed ?? proposedTree) ? (
       <section className="sb-inspector" aria-label="Claude's proposal">
         <header className="sb-inspector-head">
           <Icon name="message-square" size="sm" />
@@ -704,20 +1102,14 @@ export function ScenarioBuilder({
             <div key={change.id} className="sb-change" data-kind={change.kind}>
               <span className="sb-change-kind">{change.kind}</span>
               <span className="ah-stack" style={{ gap: 0, minWidth: 0 }}>
-                <b className="ah-mono">{change.id}</b>
-                <span className="ah-small ah-muted">
-                  {kindLook(change.node.type).label}
-                  {typeof change.node.action === "string" ? ` · ${change.node.action}` : ""}
-                  {typeof change.node.description === "string"
-                    ? ` · ${change.node.description}`
-                    : ""}
-                </span>
+                <b className="ah-mono">{change.shown}</b>
+                <span className="ah-small ah-muted">{change.detail}</span>
               </span>
               <span className="ah-row" style={{ gap: 4 }}>
                 <Button
                   size="sm"
                   variant="primary"
-                  aria-label={`Accept ${change.id}`}
+                  aria-label={`Accept ${change.name}`}
                   onClick={() => {
                     acceptOne(change.id);
                   }}
@@ -727,7 +1119,7 @@ export function ScenarioBuilder({
                 <Button
                   size="sm"
                   variant="ghost"
-                  aria-label={`Reject ${change.id}`}
+                  aria-label={`Reject ${change.name}`}
                   onClick={() => {
                     rejectOne(change.id);
                   }}
@@ -740,11 +1132,14 @@ export function ScenarioBuilder({
         </div>
       </section>
     ) : null;
-  const reviewProgram = proposed && reviewing ? programOf(proposed.nodes).main : null;
+  const reviewProgram = underReview
+    ? (theirStages ?? (proposed ? programOf(proposed.nodes).main : null))
+    : null;
 
   // Keys on the builder (never while typing in a field): Delete removes the selected block (with
   // an Undo toast), Alt+↑/↓ moves it in its list, ⌘D duplicates it, ⌘Z/⇧⌘Z undo and redo, ⌘S
-  // saves, Esc clears the selection.
+  // saves, Esc clears the selection. Under review, a selected row is the proposal's: the block
+  // keys leave the draft as it is.
   const onKeys = (event: KeyboardEvent) => {
     const target = event.target as HTMLElement;
     if (!bodyRef.current?.contains(target) && target !== window.document.body) return;
@@ -765,29 +1160,34 @@ export function ScenarioBuilder({
     if (!selected) return;
     if (event.key === "Escape") {
       setSelected(null);
-    } else if (event.key === "Delete" || event.key === "Backspace") {
+      return;
+    }
+    if (underReview) return;
+    if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
+      const stage = findItem(main, selected)?.kind === "stage";
       removeItem(selected);
-      setToast(`Deleted ${selected}.`);
+      setToast(stage ? `Deleted stage ${selected} and its steps.` : `Deleted step ${selected}.`);
     } else if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
       event.preventDefault();
-      const at = locate(program.main, selected);
+      const at = locate(main, selected);
       if (!at) return;
       const to = at.index + (event.key === "ArrowUp" ? -1 : 1);
-      const { rest, taken: moved } = takeFrom(program.main, selected, true);
+      const { rest, taken: moved } = takeFrom(main, selected, true);
       if (to < 0 || moved.length === 0) return;
+      // Written as blocks, a block keeps to its list's end (a stage holds what it holds).
+      if (tree && to > (listAt(rest, at.slot)?.length ?? 0)) return;
       commit(insertAt(rest, at.slot, to, moved));
     } else if (mod && event.key.toLowerCase() === "d") {
       event.preventDefault();
-      const item = findItem(program.main, selected);
-      const at = locate(program.main, selected);
+      const item = findItem(main, selected);
+      const at = locate(main, selected);
       if (item?.kind !== "block" || !at) return;
-      const copy: Item = {
-        kind: "block",
-        node: { ...item.node, id: freshId(taken, item.node.id) },
-      };
-      commit(insertAt(program.main, at.slot, at.index + 1, [copy]));
-      setSelected(itemId(copy));
+      const [copy] = asNew([
+        { kind: "block", node: { ...item.node, id: freshId(taken, item.node.id) } },
+      ]);
+      if (!copy) return;
+      commit(insertAt(main, at.slot, at.index + 1, [copy]), kept, itemId(copy));
     }
   };
 
@@ -806,7 +1206,7 @@ export function ScenarioBuilder({
   }, []);
 
   const drafts = new Set(
-    programNodes(program.main)
+    programNodes(main)
       .map((node) => actionFacts(node))
       .filter((action) => action?.draft === true)
       .map((action) => action?.ref),
@@ -862,13 +1262,13 @@ export function ScenarioBuilder({
     return facts?.inputs.some((input) => input.name === name && !(name in given)) ?? false;
   };
   const everyNode = allNodes(document.nodes);
-  const numbersNow = stepNumbers(program.main);
+  const numbersNow = stepNumbers(main);
   const keptValues: KeptValue[] = everyNode.flatMap((node) =>
     Object.keys(
       typeof node.capture === "object" && node.capture !== null && !Array.isArray(node.capture)
         ? node.capture
         : {},
-    ).map((name) => ({ name, step: node.id, number: numbersNow.get(node.id) ?? node.id })),
+    ).map((name) => ({ name, step: node.id, number: numbersNow.get(keyOf(node.id)) ?? node.id })),
   );
   const variableUsage = new Map<string, number>();
   for (const name of [
@@ -884,6 +1284,11 @@ export function ScenarioBuilder({
     if (ref) actionUsage.set(ref, (actionUsage.get(ref) ?? 0) + 1);
   }
   const repeats = withoutRunRepeats(document);
+  // Drops the repeats of a run value: from the graph's nodes, or from each block's `with`.
+  const dropRepeats = () => {
+    if (tree) commit(mapNodes(main, (node) => withoutRunRepeatsOf(node).node));
+    else draft.edit(repeats.document);
+  };
   const variablesPanel = (
     <VariablesPanel
       document={document}
@@ -915,7 +1320,7 @@ export function ScenarioBuilder({
                   value: typeof fallback === "string" ? fallback : JSON.stringify(fallback),
                 });
               }
-              if (repeats.dropped > 0) draft.edit(repeats.document);
+              if (repeats.dropped > 0) dropRepeats();
               setToast(
                 `Kept ${names.join(", ")} in ${environment}${repeats.dropped > 0 ? ` and removed ${String(repeats.dropped)} repeats` : ""}.`,
               );
@@ -923,7 +1328,7 @@ export function ScenarioBuilder({
           : null
       }
       onRemoveRepeats={() => {
-        draft.edit(repeats.document);
+        dropRepeats();
         setToast(`Removed ${String(repeats.dropped)} repeats.`);
       }}
       onSaveValue={
@@ -943,7 +1348,7 @@ export function ScenarioBuilder({
       }}
       onOpenStep={(id) => {
         setSettings(false);
-        setSelected(id);
+        setSelected(keyOf(id));
       }}
     />
   );
@@ -956,6 +1361,9 @@ export function ScenarioBuilder({
     const origin = { x: event.clientX, y: event.clientY };
     let moved = false;
     let target: InsertTarget | null = null;
+    const made = make();
+    // A stage lands between stages, any other block in a list of steps.
+    const kind: GapKind = made.kind === "stage" ? "stage" : "step";
     const inList = (x: number) => {
       const box = listScroll.current?.getBoundingClientRect();
       return box !== undefined && x >= box.left && x <= box.right;
@@ -963,7 +1371,9 @@ export function ScenarioBuilder({
     const move = (moving: PointerEvent) => {
       if (!moved && Math.hypot(moving.clientX - origin.x, moving.clientY - origin.y) < 4) return;
       moved = true;
-      target = inList(moving.clientX) ? nearestGap(listScroll.current, moving.clientY) : null;
+      target = inList(moving.clientX)
+        ? nearestGap(listScroll.current, moving.clientY, undefined, kind)
+        : null;
       if (target) scrollNear(listScroll.current, moving.clientY);
       setPaletteDrag({ look, x: moving.clientX, y: moving.clientY, target });
     };
@@ -971,9 +1381,9 @@ export function ScenarioBuilder({
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       setPaletteDrag(null);
-      if (!moved) addAtEnd(make());
+      if (!moved) addAtEnd(made);
       else if (target) {
-        placeAt([make()], target);
+        placeAt([made], target);
         setSettings(false);
       }
     };
@@ -982,8 +1392,10 @@ export function ScenarioBuilder({
   };
 
   // The row menu (right click, Shift F10, or a click on the handle): move, duplicate, delete.
-  const rowMenuAt = rowMenu ? locate(program.main, rowMenu.id) : null;
-  const rowMenuLength = rowMenuAt ? (listAt(program.main, rowMenuAt.slot)?.length ?? 0) : 0;
+  const rowMenuAt = rowMenu ? locate(main, rowMenu.id) : null;
+  const rowMenuLength = rowMenuAt ? (listAt(main, rowMenuAt.slot)?.length ?? 0) : 0;
+  const rowMenuStage = rowMenu ? findItem(main, rowMenu.id)?.kind === "stage" : false;
+  const rowNoun = rowMenuStage ? "stage" : "step";
   const closeRowMenu = () => {
     setRowMenu(null);
   };
@@ -993,7 +1405,7 @@ export function ScenarioBuilder({
       <div
         className="ah-pop sb-row-menu"
         role="menu"
-        aria-label={`Step ${rowMenu.id}`}
+        aria-label={`${rowMenuStage ? "Stage" : "Step"} ${rowMenu.id}`}
         style={{
           top: Math.min(rowMenu.anchor.bottom + 4, window.innerHeight - 260),
           left: rowMenu.anchor.left,
@@ -1031,24 +1443,30 @@ export function ScenarioBuilder({
             Move down
           </MenuItem>
         )}
-        <MenuItem
-          icon="copy"
-          onClick={() => {
-            duplicate(rowMenu.id);
-            closeRowMenu();
-          }}
-        >
-          Duplicate
-        </MenuItem>
+        {!rowMenuStage && (
+          <MenuItem
+            icon="copy"
+            onClick={() => {
+              duplicate(rowMenu.id);
+              closeRowMenu();
+            }}
+          >
+            Duplicate
+          </MenuItem>
+        )}
         <MenuItem
           icon="trash"
           onClick={() => {
             removeItem(rowMenu.id);
-            setToast(`Deleted step ${rowMenu.id}.`);
+            setToast(
+              rowMenuStage
+                ? `Deleted stage ${rowMenu.id} and its steps.`
+                : `Deleted step ${rowMenu.id}.`,
+            );
             closeRowMenu();
           }}
         >
-          Delete step
+          Delete {rowNoun}
         </MenuItem>
       </div>
     </>
@@ -1122,7 +1540,8 @@ export function ScenarioBuilder({
                     className="sb-problem-row"
                     data-severity={problem.severity}
                     onClick={() => {
-                      if (problem.node) setSelected(problem.node);
+                      const at = problemAt(problem);
+                      if (at) setSelected(at);
                       setMenu(null);
                     }}
                   >
@@ -1131,7 +1550,7 @@ export function ScenarioBuilder({
                       size="sm"
                     />
                     <span className="ah-grow">
-                      {problem.node && <b className="ah-mono">{problem.node}: </b>}
+                      {problemAt(problem) && <b className="ah-mono">{problemAt(problem)}: </b>}
                       {problem.message}
                     </span>
                   </button>
@@ -1197,6 +1616,17 @@ export function ScenarioBuilder({
                   }}
                 >
                   Copy the YAML
+                </MenuItem>
+              )}
+              {!tree && (
+                <MenuItem
+                  icon="milestone"
+                  onClick={() => {
+                    setMenu(null);
+                    setMigrating(true);
+                  }}
+                >
+                  Migrate to stages of blocks
                 </MenuItem>
               )}
             </div>
@@ -1316,9 +1746,9 @@ export function ScenarioBuilder({
           {offered ? (
             <>
               <span>
-                <b>Claude proposes</b> {open.length - removedCount} new or changed{" "}
-                {open.length - removedCount === 1 ? "block" : "blocks"}
-                {removedCount > 0 && `, ${String(removedCount)} removed`}
+                <b>Claude proposes</b> {proposes}
+                {proposedGraph &&
+                  " · it is written as a graph (nodes), not as stages: accepting it all leaves no stage"}
                 {offered.check
                   ? offered.check.loads
                     ? " · it loads"
@@ -1333,6 +1763,8 @@ export function ScenarioBuilder({
                 variant={reviewing ? "primary" : "default"}
                 onClick={() => {
                   setReviewing(!reviewing);
+                  // The draft's and the proposal's rows are other blocks under the same keys.
+                  setSelected(null);
                   setView("blocks");
                 }}
               >
@@ -1341,15 +1773,7 @@ export function ScenarioBuilder({
               <Button size="sm" variant="primary" icon="check" onClick={acceptProposal}>
                 Accept all
               </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setReviewing(false);
-                  setResolved(new Set());
-                  dismiss.mutate();
-                }}
-              >
+              <Button size="sm" variant="ghost" onClick={rejectProposal}>
                 Reject all
               </Button>
             </>
@@ -1433,12 +1857,25 @@ export function ScenarioBuilder({
               pack={scenario.pack}
               taken={taken}
               where={
-                selected && locate(program.main, selected)
-                  ? `after step ${numbersNow.get(selected) ?? selected}`
-                  : "at the end"
+                tree && selected && stageOf(selected)?.key === selected
+                  ? `at the end of stage ${selected}`
+                  : selected && locate(main, selected)
+                    ? `after step ${numbersNow.get(selected) ?? selected}`
+                    : "at the end"
               }
+              locked={underReview}
               onAdd={addAtEnd}
               onPress={pressBlock}
+              stages={
+                tree
+                  ? {
+                      names: main.flatMap((item) => (item.kind === "stage" ? [item.name] : [])),
+                      where: stageOf(selected)
+                        ? `after stage ${stageOf(selected)?.key ?? ""}`
+                        : "at the end",
+                    }
+                  : null
+              }
             />
           ) : leftTab === "variables" ? (
             variablesPanel
@@ -1466,25 +1903,30 @@ export function ScenarioBuilder({
               scrollRef={listScroll}
               externalTarget={paletteDrag?.target ?? null}
               empty={
-                program.kept.length === 0 && !reviewProgram ? (
+                kept.length === 0 && !reviewProgram ? (
                   <StartCard
                     onDescribe={() => {
                       setDescribing(true);
                     }}
                     onTemplate={(items_) => {
-                      commit(items_);
+                      // Written as blocks, a shape starts the first stage.
+                      commit(tree ? asNew([{ ...newStage([]), steps: items_ }]) : items_);
                     }}
                     taken={taken}
                   />
                 ) : null
               }
               scenarioName={scenario.name}
-              items={reviewProgram ?? program.main}
-              numbers={stepNumbers(reviewProgram ?? program.main)}
+              items={reviewProgram ?? main}
+              numbers={stepNumbers(reviewProgram ?? main)}
               selected={selected}
               actionOf={actionFacts}
-              problemsOf={(id) => problems.filter((problem) => problem.node === id)}
-              planOf={(id) => planRows.get(id) ?? null}
+              problemsOf={tree && reviewProgram ? () => [] : problemsOf}
+              // The plan was made for the draft's blocks: a proposal's, by its own addresses,
+              // are other blocks, so none shows one.
+              planOf={
+                tree && reviewProgram ? () => null : (id) => planRows.get(nodeIdOf(id)) ?? null
+              }
               planStale={previewFor !== null && previewFor !== JSON.stringify(document.nodes)}
               start={{
                 environment: environment || null,
@@ -1512,7 +1954,8 @@ export function ScenarioBuilder({
               usesVariable={(node) => (variable ? nodeUses(node, variable) : false)}
               suggested={reviewProgram ? suggestedIds : undefined}
               readOnly={reviewProgram !== null}
-              loose={program.kept}
+              loose={kept}
+              onInsertStage={tree ? insertStage : undefined}
               onOpenYaml={() => {
                 setView("yaml");
               }}
@@ -1538,7 +1981,7 @@ export function ScenarioBuilder({
               }
             />
           )}
-          {view === "graph" && (
+          {view === "graph" && !tree && (
             <FlowCanvas
               nodes={document.nodes}
               actionOf={actionFacts}
@@ -1547,6 +1990,24 @@ export function ScenarioBuilder({
               onSelect={setSelected}
               onAdd={onGraphAdd}
             />
+          )}
+          {view === "graph" && tree && (
+            <div className="sb-graph-picture">
+              <span className="ah-small ah-muted" role="note">
+                The graph shows how the blocks run: edit them in Blocks.
+              </span>
+              <FlowCanvas
+                nodes={document.nodes}
+                actionOf={actionFacts}
+                problemsOf={(id) => problemsOf(keyOf(id))}
+                selected={selected ? nodeIdOf(selected) : null}
+                onSelect={(id) => {
+                  setSelected(id === null ? null : keyOf(id));
+                }}
+                onAdd={() => undefined}
+                readOnly
+              />
+            </div>
           )}
           {view === "yaml" && (
             <div className="sb-yaml">
@@ -1578,12 +2039,24 @@ export function ScenarioBuilder({
         </div>
         {reviewPanel ?? inspector}
       </div>
+      {migrating && (
+        <MigrateDialog
+          project={scenario.project}
+          name={scenario.name}
+          contentHash={fresh.content_hash ?? null}
+          unsaved={draft.dirty}
+          onClose={() => {
+            setMigrating(false);
+          }}
+        />
+      )}
       {describing && (
         <DescribeDialog
-          empty={program.main.length === 0}
-          after={selected}
+          empty={main.length === 0}
+          after={editable}
+          tree={tree}
           onSend={(described, scope) => {
-            sendDescription(described, scope, scope === "after" ? selected : null);
+            sendDescription(described, scope, scope === "after" ? editable : null);
           }}
           onClose={() => {
             setDescribing(false);
@@ -1599,6 +2072,7 @@ export function ScenarioBuilder({
                 pack: scenario.pack,
                 step: askingAction.step,
                 readOnly: askingAction.readOnly,
+                tree,
               }),
             );
             setAskingAction(null);
@@ -1615,7 +2089,7 @@ export function ScenarioBuilder({
           return (
             <ActionPanel
               action={shownAction}
-              steps={programNodes(program.main).map((node) => ({
+              steps={programNodes(main).map((node) => ({
                 id: node.id,
                 type: node.type,
                 action: typeof node.action === "string" ? node.action : null,
@@ -1626,7 +2100,7 @@ export function ScenarioBuilder({
                 setActionPanel(null);
               }}
               onShowStep={(id) => {
-                setSelected(id);
+                setSelected(keyOf(id));
                 setActionPanel(null);
               }}
               tools={
@@ -1645,6 +2119,8 @@ export function ScenarioBuilder({
                     size="sm"
                     variant="primary"
                     icon="plus"
+                    // Under review the draft is not edited (the Blocks tab says so).
+                    disabled={underReview}
                     onClick={() => {
                       const ref =
                         shownAction.pack === scenario.pack ? shownAction.name : shownAction.ref;
@@ -1666,8 +2142,10 @@ export function ScenarioBuilder({
           existing={newAction.existing ?? null}
           readOnly={newAction.readOnly}
           onCreated={(action) => {
-            const target = newAction.node ? findItem(allItems, newAction.node) : null;
-            if (target?.kind === "block") editNode({ ...target.node, action: action.name });
+            const key = newAction.node;
+            const target = key ? findItem(allItems, key) : null;
+            if (key && target?.kind === "block")
+              editNode(key, { ...target.node, action: action.name });
             setNewAction(null);
           }}
           onClose={() => {

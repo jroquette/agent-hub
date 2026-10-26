@@ -696,6 +696,9 @@ export function BlockInspector({
   tab,
   onTab,
   environment,
+  placeId,
+  named = false,
+  onId,
 }: {
   document: BuilderDocument;
   node: BuilderNode;
@@ -721,14 +724,26 @@ export function BlockInspector({
   onTab: (tab: "settings" | "script") => void;
   /** The environment the page is read in, and its values (null when unknown). */
   environment: { name: string; values: Readonly<Record<string, string>> | null } | null;
+  /** A block of a scenario written as blocks: the id its place gives it, which it runs under
+   * when it has none of its own (its position is its order, so it has no `when`, no "runs
+   * after" and no join rule). Undefined for a step of a graph. */
+  placeId?: string | undefined;
+  /** Written as blocks: whether the block gives its id (even one equal to its place's). */
+  named?: boolean;
+  /** Written as blocks: the id given in its field, the block's own from then on (even one equal
+   * to its place's), or "" for none (it runs under its place's). */
+  onId?: ((id: string) => void) | undefined;
 }) {
   const look = kindLook(node.type);
+  const tree = placeId !== undefined;
+  // A block written as blocks shows its own id only; empty, it runs under its place's.
+  const ownId = tree && !named ? "" : node.id;
   const [overridden, setOverridden] = useState<string[]>([]);
-  const [id, setId] = useState(node.id);
+  const [id, setId] = useState(ownId);
   const [shownFor, setShownFor] = useState(node.id);
   if (shownFor !== node.id) {
     setShownFor(node.id);
-    setId(node.id);
+    setId(ownId);
     setOverridden([]);
   }
   const set = (key: string, value: Json | undefined) => {
@@ -1301,68 +1316,97 @@ export function BlockInspector({
           )}
 
           <div className="sb-more">
-            <Disclosure
-              label={
-                conditionSet
-                  ? `More: only if ${conditionWords(text(node.when))}`
-                  : "More: only if, order and id"
-              }
-            >
-              <ConditionBuilder
-                label="Only if"
-                value={typeof node.when === "string" ? node.when : ""}
-                fields={whenFields}
-                onChange={(value) => {
-                  set("when", value);
-                }}
-              />
-              <Field label="Runs after" help="Set by where it sits on the canvas.">
-                {() => (
-                  <span className="ah-mono ah-small">
-                    {dependsOn(node).join(", ") || "the start"}
-                  </span>
-                )}
-              </Field>
-              {dependsOn(node).length > 1 && (
-                <Field label="Runs when">
+            {tree && (
+              <Disclosure label="More: id">
+                <Field
+                  label="Id"
+                  help={`Optional, kebab-case, not self ($self reads a block's own output). Without one it runs as ${placeId}, from its place, and what reads its output follows it when it moves. Renaming updates what reads it.`}
+                >
                   {(fieldId) => (
-                    <select
+                    <input
                       id={fieldId}
-                      className="ah-input"
-                      value={text(node.trigger_rule, "all_success")}
+                      className="ah-input ah-mono"
+                      value={id}
+                      placeholder={placeId}
                       onChange={(event) => {
-                        set(
-                          "trigger_rule",
-                          event.target.value === "all_success" ? undefined : event.target.value,
-                        );
+                        setId(event.target.value);
                       }}
-                    >
-                      {TRIGGER_WORDS.map(([rule, words]) => (
-                        <option key={rule} value={rule}>
-                          {words}
-                        </option>
-                      ))}
-                    </select>
+                      onBlur={() => {
+                        if (id === ownId) return;
+                        if (id !== "" && (id === "self" || !/^[a-z][a-z0-9-]*$/.test(id)))
+                          setId(ownId);
+                        else onId?.(id);
+                      }}
+                    />
                   )}
                 </Field>
-              )}
-              <Field label="Id" help="Unique, kebab-case. Renaming updates what waits for it.">
-                {(fieldId) => (
-                  <input
-                    id={fieldId}
-                    className="ah-input ah-mono"
-                    value={id}
-                    onChange={(event) => {
-                      setId(event.target.value);
-                    }}
-                    onBlur={() => {
-                      if (id !== node.id && /^[a-z][a-z0-9-]*$/.test(id)) onChange({ ...node, id });
-                      else setId(node.id);
-                    }}
-                  />
+              </Disclosure>
+            )}
+            {!tree && (
+              <Disclosure
+                label={
+                  conditionSet
+                    ? `More: only if ${conditionWords(text(node.when))}`
+                    : "More: only if, order and id"
+                }
+              >
+                <ConditionBuilder
+                  label="Only if"
+                  value={typeof node.when === "string" ? node.when : ""}
+                  fields={whenFields}
+                  onChange={(value) => {
+                    set("when", value);
+                  }}
+                />
+                <Field label="Runs after" help="Set by where it sits on the canvas.">
+                  {() => (
+                    <span className="ah-mono ah-small">
+                      {dependsOn(node).join(", ") || "the start"}
+                    </span>
+                  )}
+                </Field>
+                {dependsOn(node).length > 1 && (
+                  <Field label="Runs when">
+                    {(fieldId) => (
+                      <select
+                        id={fieldId}
+                        className="ah-input"
+                        value={text(node.trigger_rule, "all_success")}
+                        onChange={(event) => {
+                          set(
+                            "trigger_rule",
+                            event.target.value === "all_success" ? undefined : event.target.value,
+                          );
+                        }}
+                      >
+                        {TRIGGER_WORDS.map(([rule, words]) => (
+                          <option key={rule} value={rule}>
+                            {words}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </Field>
                 )}
-              </Field>
-            </Disclosure>
+                <Field label="Id" help="Unique, kebab-case. Renaming updates what waits for it.">
+                  {(fieldId) => (
+                    <input
+                      id={fieldId}
+                      className="ah-input ah-mono"
+                      value={id}
+                      onChange={(event) => {
+                        setId(event.target.value);
+                      }}
+                      onBlur={() => {
+                        if (id !== node.id && /^[a-z][a-z0-9-]*$/.test(id))
+                          onChange({ ...node, id });
+                        else setId(node.id);
+                      }}
+                    />
+                  )}
+                </Field>
+              </Disclosure>
+            )}
             {stops.length > 0 && (
               <Disclosure
                 label={`Where it can stop: ${String(stops.length)} ${stops.length === 1 ? "way" : "ways"}`}
@@ -1529,6 +1573,7 @@ export function GroupInspector({
   onClose,
   openerRef,
   footer,
+  problems = [],
 }: {
   kind: "if" | "parallel";
   number: string | undefined;
@@ -1540,9 +1585,12 @@ export function GroupInspector({
   onClose: () => void;
   openerRef: RefObject<HTMLElement | null>;
   footer?: ReactNode;
+  /** The server's problems on it (an If's condition). */
+  problems?: readonly BuilderProblem[];
 }) {
   const look = kindLook(kind === "if" ? "branch" : "parallel");
   const isIf = kind === "if";
+  const errors = problems.filter((problem) => problem.severity === "error");
   return (
     <FormShell
       icon={look.icon}
@@ -1562,6 +1610,13 @@ export function GroupInspector({
       openerRef={openerRef}
       footer={footer}
     >
+      {errors.length > 0 && (
+        <Banner tone="error" live={false}>
+          {errors.map((problem, index) => (
+            <div key={index}>{problem.message}</div>
+          ))}
+        </Banner>
+      )}
       {isIf ? (
         <Section
           title="Condition"
@@ -1598,6 +1653,90 @@ export function GroupInspector({
           </span>
         </Section>
       )}
+    </FormShell>
+  );
+}
+
+/** A stage of a scenario written as blocks: its name (unique once folded to its slug, which
+ * starts with a letter) and what it is for. */
+export function StageInspector({
+  number,
+  name,
+  description,
+  problems,
+  onChange,
+  onClose,
+  openerRef,
+  footer,
+}: {
+  number: string;
+  name: string;
+  description: string;
+  problems: readonly BuilderProblem[];
+  onChange: (next: { name: string; description: string }) => void;
+  onClose: () => void;
+  openerRef: RefObject<HTMLElement | null>;
+  footer?: ReactNode;
+}) {
+  const look = kindLook("stage");
+  const errors = problems.filter((problem) => problem.severity === "error");
+  const problemOf = (key: string) =>
+    errors.find((problem) => problem.key?.endsWith(`.${key}`))?.message;
+  // What is wrong with the stage elsewhere than its name (its steps, as a list).
+  const others = errors.filter((problem) => problem.key?.endsWith(".name") !== true);
+  return (
+    <FormShell
+      icon={look.icon}
+      tint={look.tint}
+      soft={look.soft}
+      eyebrow={`Stage ${number}`}
+      title={name || "A stage with no name"}
+      region={`Inspector: Stage ${number}`}
+      closeLabel={`Close stage ${number}`}
+      onClose={onClose}
+      openerRef={openerRef}
+      footer={footer}
+    >
+      {others.length > 0 && (
+        <Banner tone="error" live={false}>
+          {others.map((problem, index) => (
+            <div key={index}>{problem.message}</div>
+          ))}
+        </Banner>
+      )}
+      <Section
+        title="Stage"
+        help="Its steps run in order, after the stage before it. Without an id of their own, they run under ids made from its name."
+      >
+        <Field
+          label="Name"
+          help="Unique in the scenario, starting with a letter."
+          error={problemOf("name")}
+        >
+          {(fieldId) => (
+            <input
+              id={fieldId}
+              className="ah-input"
+              value={name}
+              onChange={(event) => {
+                onChange({ name: event.target.value, description });
+              }}
+            />
+          )}
+        </Field>
+        <Field label="What it is for">
+          {(fieldId) => (
+            <input
+              id={fieldId}
+              className="ah-input"
+              value={description}
+              onChange={(event) => {
+                onChange({ name, description: event.target.value });
+              }}
+            />
+          )}
+        </Field>
+      </Section>
     </FormShell>
   );
 }

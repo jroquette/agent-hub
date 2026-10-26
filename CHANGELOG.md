@@ -11,6 +11,33 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- Scenarios written as blocks, and a debugger for their runs (ADR 0049, proposed): a scenario may be written as
+  `version: 2`, named stages of ordered blocks (Do, Wait until, You, Wait, Include; Repeat, If/else, At the same
+  time), which core translates to the node graph at load, so the policy, gates, records and fixtures work as before,
+  and each load or plan problem names its block's address and tree key path. `generator` writes a scenario in one
+  canonical form, which `hub scenario migrate` and hub web's Save share. `hub scenario migrate [NAME…] [--check]`
+  writes graph scenarios (`version: 1`) again in place as blocks, or writes nothing and names each node it cannot map
+  and why; `hub doctor` warns (`scenarios.graph_format`) on each graph scenario, which a later release stops reading,
+  and `hub init` seeds `demo-service-up` as `version: 2`. A scenario run written as blocks can be debugged off
+  production: `hub scenario run --break ADDR`, `hub scenario break RUN [ADDR]… [--off|--set]`, `hub scenario step RUN`
+  and `hub scenario continue RUN` pause it before a block, run the next block, or run to the next breakpoint; no debug
+  command answers an ask, edits a value or changes what the run does, and the `debug.*` events record each pause and
+  command. In hub web, the builder edits a `version: 2` scenario as its stages of blocks (stage headers to add,
+  rename, move and remove, a Stage block in the Blocks tab, each block numbered by its address, the Graph view a
+  picture of how they run, Claude's prompt and proposal review in blocks), and Save of an unchanged file writes
+  nothing; it keeps editing a `version: 1` scenario as before and offers Migrate for it. A scenario run's page lists
+  the blocks the run pinned, each with its state and a breakpoint toggle, offers Step and Continue in a debug pause,
+  and shows the run's inputs and each finished block's values while it is paused; the scenario page sets breakpoints
+  before a start. The API gains the routes for breakpoints, Step, Continue, a paused run's values and migrate, and a
+  scenario run's start takes `breakpoints` (AGH-507).
+
+### Fixed
+
+- `hub web` answers 404 to a request whose path holds a control character (a trailing `%0A` included), before any
+  other check, so no such path reaches a route without the checks its own path gets (AGH-507).
+
 ## [0.24.0] - 2026-10-25
 
 ### Added

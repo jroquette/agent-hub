@@ -1483,7 +1483,7 @@ export interface paths {
     /**
      * Get Scenario Run
      * @description A scenario run as its record holds it: timeline, polls, captures, decisions, findings,
-     *     investigations, the latest proposal's options and the workarounds.
+     *     investigations, the latest proposal's options, the workarounds and its debug pause.
      */
     get: operations["get_scenario_run_api_v1_scenario_runs__run_id__get"];
     put?: never;
@@ -1509,6 +1509,47 @@ export interface paths {
      *     resume the run; a pick that cannot stand is 409 with its reason and records nothing.
      */
     post: operations["answer_investigation_api_v1_scenario_runs__run_id__answer_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/scenario-runs/{run_id}/breakpoints": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Put Breakpoints
+     * @description Replace a run's breakpoints, blocks of its pinned tree (none clears them); a run that
+     *     runs takes them at its next block. Refused on production, but for clearing them.
+     */
+    put: operations["put_breakpoints_api_v1_scenario_runs__run_id__breakpoints_put"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/scenario-runs/{run_id}/continue": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Continue Run
+     * @description Run a run in a debug pause to its next breakpoint, or its end.
+     */
+    post: operations["continue_run_api_v1_scenario_runs__run_id__continue_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -1577,6 +1618,47 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/scenario-runs/{run_id}/step": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Step Run
+     * @description Run the next block of a run in a debug pause, then pause before the one after it.
+     */
+    post: operations["step_run_api_v1_scenario_runs__run_id__step_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/scenario-runs/{run_id}/values": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Scenario Run Values
+     * @description A paused run's inputs and each finished block's inputs, status and output, from its
+     *     record (needs the launch cookie; never on a production environment).
+     */
+    get: operations["get_scenario_run_values_api_v1_scenario_runs__run_id__values_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/scenarios": {
     parameters: {
       query?: never;
@@ -1618,6 +1700,27 @@ export interface paths {
      */
     put: operations["save_scenario_api_v1_scenarios__project___name__put"];
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/scenarios/{project}/{name}/migrate": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Migrate Scenario
+     * @description Write a graph scenario (version 1) again as blocks (version 2), or with ``check`` say
+     *     what would be written; a node a tree cannot hold is a problem and nothing is written.
+     */
+    post: operations["migrate_scenario_api_v1_scenarios__project___name__migrate_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2659,6 +2762,47 @@ export interface components {
     ApprovalKind: "guard_ask" | "plan" | "spec" | "human_gate" | "permission";
     /** @enum {string} */
     ApprovalStatus: "open" | "approved" | "declined" | "changes_requested" | "rejected";
+    BlockAddress: string;
+    BlockAddresses: components["schemas"]["BlockAddress"][];
+    /**
+     * BlockValues
+     * @description A finished node of a paused run: the address of the block that holds it (``None`` in a
+     *     version-1 run), its last end's status and output, the inputs its last action call rendered
+     *     (``with``) and, for a Wait until, its polls and the last poll's output.
+     */
+    BlockValues: {
+      /** Address */
+      address: string | null;
+      /** Attempt */
+      attempt: number | null;
+      last_poll: components["schemas"]["agent_hub__core__json_form__JsonValue-Output"];
+      /** Node */
+      node: string;
+      output: components["schemas"]["agent_hub__core__json_form__JsonValue-Output"];
+      /** Polls */
+      polls: number;
+      /** Status */
+      status: string | null;
+      with: components["schemas"]["agent_hub__core__json_form__JsonValue-Output"];
+    };
+    /**
+     * BlockView
+     * @description A block of a scenario written as blocks: its address, kind (``stage``, ``do``, ``if``,
+     *     ...), label and the nodes it starts with in the translated graph (a Repeat body's as
+     *     ``<group>__<id>``). A run may start it elsewhere: a gated step at its ``<step>__ask`` gate,
+     *     an include at the roots of what it includes (core's ``BlockMap.run_entries``), so a run's
+     *     lines are put on blocks by the address its detail gives each line, not by these.
+     */
+    BlockView: {
+      /** Address */
+      address: string;
+      /** Entry Nodes */
+      entry_nodes: string[];
+      /** Kind */
+      kind: string;
+      /** Label */
+      label: string;
+    };
     /**
      * BrainEntry
      * @description One ``.md`` note of the tree and its size in bytes.
@@ -2716,6 +2860,24 @@ export interface components {
        * @default false
        */
       truncated: boolean;
+    };
+    /**
+     * Breakpoints
+     * @description The breakpoints written, in the pinned tree's declaration order.
+     */
+    Breakpoints: {
+      /** Blocks */
+      blocks: string[];
+      /** Run Id */
+      run_id: string;
+    };
+    /**
+     * BreakpointsRequest
+     * @description A run's breakpoints, replaced whole: block addresses of its pinned tree (none clears
+     *     them).
+     */
+    BreakpointsRequest: {
+      blocks: components["schemas"]["BlockAddresses"];
     };
     /**
      * BuilderProblem
@@ -3093,6 +3255,23 @@ export interface components {
     } & {
       [key: string]: unknown;
     };
+    /**
+     * DebugPauseEntry
+     * @description The debug pause a run is in: the block it paused before, that block's node, why
+     *     (``breakpoint`` or ``step``), its number in the run and when.
+     */
+    DebugPauseEntry: {
+      /** At */
+      at: string | null;
+      /** Block */
+      block: string;
+      /** Node */
+      node: string;
+      /** Number */
+      number: number;
+      /** Reason */
+      reason: string;
+    };
     /** DecisionEntry */
     DecisionEntry: {
       /** Approver */
@@ -3437,7 +3616,10 @@ export interface components {
       | "policy.decision"
       | "finding"
       | "workaround.start"
-      | "workaround.end";
+      | "workaround.end"
+      | "debug.pause"
+      | "debug.command"
+      | "debug.breakpoints";
     /**
      * Evidence
      * @description Where Claude saw something: a file relative to the workspace, inside a picked repo.
@@ -4734,6 +4916,30 @@ export interface components {
       media_type: "application/pdf" | "text/plain";
       /** Name */
       name: string;
+    };
+    /**
+     * MigrateRequest
+     * @description A migrate: ``check`` writes nothing; ``base_content_hash``, when sent, is the content
+     *     hash of the file the builder last read, which the file must still hold.
+     */
+    MigrateRequest: {
+      /** Base Content Hash */
+      base_content_hash?: string | null;
+      /**
+       * Check
+       * @default false
+       */
+      check: boolean;
+    };
+    /**
+     * MigrationProblemView
+     * @description A node a tree cannot hold, and why (``node`` None for the document or its file).
+     */
+    MigrationProblemView: {
+      /** Message */
+      message: string;
+      /** Node */
+      node: string | null;
     };
     /**
      * MissingService
@@ -6063,7 +6269,19 @@ export interface components {
       run_id: string;
     };
     /** @enum {string} */
-    RunAction: "start" | "cancel" | "resume" | "abandon";
+    RunAction: "start" | "cancel" | "resume" | "abandon" | "step" | "continue";
+    /**
+     * RunBlockView
+     * @description A block of the tree a scenario run pins: its address, kind and label.
+     */
+    RunBlockView: {
+      /** Address */
+      address: string;
+      /** Kind */
+      kind: string;
+      /** Label */
+      label: string;
+    };
     /**
      * RunCaps
      * @description The limits a run started with.
@@ -6251,7 +6469,8 @@ export interface components {
      * ScenarioDetail
      * @description A scenario's steps, its scenario runs, newest first, and the environments it can be
      *     planned in (empty when ``hub.local.json`` or ``hub.json`` cannot be read), with its file
-     *     (hub-relative ``path`` and raw ``document_text``) and the actions its steps call.
+     *     (hub-relative ``path`` and raw ``document_text``) and the actions its steps call; its
+     *     format's ``version`` and, written as blocks (2), its ``blocks`` in declaration order.
      */
     ScenarioDetail: {
       /**
@@ -6259,6 +6478,11 @@ export interface components {
        * @default []
        */
       actions: components["schemas"]["ScenarioActionView"][];
+      /**
+       * Blocks
+       * @default []
+       */
+      blocks: components["schemas"]["BlockView"][];
       /** Content Hash */
       content_hash?: string | null;
       /** Description */
@@ -6296,6 +6520,11 @@ export interface components {
       runs: components["schemas"]["ScenarioRunRef"][];
       /** Steps */
       steps: components["schemas"]["ScenarioStepView"][];
+      /**
+       * Version
+       * @default 1
+       */
+      version: number;
     };
     /**
      * ScenarioEnvironment
@@ -6314,6 +6543,23 @@ export interface components {
       values?: {
         [key: string]: string;
       };
+    };
+    /**
+     * ScenarioMigration
+     * @description What a migrate did: the file, whether it was written, the tree's canonical text (None
+     *     when it cannot be migrated), the file's content hash after the call, and the problems.
+     */
+    ScenarioMigration: {
+      /** Content Hash */
+      content_hash: string | null;
+      /** Path */
+      path: string;
+      /** Problems */
+      problems: components["schemas"]["MigrationProblemView"][];
+      /** Written */
+      written: boolean;
+      /** Yaml */
+      yaml: string | null;
     };
     /** @enum {string} */
     ScenarioMode: "interactive" | "regression";
@@ -6394,7 +6640,11 @@ export interface components {
     /**
      * ScenarioRunDetail
      * @description A scenario run as its record holds it. ``status`` is its end's, ``None`` while it has
-     *     none; ``open_investigation`` is the number of the investigation waiting for an answer.
+     *     none; ``open_investigation`` is the number of the investigation waiting for an answer;
+     *     ``debug`` the debug pause it is in, ``breakpoints`` the block addresses last set,
+     *     ``stepping`` whether its last debug command was a Step, and ``blocks`` the blocks of the
+     *     tree it pins (its snapshot's, not the scenario file as it reads now; none for a graph run
+     *     or a snapshot that cannot be read), in declaration order.
      */
     ScenarioRunDetail: {
       /**
@@ -6402,8 +6652,19 @@ export interface components {
        * @default []
        */
       actions: components["schemas"]["ActionCallEntry"][];
+      /**
+       * Blocks
+       * @default []
+       */
+      blocks: components["schemas"]["RunBlockView"][];
+      /**
+       * Breakpoints
+       * @default []
+       */
+      breakpoints: string[];
       /** Captures */
       captures: components["schemas"]["CaptureEntry"][];
+      debug?: components["schemas"]["DebugPauseEntry"] | null;
       /** Decisions */
       decisions: components["schemas"]["DecisionEntry"][];
       /** Environment */
@@ -6431,6 +6692,11 @@ export interface components {
       scenario: string | null;
       /** Status */
       status: string | null;
+      /**
+       * Stepping
+       * @default false
+       */
+      stepping: boolean;
       /** Timeline */
       timeline: components["schemas"]["TimelineEntry"][];
       /** Workarounds */
@@ -6453,10 +6719,27 @@ export interface components {
       status: components["schemas"]["WorkflowRunStatus"];
     };
     /**
+     * ScenarioRunValues
+     * @description What a paused run shows to inspect, from its record: its effective inputs (environment
+     *     values included) and each finished node, in the order they first ended.
+     */
+    ScenarioRunValues: {
+      /** Blocks */
+      blocks: components["schemas"]["BlockValues"][];
+      /** Inputs */
+      inputs: {
+        [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue-Output"];
+      };
+      /** Run Id */
+      run_id: string;
+    };
+    /**
      * ScenarioStartRequest
-     * @description The body of a start: a plan's, and the mode (``interactive`` by default).
+     * @description The body of a start: a plan's, the mode (``interactive`` by default) and the
+     *     breakpoints, block addresses of the tree the run pins (``--break``).
      */
     ScenarioStartRequest: {
+      breakpoints?: components["schemas"]["BlockAddresses"];
       /** Environment */
       environment: string;
       inputs?: components["schemas"]["Inputs"];
@@ -7540,7 +7823,8 @@ export interface components {
     /**
      * TimelineEntry
      * @description A line of the run's timeline; an investigation read (``agent_action``) names its action
-     *     and effect.
+     *     and effect, and ``block`` is the address of the pinned tree's block that holds its node
+     *     (``None`` in a version-1 run, or for a line about no block's node).
      */
     TimelineEntry: {
       /** Action */
@@ -7549,6 +7833,8 @@ export interface components {
       at: string | null;
       /** Attempt */
       attempt: number | null;
+      /** Block */
+      block?: string | null;
       /** Effect */
       effect?: string | null;
       /** Event */
@@ -11693,6 +11979,90 @@ export interface operations {
       };
     };
   };
+  put_breakpoints_api_v1_scenario_runs__run_id__breakpoints_put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["BreakpointsRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Breakpoints"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  continue_run_api_v1_scenario_runs__run_id__continue_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RunAccepted"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
   finding_inbox_api_v1_scenario_runs__run_id__findings__finding_id__inbox_post: {
     parameters: {
       query?: never;
@@ -11837,6 +12207,86 @@ export interface operations {
       };
     };
   };
+  step_run_api_v1_scenario_runs__run_id__step_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RunAccepted"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_scenario_run_values_api_v1_scenario_runs__run_id__values_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ScenarioRunValues"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
   list_scenarios_api_v1_scenarios_get: {
     parameters: {
       query?: {
@@ -11941,6 +12391,51 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["SaveResult"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  migrate_scenario_api_v1_scenarios__project___name__migrate_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["MigrateRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ScenarioMigration"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

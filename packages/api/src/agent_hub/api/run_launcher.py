@@ -25,10 +25,14 @@ recorded. Abandon and a gate's decision (``hub workflow decide``, its text on st
 argv) wait for the CLI. Nothing here polls a run's status: it comes from events.
 
 A scenario run (AGH-350 plan T12) starts the same way, as a detached ``hub scenario run NAME
---env ENV --mode MODE --run-id RUN`` child, and resumes through ``hub workflow run --resume``
-like any engine run. ``plan_scenario`` waits for ``hub scenario plan NAME --env ENV --json``
-in its own session: the plan with its plan-mode summaries (AM-8), which only the CLI's action
-runner calls, with no credential. Its stdout is read in chunks up to ``MAX_PLAN_BYTES``, its
+--env ENV --mode MODE --run-id RUN [--break=ADDR]...`` child, and resumes through ``hub workflow
+run --resume`` like any engine run. A run written as blocks is debugged through the CLI too
+(ADR 0049): its breakpoints are replaced by ``hub scenario break RUN --set -- [ADDR]...``,
+waited for (the addresses after ``--``, so none is read as an option), and Step and Continue
+resume it detached as ``hub scenario step|continue RUN``, which records the command first.
+``plan_scenario`` waits for ``hub scenario plan NAME --env ENV --json`` in its own session: the
+plan with its plan-mode summaries (AM-8), which only the CLI's action runner calls, with no
+credential. Its stdout is read in chunks up to ``MAX_PLAN_BYTES``, its
 stderr dropped; past that cap or ``PLAN_TIMEOUT_SECONDS`` its group gets SIGINT, so the CLI kills
 its plan-mode scripts' groups, then SIGKILL, and nothing of it outlives the call.
 """
@@ -74,6 +78,7 @@ MAX_PID_FILES: Final = 64
 MAX_CHILDREN: Final = 8
 ABANDON_TIMEOUT_SECONDS: Final = 60.0
 DECIDE_TIMEOUT_SECONDS: Final = 60.0
+BREAK_TIMEOUT_SECONDS: Final = 60.0
 GRACE_SECONDS: Final = 10.0
 # ``hub scenario plan`` calls each step's script in plan mode, 60 s at most each.
 PLAN_TIMEOUT_SECONDS: Final = 300.0
@@ -85,6 +90,7 @@ SCAN_BUDGET_SECONDS: Final = 2.0
 LOGGER = logging.getLogger("agent_hub.api")
 
 type PidState = Literal["ours", "stale", "unknown"]
+type DebugCommand = Literal["step", "continue"]
 
 
 def own_hub_program() -> tuple[str, ...]:
@@ -116,8 +122,8 @@ def process_started(pid: int) -> str | None:
 
 @dataclass(frozen=True, kw_only=True)
 class ScenarioLaunch:
-    """A scenario run to start: its id, project, hub folder, scenario, environment, mode and
-    the inputs given (the CLI fills the defaults)."""
+    """A scenario run to start: its id, project, hub folder, scenario, environment, mode, the
+    inputs given (the CLI fills the defaults) and its breakpoints (block addresses)."""
 
     run_id: str
     project: str
@@ -126,6 +132,7 @@ class ScenarioLaunch:
     environment: str
     mode: str
     inputs: Mapping[str, JsonValue]
+    breakpoints: tuple[str, ...] = ()
 
 
 @dataclass
@@ -185,7 +192,33 @@ class ProcessRunLauncher:
         argv += ["--mode", spec.mode, "--run-id", spec.run_id]
         for name, value in spec.inputs.items():
             argv += ["--input", f"{name}={argv_text(value)}"]
+        # One argument each: an address is never read as an option or as the next one's value.
+        argv += [f"--break={address}" for address in spec.breakpoints]
         self._detach(spec.hub_path, spec.run_id, argv, issue=None)
+
+    def set_breakpoints(self, hub_path: str, run_id: str, addresses: Sequence[str]) -> None:
+        """Replace the run's breakpoints (``hub scenario break RUN --set -- ADDR...``), waited
+        for; ``RunConflictError`` (``refused``) when the CLI refuses, ``RunLaunchError`` when it
+        cannot start or finish in time."""
+        argv = [*self._program, "scenario", "break", run_id, "--set", "--", *addresses]
+        try:
+            code = self._wait_for(hub_path, argv, timeout=BREAK_TIMEOUT_SECONDS)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            message = f"hub scenario break did not finish: {type(error).__name__}"
+            raise RunLaunchError(message) from None
+        if code != 0:
+            # Not the CLI's words: its stderr can name local paths.
+            reason = (
+                "hub scenario break refused the breakpoints (the run may have ended, be on a"
+                " production environment, or its breakpoints be changed by another command)"
+            )
+            raise RunConflictError(code="refused", reason=reason, run_id=run_id)
+
+    def debug(self, hub_path: str, run_id: str, *, command: DebugCommand) -> None:
+        """Step or Continue the run in a debug pause, detached (``hub scenario step|continue
+        RUN``, which records the command, then resumes the run)."""
+        argv = [*self._program, "scenario", command, run_id]
+        self._detach(hub_path, run_id, argv, issue=None, probe=True)
 
     def plan_scenario(
         self, hub_path: str, name: str, *, environment: str, inputs: Mapping[str, str]

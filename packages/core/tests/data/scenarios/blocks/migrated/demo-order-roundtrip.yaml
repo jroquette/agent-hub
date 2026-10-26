@@ -1,0 +1,129 @@
+version: 2
+kind: scenario
+name: demo-order-roundtrip
+revision: 1
+description: One demo-shop order on a personal stack, from fetch to paid
+inputs:
+  shop_order_id:
+    required: true
+    description: The order to follow, from the shop
+  shop_id:
+    default: shop-0001
+  channel_id:
+    default: channel-0001
+  lookback_minutes:
+    type: integer
+    default: 60
+  personal_name:
+    required: true
+    description: From the environment's values
+  aws_account_id:
+    required: true
+    description: From the environment's values
+stages:
+- name: demo-order-roundtrip
+  steps:
+  - do: queue-send
+    id: fetch-order--1
+    with:
+      message: demo.fetch-orders
+  - wait_until: order-state
+    id: fetch-order--2
+    until: $self.output.order_status == 'ON_HOLD' && $self.output.review_status == 'PENDING'
+    every: 15s
+    timeout: 10m
+    capture:
+      order_id: $self.output.order_id
+  - do: queue-send
+    id: review--1
+    with:
+      message: demo.review-orders
+      order_id: $CTX.order_id
+  - wait_until: order-state
+    id: review--2
+    until: $self.output.review_status == 'REVIEWED' && $self.output.payment_status == 'CONFIRMED' && $self.output.open_tasks
+      > 0
+    every: 15s
+    timeout: 10m
+  - do: order-set-carrier
+    id: switch-carrier--1
+    with:
+      order_id: $CTX.order_id
+  - do: order-tasks-resolve
+    id: switch-carrier--2
+    with:
+      order_id: $CTX.order_id
+  - do: shipments-regenerate
+    id: switch-carrier--3
+    with:
+      order_id: $CTX.order_id
+  - do: queue-send
+    id: switch-carrier--4
+    with:
+      message: demo.process-order
+      order_id: $CTX.order_id
+  - wait_until: order-state
+    id: switch-carrier--5
+    until: $self.output.order_status == 'PROCESSED'
+    every: 15s
+    timeout: 10m
+  - do: shipments-mark-in-transit
+    id: dispatch--1
+    with:
+      order_id: $CTX.order_id
+  - wait_until: order-state
+    id: dispatch--2
+    until: $self.output.invoice_status == 'CREATED'
+    every: 15s
+    timeout: 10m
+    capture:
+      invoice_number: $self.output.invoice_number
+  - you: Render the PDF of invoice $CTX.invoice_number by hand, then approve.
+    id: invoice-pdf--1
+  - do: queue-send
+    id: send-invoice--1
+    with:
+      message: demo.invoice
+      order_id: $CTX.order_id
+  - wait_until: order-state
+    id: send-invoice--2
+    until: $self.output.invoice_status == 'SENT' && $self.output.invoice_update_job_id != ''
+    every: 15s
+    timeout: 10m
+  - do: queue-send
+    id: approval--1
+    with:
+      message: demo.poll
+      order_id: $CTX.order_id
+  - wait_until: order-state
+    id: approval--2
+    until: $self.output.approval_job_id != ''
+    every: 15s
+    timeout: 10m
+  - do: queue-send
+    id: approval--3
+    with:
+      message: demo.poll
+      order_id: $CTX.order_id
+  - wait_until: order-state
+    id: approval--4
+    until: $self.output.review_status == 'APPROVED'
+    every: 15s
+    timeout: 10m
+  - you: Pay order $CTX.order_id in the payment sandbox, then approve.
+    id: payment--1
+  - wait_until: order-state
+    id: payment--2
+    until: $self.output.paid == true && $self.output.payment_job_id != ''
+    every: 15s
+    timeout: 15m
+  - do: queue-send
+    id: payment--3
+    with:
+      message: demo.poll
+      order_id: $CTX.order_id
+  - wait_until: order-state
+    id: payment--4
+    until: $self.output.review_status == 'CLOSED'
+    every: 15s
+    timeout: 10m

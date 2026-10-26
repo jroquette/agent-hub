@@ -7,6 +7,7 @@ import {
   aDraftRow,
   aPage,
   aProblem,
+  aDebugScenarioRun,
   aRun,
   aScenarioDetail,
   aScenarioRunDetail,
@@ -14,11 +15,20 @@ import {
   aScenarioPlan,
   aScenarioPlanRow,
   aScenarioRunRef,
+  aTreeDocument,
+  at,
   renderWithApi,
   SCENARIO_RUN,
   type ApiRoutes,
 } from "../../testing/builders";
+import { DiscussProvider, useDiscuss } from "../../shell/discuss";
 import { ScenarioDetailScreen } from ".";
+
+/** What the Discuss panel would be handed on this page. */
+function BriefProbe() {
+  const { target } = useDiscuss();
+  return <output aria-label="discuss brief">{target?.brief ?? ""}</output>;
+}
 
 const PATH = "/scenarios/demo/order-lifecycle";
 const DETAIL = "/api/v1/scenarios/demo/order-lifecycle";
@@ -320,6 +330,28 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
     expect(screen.getByRole("button", { name: "Edit with Claude" })).toBeInTheDocument();
   });
 
+  it("scenarios detail hands Discuss the brief of the scenario's own format", async () => {
+    const tree = aScenarioDetail({ document: aTreeDocument("blocks-together"), version: 2 });
+    renderWithApi(
+      <DiscussProvider>
+        <ScenarioDetailScreen />
+        <BriefProbe />
+      </DiscussProvider>,
+      {
+        routes: { ...routes, [DETAIL]: tree },
+        path: `${PATH}?mode=run`,
+        route: "/scenarios/:project/:name",
+      },
+    );
+
+    const brief = await screen.findByLabelText("discuss brief");
+    await waitFor(() => {
+      expect(brief).toHaveTextContent("This scenario is written as blocks: `version: 2`");
+    });
+    expect(brief).not.toHaveTextContent("schema v1");
+    expect(brief).not.toHaveTextContent("`nodes`");
+  });
+
   describe("states", () => {
     it("scenarios detail states: not found", async () => {
       renderDetail({ [DETAIL]: aProblem({ status: 404, title: "Not found" }) });
@@ -571,6 +603,130 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
     expect(within(panel).getByRole("region", { name: "Run it" })).toBeInTheDocument();
     expect(within(panel).getByRole("region", { name: "Scenario runs" })).toBeInTheDocument();
   });
+  it("scenarios detail sets breakpoints on a scenario written as blocks and starts with them", async () => {
+    // A tree whose blocks run under the ids of the step cards; the stage holds no card.
+    const tree = aScenarioDetail({
+      version: 2,
+      blocks: [
+        { address: "1", kind: "stage", label: "Fetch", entry_nodes: ["fetch-order"] },
+        { address: "1.1", kind: "do", label: "send-queue-message", entry_nodes: ["fetch-order"] },
+        {
+          address: "1.2",
+          kind: "wait_until",
+          label: "get-order-by-ref",
+          entry_nodes: ["order-on-hold"],
+        },
+        { address: "1.3", kind: "do", label: "render-invoice-pdf", entry_nodes: ["render-pdf"] },
+      ],
+    });
+    const { requests } = renderDetail({
+      [DETAIL]: tree,
+      [PLAN]: aScenarioPlan(),
+      [START]: { run_id: SCENARIO_RUN, project: "demo", action: "start" },
+    });
+
+    const held = await screen.findByRole("article", { name: "Step 2: order-on-hold" });
+    const toggle = within(held).getByRole("button", { name: "Breakpoint before block 1.2" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    const user = userEvent.setup();
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await planIn("personal");
+    await user.click(await screen.findByRole("button", { name: "Start scenario run" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Start a scenario run in personal?" });
+    expect(dialog).toHaveTextContent("It pauses before block 1.2, its breakpoint.");
+    await user.click(within(dialog).getByRole("button", { name: "Start scenario run" }));
+    await waitFor(() => {
+      expect(requests.some((r) => r.method === "POST" && r.url.endsWith("/runs"))).toBe(true);
+    });
+    const start = requests.find((r) => r.method === "POST" && r.url.endsWith("/runs"));
+    expect(await start?.clone().json()).toEqual({
+      environment: "personal",
+      inputs: { external_ref: "T-1" },
+      mode: "interactive",
+      breakpoints: ["1.2"],
+    });
+
+    // A production environment takes no breakpoint: none is offered there.
+    await user.selectOptions(screen.getByLabelText("Environment"), "live");
+    expect(within(held).queryByRole("button", { name: /^Breakpoint before/ })).toBeNull();
+  });
+
+  it("scenarios detail follows a scenario run in a debug pause: the banner names the block", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    renderDetail({
+      [DETAIL]: aScenarioDetail({ runs: [aScenarioRunRef({ status: "running" })] }),
+      [`/api/v1/workflow-runs/${SCENARIO_RUN}`]: aRun({
+        id: SCENARIO_RUN,
+        kind: "scenario",
+        workflow: "scenario:order-lifecycle",
+        content_hash: "sha256:5f0c2e1d",
+        revision: 1,
+        status: "running",
+        steps: [],
+      }),
+      [`/api/v1/scenario-runs/${SCENARIO_RUN}`]: aDebugScenarioRun(),
+    });
+
+    expect(
+      await screen.findByText(/is paused before block 2\.1 at its breakpoint, in personal/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Open scenario run/ })).toHaveAttribute(
+      "href",
+      `${PATH}/runs/${SCENARIO_RUN}`,
+    );
+  });
+
+  it("scenarios detail marks the step card a scenario run's debug pause holds", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    renderDetail({
+      [DETAIL]: aScenarioDetail({ runs: [aScenarioRunRef({ status: "running" })] }),
+      [`/api/v1/workflow-runs/${SCENARIO_RUN}`]: aRun({
+        id: SCENARIO_RUN,
+        kind: "scenario",
+        workflow: "scenario:order-lifecycle",
+        content_hash: "sha256:5f0c2e1d",
+        revision: 1,
+        status: "running",
+        steps: [],
+      }),
+      [`/api/v1/scenario-runs/${SCENARIO_RUN}`]: aDebugScenarioRun({
+        debug: { block: "1.2", node: "order-on-hold", reason: "step", number: 2, at: at(41) },
+      }),
+    });
+
+    expect(
+      await screen.findByText(/is paused before block 1\.2 after a Step, in personal/),
+    ).toBeInTheDocument();
+    const held = screen.getByRole("article", { name: "Step 2: order-on-hold" });
+    expect(within(held).getByText("Paused before it")).toBeInTheDocument();
+    const other = screen.getByRole("article", { name: "Step 1: fetch-order" });
+    expect(within(other).queryByText("Paused before it")).toBeNull();
+  });
+
+  it("scenarios detail has no serious a11y violation with breakpoint toggles (a11y)", async () => {
+    const { container } = renderDetail({
+      [DETAIL]: aScenarioDetail({
+        version: 2,
+        blocks: [
+          { address: "1", kind: "stage", label: "Fetch", entry_nodes: ["fetch-order"] },
+          { address: "1.1", kind: "do", label: "send-queue-message", entry_nodes: ["fetch-order"] },
+          {
+            address: "1.2",
+            kind: "wait_until",
+            label: "get-order-by-ref",
+            entry_nodes: ["order-on-hold"],
+          },
+        ],
+      }),
+    });
+    const toggle = await screen.findByRole("button", { name: "Breakpoint before block 1.2" });
+    await userEvent.setup().click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+    expect(await seriousViolations(container)).toEqual([]);
+  });
+
   it("scenarios detail breaks long ids only after a slash or a dash", async () => {
     renderDetail();
 

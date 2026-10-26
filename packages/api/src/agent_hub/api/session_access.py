@@ -14,6 +14,8 @@ refuses before routing, so a refused request never reaches a port.
   (``run-control-off``): both start processes in a hub.
 - **Run writes** (start, cancel, resume, abandon a workflow run) need the cookie too; their
   Origin and JSON checks are the strict ones of ``LocalSecurityMiddleware``.
+- **Run reads** (a paused scenario run's values, ADR 0049) need the cookie and follow the reads'
+  Origin rules below; with ``sessions_off`` they answer 404 ``run-control-off``.
 - **Item writes** (a Restore into a hub's tree, AGH-295 D13) need the cookie too, with the
   strict checks; with ``sessions_off`` they answer 409 ``hub_read_only`` before the cookie is
   looked at (A6): the container mounts the hubs read-only and mints no token.
@@ -29,6 +31,7 @@ The token, the cookie and the query string are never logged or echoed in a probl
 """
 
 import re
+from typing import Final
 from urllib.parse import parse_qsl, quote, urlencode
 
 from starlette.datastructures import Headers
@@ -39,6 +42,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from agent_hub.api.local_security import (
     STATE_CHANGING_METHODS,
     is_item_write,
+    is_run_read,
     is_run_write,
     strict_refusal,
 )
@@ -99,14 +103,24 @@ def session_cookie(name: str, token: str) -> str:
     return f"{name}={token}; HttpOnly; SameSite=Strict; Path=/"
 
 
-def read_refusal(headers: Headers) -> tuple[int, str, str] | None:
-    """Why a read under the prefix is refused (L1), or None."""
+SESSION_READS: Final = "Agent sessions are read only from this server's pages."
+VALUES_READS: Final = "A scenario run's values are read only from this server's pages."
+SESSION_COOKIE_DETAIL: Final = (
+    "Open the address hub web printed (with its token) to drive sessions."
+)
+VALUES_COOKIE_DETAIL: Final = (
+    "Open the address hub web printed (with its token) to read a scenario run's values."
+)
+
+
+def read_refusal(headers: Headers, *, detail: str = SESSION_READS) -> tuple[int, str, str] | None:
+    """Why a read under the prefix is refused (L1), or None; ``detail`` says what is read."""
     origin = headers.get("origin")
     if origin is not None and origin != f"http://{headers.get('host')}":
-        return 403, "Forbidden origin", "Agent sessions are read only from this server's pages."
+        return 403, "Forbidden origin", detail
     site = headers.get("sec-fetch-site")
     if site is not None and site not in OWN_FETCH_SITES:
-        return 403, "Forbidden fetch site", "Agent sessions are read only from this server's pages."
+        return 403, "Forbidden fetch site", detail
     return None
 
 
@@ -133,6 +147,8 @@ class SessionAccessMiddleware:
             response = self._run_refusal(path, headers)
         elif is_item_write(str(scope["method"]), path):
             response = self._item_write_refusal(path, headers)
+        elif is_run_read(str(scope["method"]), path):
+            response = self._run_read_refusal(path, headers)
         else:
             response = self._exchange(scope)
         if response is None:
@@ -192,6 +208,23 @@ class SessionAccessMiddleware:
             return None
         return self._unauthorized(instance)
 
+    def _run_read_refusal(self, instance: str, headers: Headers) -> Response | None:
+        if self._off:
+            return problem(
+                404,
+                title="Run control is off",
+                detail="A scenario run's values cannot be read from the agent-hub container.",
+                instance=instance,
+                members={"type": RUNS_OFF_PROBLEM_TYPE},
+            )
+        if not self._has_cookie(headers):
+            return self._unauthorized(instance, detail=VALUES_COOKIE_DETAIL)
+        refusal = read_refusal(headers, detail=VALUES_READS)
+        if refusal is None:
+            return None
+        status, title, detail = refusal
+        return problem(status, title=title, detail=detail, instance=instance)
+
     def _item_write_refusal(self, instance: str, headers: Headers) -> Response | None:
         if self._off:
             found = item_write_refused_problem(CONTAINER_READ_ONLY)
@@ -206,11 +239,11 @@ class SessionAccessMiddleware:
             return None
         return self._unauthorized(instance)
 
-    def _unauthorized(self, instance: str) -> Response:
+    def _unauthorized(self, instance: str, *, detail: str = SESSION_COOKIE_DETAIL) -> Response:
         response = problem(
             401,
             title="Session cookie required",
-            detail="Open the address hub web printed (with its token) to drive sessions.",
+            detail=detail,
             instance=instance,
             members={"type": UNAUTHORIZED_PROBLEM_TYPE},
         )

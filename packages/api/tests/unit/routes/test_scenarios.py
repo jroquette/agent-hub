@@ -12,10 +12,9 @@ from typing import Any
 
 import pytest
 
-from agent_hub.api import scenario_investigation
+from agent_hub.api import scenario_catalog, scenario_investigation
 from agent_hub.api.agent_session_runtime import HubCredentials
 from agent_hub.api.run_launcher import ScenarioLaunch
-from agent_hub.api.scenario_builder import render_document
 from agent_hub.api.scenario_catalog import ScenarioCatalog, ScenarioCommands
 from agent_hub.api.scenario_investigation import InvestigationRestrictions, ScenarioInvestigations
 from agent_hub.core.agent_sessions import errors as session_errors
@@ -46,9 +45,11 @@ from agent_hub.core.testing.hub_fakes import FakeHub, FakeHubFileReader, InMemor
 from agent_hub.core.testing.read_model_builders import WORKDIR_ID
 from agent_hub.core.testing.session_driver_fakes import InMemorySessionDriver
 from agent_hub.core.workflows.gates import GateAnswer
+from agent_hub.core.workflows.launch import RunConflictError, RunLaunchError
 from agent_hub.generator.action_discovery import discover_actions
 from agent_hub.generator.finding_issues import HeldIssue as HeldFindingIssue
 from agent_hub.generator.finding_issues import IssueMarked, marked_issue, retake_issue
+from agent_hub.generator.scenario_yaml import render_document
 from agent_hub.generator.workflow_yaml import load_workflow_bytes
 
 RUNNING = "0.9.0"
@@ -795,6 +796,12 @@ class FakeScenarioLauncher:
         if self.answer is not None and self.answer.choice == "stop":
             closed = {"event": "step_end", "node": WALK_GATE, "attempt": 1, "status": "ok"}
             append_records(self.hub, closed, {"event": "end", "status": "cancelled"})
+
+    def set_breakpoints(self, hub_path: str, run_id: str, addresses: tuple[str, ...]) -> None:
+        self.calls.append(("break", (run_id, addresses)))
+
+    def debug(self, hub_path: str, run_id: str, *, command: str) -> None:
+        self.calls.append(("debug", (run_id, command)))
 
     def live_runs(self, hub_path: str) -> dict[str, str | None]:
         return {}
@@ -1992,6 +1999,155 @@ def test_refuses_stale_invalid_and_taken_when_builder_saves(scenarios: Any) -> N
     assert writes.calls == []
 
 
+TREE = """\
+version: 2
+kind: scenario
+name: order-tree
+revision: 1
+description: One demo order as blocks
+inputs:
+  ref:
+    type: string
+    required: true
+stages:
+- name: Send
+  steps:
+  - do: send-order
+    with:
+      target: api
+      ref: $INPUTS.ref
+  - wait_until: demo/get-order
+    with:
+      target: api
+      ref: $INPUTS.ref
+    until: $self.output.status == 'ON_HOLD'
+    every: 10s
+    timeout: 5m
+"""
+
+
+def _a_tree(scenarios: Any, text: str = TREE) -> Path:
+    path: Path = scenarios.hub / "scenarios" / "demo" / "order-tree.yaml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _put(scenarios: Any, name: str, document: dict[str, Any], *, base: str | None) -> Any:
+    return scenarios.client.put(
+        f"/api/v1/scenarios/demo/{name}",
+        json={"pack": "demo", "document": document, "base_content_hash": base},
+        headers=_origin(scenarios),
+    )
+
+
+def test_writes_nothing_when_saved_unchanged(scenarios: Any) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    path = _a_tree(scenarios)
+    detail = scenarios.client.get("/api/v1/scenarios/demo/order-tree").json()
+
+    saved = _put(scenarios, "order-tree", detail["document"], base=detail["content_hash"])
+
+    assert saved.status_code == 200, saved.text
+    body = saved.json()
+    assert (body["changed"], body["versioned"], body["revision"]) == (False, False, 1)
+    assert body["content_hash"] == detail["content_hash"]
+    assert body["yaml"] == TREE
+    assert writes.calls == []
+    assert path.read_text(encoding="utf-8") == TREE
+
+
+# The contract's reference tree and the actions it calls.
+BLOCKS = Path(__file__).resolve().parents[4] / "core/tests/data/scenarios/blocks"
+
+
+def test_writes_nothing_when_reference_tree_saved_unchanged(scenarios: Any) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    actions = scenarios.hub / "actions" / "demo"
+    shutil.copytree(BLOCKS / "actions" / "fixture", actions, dirs_exist_ok=True)
+    reference = (BLOCKS / "tree" / "demo-order-roundtrip.yaml").read_bytes()
+    path = scenarios.hub / "scenarios" / "demo" / "demo-order-roundtrip.yaml"
+    path.write_bytes(reference)
+    detail = scenarios.client.get("/api/v1/scenarios/demo/demo-order-roundtrip").json()
+
+    saved = _put(scenarios, "demo-order-roundtrip", detail["document"], base=detail["content_hash"])
+
+    assert saved.status_code == 200, saved.text
+    body = saved.json()
+    assert (body["changed"], body["versioned"], body["revision"]) == (False, False, 1)
+    assert body["content_hash"] == detail["content_hash"]
+    assert body["yaml"].encode() == reference
+    assert writes.calls == []
+    assert path.read_bytes() == reference
+
+
+def test_keeps_revision_when_graph_saved_again_unchanged(scenarios: Any) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    detail = scenarios.client.get("/api/v1/scenarios/demo/order-walk").json()
+    first = _put(scenarios, "order-walk", detail["document"], base=detail["content_hash"]).json()
+    path = scenarios.hub / "scenarios" / "demo" / "order-walk.yaml"
+    written = path.read_bytes()
+
+    again = _put(scenarios, "order-walk", detail["document"], base=first["content_hash"]).json()
+
+    assert (first["changed"], first["revision"]) == (True, 2)
+    assert (again["changed"], again["revision"]) == (False, 2)
+    assert again["content_hash"] == first["content_hash"]
+    assert writes.calls == ["scenarios/demo/order-walk.yaml"]
+    assert path.read_bytes() == written
+
+
+def test_writes_next_revision_when_tree_saved_with_an_edit(scenarios: Any) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    path = _a_tree(scenarios)
+    detail = scenarios.client.get("/api/v1/scenarios/demo/order-tree").json()
+    document = detail["document"]
+    document["description"] = "Edited in the builder"
+
+    saved = _put(scenarios, "order-tree", document, base=detail["content_hash"])
+
+    assert saved.status_code == 200, saved.text
+    assert (saved.json()["changed"], saved.json()["revision"]) == (True, 2)
+    expected = TREE.replace("revision: 1", "revision: 2").replace(
+        "One demo order as blocks", "Edited in the builder"
+    )
+    assert path.read_text(encoding="utf-8") == expected
+
+
+def test_places_action_problems_on_tree_nodes_when_builder_validates(scenarios: Any) -> None:
+    document = _walk_document(scenarios)
+    _a_tree(scenarios)
+    tree = scenarios.client.get("/api/v1/scenarios/demo/order-tree").json()["document"]
+    tree["stages"][0]["steps"].append({"id": "lost", "do": "no-such"})
+
+    body = _post(
+        scenarios, "/projects/demo/scenarios/validate", {"pack": "demo", "document": tree}
+    ).json()
+    unchanged = _post(
+        scenarios, "/projects/demo/scenarios/validate", {"pack": "demo", "document": document}
+    ).json()
+
+    assert body["loads"] is False
+    assert body["yaml"].startswith("version: 2\nkind: scenario\nname: order-tree\n")
+    by_node = {problem["node"]: problem for problem in body["problems"]}
+    assert "unknown action 'no-such'" in by_node["lost"]["message"]
+    assert by_node["lost"]["key"] == "stages[0].steps[2].do"
+    assert (unchanged["loads"], unchanged["problems"]) == (True, [])
+
+
+def test_lists_tree_scenarios_as_users_when_library_read(scenarios: Any) -> None:
+    _a_tree(scenarios)
+
+    library = scenarios.client.get("/api/v1/projects/demo/actions").json()
+
+    items = {item["action"]["ref"]: item for item in library["items"]}
+    assert items["demo/get-order"]["used_by"] == ["order-tree", "order-walk"]
+    assert items["demo/send-order"]["used_by"] == ["order-tree", "order-walk"]
+
+
 def test_reads_checks_and_drops_claudes_proposal_when_builder_reviews(scenarios: Any) -> None:
     route = "/api/v1/scenarios/demo/order-walk/proposal"
     missing = scenarios.client.get(route)
@@ -2290,3 +2446,764 @@ def test_refuses_proposal_when_over_the_size_bound(scenarios: Any) -> None:
 
     assert body["document"] is None
     assert body["problem"] == "the proposal is over 256 KiB"
+
+
+# Debugging a scenario run written as blocks, its values and migrate (ADR 0049; AC-507.13 (API),
+# .16, .17 (API); docs/API.md § Scenarios, Debugging and migration). The run
+# ``tree-1`` of ``order-debug`` pins the tree below in its snapshot; the fake launcher records
+# each CLI child it is asked for, so no child process runs.
+
+DEBUG_TREE = """\
+version: 2
+kind: scenario
+name: order-debug
+revision: 1
+description: One demo order, debugged block by block
+inputs:
+  ref:
+    type: string
+    required: true
+stages:
+- name: Send
+  steps:
+  - do: send-order
+    with:
+      target: api
+      ref: $INPUTS.ref
+  - wait_until: demo/get-order
+    with:
+      target: api
+      ref: $INPUTS.ref
+    until: $self.output.status == 'ON_HOLD'
+    every: 10s
+    timeout: 5m
+- name: Check
+  steps:
+  - you: Confirm the hold, then approve.
+"""
+DEBUG_RUN = "tree-1"
+DEBUG_FOLDER = Path(".agent-runs", "workflows", DEBUG_RUN)
+OPEN = {"order": "o-1", "status": "OPEN"}
+HELD = {"order": "o-1", "status": "ON_HOLD"}
+CALLED = {"target": "api", "ref": "T-1"}
+DEBUG_PAUSE = {
+    "event": "debug.pause",
+    "node": "check--1",
+    "block": "2.1",
+    "reason": "breakpoint",
+    "number": 1,
+    "pass": {"layer": 2, "ends": {}, "before": {}, "changed": [], "stale": [], "gate": None},
+    "gates": {},
+    "asks": {},
+}
+
+
+def a_debug_run(
+    hub: Path, *, environment: str = "local", paused: bool = True
+) -> list[dict[str, Any]]:
+    """``order-debug`` run in ``environment``: its breakpoint on 2.1, its first two blocks
+    finished (the Wait until after two polls), then paused before 2.1 (or still running)."""
+    (hub / "scenarios" / "demo" / "order-debug.yaml").write_text(DEBUG_TREE, encoding="utf-8")
+    snapshot = hub / DEBUG_FOLDER / "snapshot"
+    snapshot.mkdir(parents=True, exist_ok=True)
+    pinned = load_workflow_bytes(DEBUG_TREE.encode(), source="order-debug.yaml").document
+    (snapshot / "workflow.json").write_text(json.dumps(dict(pinned)), encoding="utf-8")
+    records: list[dict[str, Any]] = [
+        {"event": "start", "run": DEBUG_RUN, "workflow": "scenario:order-debug"}
+        | {"kind": "scenario", "scenario": "order-debug", "pack": "demo"}
+        | {"environment": environment, "mode": "interactive", "ts": "2026-10-24T10:00:00+00:00"},
+        {"event": "inputs", "inputs": {"ref": "T-1"}},
+        {"event": "debug.breakpoints", "addresses": ["2.1"]},
+        {"event": "step_start", "node": "send--1", "attempt": 1},
+        {"event": "action", "node": "send--1", "attempt": 1, "action": "demo/send-order"}
+        | {"effect": "write", "inputs": CALLED, "status": "ok"},
+        {"event": "step_end", "node": "send--1", "attempt": 1, "status": "ok", "output": OPEN},
+        {"event": "step_start", "node": "send--2", "attempt": 1},
+        {"event": "action_start", "node": "send--2", "attempt": 1, "poll": 1},
+        {"event": "expect.poll", "node": "send--2", "attempt": 1, "poll": 1, "held": False}
+        | {"output": OPEN},
+        {"event": "action_start", "node": "send--2", "attempt": 1, "poll": 2},
+        {"event": "expect.poll", "node": "send--2", "attempt": 1, "poll": 2, "held": True}
+        | {"output": HELD},
+        {"event": "action", "node": "send--2", "attempt": 1, "poll": 2, "action": "demo/get-order"}
+        | {"effect": "read", "inputs": CALLED, "status": "ok"},
+        {"event": "step_end", "node": "send--2", "attempt": 1, "status": "ok", "output": HELD},
+    ]
+    if paused:
+        records += [{"event": "held", "groups": {}}, DEBUG_PAUSE]
+    path = hub / DEBUG_FOLDER / "records.jsonl"
+    path.write_text("".join(json.dumps(line) + "\n" for line in records), encoding="utf-8")
+    return records
+
+
+def _put_json(wired: Any, path: str, body: dict[str, Any]) -> Any:
+    return wired.client.put(f"/api/v1{path}", json=body, headers=_origin(wired))
+
+
+def _recorded(hub: Path) -> bytes:
+    return (hub / DEBUG_FOLDER / "records.jsonl").read_bytes()
+
+
+def test_shows_version_and_blocks_when_a_tree_scenario_detail_read(scenarios: Any) -> None:
+    a_debug_run(scenarios.hub)
+
+    tree = scenarios.client.get("/api/v1/scenarios/demo/order-debug").json()
+    graph = scenarios.client.get("/api/v1/scenarios/demo/order-walk").json()
+
+    assert tree["version"] == 2
+    shown = [(b["address"], b["kind"], tuple(b["entry_nodes"])) for b in tree["blocks"]]
+    assert shown == [
+        ("1", "stage", ("send--1",)),
+        ("1.1", "do", ("send--1",)),
+        ("1.2", "wait_until", ("send--2",)),
+        ("2", "stage", ("check--1",)),
+        ("2.1", "you", ("check--1",)),
+    ]
+    assert (tree["blocks"][0]["label"], tree["blocks"][3]["label"]) == ("Send", "Check")
+    assert (graph["version"], graph["blocks"]) == (1, [])
+
+
+def test_shows_debug_pause_breakpoints_and_stepping_when_a_paused_run_read(scenarios: Any) -> None:
+    a_debug_run(scenarios.hub)
+    paused = scenarios.client.get(f"/api/v1/scenario-runs/{DEBUG_RUN}").json()
+    with (scenarios.hub / DEBUG_FOLDER / "records.jsonl").open("a", encoding="utf-8") as file:
+        file.write(json.dumps({"event": "debug.command", "command": "step"} | {"number": 1}))
+        file.write("\n" + json.dumps({"event": "resume"}) + "\n")
+    stepping = scenarios.client.get(f"/api/v1/scenario-runs/{DEBUG_RUN}").json()
+
+    assert paused["debug"] == {"block": "2.1", "node": "check--1", "reason": "breakpoint"} | {
+        "number": 1,
+        "at": None,
+    }
+    assert (paused["breakpoints"], paused["stepping"]) == (["2.1"], False)
+    assert (stepping["debug"], stepping["stepping"]) == (None, True)
+    # The run view stays metadata: no action input or output.
+    assert "T-1" not in json.dumps(paused)
+
+
+def test_gives_the_pinned_trees_blocks_and_each_lines_block_when_a_tree_run_read(
+    scenarios: Any,
+) -> None:
+    records = a_debug_run(scenarios.hub)
+    # A gate is its step's block; a line about no node (the start) has no block.
+    asked = [
+        {"event": "step_start", "node": "send--1__ask", "attempt": 1},
+        {"event": "step_end", "node": "send--1__ask", "attempt": 1, "status": "ok"},
+    ]
+    records[3:3] = asked
+    path = scenarios.hub / DEBUG_FOLDER / "records.jsonl"
+    path.write_text("".join(json.dumps(line) + "\n" for line in records), encoding="utf-8")
+    # The file now drops the stage Check (2, 2.1) and adds a third block to Send (1.3).
+    edited = DEBUG_TREE.split("- name: Check\n")[0] + "  - you: Look again.\n"
+    (scenarios.hub / "scenarios" / "demo" / "order-debug.yaml").write_text(edited)
+    write_records(scenarios.hub, a_paused_walk(scenarios.hub, environment="local"))
+
+    run = scenarios.client.get(f"/api/v1/scenario-runs/{DEBUG_RUN}").json()
+    graph = scenarios.client.get(f"/api/v1/scenario-runs/{WALK_RUN}").json()
+
+    assert run["blocks"] == [
+        {"address": "1", "kind": "stage", "label": "Send"},
+        {"address": "1.1", "kind": "do", "label": "send-order"},
+        {"address": "1.2", "kind": "wait_until", "label": "demo/get-order"},
+        {"address": "2", "kind": "stage", "label": "Check"},
+        {"address": "2.1", "kind": "you", "label": "Confirm the hold, then approve."},
+    ]
+    shown = [(entry["event"], entry["node"], entry["block"]) for entry in run["timeline"]]
+    assert shown == [
+        ("start", None, None),
+        ("step_start", "send--1__ask", "1.1"),
+        ("step_end", "send--1__ask", "1.1"),
+        ("step_start", "send--1", "1.1"),
+        ("step_end", "send--1", "1.1"),
+        ("step_start", "send--2", "1.2"),
+        ("step_end", "send--2", "1.2"),
+    ]
+    # A graph run has no block: its lines name nodes only.
+    assert graph["blocks"] == []
+    assert {entry["block"] for entry in graph["timeline"]} == {None}
+
+
+def test_sets_breakpoints_through_the_cli_when_blocks_of_the_pinned_tree_put(
+    scenarios: Any,
+) -> None:
+    a_debug_run(scenarios.hub)
+    route = f"/scenario-runs/{DEBUG_RUN}/breakpoints"
+
+    written = _put_json(scenarios, route, {"blocks": ["2", "1.2", "2"]})
+    cleared = _put_json(scenarios, route, {"blocks": []})
+    unknown = _put_json(scenarios, route, {"blocks": ["1.2", "9.9"]})
+    option = _put_json(scenarios, route, {"blocks": ["--set"]})
+    too_many = _put_json(scenarios, route, {"blocks": ["1.1"] * 513})
+
+    assert written.status_code == 200, written.text
+    # In the pinned tree's order, each once.
+    assert written.json() == {"run_id": DEBUG_RUN, "blocks": ["1.2", "2"]}
+    assert cleared.json() == {"run_id": DEBUG_RUN, "blocks": []}
+    assert unknown.status_code == 422, unknown.text
+    body = unknown.json()
+    assert (body["type"], body["code"]) == (
+        "urn:agent-hub:problem:workflow-run-unknown-block",
+        "unknown_block",
+    )
+    assert body["block"] == "9.9"
+    assert "9.9" in body["detail"]
+    # An address outside the grammar never reaches the CLI's argv (no option such as --set).
+    assert (option.status_code, too_many.status_code) == (422, 422)
+    assert scenarios.launcher.calls == [
+        ("break", (DEBUG_RUN, ("1.2", "2"))),
+        ("break", (DEBUG_RUN, ())),
+    ]
+
+
+def test_checks_breakpoints_against_the_pinned_tree_when_the_scenario_file_changed(
+    scenarios: Any,
+) -> None:
+    a_debug_run(scenarios.hub)
+    # The file now drops the stage Check (2, 2.1) and adds a third block to Send (1.3).
+    edited = DEBUG_TREE.split("- name: Check\n")[0] + "  - you: Look again.\n"
+    (scenarios.hub / "scenarios" / "demo" / "order-debug.yaml").write_text(edited)
+    route = f"/scenario-runs/{DEBUG_RUN}/breakpoints"
+
+    pinned = _put_json(scenarios, route, {"blocks": ["2.1"]})
+    added = _put_json(scenarios, route, {"blocks": ["1.3"]})
+
+    assert pinned.status_code == 200, pinned.text
+    assert pinned.json()["blocks"] == ["2.1"]
+    assert (added.status_code, added.json()["code"], added.json()["block"]) == (
+        422,
+        "unknown_block",
+        "1.3",
+    )
+    assert scenarios.launcher.calls == [("break", (DEBUG_RUN, ("2.1",)))]
+
+
+def test_pins_debug_bounds_when_the_routes_are_built() -> None:
+    # docs/API.md § Debugging and migration: an address is at most 64 characters, a body at
+    # most 512 of them, and a run's pinned tree is read up to 1 MiB.
+    assert scenario_catalog.MAX_ADDRESS_CHARS == 64
+    assert scenario_catalog.MAX_BREAKPOINTS == 512
+    assert scenario_catalog.SNAPSHOT_BYTES == 1024 * 1024
+
+
+def test_enforces_the_address_bound_at_the_body_when_an_address_fits_the_grammar(
+    scenarios: Any,
+) -> None:
+    a_debug_run(scenarios.hub)
+    route = f"/scenario-runs/{DEBUG_RUN}/breakpoints"
+    longest = "11" + ".1" * 31
+    over = "1" + ".1" * 32
+
+    at_bound = _put_json(scenarios, route, {"blocks": [longest]})
+    past_bound = _put_json(scenarios, route, {"blocks": [over]})
+
+    assert (len(longest), len(over)) == (64, 65)
+    # The longest address reaches the pinned tree, which does not hold it; one past is the body's.
+    assert (at_bound.status_code, at_bound.json()["code"]) == (422, "unknown_block")
+    assert past_bound.status_code == 422, past_bound.text
+    assert past_bound.json().get("code") != "unknown_block"
+    assert scenarios.launcher.calls == []
+
+
+def test_names_the_unreadable_snapshot_when_breakpoints_put_on_a_tree_run_without_one(
+    scenarios: Any,
+) -> None:
+    a_debug_run(scenarios.hub)
+    snapshot = scenarios.hub / DEBUG_FOLDER / "snapshot" / "workflow.json"
+    route = f"/scenario-runs/{DEBUG_RUN}/breakpoints"
+
+    snapshot.write_text("{not json", encoding="utf-8")
+    broken = _put_json(scenarios, route, {"blocks": ["2.1"]})
+    snapshot.unlink()
+    missing = _put_json(scenarios, route, {"blocks": ["2.1"]})
+
+    for refused in (broken, missing):
+        assert (refused.status_code, refused.json()["code"]) == (422, "unknown_block")
+        assert "pinned tree cannot be read" in refused.json()["detail"]
+        assert "version 2" not in refused.json()["detail"]
+    assert scenarios.launcher.calls == []
+
+
+class RefusingBreakLauncher(FakeScenarioLauncher):
+    def set_breakpoints(self, hub_path: str, run_id: str, addresses: tuple[str, ...]) -> None:
+        super().set_breakpoints(hub_path, run_id, addresses)
+        reason = "hub scenario break refused the breakpoints"
+        raise RunConflictError(code="refused", reason=reason, run_id=run_id)
+
+
+class StalledBreakLauncher(FakeScenarioLauncher):
+    def set_breakpoints(self, hub_path: str, run_id: str, addresses: tuple[str, ...]) -> None:
+        super().set_breakpoints(hub_path, run_id, addresses)
+        raise RunLaunchError("hub scenario break did not finish: TimeoutExpired")
+
+
+@pytest.mark.parametrize(
+    ("launcher", "status", "code"),
+    [(RefusingBreakLauncher, 409, "refused"), (StalledBreakLauncher, 502, "launch-failed")],
+)
+def test_gives_the_clis_refusal_when_hub_scenario_break_refuses_or_stalls(
+    scenarios: Any, *, launcher: type[FakeScenarioLauncher], status: int, code: str
+) -> None:
+    a_debug_run(scenarios.hub)
+    scenarios.launcher = launcher(scenarios.hub)
+    rewire_tracker(scenarios, lambda _config, _hub: None)
+
+    refused = _put_json(scenarios, f"/scenario-runs/{DEBUG_RUN}/breakpoints", {"blocks": ["2"]})
+
+    assert refused.status_code == status, refused.text
+    assert refused.json()["type"] == f"urn:agent-hub:problem:workflow-run-{code}"
+    assert scenarios.launcher.calls == [("break", (DEBUG_RUN, ("2",)))]
+
+
+@pytest.mark.parametrize("command", ["step", "continue"])
+def test_refuses_step_and_continue_when_the_debug_pause_line_cannot_be_read(
+    scenarios: Any, command: str
+) -> None:
+    records = a_debug_run(scenarios.hub, paused=False)
+    unreadable = {key: value for key, value in DEBUG_PAUSE.items() if key != "pass"}
+    lines = [*records, {"event": "held", "groups": {}}, unreadable]
+    path = scenarios.hub / DEBUG_FOLDER / "records.jsonl"
+    path.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
+    before = _recorded(scenarios.hub)
+
+    refused = _post(scenarios, f"/scenario-runs/{DEBUG_RUN}/{command}", {})
+
+    assert (refused.status_code, refused.json()["code"]) == (422, "record_unreadable")
+    assert scenarios.launcher.calls == []
+    assert _recorded(scenarios.hub) == before
+
+
+def test_refuses_breakpoints_when_the_run_ended_or_is_a_graph_run(scenarios: Any) -> None:
+    a_debug_run(scenarios.hub)
+    with (scenarios.hub / DEBUG_FOLDER / "records.jsonl").open("a", encoding="utf-8") as file:
+        file.write(json.dumps({"event": "end", "status": "done"}) + "\n")
+    write_records(scenarios.hub, a_paused_walk(scenarios.hub))
+    # The graph run pins its version-1 document, as every run pins its scenario.
+    walk = (scenarios.hub / "scenarios" / "demo" / "order-walk.yaml").read_bytes()
+    pinned = load_workflow_bytes(walk, source="order-walk.yaml").document
+    snapshot = scenarios.hub / WALK_RECORDS.parent / "snapshot"
+    snapshot.mkdir(parents=True, exist_ok=True)
+    (snapshot / "workflow.json").write_text(json.dumps(dict(pinned)), encoding="utf-8")
+
+    ended = _put_json(scenarios, f"/scenario-runs/{DEBUG_RUN}/breakpoints", {"blocks": ["2.1"]})
+    graph = _put_json(scenarios, f"/scenario-runs/{WALK_RUN}/breakpoints", {"blocks": ["1"]})
+
+    assert (ended.status_code, ended.json()["code"]) == (409, "ended")
+    assert (graph.status_code, graph.json()["code"]) == (422, "unknown_block")
+    assert "version 2" in graph.json()["detail"]
+    assert scenarios.launcher.calls == []
+
+
+def test_steps_and_continues_through_the_cli_only_when_the_run_is_in_a_debug_pause(
+    scenarios: Any,
+) -> None:
+    a_debug_run(scenarios.hub)
+    write_records(scenarios.hub, a_paused_walk(scenarios.hub))
+
+    stepped = _post(scenarios, f"/scenario-runs/{DEBUG_RUN}/step", {})
+    continued = _post(scenarios, f"/scenario-runs/{DEBUG_RUN}/continue", {})
+    at_gate = _post(scenarios, f"/scenario-runs/{WALK_RUN}/step", {})
+    a_debug_run(scenarios.hub, paused=False)
+    running = _post(scenarios, f"/scenario-runs/{DEBUG_RUN}/continue", {})
+
+    assert stepped.status_code == 202, stepped.text
+    assert stepped.json() == {"run_id": DEBUG_RUN, "project": "demo", "action": "step"}
+    assert stepped.headers["Location"] == f"/api/v1/scenario-runs/{DEBUG_RUN}"
+    assert continued.json()["action"] == "continue"
+    # A gate keeps its own paths; a run past its pause is not in one.
+    assert (at_gate.status_code, at_gate.json()["code"]) == (409, "not_debug_paused")
+    assert (running.status_code, running.json()["code"]) == (409, "not_debug_paused")
+    assert scenarios.launcher.calls == [
+        ("debug", (DEBUG_RUN, "step")),
+        ("debug", (DEBUG_RUN, "continue")),
+    ]
+
+
+class LiveDebugLauncher(FakeScenarioLauncher):
+    def live_runs(self, hub_path: str) -> dict[str, str | None]:
+        return {DEBUG_RUN: None}
+
+
+def test_refuses_step_when_the_runs_child_still_runs(scenarios: Any) -> None:
+    a_debug_run(scenarios.hub)
+    launcher = LiveDebugLauncher(scenarios.hub)
+    scenarios.launcher = launcher
+    rewire_tracker(scenarios, lambda _config, _hub: None)
+
+    refused = _post(scenarios, f"/scenario-runs/{DEBUG_RUN}/step", {})
+
+    assert (refused.status_code, refused.json()["code"]) == (409, "in_use")
+    assert launcher.calls == []
+
+
+def test_refuses_debug_routes_and_records_nothing_when_the_environment_is_production(
+    scenarios: Any,
+) -> None:
+    a_debug_run(scenarios.hub, environment="live")
+    before = _recorded(scenarios.hub)
+    run = f"/scenario-runs/{DEBUG_RUN}"
+    start = {"environment": "live", "inputs": {"ref": "T-1"}, "breakpoints": ["1.2"]}
+
+    breakpoints = _put_json(scenarios, f"{run}/breakpoints", {"blocks": ["1.2"]})
+    stepped = _post(scenarios, f"{run}/step", {})
+    continued = _post(scenarios, f"{run}/continue", {})
+    values = scenarios.client.get(f"/api/v1{run}/values")
+    started = _post(scenarios, "/scenarios/demo/order-debug/runs", start)
+    cleared = _put_json(scenarios, f"{run}/breakpoints", {"blocks": []})
+
+    for refused in (breakpoints, stepped, continued, values, started):
+        assert refused.status_code == 409, refused.text
+        body = refused.json()
+        assert body["type"] == "urn:agent-hub:problem:workflow-run-debug-production"
+        assert "live is a production environment" in body["detail"]
+    # Clearing breakpoints stays allowed there; nothing else reached a child or the record.
+    assert cleared.status_code == 200, cleared.text
+    assert scenarios.launcher.calls == [("break", (DEBUG_RUN, ()))]
+    assert _recorded(scenarios.hub) == before
+
+
+def test_gives_inputs_and_finished_blocks_when_values_read_while_paused(scenarios: Any) -> None:
+    a_debug_run(scenarios.hub)
+
+    values = scenarios.client.get(f"/api/v1/scenario-runs/{DEBUG_RUN}/values")
+
+    assert values.status_code == 200, values.text
+    assert values.json() == {
+        "run_id": DEBUG_RUN,
+        "inputs": {"ref": "T-1"},
+        "blocks": [
+            {"address": "1.1", "node": "send--1", "attempt": 1, "status": "ok"}
+            | {"with": CALLED, "output": OPEN, "polls": 0, "last_poll": None},
+            {"address": "1.2", "node": "send--2", "attempt": 1, "status": "ok"}
+            | {"with": CALLED, "output": HELD, "polls": 2, "last_poll": HELD},
+        ],
+    }
+
+
+NESTED_TREE = """\
+version: 2
+kind: scenario
+name: order-debug
+revision: 2
+description: One demo order, included and polled
+inputs:
+  ref:
+    type: string
+    required: true
+stages:
+- name: Send
+  steps:
+  - do: send-order
+    with:
+      target: api
+      ref: $INPUTS.ref
+  - include: order-walk
+    with:
+      ref: $INPUTS.ref
+  - repeat:
+      max: 2
+      until: $poll.output.status == 'ON_HOLD'
+      steps:
+      - wait_until: demo/get-order
+        id: poll
+        with:
+          target: api
+          ref: $INPUTS.ref
+        until: $self.output.status != ''
+        every: 10s
+        timeout: 5m
+"""
+
+
+def test_gives_each_node_its_blocks_address_when_values_read_of_gates_includes_and_repeats(
+    scenarios: Any,
+) -> None:
+    a_debug_run(scenarios.hub)
+    pinned = load_workflow_bytes(NESTED_TREE.encode(), source="order-debug.yaml").document
+    snapshot = scenarios.hub / DEBUG_FOLDER / "snapshot" / "workflow.json"
+    snapshot.write_text(json.dumps(dict(pinned)), encoding="utf-8")
+    # A gate is its step's block, an included node its include's, a Repeat body node
+    # (``<group>__<id>``) its own block's, and a gate on a body node that node's block.
+    nodes = ("send--1__ask", "send--1", "send--2__send-order", "send--2__order-held")
+    nodes += ("send--3__poll__ask", "send--3__poll", "send--3")
+    records = [
+        {"event": "start", "run": DEBUG_RUN, "workflow": "scenario:order-debug"}
+        | {"kind": "scenario", "scenario": "order-debug", "pack": "demo"}
+        | {"environment": "local", "mode": "interactive", "ts": "2026-10-24T10:00:00+00:00"},
+        {"event": "inputs", "inputs": {"ref": "T-1"}},
+        *({"event": "step_end", "node": node, "attempt": 1, "status": "ok"} for node in nodes),
+        {"event": "held", "groups": {}},
+    ]
+    path = scenarios.hub / DEBUG_FOLDER / "records.jsonl"
+    path.write_text("".join(json.dumps(line) + "\n" for line in records), encoding="utf-8")
+
+    values = scenarios.client.get(f"/api/v1/scenario-runs/{DEBUG_RUN}/values")
+
+    assert values.status_code == 200, values.text
+    shown = [(block["node"], block["address"]) for block in values.json()["blocks"]]
+    assert shown == [
+        ("send--1__ask", "1.1"),
+        ("send--1", "1.1"),
+        ("send--2__send-order", "1.2"),
+        ("send--2__order-held", "1.2"),
+        ("send--3__poll__ask", "1.3.1"),
+        ("send--3__poll", "1.3.1"),
+        ("send--3", "1.3"),
+    ]
+
+
+def test_refuses_values_when_the_run_is_not_paused(scenarios: Any) -> None:
+    a_debug_run(scenarios.hub, paused=False)
+    running = scenarios.client.get(f"/api/v1/scenario-runs/{DEBUG_RUN}/values")
+    write_records(scenarios.hub, a_paused_walk(scenarios.hub, environment="local"))
+    at_gate = scenarios.client.get(f"/api/v1/scenario-runs/{WALK_RUN}/values")
+    append_records(scenarios.hub, {"event": "end", "status": "cancelled"})
+    ended = scenarios.client.get(f"/api/v1/scenario-runs/{WALK_RUN}/values")
+
+    assert (running.status_code, running.json()["code"]) == (409, "not_paused")
+    # A gate pause shows its values too; a version-1 run's blocks have no address.
+    assert at_gate.status_code == 200, at_gate.text
+    (polled,) = at_gate.json()["blocks"]
+    assert (polled["address"], polled["node"], polled["status"]) == (None, "order-held", "failed")
+    assert (ended.status_code, ended.json()["code"]) == (409, "not_paused")
+
+
+def test_needs_the_launch_cookie_and_own_origin_when_values_read(scenarios: Any) -> None:
+    a_debug_run(scenarios.hub)
+    route = f"/api/v1/scenario-runs/{DEBUG_RUN}/values"
+
+    foreign = scenarios.client.get(route, headers={"Origin": "http://127.0.0.1:9999"})
+    scenarios.client.cookies.clear()
+    unsigned = scenarios.client.get(route)
+    view = scenarios.client.get(f"/api/v1/scenario-runs/{DEBUG_RUN}")
+
+    assert foreign.status_code == 403
+    assert "scenario run's values" in foreign.json()["detail"]
+    assert unsigned.status_code == 401
+    assert unsigned.json()["type"] == "urn:agent-hub:problem:agent-session-unauthorized"
+    assert "scenario run's values" in unsigned.json()["detail"]
+    # The run view itself needs no cookie.
+    assert view.status_code == 200
+
+
+def test_refuses_debug_routes_and_migrate_without_the_cookie_when_a_path_ends_with_a_newline(
+    scenarios: Any,
+) -> None:
+    a_debug_run(scenarios.hub)
+    scenarios.wire(item_version_writes=_DiskWrites())
+    before = _recorded(scenarios.hub)
+    walk = (scenarios.hub / "scenarios" / "demo" / "order-walk.yaml").read_bytes()
+    run = f"/api/v1/scenario-runs/{DEBUG_RUN}"
+    scenarios.client.cookies.clear()
+    origin = _origin(scenarios)
+
+    refused = (
+        scenarios.client.get(f"{run}/values%0A"),
+        scenarios.client.put(f"{run}/breakpoints%0A", json={"blocks": ["1"]}, headers=origin),
+        scenarios.client.post(f"{run}/step%0A", headers=origin),
+        scenarios.client.post(f"{run}/continue%0A", headers=origin),
+        scenarios.client.post(
+            "/api/v1/scenarios/demo/order-walk/migrate%0A", json={}, headers=origin
+        ),
+    )
+
+    for response in refused:
+        assert response.status_code == 404, response.text
+        assert "T-1" not in response.text
+    assert scenarios.launcher.calls == []
+    assert _recorded(scenarios.hub) == before
+    assert (scenarios.hub / "scenarios" / "demo" / "order-walk.yaml").read_bytes() == walk
+
+
+def test_starts_with_breakpoints_in_tree_order_when_a_tree_run_asked(scenarios: Any) -> None:
+    a_debug_run(scenarios.hub)
+    path = "/scenarios/demo/order-debug/runs"
+    body = {"environment": "local", "inputs": {"ref": "T-1"}}
+
+    started = _post(scenarios, path, body | {"breakpoints": ["2", "1.2"]})
+    unknown = _post(scenarios, path, body | {"breakpoints": ["3"]})
+    graph = _post(scenarios, "/scenarios/demo/order-walk/runs", body | {"breakpoints": ["1"]})
+
+    assert started.status_code == 202, started.text
+    ((kind, spec),) = scenarios.launcher.calls
+    assert (kind, spec.name, spec.breakpoints) == ("start", "order-debug", ("1.2", "2"))
+    assert (unknown.status_code, unknown.json()["code"]) == (422, "unknown_block")
+    assert (graph.status_code, graph.json()["code"]) == (422, "unknown_block")
+
+
+LOST_TREE = DEBUG_TREE.replace("name: order-debug", "name: order-lost").replace(
+    "  - do: send-order\n", "  - do: no-such\n"
+)
+
+
+def test_names_the_block_and_the_environment_when_a_start_is_refused(scenarios: Any) -> None:
+    (scenarios.hub / "scenarios" / "demo" / "order-lost.yaml").write_text(LOST_TREE)
+
+    body = {"environment": "local", "inputs": {"ref": "T-1"}}
+    lost = _post(scenarios, "/scenarios/demo/order-lost/runs", body)
+    missing = _post(scenarios, "/scenarios/demo/order-walk/runs", {"environment": "staging"})
+    planned = _post(scenarios, "/scenarios/demo/order-walk/plan", {"environment": "staging"})
+
+    assert (lost.status_code, lost.json()["code"]) == (409, "plan_problem")
+    assert "block 1.1 (stages[0].steps[0]): unknown action 'no-such'" in lost.json()["detail"]
+    assert "send--1" not in lost.json()["detail"]
+    for refused in (missing, planned):
+        assert refused.status_code == 422, refused.text
+        assert 'as a value of environment "staging"' in refused.json()["detail"]
+    assert scenarios.launcher.calls == []
+
+
+EITHER_WALK = """\
+version: 1
+kind: scenario
+name: either-walk
+revision: 3
+description: Either read lets the last one run
+inputs:
+  ref: {type: string, required: true}
+nodes:
+  - id: first
+    type: action
+    action: get-order
+    with: {target: api, ref: $INPUTS.ref}
+  - id: second
+    type: action
+    action: get-order
+    with: {target: api, ref: $INPUTS.ref}
+  - id: after
+    type: action
+    action: get-order
+    depends_on: [first, second]
+    trigger_rule: one_success
+    with: {target: api, ref: $INPUTS.ref}
+"""
+
+
+def test_writes_the_tree_when_a_graph_scenario_is_migrated(scenarios: Any) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    path = scenarios.hub / "scenarios" / "demo" / "order-walk.yaml"
+    detail = scenarios.client.get("/api/v1/scenarios/demo/order-walk").json()
+    route = "/scenarios/demo/order-walk/migrate"
+
+    checked = _post(scenarios, route, {"check": True})
+    unchanged = path.read_text(encoding="utf-8")
+    migrated = _post(scenarios, route, {"base_content_hash": detail["content_hash"]})
+    reread = scenarios.client.get("/api/v1/scenarios/demo/order-walk").json()
+
+    assert checked.status_code == 200, checked.text
+    body = checked.json()
+    assert (body["path"], body["written"], body["problems"]) == (
+        "scenarios/demo/order-walk.yaml",
+        False,
+        [],
+    )
+    assert body["yaml"].startswith("version: 2\nkind: scenario\nname: order-walk\nrevision: 1\n")
+    assert body["content_hash"] == detail["content_hash"]
+    assert unchanged == WALK
+    assert migrated.status_code == 200, migrated.text
+    assert (migrated.json()["written"], migrated.json()["yaml"]) == (True, body["yaml"])
+    assert path.read_text(encoding="utf-8") == body["yaml"]
+    assert writes.calls == ["scenarios/demo/order-walk.yaml"]
+    assert migrated.json()["content_hash"] == reread["content_hash"]
+    assert (reread["version"], reread["revision"]) == (2, 1)
+    assert [step["id"] for step in reread["steps"]] == ["send-order", "order-held"]
+
+
+def test_writes_nothing_when_migrate_is_stale_already_a_tree_or_cannot_map_a_node(
+    scenarios: Any,
+) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    a_debug_run(scenarios.hub)
+    either = scenarios.hub / "scenarios" / "demo" / "either-walk.yaml"
+    either.write_text(EITHER_WALK, encoding="utf-8")
+
+    stale = _post(scenarios, "/scenarios/demo/order-walk/migrate", {"base_content_hash": "x"})
+    tree = _post(scenarios, "/scenarios/demo/order-debug/migrate", {})
+    unmapped = _post(scenarios, "/scenarios/demo/either-walk/migrate", {})
+
+    assert (stale.status_code, stale.json()["code"]) == (409, "stale_document")
+    assert (tree.status_code, tree.json()["code"]) == (409, "scenario_already_tree")
+    assert unmapped.status_code == 200, unmapped.text
+    body = unmapped.json()
+    assert (body["written"], body["yaml"]) == (False, None)
+    nodes = {problem["node"] for problem in body["problems"]}
+    assert "after" in nodes
+    assert any("trigger_rule" in problem["message"] for problem in body["problems"])
+    assert either.read_text(encoding="utf-8") == EITHER_WALK
+    assert writes.calls == []
+
+
+def _graph_named(name: str) -> dict[str, Any]:
+    walk = WALK.replace("name: order-walk", f"name: {name}")
+    return dict(load_workflow_bytes(walk.encode(), source=f"{name}.yaml").document)
+
+
+def test_gives_the_refusal_when_migrate_is_asked_with_the_hash_read_of_a_json_file(
+    scenarios: Any,
+) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    path = scenarios.hub / "scenarios" / "demo" / "walk-json.json"
+    path.write_text(json.dumps(_graph_named("walk-json")), encoding="utf-8")
+    detail = scenarios.client.get("/api/v1/scenarios/demo/walk-json").json()
+    route = "/scenarios/demo/walk-json/migrate"
+    read = {"base_content_hash": detail["content_hash"]}
+
+    checked = _post(scenarios, route, {"check": True} | read)
+    written = _post(scenarios, route, read)
+    stale = _post(scenarios, route, {"check": True, "base_content_hash": "sha256:0"})
+
+    assert detail["content_hash"] is not None
+    for refused in (checked, written):
+        assert refused.status_code == 200, refused.text
+        body = refused.json()
+        assert (body["written"], body["yaml"], body["content_hash"]) == (
+            False,
+            None,
+            detail["content_hash"],
+        )
+        assert body["problems"] == [
+            {"node": None, "message": "it is a JSON file: migrate rewrites a .yaml file in place"}
+        ]
+    # The JSON file's bytes are still read, so a file that changed is stale all the same.
+    assert (stale.status_code, stale.json()["code"]) == (409, "stale_document")
+    assert writes.calls == []
+
+
+def test_gives_the_refusal_when_migrate_is_asked_of_a_link_or_a_path_the_writer_refuses(
+    scenarios: Any,
+) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    pack = scenarios.hub / "scenarios" / "demo"
+    (pack / "kept").mkdir()
+    target = pack / "kept" / "walk-link.yaml"
+    target.write_text(WALK.replace("name: order-walk", "name: walk-link"), encoding="utf-8")
+    (pack / "walk-link.yaml").symlink_to(Path("kept", "walk-link.yaml"))
+    slashed = scenarios.hub / "scenarios" / "de\\mo" / "walk-slash.yaml"
+    slashed.parent.mkdir()
+    slashed.write_text(WALK.replace("name: order-walk", "name: walk-slash"), encoding="utf-8")
+    slash_hash = scenarios.client.get("/api/v1/scenarios/demo/walk-slash").json()["content_hash"]
+    a_hash = {"base_content_hash": "sha256:0"}
+
+    link = _post(scenarios, "/scenarios/demo/walk-link/migrate", {})
+    link_hashed = _post(scenarios, "/scenarios/demo/walk-link/migrate", a_hash)
+    slash = _post(
+        scenarios, "/scenarios/demo/walk-slash/migrate", {"base_content_hash": slash_hash}
+    )
+
+    # A link is never read, so no hash can match it: its refusal is the answer.
+    for refused in (link, link_hashed):
+        assert refused.status_code == 200, refused.text
+        assert (refused.json()["written"], refused.json()["content_hash"]) == (False, None)
+        (problem,) = refused.json()["problems"]
+        assert problem["node"] is None
+        assert problem["message"].startswith("it is a link")
+    assert slash.status_code == 200, slash.text
+    assert slash.json()["content_hash"] == slash_hash
+    (problem,) = slash.json()["problems"]
+    assert problem["node"] is None
+    assert "backslash" in problem["message"]
+    assert target.read_text(encoding="utf-8").startswith("version: 1\n")
+    assert writes.calls == []

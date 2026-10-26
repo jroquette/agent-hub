@@ -10,7 +10,10 @@ refused too, A11: a registered hub is a folder sessions may start in), bodies st
 (160 MiB for ``POST /agent-sessions`` and its messages, which may carry images and files), API
 answers are never cached, a CSP keeps the app to its own origin, and no CORS header is ever
 sent. No route speaks WebSocket (ADR 0031, D3): any ``websocket`` scope is closed with 1008
-before it is accepted, so an upgrade never skips these checks (P7, AC-165.54).
+before it is accepted, so an upgrade never skips these checks (P7, AC-165.54). A path holding a
+control character answers 404 before any check reads it: the router matches ``^…$``, whose ``$``
+also matches before a trailing newline (``%0A``), while the classifiers below fullmatch the
+path, so such a path would reach a route without the checks that route needs.
 
 ``AGENT_HUB_ALLOWED_HOSTS`` (read by ``hub web``, parsed here) may add exact ``host[:port]``
 names, for example the host port a container publishes; never a wildcard.
@@ -40,26 +43,35 @@ STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # decision on a plan change request whose run is gone (two-level-flows AC-2.14): it answers in
 # the run's stead. The scenario writes (AGH-350 plan T12) run the CLI too: a plan (the scripts'
 # plan mode), a start, an investigation's session and answer; a finding's issue reaches the
-# tracker and its note writes into the hub.
+# tracker and its note writes into the hub. A scenario run's breakpoints (a PUT), Step and
+# Continue (ADR 0049) run ``hub scenario break|step|continue``.
 RUN_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/(workflow-runs(/[^/]+/(cancel|resume|abandon))?"
     r"|approvals/[^/]+/decision"
     r"|scenarios/[^/]+/[^/]+/(plan|runs)"
-    r"|scenario-runs/[^/]+/(investigation|answer|findings/[^/]+/(issue|inbox))"
+    r"|scenario-runs/[^/]+/"
+    r"(investigation|answer|breakpoints|step|continue|findings/[^/]+/(issue|inbox))"
     r"|features/[^/]+/[^/]+/acs/[^/]+/check-runs"
     r"|features/[^/]+/[^/]+/change-requests/[^/]+/decision)$"
 )
 # The item writes (AGH-295, S7, D13) write into a hub's working tree: strict too, and they need
 # the launch's cookie (``session_access``, which answers 409 ``hub_read_only`` in the container).
-# Restore of a Toolkit item's or a hub workflow's version, the Studio's Publish of a draft, and
-# the scenario builder's save (a PUT of ``/scenarios/{project}/{name}``; its GET is a read).
+# Restore of a Toolkit item's or a hub workflow's version, the Studio's Publish of a draft, the
+# scenario builder's save (a PUT of ``/scenarios/{project}/{name}``; its GET is a read) and a
+# scenario's migrate to blocks (ADR 0049).
 ITEM_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/((projects/[^/]+/skills/[^/]+/[^/]+/[^/]+"
     r"|workflows/[^/]+/[^/]+)/versions/[^/]+/restore"
     r"|projects/[^/]+/skills/drafts/[^/]+/publish"
-    r"|scenarios/[^/]+/[^/]+(/proposal/dismiss)?"
+    r"|scenarios/[^/]+/[^/]+(/proposal/dismiss|/migrate)?"
     r"|projects/[^/]+/actions(/[^/]+/[^/]+)?)$"
 )
+# The run reads that need the launch cookie (ADR 0049): a paused scenario run's values (its
+# action inputs and outputs), which no other local process may read; off in the container.
+RUN_READS = re.compile(rf"^{re.escape(API_PREFIX)}/scenario-runs/[^/]+/values$")
+READ_METHODS = frozenset({"GET", "HEAD"})
+# A control character (C0, DEL, C1) in a request's path, as the server decoded it.
+CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 STRICT_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/learnings/[^/]+/(accept|reject)$|{RUN_WRITES.pattern}"
     rf"|{ITEM_WRITES.pattern}"
@@ -186,6 +198,11 @@ def is_run_write(method: str, path: str) -> bool:
     return method in STATE_CHANGING_METHODS and RUN_WRITES.fullmatch(path) is not None
 
 
+def is_run_read(method: str, path: str) -> bool:
+    """Whether a request reads a scenario run's values (``RUN_READS``)."""
+    return method in READ_METHODS and RUN_READS.fullmatch(path) is not None
+
+
 def is_item_write(method: str, path: str) -> bool:
     """Whether a request writes a Toolkit item or a hub workflow into its hub (``ITEM_WRITES``)."""
     return method in STATE_CHANGING_METHODS and ITEM_WRITES.fullmatch(path) is not None
@@ -255,6 +272,8 @@ class LocalSecurityMiddleware:
         headers = Headers(scope=scope)
         if headers.get("host") not in self._hosts:
             return 403, "Forbidden host", "This server answers only on its loopback address."
+        if CONTROL_CHARACTER.search(str(scope["path"])) is not None:
+            return 404, "Not Found", "No route has a path holding a control character."
         origin = headers.get("origin")
         if (
             scope["method"] in STATE_CHANGING_METHODS
@@ -262,14 +281,9 @@ class LocalSecurityMiddleware:
             and origin not in self._origins
         ):
             return 403, "Forbidden origin", "Changes are accepted only from this server's pages."
-        if is_strict_write(scope["method"], scope["path"]):
-            strict = strict_refusal(headers)
-            if strict is not None:
-                return strict
-        if is_hub_registry_write(scope["method"], scope["path"]):
-            strict = strict_refusal(headers, needs_json=scope["method"] == "POST")
-            if strict is not None:
-                return strict
+        strict = _strict_refusal(str(scope["method"]), str(scope["path"]), headers)
+        if strict is not None:
+            return strict
         length = headers.get("content-length")
         cap = self._body_cap(scope)
         if length is not None and (not length.isdigit() or int(length) > cap):
@@ -317,6 +331,17 @@ class LocalSecurityMiddleware:
                 instance=scope["path"],
             )
             await response(scope, receive, secured_send)
+
+
+def _strict_refusal(method: str, path: str, headers: Headers) -> tuple[int, str, str] | None:
+    """Why a strict write or a hub registry write is refused (``strict_refusal``), or None."""
+    if is_strict_write(method, path):
+        strict = strict_refusal(headers)
+        if strict is not None:
+            return strict
+    if is_hub_registry_write(method, path):
+        return strict_refusal(headers, needs_json=method == "POST")
+    return None
 
 
 def _too_large_detail(cap: int) -> str:

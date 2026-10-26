@@ -161,6 +161,11 @@ _BY_TYPE: Final[dict[EventType, frozenset[str]]] = {
     EventType.FINDING: frozenset({"finding_id", "step"}),
     EventType.WORKAROUND_START: _WORKAROUND,
     EventType.WORKAROUND_END: _WORKAROUND,
+    # A debug pause's node, block and reason, a command and who sent it, how many breakpoints;
+    # never a value of the run.
+    EventType.DEBUG_PAUSE: frozenset({"node", "block", "reason"}),
+    EventType.DEBUG_COMMAND: frozenset({"command", "approver"}),
+    EventType.DEBUG_BREAKPOINTS: frozenset({"count"}),
 }
 
 PAYLOAD_KEYS: Final[Mapping[EventType, frozenset[str]]] = MappingProxyType(

@@ -1,7 +1,7 @@
 import type { IconName } from "../../../components";
 import { kindLook } from "./FlowCanvas";
 import { newBlock, without, type BlockKind, type BuilderDocument } from "./model";
-import { freshKey, type Item } from "./program";
+import { freshKey, newStage, type Item } from "./program";
 
 /* The blocks a scenario is built from, as the palette and the insert menu offer them: each with
  * the verb it reads as, a hint, its icon and tint, and how to make a fresh one. */
@@ -107,3 +107,14 @@ export const CATEGORIES: readonly { title: string; entries: readonly PaletteEntr
     ],
   },
 ];
+
+/** The Stage block of a scenario written as blocks: a named part, its steps run in order (it
+ * looks as `kindLook("stage")` does). */
+export const STAGE_ENTRY: Pick<PaletteEntry, "label" | "hint" | "icon"> & {
+  make: (names: readonly string[]) => Item;
+} = {
+  label: "Stage",
+  hint: "A named part, run in order",
+  icon: "milestone",
+  make: (names) => newStage(names),
+};

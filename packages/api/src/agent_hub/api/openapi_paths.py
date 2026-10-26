@@ -212,6 +212,14 @@ SCENARIO_PATHS: frozenset[tuple[str, str]] = frozenset(
         ("post", "/scenarios/{project}/{name}/proposal/dismiss"),
         ("post", "/projects/{project}/actions"),
         ("put", "/projects/{project}/actions/{pack}/{name}"),
+        # Debugging a scenario run written as blocks (ADR 0049): its breakpoints, Step and
+        # Continue (strict run writes), its values (the launch cookie) and migrate (an item
+        # write).
+        ("put", "/scenario-runs/{run_id}/breakpoints"),
+        ("post", "/scenario-runs/{run_id}/step"),
+        ("post", "/scenario-runs/{run_id}/continue"),
+        ("get", "/scenario-runs/{run_id}/values"),
+        ("post", "/scenarios/{project}/{name}/migrate"),
     )
 )
 

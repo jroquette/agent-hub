@@ -20,6 +20,7 @@ from agent_hub.core.doctor.environments_rule import ENVIRONMENTS_ENV_FILE, ENVIR
 from agent_hub.core.doctor.features_rule import FEATURES_TRACKER
 from agent_hub.core.doctor.finding import Rule
 from agent_hub.core.doctor.frontmatter_rule import RULES_FRONTMATTER
+from agent_hub.core.doctor.graph_format_rule import SCENARIOS_GRAPH_FORMAT
 from agent_hub.core.doctor.guard_extension_rule import GUARD_EXTENSION
 from agent_hub.core.doctor.instruction_rules import (
     INSTRUCTIONS_DUPLICATES,
@@ -66,6 +67,7 @@ REGISTRY: Final[tuple[Rule, ...]] = (
     ENVIRONMENTS_PRODUCTION,
     ENVIRONMENTS_ENV_FILE,
     WORKFLOWS_STARTS,
+    SCENARIOS_GRAPH_FORMAT,
     BRAIN_MEMORY,
     SANDBOX_WORKFLOW,
     WORKFLOWS_VALID,
