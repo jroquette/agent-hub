@@ -17,7 +17,7 @@ cap) or JSON, then a frozen Pydantic model that forbids unknown keys. A load err
 
 | Key | Type | Meaning |
 |---|---|---|
-| `version` | `1`, or `2` for a `kind: scenario` tree | format version; the engine refuses one it does not know. A `version: 2` scenario (`stages` instead of `nodes`) is translated to this graph at load ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md), proposed; [scenarios.md](scenarios.md) § Tree format) |
+| `version` | `1`, or `2` for a `kind: scenario` tree | format version; the engine refuses one it does not know. A `version: 2` scenario (`stages` instead of `nodes`) is translated to this graph at load ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md), accepted; [scenarios.md](scenarios.md) § Tree format) |
 | `kind` | `workflow` (default) or `scenario` | a scenario holds only `action`, `expect`, `approval`, `wait`, `loop_group`, `include` ([scenarios.md](scenarios.md)) |
 | `name`, `description` | kebab-case file stem; optional string | unique among the workflows discovered; one line for people, whose first sentence says when to use the flow: the "Use when" column of the flow catalog (`flow_catalog.py`) and the first line of hub web's Workflows card; a built-in's must hold at least four words |
 | `revision` | integer ≥ 1 | bumped by the author on each change |
