@@ -1,6 +1,6 @@
 # 0049. Scenarios as ordered blocks, and a debugger as engine run control
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-23
 - Deciders: José Henrique Roquette (the debugger's scope, the migrate command, the format direction and the
   production rule were set by the owner for AGH-507)
@@ -110,7 +110,7 @@ Chosen option: 1.
 
 ## Delivery notes (AGH-507, AGH-521)
 
-This ADR stays proposed. The whole decision above is built (AGH-507), in these parts:
+Accepted on 2026-10-26, once the whole decision was built and merged (AGH-507). It is built in these parts:
 
 - **Translation at load.** `parse_workflow` reads a `version: 2` scenario into the node graph, with its block map and
   its problems on the tree's key paths; a plan problem of a `version: 2` scenario names its block by address and tree

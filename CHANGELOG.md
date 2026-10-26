@@ -13,7 +13,7 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
-- Scenarios written as blocks, and a debugger for their runs (ADR 0049, proposed): a scenario may be written as
+- Scenarios written as blocks, and a debugger for their runs (ADR 0049, accepted): a scenario may be written as
   `version: 2`, named stages of ordered blocks (Do, Wait until, You, Wait, Include; Repeat, If/else, At the same
   time), which core translates to the node graph at load, so the policy, gates, records and fixtures work as before,
   and each load or plan problem names its block's address and tree key path. `generator` writes a scenario in one

@@ -445,7 +445,7 @@ instruction" for actions and for the deterministic nodes of a workflow that decl
   `scenarios.graph_format` warning; hub web's builder edits it as its stage of blocks), each file only where absent.
   They are the project's files: `hub sync` never adds them and `hub.lock` does not list them, so a hub without
   `scenarios/`, `actions/` and `environments` renders and syncs as before.
-- **Blocks and debugging** ([ADR 0049](adr/0049-scenario-blocks-and-run-control.md), AGH-507, proposed; built, with
+- **Blocks and debugging** ([ADR 0049](adr/0049-scenario-blocks-and-run-control.md), AGH-507, accepted; built, with
   hub web's builder still editing a `version: 1` file as AGH-521 shipped it, beside a Migrate action, see the ADR's
   delivery notes): a scenario may be written as `version: 2`, named stages of ordered blocks (Do, Wait until, You,
   Wait, Include; Repeat, If/else, At the same time), which core translates to the node graph at load, so the policy,
@@ -1125,7 +1125,7 @@ Continuity between sessions comes from the brain and the summaries, not from rer
   in v1.
 - Scenarios are authored as ordered stages of blocks (`version: 2`), translated to the graph at load; a scenario run
   can be debugged (breakpoints, Step, Continue, inspect) off production only (2026-10-23, AGH-507,
-  [ADR 0049](adr/0049-scenario-blocks-and-run-control.md), proposed).
+  [ADR 0049](adr/0049-scenario-blocks-and-run-control.md), accepted).
 
 **Open questions**
 
