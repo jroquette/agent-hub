@@ -11,6 +11,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-26
+
 ### Added
 
 - Scenarios written as blocks, and a debugger for their runs (ADR 0049, accepted): a scenario may be written as
@@ -1330,7 +1332,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/jroquette/agent-hub/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/jroquette/agent-hub/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/jroquette/agent-hub/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/jroquette/agent-hub/compare/v0.21.0...v0.22.0
