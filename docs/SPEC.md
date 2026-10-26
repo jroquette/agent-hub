@@ -1033,7 +1033,8 @@ outputs (AGH-474), and v0.22.0 the knowledge view in `hub web`: search, note bac
 (AGH-393), and v0.23.0 the AI Toolkit flows: every skill runs as a workflow pack, started on a schedule or a
 GitHub event by `hub web` (AGH-480, ADR 0048), and the example scenario `hub init` writes (AGH-365), and v0.24.0
 the scenario builder and the playground's screens (AGH-521), the flaky workflow pack (AGH-449) and the post-merge
-signal in the brief's Outcome (AGH-451);
+signal in the brief's Outcome (AGH-451), and v0.25.0 scenarios written as blocks, with `hub scenario migrate` and
+a run debugger in the CLI and `hub web` (AGH-507, ADR 0049);
 other agents' adapters stay in Phase 4. The Phase 1 gate (Loki hub recreated) is open;
 pilot: AGH-54.
 
