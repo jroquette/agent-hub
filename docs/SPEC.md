@@ -445,7 +445,7 @@ instruction" for actions and for the deterministic nodes of a workflow that decl
   `scenarios.graph_format` warning; hub web's builder edits it as its stage of blocks), each file only where absent.
   They are the project's files: `hub sync` never adds them and `hub.lock` does not list them, so a hub without
   `scenarios/`, `actions/` and `environments` renders and syncs as before.
-- **Blocks and debugging** ([ADR 0049](adr/0049-scenario-blocks-and-run-control.md), AGH-507, proposed; built, with
+- **Blocks and debugging** ([ADR 0049](adr/0049-scenario-blocks-and-run-control.md), AGH-507, accepted; built, with
   hub web's builder still editing a `version: 1` file as AGH-521 shipped it, beside a Migrate action, see the ADR's
   delivery notes): a scenario may be written as `version: 2`, named stages of ordered blocks (Do, Wait until, You,
   Wait, Include; Repeat, If/else, At the same time), which core translates to the node graph at load, so the policy,
@@ -1006,7 +1006,7 @@ The MVP goes up to Phase 2: generate hubs from Loki and see the agents' sessions
 | 3 · Knowledge and decisions | Provenance in the brain, inbox triage in the UI (accept and reject moved to Phase 2 by AGH-201; snooze stays here), extracted decisions, learning metrics | One learning traced from the session to the rule |
 | 4 · Workflows as data and actions | Generic executor reading the workflow ([ADR 0032](adr/0032-workflow-engine.md)), gates approved from the UI, adapters for other agents | — |
 
-Status (2026-10-25, latest release v0.24.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
+Status (2026-10-26, latest release v0.25.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
 Phase 1 in progress: `init`, `sync` (`--adopt`), `doctor`, `worktree`, `brief`, `agent`, `next`, `run` and `bench`
 shipped in v0.8.0, and `setup`, `start` and `ship` in v0.9.0. Phase 2's first slice is shipped too: the control plane
 `hub web` (AGH-200) in v0.9.0 and its clarity pass (AGH-201: session labels, problems, learning accept and reject
@@ -1033,7 +1033,8 @@ outputs (AGH-474), and v0.22.0 the knowledge view in `hub web`: search, note bac
 (AGH-393), and v0.23.0 the AI Toolkit flows: every skill runs as a workflow pack, started on a schedule or a
 GitHub event by `hub web` (AGH-480, ADR 0048), and the example scenario `hub init` writes (AGH-365), and v0.24.0
 the scenario builder and the playground's screens (AGH-521), the flaky workflow pack (AGH-449) and the post-merge
-signal in the brief's Outcome (AGH-451);
+signal in the brief's Outcome (AGH-451), and v0.25.0 scenarios written as blocks, with `hub scenario migrate` and
+a run debugger in the CLI and `hub web` (AGH-507, ADR 0049);
 other agents' adapters stay in Phase 4. The Phase 1 gate (Loki hub recreated) is open;
 pilot: AGH-54.
 
@@ -1125,7 +1126,7 @@ Continuity between sessions comes from the brain and the summaries, not from rer
   in v1.
 - Scenarios are authored as ordered stages of blocks (`version: 2`), translated to the graph at load; a scenario run
   can be debugged (breakpoints, Step, Continue, inspect) off production only (2026-10-23, AGH-507,
-  [ADR 0049](adr/0049-scenario-blocks-and-run-control.md), proposed).
+  [ADR 0049](adr/0049-scenario-blocks-and-run-control.md), accepted).
 
 **Open questions**
 
