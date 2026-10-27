@@ -1120,9 +1120,13 @@
   white-space: normal;
 }
 
-/* The selected block, open in place: part of the row, under the title, as wide as the row. */
+/* The selected block, open in place: part of the row, under the title, as wide as the row. Open,
+ * it keeps the accent edge but a neutral ground, so its groups read calmly. */
 .st-row[data-selected="true"] {
   align-items: start;
+}
+.st-row[data-selected="true"]:has(> .st-open) {
+  background: var(--surface);
 }
 .st-row[data-selected="true"] > .st-num,
 .st-row[data-selected="true"] > .st-tile,
@@ -1131,12 +1135,11 @@
 }
 .st-open {
   grid-column: 4 / -1;
-  container-type: inline-size;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-4);
   margin-top: var(--space-2);
-  padding-top: var(--space-3);
+  padding: var(--space-3) 0 var(--space-1);
   border-top: 1px solid var(--border);
   font-size: 13px;
   line-height: 20px;
@@ -1145,40 +1148,8 @@
 }
 .st-open-about {
   margin: 0;
-}
-.st-open-dl {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  column-gap: var(--space-4);
-  row-gap: var(--space-4);
-  margin: 0;
-}
-.st-open-pair {
-  display: contents;
-}
-.st-open-dl dt {
-  display: flex;
-  flex-direction: column;
-  padding-top: 2px;
-  font-size: 12px;
-  line-height: 16px;
-  font-weight: 500;
+  max-width: 72ch;
   color: var(--text-muted);
-}
-.st-open-label-2 {
-  font-family: var(--font-mono);
-  font-weight: 400;
-  color: var(--text-subtle);
-}
-.st-open-dl dd {
-  min-width: 0;
-  margin: 0;
-}
-.st-open-runs {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: var(--space-2);
 }
 .st-open-mono {
   font-family: var(--font-mono);
@@ -1186,29 +1157,83 @@
 }
 .st-open-strong {
   color: var(--text);
+  font-weight: 500;
 }
 .st-open-quiet {
   color: var(--text-subtle);
 }
 
-/* With: the step's values (set here), then the scenario's (from the scenario). */
-.st-open-with {
-  display: grid;
-  grid-template-columns: minmax(88px, max-content) minmax(0, 1fr) max-content;
-  column-gap: var(--space-4);
-  row-gap: var(--space-1);
+/* Grouped lists, as system settings show them: a small title, then rows in one rounded group,
+ * the label at the left and the value at the right, hairlines between rows. */
+.st-g-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.st-g-title {
+  display: flex;
   align-items: baseline;
-}
-.st-open-param {
-  display: contents;
-}
-.st-open-name {
-  font-family: var(--font-mono);
+  gap: var(--space-2);
+  margin: 0 0 0 var(--space-3);
   font-size: 12px;
-  color: var(--text);
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--text-muted);
 }
-.st-open-value {
+.st-g {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  overflow: hidden;
+}
+.st-g-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+}
+/* An inset hairline between rows, starting at the text, not at the group's edge. */
+.st-g-row + .st-g-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: var(--space-3);
+  right: 0;
+  border-top: 1px solid var(--border);
+}
+.st-g-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
+  flex: 1 1 auto;
+}
+.st-g-row[data-quiet="true"] .st-g-label {
+  color: var(--text-muted);
+}
+.st-g-note {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-g-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  min-width: 0;
+  max-width: 60%;
+  text-align: right;
 }
 .st-open-src {
   display: inline-flex;
@@ -1219,48 +1244,21 @@
   color: var(--text-subtle);
   white-space: nowrap;
 }
-.st-open-desc {
-  grid-column: 2 / -1;
-  margin-bottom: var(--space-1);
+.st-g-foot {
+  margin-left: var(--space-3);
   font-size: 12px;
   line-height: 16px;
   color: var(--text-subtle);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.st-open-sub {
-  grid-column: 1 / -1;
-  margin-top: var(--space-2);
-  font-size: 12px;
-  line-height: 16px;
-  color: var(--text-subtle);
-}
-.st-open-inherited .st-open-name,
-.st-open-inherited .st-open-value {
-  color: var(--text-muted);
-}
-@container (width < 640px) {
-  .st-open-dl {
-    grid-template-columns: 56px minmax(0, 1fr);
-  }
-  .st-open-with {
-    grid-template-columns: minmax(88px, max-content) minmax(0, 1fr);
-  }
-  .st-open-with > .st-open-param > .st-open-src {
-    grid-column: 2;
-  }
 }
 
 /* Body: the app's code well, the copy button in its corner. */
 .st-open-body {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
 }
 .st-open-json {
   max-height: 320px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
   line-height: 20px;
   white-space: pre;
 }
@@ -1268,16 +1266,6 @@
   position: absolute;
   top: var(--space-1);
   right: var(--space-1);
-}
-.st-open-uses {
-  display: grid;
-  grid-template-columns: minmax(120px, max-content) minmax(0, 1fr);
-  column-gap: var(--space-4);
-  row-gap: var(--space-1);
-  align-items: baseline;
-}
-.st-open-use {
-  display: contents;
 }
 
 /* An editable value: one line, a quiet dashed edge that says it can be changed. */

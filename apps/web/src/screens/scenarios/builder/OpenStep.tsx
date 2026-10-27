@@ -198,166 +198,202 @@ export function OpenStep({ node, action, sources, values, editor, onEdit }: Open
       }}
     >
       {action?.description && <p className="st-open-about">{action.description}</p>}
-      <dl className="st-open-dl">
-        <div className="st-open-pair">
-          <dt>Runs</dt>
-          <dd className="st-open-runs">
+
+      <Group title="Runs">
+        <Row
+          label={
             <span className="st-open-mono st-open-strong">{action?.name ?? text(node.action)}</span>
+          }
+          value={
             <span className="st-open-quiet">
               {[action?.runtime, action?.draft === true ? "Draft action" : null]
                 .filter(Boolean)
                 .join(" · ")}
             </span>
-          </dd>
-        </div>
-
+          }
+        />
         {node.type === "expect" && every && timeout && (
-          <div className="st-open-pair">
-            <dt>Checks</dt>
-            <dd className="st-open-runs">
-              {editor("timing") ??
-                editChip(
-                  "timing",
-                  `every ${pace(every)}, up to ${pace(timeout)}`,
-                  "Edit how often it checks",
-                )}
-              {text(node.until_when) && (
-                <span className="st-open-quiet">until {conditionWords(text(node.until_when))}</span>
-              )}
-            </dd>
-          </div>
+          <Row
+            label="Checks"
+            value={
+              editor("timing") ??
+              editChip(
+                "timing",
+                `every ${pace(every)}, up to ${pace(timeout)}`,
+                "Edit how often it checks",
+              )
+            }
+          />
         )}
-
-        {(params.length > 0 || inherited.length > 0) && (
-          <div className="st-open-pair">
-            <dt>With</dt>
-            <dd>
-              <div className="st-open-with">
-                {params.map(([name, value]) => {
-                  const spec = specOf(name);
-                  return (
-                    <div key={name} className="st-open-param">
-                      <span className="st-open-name">{name}</span>
-                      <span className="st-open-value">{valueOf(name, value)}</span>
-                      <span className="st-open-src">set here</span>
-                      {spec?.description && (
-                        <span className="st-open-desc" title={spec.description}>
-                          {spec.required ? "required · " : ""}
-                          {spec.description}
-                        </span>
-                      )}
-                    </div>
-                  );
-                })}
-                {inherited.length > 0 && <span className="st-open-sub">From the scenario</span>}
-                {inherited.map((input) => {
-                  const fromEnv = env !== null && input.name in env.values;
-                  const isInput = sources?.inputs.includes(input.name) ?? false;
-                  return (
-                    <div key={input.name} className="st-open-param st-open-inherited">
-                      <span className="st-open-name">{input.name}</span>
-                      <span className="st-open-value">
-                        {fromEnv ? (
-                          <span className="st-open-mono">{env.values[input.name]}</span>
-                        ) : input.default !== undefined ? (
-                          <span className="st-open-mono">{shown(input.default as Json)}</span>
-                        ) : (
-                          <ValueToken value={`$INPUTS.${input.name}`} />
-                        )}
-                      </span>
-                      {fromEnv ? (
-                        <Source icon="server">environment {env.name}</Source>
-                      ) : input.default !== undefined ? (
-                        <Source>default</Source>
-                      ) : (
-                        <Source icon="flag">
-                          {isInput ? "scenario input · asked at start" : "from the run"}
-                        </Source>
-                      )}
-                      {input.description && (
-                        <span className="st-open-desc" title={input.description}>
-                          {input.description}
-                        </span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </dd>
-          </div>
+        {node.type === "expect" && text(node.until_when) && (
+          <Row label="Until" value={conditionWords(text(node.until_when))} />
         )}
+      </Group>
 
-        {bodies.map(([name, value]) => {
-          const body = pretty(value);
-          const about = specOf(name)?.description;
-          return (
-            <div key={name} className="st-open-pair">
-              <dt>
-                Body
-                <span className="st-open-label-2">{name}</span>
-              </dt>
-              <dd className="st-open-body">
-                {/* A scrollable region is reached by keyboard. */}
-                {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
-                <pre className="ah-json st-open-json" tabIndex={0} aria-label={`${name}, as JSON`}>
-                  <JsonText source={body} />
-                </pre>
-                <span className="st-open-copy">
-                  <CopyButton text={body} label={`Copy ${name}`} compact />
-                </span>
-                {about && <span className="st-open-desc">{about}</span>}
-              </dd>
+      {params.length > 0 && (
+        <Group title="Set in this step">
+          {params.map(([name, value]) => {
+            const spec = specOf(name);
+            return (
+              <Row
+                key={name}
+                label={<span className="st-open-mono">{name}</span>}
+                note={
+                  spec?.description
+                    ? `${spec.required ? "Required · " : ""}${spec.description}`
+                    : undefined
+                }
+                value={valueOf(name, value)}
+              />
+            );
+          })}
+        </Group>
+      )}
+
+      {inherited.length > 0 && (
+        <Group title="From the scenario">
+          {inherited.map((input) => {
+            const fromEnv = env !== null && input.name in env.values;
+            const isInput = sources?.inputs.includes(input.name) ?? false;
+            return (
+              <Row
+                key={input.name}
+                quiet
+                label={<span className="st-open-mono">{input.name}</span>}
+                note={input.description ?? undefined}
+                value={
+                  fromEnv ? (
+                    <span className="st-open-mono">{env.values[input.name]}</span>
+                  ) : input.default !== undefined ? (
+                    <span className="st-open-mono">{shown(input.default as Json)}</span>
+                  ) : (
+                    <ValueToken value={`$INPUTS.${input.name}`} />
+                  )
+                }
+                source={
+                  fromEnv ? (
+                    <Source icon="server">environment {env.name}</Source>
+                  ) : input.default !== undefined ? (
+                    <Source>default</Source>
+                  ) : (
+                    <Source icon="flag">
+                      {isInput ? "scenario input · asked at start" : "from the run"}
+                    </Source>
+                  )
+                }
+              />
+            );
+          })}
+        </Group>
+      )}
+
+      {bodies.map(([name, value]) => {
+        const body = pretty(value);
+        const about = specOf(name)?.description;
+        return (
+          <section key={name} className="st-g-section" aria-label={`Body ${name}`}>
+            <h4 className="st-g-title">
+              Body <span className="st-open-mono">{name}</span>
+            </h4>
+            <div className="st-open-body">
+              {/* A scrollable region is reached by keyboard. */}
+              {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+              <pre className="ah-json st-open-json" tabIndex={0} aria-label={`${name}, as JSON`}>
+                <JsonText source={body} />
+              </pre>
+              <span className="st-open-copy">
+                <CopyButton text={body} label={`Copy ${name}`} compact />
+              </span>
             </div>
-          );
-        })}
+            {about && <span className="st-g-foot">{about}</span>}
+          </section>
+        );
+      })}
 
-        {uses.size > 0 && (
-          <div className="st-open-pair">
-            <dt>Uses</dt>
-            <dd>
-              <div className="st-open-uses">
-                {[...uses.entries()].map(([ref, name]) => {
-                  const scenario = ref.startsWith("$INPUTS.");
-                  const envValue = scenario && env !== null ? env.values[name] : undefined;
-                  const keptBy = sources?.kept.find((item) => item.name === name)?.number;
-                  return (
-                    <div key={ref} className="st-open-use">
-                      <ValueToken value={ref} />
-                      <span className="st-open-quiet">
-                        {scenario
-                          ? envValue !== undefined
-                            ? `scenario input · ${envValue} from environment ${env?.name ?? ""}`
-                            : "scenario input · asked when the scenario run starts"
-                          : keptBy
-                            ? `kept by ${keptBy}`
-                            : "kept by an earlier step"}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </dd>
-          </div>
-        )}
+      {uses.size > 0 && (
+        <Group title="Uses">
+          {[...uses.entries()].map(([ref, name]) => {
+            const scenario = ref.startsWith("$INPUTS.");
+            const envValue = scenario && env !== null ? env.values[name] : undefined;
+            const keptBy = sources?.kept.find((item) => item.name === name)?.number;
+            return (
+              <Row
+                key={ref}
+                label={<ValueToken value={ref} />}
+                value={
+                  <span className="st-open-quiet">
+                    {scenario
+                      ? envValue !== undefined
+                        ? `scenario input · ${envValue} from environment ${env?.name ?? ""}`
+                        : "scenario input · asked when the scenario run starts"
+                      : keptBy
+                        ? `kept by ${keptBy}`
+                        : "kept by an earlier step"}
+                  </span>
+                }
+              />
+            );
+          })}
+        </Group>
+      )}
 
-        {keeps.length > 0 && (
-          <div className="st-open-pair">
-            <dt>Keeps</dt>
-            <dd>
-              <div className="st-open-uses">
-                {keeps.map(([name, from]) => (
-                  <div key={name} className="st-open-use">
-                    <ValueToken value={`$CTX.${name}`} />
-                    <span className="st-open-quiet">
-                      ← <WithTokens value={written(from)} />
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </dd>
-          </div>
-        )}
-      </dl>
+      {keeps.length > 0 && (
+        <Group title="Keeps">
+          {keeps.map(([name, from]) => (
+            <Row
+              key={name}
+              label={<ValueToken value={`$CTX.${name}`} />}
+              value={
+                <span className="st-open-quiet">
+                  from <WithTokens value={written(from)} />
+                </span>
+              }
+            />
+          ))}
+        </Group>
+      )}
     </div>
+  );
+}
+
+/** A titled group of rows, as a grouped list in system settings. */
+function Group({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="st-g-section" aria-label={title}>
+      <h4 className="st-g-title">{title}</h4>
+      <ul className="st-g">{children}</ul>
+    </section>
+  );
+}
+
+/** One row of a group: its label at the left (a note under it), its value at the right. */
+function Row({
+  label,
+  value,
+  note,
+  source,
+  quiet = false,
+}: {
+  label: ReactNode;
+  value: ReactNode;
+  note?: string | undefined;
+  source?: ReactNode;
+  quiet?: boolean;
+}) {
+  return (
+    <li className="st-g-row" data-quiet={quiet ? "true" : undefined}>
+      <span className="st-g-label">
+        {label}
+        {note && (
+          <span className="st-g-note" title={note}>
+            {note}
+          </span>
+        )}
+      </span>
+      <span className="st-g-value">
+        {value}
+        {source}
+      </span>
+    </li>
   );
 }
