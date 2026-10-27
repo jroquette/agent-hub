@@ -1,22 +1,36 @@
-"""The rendered ``/implement`` skill (two-level-flows AC-2.1).
+"""The rendered ``/implement`` skill (two-level-flows AC-2.1; AGH-579, ADR 0050).
 
-``/implement <ticket>`` starts the built-in ``implement`` workflow for one ticket of a planned
-feature, with the inputs that workflow declares, and runs no spec, research, plan or tickets
-step; a ticket in no feature is sent to ``issue-to-pr`` or ``/fix``. The ticket's text reaches
-the run through a file, never pasted into the command. Checked on the demo hub's render;
-``/feature``'s Build step is checked in ``test_feature_agents.py``.
+``/implement <ticket>`` conducts one ticket of a planned feature in the session that runs it:
+each agent stage is a subagent the session dispatches, with the ``implement`` workflow's own
+prompt (``hub step prompt``) and output contract (``hub step output``), and the records are the
+ones a run writes (``hub step ticket-brief``, ``preflight``, ``change-request``, ``decide``,
+``amend-plan``). It never starts ``hub workflow run``, ``claude -p`` or another session; the
+commands the sandbox cannot run (``hub worktree``, the push, ``gh``) are bare calls. A ticket in
+no feature is sent to ``issue-to-pr`` or ``/fix``; texts reach a command through a file. Checked
+on the demo hub's render; ``/feature``'s Build step is checked in ``test_feature_agents.py``.
 """
+
+import re
 
 import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.workflows.document import parse_workflow
+from agent_hub.core.workflows.nodes import AgentNode, LoopGroupNode
 from agent_hub.generator.render_hub import render_hub
 from agent_hub.generator.workflow_discovery import BUILTIN_WORKFLOWS
 from agent_hub.generator.workflow_yaml import load_workflow_bytes
 
 IMPLEMENT = "plugin/hub-workflow/skills/implement/SKILL.md"
-WORKFLOW = BUILTIN_WORKFLOWS / "sdlc" / "implement.yaml"
-TEXT_FILE = '--input issue_text="$(cat "<file>")"'
+SDLC = BUILTIN_WORKFLOWS / "sdlc"
+# Each stage hub step prompt renders: its workflow and agent node (cli's step_stages.STAGES).
+STAGES = {
+    "preflight": ("preflight-check", "preflight"),
+    "ticket-plan": ("ticket-pass", "plan"),
+    "spec-lens": ("ticket-pass", "spec"),
+    "quality-lens": ("ticket-pass", "quality"),
+    "ticket-eval": ("implement", "eval"),
+}
 
 
 @pytest.fixture
@@ -32,42 +46,116 @@ def text(raw: str) -> str:
     return " ".join(raw.split())
 
 
-def run_line(raw: str) -> str:
-    """The skill's one line that holds the run command."""
-    [line] = [line for line in raw.splitlines() if "`./hub workflow run implement" in line]
-    return line
+def stage_names(stage: str) -> set[str]:
+    """The ``with`` names of the stage's agent node, in the built-in pack."""
+    workflow, node_id = STAGES[stage]
+    path = SDLC / f"{workflow}.yaml"
+    document = parse_workflow(load_workflow_bytes(path.read_bytes(), source=str(path)).document)
+    nodes = [
+        inner
+        for node in document.nodes
+        for inner in (node.nodes if isinstance(node, LoopGroupNode) else (node,))
+    ]
+    [node] = [n for n in nodes if n.id == node_id]
+    assert isinstance(node, AgentNode)
+    return set(node.with_)
 
 
-def test_starts_the_implement_workflow_with_its_inputs_when_implement_rendered(raw: str) -> None:
-    line = run_line(raw)
-    command = line[line.index("`./hub workflow run implement") :]
-    command = command[: command.index("`", 1) + 1]
-    inputs = load_workflow_bytes(WORKFLOW.read_bytes(), source=str(WORKFLOW)).document["inputs"]
-
-    assert command.endswith(" --live`"), command
-    for name in inputs:
-        assert f"--input {name}=" in command, name
-    assert "brain/features/*/features.json" in raw
+def step_text(text: str, number: int) -> str:
+    """Step ``number``'s text, up to the next step."""
+    start = text.index(f" {number}. **")
+    end = text.find(f" {number + 1}. **", start)
+    return text[start : end if end != -1 else None]
 
 
-def test_passes_the_ticket_text_through_a_file_when_implement_rendered(raw: str, text: str) -> None:
-    line = run_line(raw)
+def test_starts_no_workflow_run_or_other_session_when_implement_rendered(text: str) -> None:
+    assert "./hub workflow run" not in text.replace("Never start `./hub workflow run`", "")
+    assert "Never start `./hub workflow run`, `claude -p` or another session for a stage" in text
+    assert "Agent tool" in text
+    # The workflow stays, for hub web and the CLI; the skill says so.
+    assert "The built-in `implement` workflow stays for hub web's Workflow runs screen" in text
 
-    assert TEXT_FILE in line
-    assert 'issue_text="<' not in text.replace(TEXT_FILE, "")
-    assert '"$TMPDIR/' not in text
-    # One absolute path, resolved once, for both the Write call and the command.
+
+def test_reports_each_stage_in_the_chat_when_implement_rendered(text: str) -> None:
+    assert "**After each stage**, write a short result in the chat" in text
+    assert "the record written" in text
+
+
+@pytest.mark.parametrize("stage", list(STAGES))
+def test_gives_each_stage_the_workflows_prompt_values_when_implement_rendered(
+    text: str, stage: str
+) -> None:
+    named = [m.start() for m in re.finditer(f"`--stage {stage}`", text)]
+    assert named, stage
+    window = text[named[0] : named[0] + 400]
+
+    for name in stage_names(stage):
+        assert f"`{name}`" in window or f"`{name}=" in window, (stage, name)
+
+
+def test_checks_each_subagent_output_as_the_workflow_does_when_implement_rendered(
+    text: str,
+) -> None:
+    assert "`./hub step prompt --stage <stage> --with <name>=<value> …`" in text
+    assert "./hub step output --stage <stage> <" in text
+    assert "Give it to the subagent whole and unchanged" in text
+    assert "re-dispatch the subagent once" in text
+
+
+def test_records_the_stages_as_a_run_does_when_implement_rendered(text: str) -> None:
+    for command in (
+        "./hub step ticket-brief --feature <slug> --ticket <ticket>",
+        "./hub step pending-decision --feature <slug> --ticket <ticket>",
+        "./hub step amend-plan --feature <slug> --request",
+        "./hub step preflight --feature <slug> --ticket <ticket> --findings",
+        "./hub step change-request --feature <slug> --ticket <ticket> --findings",
+        "./hub step decide --feature <slug> --request <n> --decision approved|declined",
+    ):
+        assert command in text, command
+    assert "`AGENT_HUB_RUN_ID=session-<ticket in lowercase> ./hub step …`" in text
+
+
+def test_stops_for_the_owner_on_plan_drift_when_implement_rendered(text: str) -> None:
+    preflight = step_text(text, 4)
+
+    assert "**Stop**" in preflight
+    assert "Never decide it yourself" in preflight
+    assert "hub web's ticket panel" in preflight
+    assert "do not decide again" in preflight
+    # The workflow's loop cap: three passes, a discovery in the third blocks.
+    assert "at most 3 passes" in preflight
+    assert "a discovery in pass 3 makes the ticket **blocked**" in step_text(text, 7)
+    assert "at most 3 per pass" in step_text(text, 8)
+
+
+def test_runs_the_sandbox_excluded_commands_bare_when_implement_rendered(text: str) -> None:
+    assert "`./hub worktree <ticket in lowercase> --only <repo>` as a call of its own" in text
+    assert "`./hub worktree <ticket in lowercase> --stack-on <blocker's PR url>`" in text
+    pr = step_text(text, 10)
+    assert "**wait for their OK**" in pr
+    assert "`git push -u origin <branch>`" in pr
+    assert "`gh pr create --base" in pr
+    assert "`hub step pr` pushes from inside the sandbox and fails there" in pr
+
+
+def test_dispatches_the_hubs_reviewers_and_evaluator_when_implement_rendered(text: str) -> None:
+    assert "`spec-reviewer` and `quality-reviewer` subagents" in text
+    assert "a fresh `evaluator` subagent" in text
+    assert "`./hub validate-output review <file>`" in text
+    assert "`./hub validate-output eval brain/features/<slug>/evals/<delivery>.json`" in text
+
+
+def test_passes_texts_through_files_when_implement_rendered(text: str) -> None:
     assert '`echo "${TMPDIR:-/tmp}"`' in text
-    assert "with the Write tool" in text
-    # A run after `blocked` writes the ticket again: the old file is replaced, never reused.
-    assert "replacing a file left by an earlier run" in text
-    assert "`test -s <file>`" in text
-    assert text.index("`test -s <file>`") < text.index("`./hub workflow run implement")
+    assert "never type or paste it into a command line" in text
+    assert "`test -s <tmp>/<ticket>.txt`" in text
+    assert '`spec="$(cat "<tmp>/<ticket>.txt")"`' in text
+    assert '"$TMPDIR/' not in text
 
 
 def test_runs_no_spec_research_plan_or_tickets_step_when_implement_rendered(text: str) -> None:
     assert "no spec, research, plan or tickets step" in text
-    assert "never commits in the hub" in text
+    assert "you never commit in the hub" in text
 
 
 def test_names_issue_to_pr_and_fix_for_a_ticket_in_no_feature_when_implement_rendered(
@@ -80,18 +168,13 @@ def test_names_issue_to_pr_and_fix_for_a_ticket_in_no_feature_when_implement_ren
     assert "`/fix`" in stop
 
 
-def test_reports_paused_blocked_and_delivered_when_implement_rendered(text: str) -> None:
-    for outcome in ("`paused`", "`blocked`", "`delivered`"):
-        assert outcome in text, outcome
-    assert "ticket panel" in text
-    assert "`./hub workflow approve <run>`" in text
-    assert "`./hub workflow respond <run> --choice decline" in text
+def test_reports_the_delivery_as_the_workflow_shapes_it_when_implement_rendered(
+    text: str,
+) -> None:
+    report = step_text(text, 11)
 
-
-def test_reads_the_delivery_from_the_run_records_when_implement_rendered(text: str) -> None:
-    assert "`.agent-runs/workflows/<run>/records.jsonl`" in text
-    assert '`"node": "delivery"`' in text
-    for field in ("`question`", "`pr`", "`stage`", "`reason`", "`hub_files`", "`superseded`"):
-        assert field in text, field
+    for outcome in ("`delivered`", "`no_changes`", "`blocked`", "`failed`"):
+        assert outcome in report, outcome
+    assert "hub PR the owner opens" in report
     # A23: an approval the plan moved past is told to the owner.
-    assert "`superseded` whenever it is not empty" in text
+    assert "`superseded` whenever it is not empty" in report

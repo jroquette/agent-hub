@@ -55,6 +55,8 @@ async def test_prefers_live_link_and_shows_waiting_when_permission_pending(
     ("text", "issue"),
     [
         ("/feature AGH-305\n\nI am the owner…", "AGH-305"),
+        # hub web's Start (AGH-579): the one session that conducts the ticket is listed under it.
+        ("/implement DEMO-1234\n\nI am the owner of the agent-hub project", "DEMO-1234"),
         ("  /hub:feature agh-7 and more", "AGH-7"),
         ("/feature", None),
         ("Fix AGH-305 please", None),

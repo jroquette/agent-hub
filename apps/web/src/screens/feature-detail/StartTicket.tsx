@@ -45,17 +45,18 @@ function blockerLines(row: TicketRow & { id: string }, rows: readonly TicketRow[
   return [
     ...lines,
     `Its blocker ${base.id} is not merged yet: it is in review in ${base.pr_url}. Build this ticket on top of it (a stacked branch) instead of waiting for the merge.`,
-    `For the workspace (the start of step 6), create the worktrees with exactly \`./hub worktree ${stackedName(row)} --stack-on ${base.pr_url}\`, with no --only and no --base: it starts ${repo}'s worktree from that pull request's branch and every other repo from its default branch.`,
+    `For the workspace, create the worktrees with exactly \`./hub worktree ${stackedName(row)} --stack-on ${base.pr_url}\`, with no --only and no --base: it starts ${repo}'s worktree from that pull request's branch and every other repo from its default branch.`,
     `Open this ticket's pull request against ${base.id}'s branch, not the default branch, and say in its body that it is stacked on ${base.pr_url}. If ${base.id} changes in review, rebase onto its branch; once it merges, rebase onto the default branch and retarget the pull request.`,
   ];
 }
 
 /**
- * The first message of a ticket's session. A ticket free to start runs the hub's `/implement`
- * skill, the ticket flow of a planned feature: the `implement` workflow writes the ticket's context
- * brief and preflight before it builds, so the ticket's Context and Preflight steps are recorded.
- * A stacked ticket still works through `/feature`'s in-line steps on its blocker's branch: the
- * `implement` workflow starts its worktree from the default branch and cannot stack.
+ * The first message of a ticket's session: the hub's `/implement` skill, which this one session
+ * conducts start to finish (ADR 0050). It records the ticket's context brief and preflight, opens
+ * the worktree, and runs the ticket plan, the implementation, the review rounds and the eval as
+ * its own subagents, reporting each in its chat, then asks before the pull request; no workflow
+ * run or other session starts. A ticket stacked on a blocker in review takes the same flow, told
+ * how to start its worktree from the blocker's branch.
  */
 export function ticketPrompt(
   project: string,
@@ -63,31 +64,15 @@ export function ticketPrompt(
   row: TicketRow & { id: string },
   rows: readonly TicketRow[],
 ): string {
-  const owner = `I am the owner of the agent-hub project "${project}", starting this ticket from the Tickets tab of the agent-hub web app.`;
-  const ticket = `Ticket: ${row.id}${row.title ? ` · ${row.title}` : ""}${row.url ? ` (${row.url})` : ""}.`;
-  const feature = `Feature: \`${slug}\`; its record is in \`brain/features/${slug}/\` (spec.md, research.md, plan.md, features.json, issues.md).`;
-  if (stackedOn(row, rows) == null) {
-    const context = [
-      owner,
-      ticket,
-      feature,
-      ...blockerLines(row, rows),
-      "Set the ticket to In Progress in the tracker when you start. Work on no other ticket.",
-    ].filter(Boolean);
-    return [`/implement ${row.id}`, "", ...context].join("\n");
-  }
   const context = [
-    owner,
-    ticket,
-    `${feature} Read it first.`,
+    `I am the owner of the agent-hub project "${project}", starting this ticket from the Tickets tab of the agent-hub web app.`,
+    `Ticket: ${row.id}${row.title ? ` · ${row.title}` : ""}${row.url ? ` (${row.url})` : ""}.`,
+    `Feature: \`${slug}\`; its record is in \`brain/features/${slug}/\` (spec.md, research.md, plan.md, features.json, issues.md).`,
     row.repo ? `Repo: ${row.repo}.` : "",
-    row.acs.length ? `Acceptance criteria this ticket owns: ${row.acs.join(", ")}.` : "",
     ...blockerLines(row, rows),
-    "The spec, plan and tickets of this feature are already approved and created, so skip steps 0 to 5 of /feature: build this ticket in-line, from step 6 (Implement), for this ticket only.",
-    "Set the ticket to In Progress in the tracker when you start. Then implement it (step 6), review it (step 7) and verify it with the evaluator scoped to this ticket (step 8).",
-    "Work on no other ticket. Ask me before you push or open the pull request.",
+    "Set the ticket to In Progress in the tracker when you start. Conduct the whole ticket in this session: run each stage as a subagent and tell me its result here. Work on no other ticket. Ask me before you push or open the pull request.",
   ].filter(Boolean);
-  return [`/feature ${row.id}`, "", ...context].join("\n");
+  return [`/implement ${row.id}`, "", ...context].join("\n");
 }
 
 /**
@@ -154,8 +139,8 @@ export function StartTicketButton({
           failed
             ? `Could not start: ${failed}`
             : base
-              ? `${base.id} is in review, not merged. Start a Claude session that builds ${row.id} on its branch and opens a stacked pull request.`
-              : `Start a Claude session that runs /implement on ${row.id}: context, preflight, build, review, eval and pull request`
+              ? `${base.id} is in review, not merged. Start one Claude session that conducts ${row.id} on its branch: context, preflight, build, review and eval as its own subagents, each reported in its chat. It asks you before a stacked pull request.`
+              : `Start one Claude session that conducts ${row.id}: context, preflight, build, review and eval as its own subagents, each reported in its chat. It asks you before the pull request.`
         }
       >
         <Button
