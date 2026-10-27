@@ -195,7 +195,7 @@ def test_keeps_hub_order_when_repo_subset_given(tmp_path: Path) -> None:
     task = two_repo_task(tmp_path, repos=("demo-web", "demo-api", "demo-web"))
 
     assert task.repos == ("demo-api", "demo-web")
-    assert task.only is None
+    assert task.only == ()
     assert task.branches == {"demo-api": BRANCH, "demo-web": BRANCH}
 
 
@@ -203,7 +203,7 @@ def test_touches_only_subset_when_one_repo_given(tmp_path: Path) -> None:
     task = two_repo_task(tmp_path, repos=("demo-web",))
 
     assert task.repos == ("demo-web",)
-    assert task.only is None
+    assert task.only == ()
     assert task.bases == {"demo-web": "origin/main"}
 
 

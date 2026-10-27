@@ -106,7 +106,8 @@ class WorktreeTask:
     # The hub's main checkout; its scripts get it as HUB_HUB_DIR.
     hub: Path
     repos: tuple[str, ...]
-    only: str | None
+    # The repos ``--only`` named, in hub.json order; empty when none was.
+    only: tuple[str, ...]
     git: str
     env: dict[str, str]
     git_timeout: float | None
@@ -125,7 +126,7 @@ def worktree_task(
     *,
     name: str,
     branch_prefix: str,
-    only: str | None,
+    only: str | Sequence[str] | None,
     hub: Path,
     git: str,
     env: dict[str, str],
@@ -139,11 +140,12 @@ def worktree_task(
     base: str | None = None,
     stacked: StackBase | None = None,
 ) -> WorktreeTask:
-    """The task named ``name`` in the hub's repos (or ``only``, or the ``repos`` subset), checked.
+    """The task named ``name`` in the hub's repos (or ``only``'s, or the ``repos`` subset), checked.
 
     Each repo's branch is ``name`` rendered with the repo's effective ``conventions.branch``
     (``conventions_for``) and ``branch_prefix``; today's ``<branch_prefix><name>`` when nothing
-    sets one. The name is checked first, then ``only``, then each distinct branch of the
+    sets one. ``only`` is one repo or several (``--only`` given again), touched in ``hub.json``
+    order. The name is checked first, then ``only``, then each distinct branch of the
     touched repos with ``git check-ref-format``, in repo order.
 
     ``runner`` runs every git call of the task; ``env`` is the environment of every git call
@@ -151,7 +153,7 @@ def worktree_task(
     ``SCRIPT_VARIABLES``, of the scripts (``script_env``); ``add_options``
     go before ``worktree add`` and ``fetch_options`` before ``fetch``. ``repos`` (``hub start``'s
     ``--repo`` dirs) touches several repos, kept in ``hub.json`` order with duplicates dropped;
-    ``task.only`` stays None, so ``--remove`` lines are the caller's. Raises
+    ``task.only`` stays empty, so ``--remove`` lines are the caller's. Raises
     ``WorktreeUsageError`` for a name not shaped like the issue, an unknown ``only`` or
     ``repos`` dir, or a branch git refuses; ``ValueError`` when both ``only`` and ``repos`` are
     given. ``fetch`` False skips the fetch: each new worktree starts from the base as already
@@ -172,7 +174,8 @@ def worktree_task(
     problem = worktree_name_problem(name, teams=config.tracker.team_keys)
     if problem is not None:
         raise WorktreeUsageError(problem)
-    touched = _task_repos(config, only=only, repos=repos, stacked=stacked)
+    named = (only,) if isinstance(only, str) else tuple(only or ())
+    touched = _task_repos(config, only=named, repos=repos, stacked=stacked)
     branches = {
         repo: worktree_branch(
             name, prefix=branch_prefix, pattern=config.conventions_for(repo).branch
@@ -206,7 +209,7 @@ def worktree_task(
         workspace=hub.parent,
         hub=hub,
         repos=touched,
-        only=only,
+        only=tuple(repo for repo in touched if repo in named),
         git=git,
         env=env,
         git_timeout=git_timeout,
@@ -221,15 +224,16 @@ def worktree_task(
 def _task_repos(
     config: HubConfig,
     *,
-    only: str | None,
+    only: tuple[str, ...],
     repos: Sequence[str] | None,
     stacked: StackBase | None,
 ) -> tuple[str, ...]:
     """The repos the task touches (``_touched``), after checking ``only`` and ``stacked``."""
     dirs = tuple(repo.dir for repo in config.repos)
-    if only is not None and only not in dirs:
+    unknown = next((repo for repo in only if repo not in dirs), None)
+    if unknown is not None:
         raise WorktreeUsageError(
-            f"unknown repo in --only: {shown_path(only)}; use one of: {' '.join(dirs)}"
+            f"unknown repo in --only: {shown_path(unknown)}; use one of: {' '.join(dirs)}"
         )
     touched = _touched(dirs, only=only, repos=repos)
     if stacked is not None and stacked.repo not in touched:
@@ -252,11 +256,11 @@ def _base_branch(
 
 
 def _touched(
-    dirs: tuple[str, ...], *, only: str | None, repos: Sequence[str] | None
+    dirs: tuple[str, ...], *, only: tuple[str, ...], repos: Sequence[str] | None
 ) -> tuple[str, ...]:
-    """The repos a task touches, in ``hub.json`` order: ``only``, ``repos``, or every one."""
-    if only is not None:
-        return (only,)
+    """The repos a task touches, in ``hub.json`` order: ``only``'s, ``repos``, or every one."""
+    if only:
+        return tuple(repo for repo in dirs if repo in only)
     if repos is None:
         return dirs
     unknown = [repo for repo in dict.fromkeys(repos) if repo not in dirs]

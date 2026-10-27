@@ -174,7 +174,7 @@ report instead of block for up to 12 h. Proof: integration tests, characterizati
 
 | Hub item(s) | Becomes | Note |
 |---|---|---|
-| `worktree.sh`, `make worktree`, `make worktree-remove` | `./hub worktree <name> [--only REPO] [--remove]` | keeps the per-repo setup/teardown scripts |
+| `worktree.sh`, `make worktree`, `make worktree-remove` | `./hub worktree <name> [--only REPO]... [--remove]` | keeps the per-repo setup/teardown scripts |
 | — | `./hub start ISSUE [--repo DIR]… [--no-agent]` | issue to worktrees, started state and a session ([hub-start.md](hub-start.md)) |
 | — | `./hub setup [--yes]` | onboards a machine ([hub-setup.md](hub-setup.md)) |
 | `brief.py`, `make brain-brief` | `./hub brief [--no-network]` | SessionStart calls it (Hooks) |

@@ -213,6 +213,16 @@ class TestUsage:
         assert_refused(result, "unknown repo in --only: nope; use one of: demo-api demo-web")
         assert_untouched(demo_workspace)
 
+    def test_refuses_when_one_of_several_only_unknown(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        result = run_command(
+            demo_workspace.hub, "worktree", NAME, "--only", "demo-api", "--only", "nope"
+        )
+
+        assert_refused(result, "unknown repo in --only: nope; use one of: demo-api demo-web")
+        assert_untouched(demo_workspace)
+
     def test_exits_two_when_not_a_hub(
         self, demo_workspace: Workspace, run_command: CommandRunner
     ) -> None:
@@ -342,6 +352,43 @@ class TestCreate:
         web = demo_workspace.ws / "demo-web"
         assert not (web / ".git" / "FETCH_HEAD").exists()
         assert not (web / ".claude").exists()
+
+    def test_touches_each_repo_named_when_only_given_more_than_once(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        # A ticket that owns several repos makes all its worktrees in one call (AGH-588).
+        result = run_command(
+            demo_workspace.hub, "worktree", NAME, "--only", "demo-web", "--only", "demo-api"
+        )
+
+        assert result.exit_code == 0, result.output
+        assert result.stdout.splitlines() == [
+            f"created  {demo_workspace.worktree('demo-api', NAME)} ({BRANCH} from origin/trunk)",
+            f"created  {demo_workspace.worktree('demo-web', NAME)} ({BRANCH} from origin/trunk)",
+            *summary(
+                NAME,
+                "demo-api demo-web",
+                f"remove   : ./hub worktree --remove {NAME} --only demo-api --only demo-web",
+            ),
+        ]
+
+    def test_removes_each_repo_named_when_only_given_more_than_once(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        made = run_command(demo_workspace.hub, "worktree", NAME)
+        assert made.exit_code == 0, made.output
+
+        result = run_command(
+            demo_workspace.hub,
+            "worktree",
+            "--remove",
+            NAME,
+            *("--only", "demo-api", "--only", "demo-api", "--only", "demo-web"),
+        )
+
+        assert result.exit_code == 0, result.output
+        assert not demo_workspace.worktree("demo-api", NAME).exists()
+        assert not demo_workspace.worktree("demo-web", NAME).exists()
 
     def test_starts_each_repo_from_its_branch_when_repo_sets_one(
         self, demo_workspace: Workspace, run_command: CommandRunner
