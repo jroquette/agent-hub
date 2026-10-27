@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from click import unstyle
 from typer.testing import CliRunner, Result
 
 from agent_hub.cli.env_files import document_bytes
@@ -51,6 +52,11 @@ def hub(tmp_path: Path) -> Path:
 
 def run_repo(root: Path, *args: str) -> Result:
     return CliRunner().invoke(app, ["repo", *args], env={"AGENT_HUB_ROOT": str(root)}, input="")
+
+
+def usage_words(result: Result) -> str:
+    """The usage box's words alone: CI colors it and may wrap the message."""
+    return " ".join(unstyle(result.stderr).replace("│", " ").split())
 
 
 def test_lists_repos_when_hub_has_two(hub: Path) -> None:
@@ -252,7 +258,7 @@ def test_exits_two_when_set_has_no_option(hub: Path) -> None:
     result = run_repo(hub, "set", "demo-web")
 
     assert (result.exit_code, result.stdout) == (2, ""), result.output
-    assert "nothing to change" in result.stderr
+    assert "nothing to change" in usage_words(result)
     assert snapshot(hub) == before
 
 
@@ -262,7 +268,7 @@ def test_exits_two_when_set_given_dir(hub: Path) -> None:
     result = run_repo(hub, "set", "demo-web", "--dir", "x")
 
     assert (result.exit_code, result.stdout) == (2, ""), result.output
-    assert "--dir" in result.stderr
+    assert "No such option: --dir" in usage_words(result)
     assert snapshot(hub) == before
 
 
