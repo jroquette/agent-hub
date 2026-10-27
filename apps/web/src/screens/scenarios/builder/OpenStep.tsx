@@ -5,7 +5,7 @@ import type { ScenarioAction } from "../queries";
 import { pace } from "../story";
 import { ValueToken, tokenOf } from "./CardParts";
 import { looksLikeJson, parseLoose, stringifyLoose } from "./looseJson";
-import { useServiceField, type ServiceOption } from "./ServicePicker";
+import { kindWordsOf, useServiceField, type ServiceOption } from "./ServicePicker";
 import { ActionFiles } from "./StepScript";
 import { conditionWords, shown, text, type BuilderNode, type Json } from "./model";
 
@@ -201,28 +201,15 @@ export function OpenStep({
     </span>
   );
 
-  const serviceRow = (name: string, value: string, required: boolean, about: string | null) => (
+  // The note follows what is picked (its kind and address), never the action's own words about
+  // one kind of service, which no longer hold once another kind is chosen.
+  const serviceRow = (name: string, value: string, required: boolean) => (
     <ServiceRow
       key={name}
       name={name}
       value={value}
-      noteText={[name, required ? "Required" : null, about].filter(Boolean).join(" · ")}
-      note={
-        <>
-          <span className="st-open-mono">{name}</span>
-          {value === "" && required ? (
-            <>
-              {" · "}
-              <Needs />
-            </>
-          ) : required ? (
-            " · Required"
-          ) : (
-            ""
-          )}
-          {about ? ` · ${about}` : ""}
-        </>
-      }
+      required={required}
+      needs={<Needs />}
       options={sources?.services ?? []}
       environment={env?.name ?? null}
       onPick={(picked) => {
@@ -351,10 +338,7 @@ export function OpenStep({
             ) : null
           }
         >
-          {onSet &&
-            unsetServices.map((input) =>
-              serviceRow(input.name, "", input.required, input.description ?? null),
-            )}
+          {onSet && unsetServices.map((input) => serviceRow(input.name, "", input.required))}
           {missing.map((input) => (
             <Row
               key={input.name}
@@ -382,7 +366,7 @@ export function OpenStep({
           {params.map(([name, value]) => {
             const spec = specOf(name);
             if (onSet && isService(name) && typeof value === "string")
-              return serviceRow(name, value, spec?.required ?? false, spec?.description ?? null);
+              return serviceRow(name, value, spec?.required ?? false);
             return (
               <Row
                 key={name}
@@ -555,26 +539,54 @@ function Row({
 function ServiceRow({
   name,
   value,
-  note,
-  noteText,
+  required,
+  needs,
   options,
   environment,
   onPick,
 }: {
   name: string;
   value: string;
-  note: ReactNode;
-  noteText: string;
+  required: boolean;
+  /** How a missing value is said (icon and words). */
+  needs: ReactNode;
   options: readonly ServiceOption[];
   environment: string | null;
   onPick: (value: string) => void;
 }) {
-  const { kindSelect, field } = useServiceField({
+  const { kindSelect, field, picked, kindWords } = useServiceField({
     label: name,
     value,
     options,
     environment,
     onPick,
   });
+  const where = environment ? ` in ${environment}` : "";
+  const about =
+    picked !== null
+      ? [kindWordsOf(picked.kind), picked.description, picked.address ?? `no address${where}`]
+          .filter(Boolean)
+          .join(" · ")
+      : value === ""
+        ? `Choose ${kindWords ? `a ${kindWords.toLowerCase()}` : "a service"}${where}`
+        : null;
+  const empty = value === "" && required;
+  const noteText = [name, empty ? "Needs a value" : required ? "Required" : null, about]
+    .filter(Boolean)
+    .join(" · ");
+  const note = (
+    <>
+      <span className="st-open-mono">{name}</span>
+      {empty ? (
+        <>
+          {" · "}
+          {needs}
+        </>
+      ) : required ? (
+        " · Required"
+      ) : null}
+      {about ? ` · ${about}` : ""}
+    </>
+  );
   return <Row label={kindSelect} note={note} noteText={noteText} value={field} />;
 }

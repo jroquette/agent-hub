@@ -2660,7 +2660,10 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const kind = within(fetch).getByRole("combobox", { name: "Kind of service for target" });
     expect(kind).toHaveValue("sqs");
     // The kind takes the input name's place; the name moves to the note under it.
-    expect(kind.closest(".st-g-row")).toHaveTextContent("target · Required · Where it is sent.");
+    // The note follows the service picked: its kind and its address, not the action's words.
+    expect(kind.closest(".st-g-row")).toHaveTextContent(
+      "target · Required · Queue (SQS) · payments-queue-personal",
+    );
     // A kind chosen filters the list.
     await user.selectOptions(kind, "database");
     await user.click(within(fetch).getByRole("button", { name: "target: payments-queue" }));
