@@ -68,6 +68,7 @@ IMPLEMENT_FIXTURES = (
     "implement-plan-moved-still-plan",
     "implement-pr-failure",
     "implement-rounds-exhausted",
+    "implement-several-repos",
     "implement-superseded-in-last-pass",
     "implement-superseded-then-discoveries",
 )
@@ -207,13 +208,13 @@ def test_reaches_the_built_in_fixtures_when_implement_tested_from_a_hub_with_a_s
     assert (demo_workspace.hub / "workflows/sdlc/deliver.yaml").is_file()
     assert checks.stdout == "preflight-check: valid (10 nodes in 9 layers)\n", checks.output
     assert passes.stdout == "ticket-pass: valid (14 nodes in 13 layers)\n", passes.output
-    assert validated.stdout == "implement: valid (51 nodes in 48 layers)\n", validated.output
+    assert validated.stdout == "implement: valid (52 nodes in 48 layers)\n", validated.output
     assert preflight.stdout == "preflight: valid (12 nodes in 11 layers)\n", preflight.output
     assert tested.exit_code == 0, tested.output
     for fixture in (*IMPLEMENT_FIXTURES, *PREFLIGHT_FIXTURES):
         assert f"<builtin>/sdlc/fixtures/{fixture}.yaml: ok" in tested.stdout
     assert "warning" not in tested.stdout
-    assert tested.stdout.endswith("24 fixtures: 24 passed, 0 failed\n")
+    assert tested.stdout.endswith("25 fixtures: 25 passed, 0 failed\n")
 
 
 def test_captures_a_decline_note_when_the_owner_answers_the_plan_change_gate() -> None:

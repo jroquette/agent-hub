@@ -1,0 +1,15 @@
+# A ticket that owns several repos: ticket-brief prints no single repo, so the run stops
+# before any preflight, worktree or plan and names /implement, which conducts such a ticket.
+workflow: implement
+inputs:
+  feature: demo-flow
+  issue: DEM-10
+  issue_text: "```text\nid: DEM-10\n```"
+stubs:
+  context:
+    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-10/brief.md, hub: /ws/hub, repo: '',
+      commit: '', repos: [{repo: demo-api, commit: 0a1b2c3d4e, slices: [BE-1]}, {repo: demo-web,
+      commit: 1b2c3d4e5f, slices: [FE-1]}]}
+expect: {status: cancelled}
+# The halt is declared first in its layer: not even the pending decision is read.
+reached: [context, several]
