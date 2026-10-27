@@ -548,8 +548,8 @@ export function PlanSummary({
       )}
       {plan.production && (
         <Banner tone="info" boxed live={false}>
-          {plan.environment} is a production environment: writes and destroys are denied there,
-          and breakpoints are off.
+          {plan.environment} is a production environment: writes and destroys are denied there, and
+          breakpoints are off.
         </Banner>
       )}
       {plan.problems.map((problem) => (

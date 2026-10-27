@@ -226,7 +226,9 @@ export function useShownRun({
       : (data.steps.find((step) => step.status === "running")?.key ?? null);
 
   const where = ref.environment ? ` in ${ref.environment}` : "";
-  const modeWords = ref.mode ? ` · ${ref.mode === "regression" ? "Regression" : "Interactive"}` : "";
+  const modeWords = ref.mode
+    ? ` · ${ref.mode === "regression" ? "Regression" : "Interactive"}`
+    : "";
   const status = isLive
     ? mine.length > 0
       ? "waiting"
@@ -238,8 +240,8 @@ export function useShownRun({
   if (isLive && mine.length > 0) {
     sentence = (
       <>
-        waits for you{current ? ` at ${scenario.version === 2 ? "block" : "step"} ${current}` : ""}
-        : {mine[0]?.gate.gate_kind === "investigation" ? "an investigation" : "an approval"}
+        waits for you{current ? ` at ${scenario.version === 2 ? "block" : "step"} ${current}` : ""}:{" "}
+        {mine[0]?.gate.gate_kind === "investigation" ? "an investigation" : "an approval"}
       </>
     );
   } else if (pause !== null) {

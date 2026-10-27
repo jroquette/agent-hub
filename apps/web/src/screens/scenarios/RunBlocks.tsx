@@ -46,14 +46,7 @@ function depthOf(address: string): number {
 /** A block's state in a run; `waiting` is a gate that waits for a person, `pending` a block
  * of its own nodes not started yet. */
 export type BlockState =
-  | "paused"
-  | "running"
-  | "done"
-  | "failed"
-  | "skipped"
-  | "waiting"
-  | "pending"
-  | null;
+  "paused" | "running" | "done" | "failed" | "skipped" | "waiting" | "pending" | null;
 type TimelineLine = ScenarioRunDetail["timeline"][number];
 
 /** Each block's last start or end line of its own, in one pass over the timeline (a gate's

@@ -364,9 +364,7 @@ export function StepList(props: StepListProps) {
   const [refocus, setRefocus] = useState<{ id: string } | null>(null);
   useEffect(() => {
     if (refocus === null) return;
-    listRef.current
-      ?.querySelector<HTMLElement>(`[data-row="${CSS.escape(refocus.id)}"]`)
-      ?.focus();
+    listRef.current?.querySelector<HTMLElement>(`[data-row="${CSS.escape(refocus.id)}"]`)?.focus();
   }, [refocus, listRef]);
   const order = ["__start__", ...rowIds(items)];
   const current = focused && order.includes(focused) ? focused : (selected ?? "__start__");
@@ -410,7 +408,13 @@ export function StepList(props: StepListProps) {
       setEditing({ id, field: "title" });
       return;
     }
-    if (event.key === "b" && !event.metaKey && !event.ctrlKey && breakpoints && id !== "__start__") {
+    if (
+      event.key === "b" &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      breakpoints &&
+      id !== "__start__"
+    ) {
       event.preventDefault();
       breakpoints.toggle(id);
       return;
@@ -853,15 +857,21 @@ export function StepList(props: StepListProps) {
         : undefined;
     // Line 2 with its values as chips: a click edits one in place (the row is selected).
     let detail: ReactNode = lines.detail;
-    const values = node.type === "action" || node.type === "expect" || node.type === "include"
-      ? ownValues(node, action)
-      : [];
+    const values =
+      node.type === "action" || node.type === "expect" || node.type === "include"
+        ? ownValues(node, action)
+        : [];
     const timed = node.type === "expect" && text(node.every) !== "" && text(node.timeout) !== "";
     if (editable && selected === id && (values.length > 0 || timed)) {
       const given = record(node.with);
       const parts: ReactNode[] = [];
       const ref = text(node.action);
-      if (ref) parts.push(<span key="ref" className="st-mono">{action?.name ?? ref}</span>);
+      if (ref)
+        parts.push(
+          <span key="ref" className="st-mono">
+            {action?.name ?? ref}
+          </span>,
+        );
       const named = typeof node.description === "string" && node.description.trim() !== "";
       if (node.type === "expect" && named && text(node.until_when)) {
         parts.push(<span key="until">until {conditionWords(text(node.until_when))}</span>);

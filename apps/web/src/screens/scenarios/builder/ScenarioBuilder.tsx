@@ -1311,8 +1311,7 @@ export function ScenarioBuilder({
   const [marked, setMarked] = useState<readonly string[]>([]);
   const runRecord = shownRun.record;
   const setRunBreakpoints = useSetBreakpoints(shownRun.runId ?? "");
-  const liveBreakpoints =
-    shownRun.live && runRecord !== null && shownRun.production === false;
+  const liveBreakpoints = shownRun.live && runRecord !== null && shownRun.production === false;
   const debuggable = tree && (liveBreakpoints || (!shownRun.live && !onProduction));
   const runSet: readonly string[] = liveBreakpoints
     ? ((setRunBreakpoints.isPending ? setRunBreakpoints.variables : undefined) ??
@@ -1330,9 +1329,10 @@ export function ScenarioBuilder({
       setMarked([...wanted]);
     }
   };
-  const breakpoints = tree && !onProduction
-    ? fresh.blocks.map((block) => block.address).filter((address) => marked.includes(address))
-    : [];
+  const breakpoints =
+    tree && !onProduction
+      ? fresh.blocks.map((block) => block.address).filter((address) => marked.includes(address))
+      : [];
   const setShownParam = (runId: string | null) => {
     setParams(
       (current) => {
@@ -1647,8 +1647,7 @@ export function ScenarioBuilder({
               </span>
             ) : (
               <>
-                <Icon name="circle-check" size="sm" style={{ color: "var(--done)" }} /> No
-                problems
+                <Icon name="circle-check" size="sm" style={{ color: "var(--done)" }} /> No problems
                 {drafts > 0 && (
                   <span className="ah-muted">
                     {" "}
@@ -1805,7 +1804,10 @@ export function ScenarioBuilder({
               ))}
             </select>
           </label>
-          <span className="sb-env" title={`${MODE_LINE[mode]} Blocks that ask still pause for your approval.`}>
+          <span
+            className="sb-env"
+            title={`${MODE_LINE[mode]} Blocks that ask still pause for your approval.`}
+          >
             <span className="ah-small ah-muted">Scenario run mode</span>
             <SegmentedControl
               label="Scenario run mode"
@@ -1922,12 +1924,7 @@ export function ScenarioBuilder({
               }}
             />
           ) : (
-            <Button
-              variant="default"
-              icon="play"
-              disabled
-              title={startBlocked ?? undefined}
-            >
+            <Button variant="default" icon="play" disabled title={startBlocked ?? undefined}>
               Start scenario run
             </Button>
           )}
@@ -1938,15 +1935,13 @@ export function ScenarioBuilder({
           data-tone={judged === null ? undefined : judged.ok ? "ok" : "bad"}
         >
           {planner.isPending ? (
-            <>Planning in {environment}… each {noun}&apos;s script runs in plan mode.</>
+            <>
+              Planning in {environment}… each {noun}&apos;s script runs in plan mode.
+            </>
           ) : judged !== null ? (
             <>
               <Icon name={judged.ok ? "circle-check" : "octagon-x"} size="sm" />
-              {judged.drafts ? (
-                <a href="#before-you-start">{judged.text}</a>
-              ) : (
-                judged.text
-              )}
+              {judged.drafts ? <a href="#before-you-start">{judged.text}</a> : judged.text}
               {judged.ok && inProgress && " · a scenario run of it is in progress"}
             </>
           ) : planner.isError ? (
@@ -2082,11 +2077,7 @@ export function ScenarioBuilder({
           file.
         </Banner>
       )}
-      <div
-        className="sb-body"
-        data-panel="open"
-        ref={bodyRef}
-      >
+      <div className="sb-body" data-panel="open" ref={bodyRef}>
         <aside className="sb-left" aria-label="Blocks, variables and actions">
           <Tabs
             label="Left column"
