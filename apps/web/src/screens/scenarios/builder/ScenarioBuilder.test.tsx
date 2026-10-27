@@ -2556,14 +2556,14 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.click(fetch);
     const body = within(fetch).getByLabelText("body, as JSON");
     expect(body.textContent).toContain('"event_type": "FETCH_ORDERS",\n');
-    // The bare reference reads as a scenario variable, as Postman writes one.
-    expect(within(body).getByTitle("Scenario variable external_ref")).toHaveTextContent(
-      "{{external_ref}}",
+    // The bare reference reads as the builder's token, as on the closed row.
+    expect(within(body).getByTitle("Scenario input external_ref")).toHaveTextContent(
+      "external_ref",
     );
-    // The open step reads as an operation: its effect as the method, then its action.
-    expect(within(fetch).getByText("WRITE")).toBeInTheDocument();
-    expect(within(fetch).getByRole("region", { name: "Variables" })).toHaveTextContent(
-      "{{external_ref}}scenario",
-    );
+    // The open step reads in order: what it runs, then the values it uses and where they come from.
+    expect(within(fetch).getByText("Runs")).toBeInTheDocument();
+    expect(
+      within(fetch).getByText("scenario input · asked when the scenario run starts"),
+    ).toBeInTheDocument();
   });
 });

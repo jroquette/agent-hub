@@ -718,7 +718,8 @@ export function StepList(props: StepListProps) {
         data-current={isCurrent ? "true" : undefined}
         data-run={state !== null ? "true" : undefined}
         aria-current={isCurrent ? "step" : undefined}
-        title={detailText ? `${titleText}\n${detailText}` : titleText}
+        // Open, the row shows it all: no tooltip over the open part.
+        title={extra.open ? undefined : detailText ? `${titleText}\n${detailText}` : titleText}
         onClick={() => {
           setFocused(id);
           onSelect(id);
@@ -765,7 +766,6 @@ export function StepList(props: StepListProps) {
           {detail && <span className="st-detail">{detail}</span>}
           {extra.tech && <span className="st-tech">{extra.tech}</span>}
           {extra.news}
-          {extra.open}
         </span>
         <span className="st-right">
           {suggested?.has(id) && <span className="st-chip">Suggested</span>}
@@ -773,6 +773,7 @@ export function StepList(props: StepListProps) {
           {state !== null && <span className="st-run-state">{state}</span>}
           {quick}
         </span>
+        {extra.open}
       </div>
     );
   };

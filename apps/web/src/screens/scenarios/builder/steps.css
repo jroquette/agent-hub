@@ -1120,7 +1120,7 @@
   white-space: normal;
 }
 
-/* The selected block, open in place: what it does, what it runs, what it sends. */
+/* The selected block, open in place: part of the row, under the title, as wide as the row. */
 .st-row[data-selected="true"] {
   align-items: start;
 }
@@ -1130,266 +1130,168 @@
   margin-top: 2px;
 }
 .st-open {
+  grid-column: 4 / -1;
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
   margin-top: var(--space-2);
   padding-top: var(--space-3);
   border-top: 1px solid var(--border);
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--text);
   cursor: default;
 }
 .st-open-about {
   margin: 0;
-  font-size: 13px;
-  line-height: 20px;
-  color: var(--text);
 }
-.st-open-grid {
+.st-open-dl {
   display: grid;
-  grid-template-columns: minmax(120px, 200px) minmax(0, 1fr);
-  gap: var(--space-2) var(--space-4);
-  align-items: start;
+  grid-template-columns: 72px minmax(0, 1fr);
+  column-gap: var(--space-4);
+  row-gap: var(--space-4);
+  margin: 0;
 }
 .st-open-pair {
   display: contents;
 }
-.st-open-label {
+.st-open-dl dt {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  padding-top: 2px;
   font-size: 12px;
-  line-height: 18px;
+  line-height: 16px;
+  font-weight: 500;
   color: var(--text-muted);
 }
-.st-open-hint {
-  font-size: 11px;
-  line-height: 15px;
+.st-open-label-2 {
+  font-family: var(--font-mono);
+  font-weight: 400;
   color: var(--text-subtle);
 }
-.st-open-line {
-  display: inline-flex;
-  align-items: center;
+.st-open-dl dd {
+  min-width: 0;
+  margin: 0;
+}
+.st-open-runs {
+  display: flex;
+  align-items: baseline;
   flex-wrap: wrap;
   gap: var(--space-2);
-  min-width: 0;
-  font-size: 13px;
-  line-height: 20px;
 }
-.st-open-wrap {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+.st-open-mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.st-open-strong {
+  color: var(--text);
+}
+.st-open-quiet {
+  color: var(--text-subtle);
+}
+
+/* With: the step's values (set here), then the scenario's (from the scenario). */
+.st-open-with {
+  display: grid;
+  grid-template-columns: minmax(88px, max-content) minmax(0, 1fr) max-content;
+  column-gap: var(--space-4);
+  row-gap: var(--space-1);
+  align-items: baseline;
+}
+.st-open-param {
+  display: contents;
+}
+.st-open-name {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
 }
 .st-open-value {
-  font-family: var(--font-mono);
-  font-size: 12px;
+  min-width: 0;
 }
-.st-json {
-  margin: 0;
-  width: 100%;
+.st-open-src {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+  white-space: nowrap;
+}
+.st-open-desc {
+  grid-column: 2 / -1;
+  margin-bottom: var(--space-1);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-open-sub {
+  grid-column: 1 / -1;
+  margin-top: var(--space-2);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+}
+.st-open-inherited .st-open-name,
+.st-open-inherited .st-open-value {
+  color: var(--text-muted);
+}
+@container (width < 640px) {
+  .st-open-dl {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+  .st-open-with {
+    grid-template-columns: minmax(88px, max-content) minmax(0, 1fr);
+  }
+  .st-open-with > .st-open-param > .st-open-src {
+    grid-column: 2;
+  }
+}
+
+/* Body: the app's code well, the copy button in its corner. */
+.st-open-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.st-open-json {
   max-height: 320px;
-  overflow: auto;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-sunken);
+  line-height: 20px;
+  white-space: pre;
+}
+.st-open-copy {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+}
+.st-open-uses {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) minmax(0, 1fr);
+  column-gap: var(--space-4);
+  row-gap: var(--space-1);
+  align-items: baseline;
+}
+.st-open-use {
+  display: contents;
+}
+
+/* An editable value: one line, a quiet dashed edge that says it can be changed. */
+.st-chip-edit {
+  min-height: 24px;
+  max-width: 100%;
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 20px;
-  color: var(--text);
-  white-space: pre;
-  cursor: text;
-}
-.st-json .bk-token {
   white-space: nowrap;
+  border-color: var(--border-control);
 }
-
-/* The open step as an API operation (Swagger / Postman): method, action, parameters, body. */
-.st-op {
-  --op: var(--idle);
-  --op-soft: var(--idle-soft);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  margin-top: var(--space-2);
-  padding: var(--space-3);
-  border: 1px solid var(--op);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  color: var(--text);
-  cursor: default;
-}
-.st-op[data-tone="read"] {
-  --op: var(--live);
-  --op-soft: var(--live-soft);
-}
-.st-op[data-tone="write"] {
-  --op: var(--done);
-  --op-soft: var(--done-soft);
-}
-.st-op[data-tone="destroy"] {
-  --op: var(--failed);
-  --op-soft: var(--failed-soft);
-}
-.st-op-head {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin: calc(var(--space-3) * -1) calc(var(--space-3) * -1) 0;
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--op);
-  border-radius: var(--radius-md) var(--radius-md) 0 0;
-  background: var(--op-soft);
-}
-.st-op-method {
-  min-width: 64px;
-  padding: 2px 8px;
-  border-radius: var(--radius-sm);
-  background: var(--op);
-  color: var(--text-inverse);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 700;
-  text-align: center;
-}
-.st-op-path {
-  font-family: var(--font-mono);
-  font-size: 14px;
-  font-weight: 600;
-}
-.st-op-tag {
-  padding: 0 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-size: 11px;
-  color: var(--text-muted);
-}
-.st-op-summary {
-  flex-basis: 100%;
-  font-size: 13px;
-  color: var(--text);
-}
-.st-op-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.st-op-title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin: 0;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-}
-.st-op-name {
-  text-transform: none;
-  letter-spacing: 0;
-  color: var(--text);
-}
-.st-op-type {
-  padding: 0 6px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-sunken);
-  font-size: 11px;
-  font-weight: 400;
-  text-transform: none;
-  letter-spacing: 0;
-}
-.st-op-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-.st-op-table th {
-  padding: 4px 8px 4px 0;
-  font-size: 11px;
-  font-weight: 600;
-  text-align: left;
-  color: var(--text-subtle);
-}
-.st-op-table td {
-  padding: 6px 8px 6px 0;
-  border-top: 1px solid var(--border);
-  vertical-align: top;
-}
-.st-op-inherited td {
-  color: var(--text-muted);
-}
-.st-op-desc {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-.st-op-req {
-  margin-left: 2px;
-  color: var(--failed);
-}
-.st-op-poll {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 13px;
-}
-.st-op-vars {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.st-op-vars li {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-/* Variables as Postman writes them: {{name}}, global (scenario) or local (kept). */
-.st-var {
-  padding: 0 4px;
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  white-space: nowrap;
-}
-.st-var[data-scope="global"] {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.st-var[data-scope="local"] {
-  background: var(--guard-soft);
-  color: var(--guard);
-}
-.st-src {
-  padding: 0 6px;
-  border-radius: var(--radius-full);
-  font-size: 11px;
-  white-space: nowrap;
-  background: var(--surface-sunken);
-  color: var(--text-muted);
-}
-.st-src[data-src="global"] {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.st-src[data-src="local"] {
-  background: var(--guard-soft);
-  color: var(--guard);
-}
-.st-src[data-src="env"] {
-  background: var(--done-soft);
-  color: var(--done);
-}
-.st-json-key {
-  color: var(--text-muted);
-}
-.st-json-string {
-  color: var(--done);
+.st-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
