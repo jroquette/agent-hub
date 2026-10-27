@@ -120,28 +120,10 @@ function JsonText({ source }: { source: string }) {
   return <>{parts}</>;
 }
 
-/** Where a value the step does not set comes from, with its icon. */
-function Source({
-  icon,
-  children,
-}: {
-  icon?: Parameters<typeof Icon>[0]["name"];
-  children: ReactNode;
-}) {
-  return (
-    <span className="st-open-src">
-      {icon && <Icon name={icon} size="sm" />}
-      {children}
-    </span>
-  );
-}
-
 export function OpenStep({ node, action, sources, values, editor, onEdit }: OpenStepProps) {
-  const given = record(node.with);
   const params = values.filter(([, value]) => !isBody(value));
   const bodies = values.filter(([, value]) => isBody(value));
   const env = sources?.environment ?? null;
-  const inherited = (action?.inputs ?? []).filter((input) => !(input.name in given));
   const every = text(node.every);
   const timeout = text(node.timeout);
   const keeps = Object.entries(record(node.capture));
@@ -250,36 +232,26 @@ export function OpenStep({ node, action, sources, values, editor, onEdit }: Open
         </Group>
       )}
 
-      {inherited.length > 0 && (
-        <Group title="From the scenario">
-          {inherited.map((input) => {
-            const fromEnv = env !== null && input.name in env.values;
-            const isInput = sources?.inputs.includes(input.name) ?? false;
+      {uses.size > 0 && (
+        <Group title="Variables">
+          {[...uses.entries()].map(([ref, name]) => {
+            const scenario = ref.startsWith("$INPUTS.");
+            const envValue = scenario && env !== null ? env.values[name] : undefined;
+            const keptBy = sources?.kept.find((item) => item.name === name)?.number;
             return (
               <Row
-                key={input.name}
-                quiet
-                label={<span className="st-open-mono">{input.name}</span>}
-                note={input.description ?? undefined}
+                key={ref}
+                label={<ValueToken value={ref} />}
                 value={
-                  fromEnv ? (
-                    <span className="st-open-mono">{env.values[input.name]}</span>
-                  ) : input.default !== undefined ? (
-                    <span className="st-open-mono">{shown(input.default as Json)}</span>
-                  ) : (
-                    <ValueToken value={`$INPUTS.${input.name}`} />
-                  )
-                }
-                source={
-                  fromEnv ? (
-                    <Source icon="server">environment {env.name}</Source>
-                  ) : input.default !== undefined ? (
-                    <Source>default</Source>
-                  ) : (
-                    <Source icon="flag">
-                      {isInput ? "scenario input · asked at start" : "from the run"}
-                    </Source>
-                  )
+                  <span className="st-open-quiet">
+                    {scenario
+                      ? envValue !== undefined
+                        ? `scenario input · ${envValue} from environment ${env?.name ?? ""}`
+                        : "scenario input · asked when the scenario run starts"
+                      : keptBy
+                        ? `kept by ${keptBy}`
+                        : "kept by an earlier step"}
+                  </span>
                 }
               />
             );
@@ -309,33 +281,6 @@ export function OpenStep({ node, action, sources, values, editor, onEdit }: Open
           </section>
         );
       })}
-
-      {uses.size > 0 && (
-        <Group title="Uses">
-          {[...uses.entries()].map(([ref, name]) => {
-            const scenario = ref.startsWith("$INPUTS.");
-            const envValue = scenario && env !== null ? env.values[name] : undefined;
-            const keptBy = sources?.kept.find((item) => item.name === name)?.number;
-            return (
-              <Row
-                key={ref}
-                label={<ValueToken value={ref} />}
-                value={
-                  <span className="st-open-quiet">
-                    {scenario
-                      ? envValue !== undefined
-                        ? `scenario input · ${envValue} from environment ${env?.name ?? ""}`
-                        : "scenario input · asked when the scenario run starts"
-                      : keptBy
-                        ? `kept by ${keptBy}`
-                        : "kept by an earlier step"}
-                  </span>
-                }
-              />
-            );
-          })}
-        </Group>
-      )}
 
       {keeps.length > 0 && (
         <Group title="Keeps">

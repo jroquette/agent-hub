@@ -1134,7 +1134,8 @@
   margin-top: 2px;
 }
 .st-open {
-  grid-column: 4 / -1;
+  /* From the row's left edge: the open part uses the whole width of the row. */
+  grid-column: 1 / -1;
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
