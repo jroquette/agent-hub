@@ -36,13 +36,14 @@ from agent_hub.core.features.feature_reviews import (
     names_pull_request,
 )
 from agent_hub.core.features.feature_view import EvalRecord, StepState, Verdict
-from agent_hub.core.features.output_models import PreflightRecord, PreflightRun
+from agent_hub.core.features.output_models import PreflightRun
 from agent_hub.core.features.ticket_planning import DONE_TYPES
 from agent_hub.core.features.ticket_records import (
     FIX_IT,
     MAX_TICKET_FOLDERS,
     NO_REQUESTS,
     TICKETS_FOLDER,
+    AnyPreflightRecord,
     ChangeRequests,
     OutcomeFile,
     TicketFiles,
@@ -86,7 +87,7 @@ class TicketEvidence:
     evals: Mapping[str, tuple[EvalRecord, ...]]
     unread: str | None
     files: Mapping[str, TicketFiles]
-    preflights: Mapping[str, PreflightRecord | str]
+    preflights: Mapping[str, AnyPreflightRecord | str]
     tickets_unread: str | None
     requests: ChangeRequests
     approved: int | None

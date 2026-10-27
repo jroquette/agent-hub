@@ -31,7 +31,13 @@ from agent_hub.core.features.feature_evals import (
 from agent_hub.core.features.feature_record import KEY_PATTERN
 from agent_hub.core.features.feature_reviews import names_pull_request
 from agent_hub.core.features.feature_view import ChangeDecisionView, ChangeRequestView
-from agent_hub.core.features.output_models import OutputProblem, PreflightRecord, PreflightRun
+from agent_hub.core.features.output_models import (
+    PREFLIGHT_V2_SCHEMA_ID,
+    OutputProblem,
+    PreflightRecord,
+    PreflightRecordV2,
+    PreflightRun,
+)
 from agent_hub.core.features.output_shape import parse_document, shape_problems
 from agent_hub.core.hub_config.problems import one_line
 
@@ -204,7 +210,11 @@ def request_view(request: ChangeRequest, *, slug: str, body: bool = False) -> Ch
     )
 
 
-def preflight_record(read: bytes | str | None, *, folder: str) -> PreflightRecord | str | None:
+# A ticket's preflight record: schema 1, or 2 once it ran over several repos (AGH-591).
+type AnyPreflightRecord = PreflightRecord | PreflightRecordV2
+
+
+def preflight_record(read: bytes | str | None, *, folder: str) -> AnyPreflightRecord | str | None:
     """The preflight record of ``tickets/<folder>/``; its one-line problem when it cannot be
     read, is malformed (the first problem, at its JSON path) or names another ticket (ASCII case
     ignored); None when absent."""
@@ -215,8 +225,11 @@ def preflight_record(read: bytes | str | None, *, folder: str) -> PreflightRecor
     document = parse_document(read)
     if isinstance(document, OutputProblem):
         return _unreadable(PREFLIGHT_FILE, f"{document.path}: {document.message}")
+    model = (
+        PreflightRecordV2 if document.get("schema") == PREFLIGHT_V2_SCHEMA_ID else PreflightRecord
+    )
     try:
-        record = PreflightRecord.model_validate(document)
+        record: AnyPreflightRecord = model.model_validate(document)
     except ValidationError as error:
         first = shape_problems(error)[0]
         return _unreadable(PREFLIGHT_FILE, f"{first.path}: {first.message}")
@@ -268,7 +281,7 @@ def recorded_outcomes(files: Iterable[OutcomeFile]) -> dict[str, TicketOutcome |
 
 
 def already_read(
-    record: PreflightRecord | None, *, names: Iterable[str], merged_at: datetime
+    record: AnyPreflightRecord | None, *, names: Iterable[str], merged_at: datetime
 ) -> PreflightRun | None:
     """The latest preflight run that read a blocker's outcome: one that ran at or after the
     blocker's ``merged_at`` and lists the blocker (one of ``names``, any case) in

@@ -467,6 +467,62 @@ class TestTicketRepo:
         assert line == "hub step ticket-brief: the ticket's repo demo-nope is not in hub.json"
 
 
+class TestPreflightPerRepo:
+    """AGH-591: one preflight over every repo of a ticket that owns several."""
+
+    @pytest.fixture
+    def several(self, hub: Hub) -> Hub:
+        record = json.loads((hub.feature / "features.json").read_text())
+        record["tickets"].append(
+            {
+                "key": "T4",
+                "id": "DEM-10",
+                "repos": [{"repo": "demo-api"}, {"repo": "demo-web"}],
+                "blocked_by": [],
+            }
+        )
+        (hub.feature / "features.json").write_text(json.dumps(record))
+        return hub
+
+    def test_records_main_in_each_repo_when_the_ticket_owns_several(self, several: Hub) -> None:
+        named = ("--feature", "demo-flow", "--ticket", "DEM-10")
+        commits = ("--commit", "demo-web=7b2c3d4e", "--commit", "demo-api=4e1a9c2d")
+
+        output = several.ok("preflight", *named, *FOUND[:4], *commits)
+
+        document = json.loads((several.root / output["path"]).read_bytes())
+        [run] = document["runs"]
+        assert document["schema"] == "agent-hub/preflight/2"
+        # In the ticket's contract order, the first repo's also as the run's commit.
+        assert run["commits"] == [
+            {"repo": "demo-api", "commit": "4e1a9c2d"},
+            {"repo": "demo-web", "commit": "7b2c3d4e"},
+        ]
+        assert run["commit"] == "4e1a9c2d"
+
+    @pytest.mark.parametrize(
+        "commits",
+        [
+            ("--commit", "4e1a9c2d"),
+            ("--commit", "demo-api=4e1a9c2d"),
+            ("--commit", "demo-api=4e1a9c2d", "--commit", "demo-api=7b2c3d4e"),
+            ("--commit", "demo-api=4e1a9c2d", "--commit", "demo-nope=7b2c3d4e"),
+        ],
+        ids=["bare", "one repo", "twice", "other repo"],
+    )
+    def test_refuses_the_run_when_a_repo_has_no_commit_of_its_own(
+        self, several: Hub, commits: tuple[str, ...]
+    ) -> None:
+        named = ("--feature", "demo-flow", "--ticket", "DEM-10")
+
+        line = several.refused("preflight", *named, *FOUND[:4], *commits)
+
+        assert line == (
+            "hub step preflight: --commit: give one REPO=SHA for each repo of DEM-10"
+            " (demo-api, demo-web)"
+        )
+
+
 class TestPreflight:
     def test_fills_the_run_from_the_findings_the_plan_main_and_the_run_when_appended(
         self, hub: Hub

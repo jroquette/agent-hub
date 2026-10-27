@@ -42,7 +42,9 @@ from agent_hub.core.features.feature_status import RecordHead
 from agent_hub.core.features.output_models import (
     OutputProblem,
     PreflightRecord,
+    PreflightRecordV2,
     PreflightRun,
+    PreflightRunV2,
 )
 from agent_hub.core.features.output_shape import parse_document, shape_problems
 from agent_hub.core.features.plan_version import last_section, opens_amendments, plan_version
@@ -59,6 +61,7 @@ from agent_hub.core.hub_config.problems import one_line
 
 BRIEF_TYPE: Final = "ticket-brief"
 PREFLIGHT_SCHEMA: Final = "agent-hub/preflight/1"
+PREFLIGHT_V2_SCHEMA: Final = "agent-hub/preflight/2"
 # A decision's note on its frontmatter line; the whole note is the file's body.
 NOTE_LINE_CHARS: Final = 1000
 MAX_NAMED_PATHS: Final = 50
@@ -268,8 +271,9 @@ MAX_INPUT_TEXT: Final = 1000
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class PreflightFacts:
-    """What the writer knows of a preflight run: when, the plan's version, main's commit, the
-    run's id, the input it was given and the change request named (None when none was)."""
+    """What the writer knows of a preflight run: when, the plan's version, main's commit (one per
+    repo for a ticket that owns several), the run's id, the input it was given and the change
+    request named (None when none was)."""
 
     ran_at: datetime
     plan_version: int
@@ -280,6 +284,9 @@ class PreflightFacts:
     request: int | None
     # The declined request a declined change's first check re-checks (the pending one).
     declined_request: int | None = None
+    # Main's commit in each repo of a ticket that owns several, in contract order (AGH-591);
+    # ``commit`` is then the first repo's. None for a ticket of one repo.
+    commits: tuple[tuple[str, str], ...] | None = None
 
 
 def preflight_run(findings: bytes, facts: PreflightFacts) -> bytes:
@@ -313,6 +320,8 @@ def preflight_run(findings: bytes, facts: PreflightFacts) -> bytes:
         "change_request": request if drift == "plan" else None,
         "run_id": facts.run_id,
     }
+    if facts.commits is not None:
+        run["commits"] = [{"repo": repo, "commit": commit} for repo, commit in facts.commits]
     return json.dumps(run, ensure_ascii=False).encode()
 
 
@@ -340,9 +349,10 @@ def appended_preflight(existing: bytes | None, run: bytes, *, folder: str) -> tu
     entry = parse_document(run)
     if isinstance(entry, OutputProblem):
         raise TicketRecordError(f"the run is unusable: {entry.message}")
-    _valid(PreflightRun, entry, "the run")
+    _valid(PreflightRunV2 if "commits" in entry else PreflightRun, entry, "the run")
     runs: list[object] = []
     ticket: object = folder
+    v2 = entry.get("commits") is not None
     if existing is not None:
         record = preflight_record(existing, folder=folder)
         if isinstance(record, str):
@@ -350,8 +360,15 @@ def appended_preflight(existing: bytes | None, run: bytes, *, folder: str) -> tu
         # Parsed as JSON, not dumped from the model: each earlier run is copied as it was.
         parsed = cast("dict[str, list[object]]", parse_document(existing))
         runs, ticket = parsed["runs"], parsed["ticket"]
-    document = {"schema": PREFLIGHT_SCHEMA, "ticket": ticket, "runs": [*runs, entry]}
-    _valid(PreflightRecord, document, "the record")
+        v2 = v2 or isinstance(record, PreflightRecordV2)
+    if v2:
+        # A ticket that owns several repos (AGH-591): every run names its commit per repo, an
+        # earlier run of one repo none, and every other fact of it stays as it was.
+        runs = [{"commits": None} | item if isinstance(item, dict) else item for item in runs]
+        entry = {"commits": None} | entry
+    schema = PREFLIGHT_V2_SCHEMA if v2 else PREFLIGHT_SCHEMA
+    document = {"schema": schema, "ticket": ticket, "runs": [*runs, entry]}
+    _valid(PreflightRecordV2 if v2 else PreflightRecord, document, "the record")
     written = (json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
     if len(written) > MAX_PREFLIGHT_BYTES:
         why = f"preflight.json would be larger than {MAX_PREFLIGHT_BYTES} bytes, its read cap"
@@ -359,7 +376,11 @@ def appended_preflight(existing: bytes | None, run: bytes, *, folder: str) -> tu
     return written, len(runs) + 1
 
 
-def _valid(model: type[PreflightRun] | type[PreflightRecord], value: object, what: str) -> None:
+def _valid(
+    model: type[PreflightRun] | type[PreflightRecord] | type[PreflightRecordV2],
+    value: object,
+    what: str,
+) -> None:
     try:
         model.model_validate(value)
     except ValidationError as error:
@@ -520,7 +541,7 @@ MAX_SUMMARY_CHARS: Final = 300
 _PROPOSAL: Final = re.compile(r"^## Proposal\n\n(.+)$", re.MULTILINE)
 
 
-def pending_request(record: PreflightRecord | None) -> int | None:
+def pending_request(record: PreflightRecord | PreflightRecordV2 | None) -> int | None:
     """The change request the ticket's last preflight run opened, waiting for a decision a run
     then follows: None when the last run found no plan drift, or re-checked a declined change
     (a still-plan re-check ends blocked; the next run opens a new request, A2)."""

@@ -30,6 +30,7 @@ from agent_hub.core.features.output_models import (
     EvalOutputV2,
     OutputProblem,
     PreflightRecord,
+    PreflightRecordV2,
     ReviewFinding,
     ReviewOutput,
 )
@@ -776,12 +777,13 @@ def test_drops_only_eval_acs_tag_when_output_path_built(
     assert output_path(loc) == path
 
 
-KINDS: tuple[OutputSchema, ...] = ("review", "eval", "eval-2", "preflight")
+KINDS: tuple[OutputSchema, ...] = ("review", "eval", "eval-2", "preflight", "preflight-2")
 MODELS: dict[OutputSchema, type[BaseModel]] = {
     "review": ReviewOutput,
     "eval": EvalOutput,
     "eval-2": EvalOutputV2,
     "preflight": PreflightRecord,
+    "preflight-2": PreflightRecordV2,
 }
 
 
@@ -823,6 +825,7 @@ def test_matches_export_when_shipped_schema_read(kind: OutputSchema) -> None:
         "eval": "eval.v1.json",
         "eval-2": "eval.v2.json",
         "preflight": "preflight.v1.json",
+        "preflight-2": "preflight.v2.json",
     }
     assert OUTPUT_SCHEMA_PACKAGE == "agent_hub.core.features"
 
@@ -834,6 +837,7 @@ def test_matches_export_when_shipped_schema_read(kind: OutputSchema) -> None:
         ("eval", "agent-hub/eval/1"),
         ("eval-2", "agent-hub/eval/2"),
         ("preflight", "agent-hub/preflight/1"),
+        ("preflight-2", "agent-hub/preflight/2"),
     ],
 )
 def test_states_schema_const_when_schema_exported(kind: OutputSchema, schema_id: str) -> None:
@@ -844,7 +848,8 @@ def test_states_schema_const_when_schema_exported(kind: OutputSchema, schema_id:
 
 
 @pytest.mark.parametrize(
-    ("kind", "objects"), [("review", 2), ("eval", 4), ("eval-2", 5), ("preflight", 2)]
+    ("kind", "objects"),
+    [("review", 2), ("eval", 4), ("eval-2", 5), ("preflight", 2), ("preflight-2", 3)],
 )
 def test_forbids_extra_keys_when_schema_object_nodes_walked(
     kind: OutputSchema, objects: int
@@ -1468,7 +1473,7 @@ def test_accepts_valid_preflight_when_every_field_valid() -> None:
 @pytest.mark.parametrize(
     ("document", "path"),
     [
-        (a_preflight_document(schema="agent-hub/preflight/2"), "schema"),
+        (a_preflight_document(schema="agent-hub/preflight/3"), "schema"),
         (a_preflight_document(runs=[a_preflight_run(drift="global")]), "runs[0].drift"),
         (a_preflight_document(runs=[a_preflight_run(plan_version=0)]), "runs[0].plan_version"),
         (a_preflight_document(runs=[a_preflight_run(ran_at="yesterday")]), "runs[0].ran_at"),
@@ -1479,7 +1484,7 @@ def test_accepts_valid_preflight_when_every_field_valid() -> None:
         ),
         (a_preflight_document(runs=[a_preflight_run(colour="red")]), "runs[0].colour"),
     ],
-    ids=["schema 2", "drift", "plan version 0", "ran at", "input", "note", "extra key"],
+    ids=["schema 3", "drift", "plan version 0", "ran at", "input", "note", "extra key"],
 )
 # two-level-flows AC-2.3: a malformed one names the JSON path.
 def test_reports_path_when_preflight_shape_broken(document: dict[str, object], path: str) -> None:

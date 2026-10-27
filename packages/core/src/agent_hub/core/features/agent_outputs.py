@@ -9,10 +9,10 @@ bounds to the bytes it is given, whatever the caller read: ``MAX_OUTPUT_BYTES`` 
 ``MAX_RECORD_BYTES`` to the record, and the sibling's first ``EVAL_HEAD_BYTES`` only are read.
 
 The JSON Schemas of the outputs ship as package data beside this module (``review.v1.json``,
-``eval.v1.json``, ``eval.v2.json``, ``preflight.v1.json``); an eval output is checked against the
-model its ``schema`` names (``agent-hub/eval/2``: ``EvalOutputV2``, else ``EvalOutput``),
-regenerated with ``make output-schemas`` whenever a model changes; unit tests fail while a shipped
-file differs from the export.
+``eval.v1.json``, ``eval.v2.json``, ``preflight.v1.json``, ``preflight.v2.json``); an eval output is
+checked against the model its ``schema`` names (``agent-hub/eval/2``: ``EvalOutputV2``, else
+``EvalOutput``), regenerated with ``make output-schemas`` whenever a model changes; unit tests fail
+while a shipped file differs from the export.
 """
 
 import json
@@ -35,10 +35,12 @@ from agent_hub.core.features.output_models import (
     MAX_PREFLIGHT_RUNS,
     MAX_RED_ON_PARENT,
     MAX_RESULTS,
+    PREFLIGHT_V2_SCHEMA_ID,
     EvalOutput,
     EvalOutputV2,
     OutputProblem,
     PreflightRecord,
+    PreflightRecordV2,
     ReviewOutput,
 )
 from agent_hub.core.features.output_shape import (
@@ -52,7 +54,7 @@ from agent_hub.core.features.review_output_checks import review_cross_problems
 type _Document = dict[str, object]
 type OutputKind = Literal["review", "eval", "preflight"]
 # Each shipped schema: an output kind, or ``<kind>-<version>`` for a later version of one.
-type OutputSchema = Literal["review", "eval", "eval-2", "preflight"]
+type OutputSchema = Literal["review", "eval", "eval-2", "preflight", "preflight-2"]
 
 OUTPUT_SCHEMA_PACKAGE: Final = "agent_hub.core.features"
 OUTPUT_SCHEMA_FILES: Final[Mapping[OutputSchema, str]] = {
@@ -60,12 +62,14 @@ OUTPUT_SCHEMA_FILES: Final[Mapping[OutputSchema, str]] = {
     "eval": "eval.v1.json",
     "eval-2": "eval.v2.json",
     "preflight": "preflight.v1.json",
+    "preflight-2": "preflight.v2.json",
 }
 _OUTPUT_MODELS: Final[Mapping[OutputSchema, type[BaseModel]]] = {
     "review": ReviewOutput,
     "eval": EvalOutput,
     "eval-2": EvalOutputV2,
     "preflight": PreflightRecord,
+    "preflight-2": PreflightRecordV2,
 }
 
 # Each list of an eval output and its bound, in the model's field order.
@@ -116,7 +120,9 @@ def preflight_problems(content: bytes) -> tuple[OutputProblem, ...]:
     document = parse_document(content)
     if isinstance(document, OutputProblem):
         return (document,)
-    return _shape(document, model=PreflightRecord, overlong=_overlong_preflight_runs)
+    v2 = document.get("schema") == PREFLIGHT_V2_SCHEMA_ID
+    model = PreflightRecordV2 if v2 else PreflightRecord
+    return _shape(document, model=model, overlong=_overlong_preflight_runs)
 
 
 def _shape(

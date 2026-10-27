@@ -32,6 +32,7 @@ from agent_hub.core.features.scope_rules import AC_ID_PATTERN, COMMIT_PATTERN
 REVIEW_SCHEMA_ID: Final = "agent-hub/review/1"
 EVAL_SCHEMA_ID: Final = "agent-hub/eval/1"
 EVAL_V2_SCHEMA_ID: Final = "agent-hub/eval/2"
+PREFLIGHT_V2_SCHEMA_ID: Final = "agent-hub/preflight/2"
 # An output over this size is refused before it is parsed.
 MAX_OUTPUT_BYTES: Final = 524_288
 MAX_FINDINGS: Final = 100
@@ -271,3 +272,34 @@ class PreflightRecord(BaseModel):
     schema_id: Literal["agent-hub/preflight/1"] = Field(alias="schema")
     ticket: TicketKey
     runs: Annotated[tuple[PreflightRun, ...], Field(max_length=MAX_PREFLIGHT_RUNS)]
+
+
+class RepoMainCommit(BaseModel):
+    """One repo of a ticket that owns several: main's commit there that a preflight run read."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    repo: GateText
+    commit: Commit
+
+
+class PreflightRunV2(PreflightRun):
+    """One preflight run of a ticket, as schema 1's, with main's commit in each repo the ticket
+    owns when it owns several (``commits``, in contract order, the first repo's also ``commit``),
+    else null."""
+
+    commits: (
+        Annotated[tuple[RepoMainCommit, ...], Field(min_length=1, max_length=MAX_TICKET_REPOS)]
+        | None
+    )
+
+
+class PreflightRecordV2(BaseModel):
+    """Every preflight run of one ticket that owns several repos, oldest first; runs are only
+    ever appended, a run before the ticket owned several naming no ``commits``."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_id: Literal["agent-hub/preflight/2"] = Field(alias="schema")
+    ticket: TicketKey
+    runs: Annotated[tuple[PreflightRunV2, ...], Field(max_length=MAX_PREFLIGHT_RUNS)]

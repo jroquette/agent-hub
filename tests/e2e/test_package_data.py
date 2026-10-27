@@ -22,6 +22,7 @@ SHIPPED_OUTPUT_SCHEMAS = (
     "agent_hub/core/features/eval.v1.json",
     "agent_hub/core/features/eval.v2.json",
     "agent_hub/core/features/preflight.v1.json",
+    "agent_hub/core/features/preflight.v2.json",
 )
 GENERATOR_PACKAGE = "agent_hub.generator"
 INSTALL_TIMEOUT_SECONDS = 300

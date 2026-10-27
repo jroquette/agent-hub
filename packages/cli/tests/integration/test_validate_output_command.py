@@ -406,6 +406,31 @@ def test_prints_valid_when_preflight_record_valid(tmp_path: Path) -> None:
     assert result.stderr == ""
 
 
+# AGH-591: a ticket that owns several repos records main's commit in each (schema 2).
+@pytest.mark.parametrize(
+    ("commits", "stderr"),
+    [
+        (
+            [{"repo": "demo-api", "commit": "feb9c4c"}, {"repo": "demo-web", "commit": "abc1234"}],
+            "",
+        ),
+        (None, ""),
+        ([], "runs[0].commits: Tuple should have at least 1 item after validation, not 0"),
+    ],
+    ids=["per repo", "one repo", "empty"],
+)
+def test_checks_commits_per_repo_when_preflight_record_is_schema_2(
+    tmp_path: Path, commits: object, stderr: str
+) -> None:
+    document = a_preflight_document(commits=commits) | {"schema": "agent-hub/preflight/2"}
+    path = a_preflight_file(tmp_path, document)
+
+    result = run_unchanged(tmp_path, "preflight", path)
+
+    assert result.exit_code == (1 if stderr else 0)
+    assert result.stderr == (f"{path}: {stderr}\n" if stderr else "")
+
+
 # two-level-flows AC-2.3: a malformed one exits non-zero, naming the JSON path.
 def test_names_json_path_when_preflight_record_malformed(tmp_path: Path) -> None:
     path = a_preflight_file(tmp_path, a_preflight_document(drift="global"))
