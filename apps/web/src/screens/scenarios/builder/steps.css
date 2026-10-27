@@ -1203,3 +1203,193 @@
 .st-json .bk-token {
   white-space: nowrap;
 }
+
+/* The open step as an API operation (Swagger / Postman): method, action, parameters, body. */
+.st-op {
+  --op: var(--idle);
+  --op-soft: var(--idle-soft);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--op);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  cursor: default;
+}
+.st-op[data-tone="read"] {
+  --op: var(--live);
+  --op-soft: var(--live-soft);
+}
+.st-op[data-tone="write"] {
+  --op: var(--done);
+  --op-soft: var(--done-soft);
+}
+.st-op[data-tone="destroy"] {
+  --op: var(--failed);
+  --op-soft: var(--failed-soft);
+}
+.st-op-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: calc(var(--space-3) * -1) calc(var(--space-3) * -1) 0;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--op);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  background: var(--op-soft);
+}
+.st-op-method {
+  min-width: 64px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--op);
+  color: var(--text-inverse);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+.st-op-path {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+}
+.st-op-tag {
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.st-op-summary {
+  flex-basis: 100%;
+  font-size: 13px;
+  color: var(--text);
+}
+.st-op-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.st-op-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.st-op-name {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+}
+.st-op-type {
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.st-op-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.st-op-table th {
+  padding: 4px 8px 4px 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  color: var(--text-subtle);
+}
+.st-op-table td {
+  padding: 6px 8px 6px 0;
+  border-top: 1px solid var(--border);
+  vertical-align: top;
+}
+.st-op-inherited td {
+  color: var(--text-muted);
+}
+.st-op-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.st-op-req {
+  margin-left: 2px;
+  color: var(--failed);
+}
+.st-op-poll {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+.st-op-vars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.st-op-vars li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* Variables as Postman writes them: {{name}}, global (scenario) or local (kept). */
+.st-var {
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.st-var[data-scope="global"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.st-var[data-scope="local"] {
+  background: var(--guard-soft);
+  color: var(--guard);
+}
+.st-src {
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  font-size: 11px;
+  white-space: nowrap;
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
+.st-src[data-src="global"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.st-src[data-src="local"] {
+  background: var(--guard-soft);
+  color: var(--guard);
+}
+.st-src[data-src="env"] {
+  background: var(--done-soft);
+  color: var(--done);
+}
+.st-json-key {
+  color: var(--text-muted);
+}
+.st-json-string {
+  color: var(--done);
+}

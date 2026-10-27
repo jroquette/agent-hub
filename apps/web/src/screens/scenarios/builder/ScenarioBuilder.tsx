@@ -2216,6 +2216,13 @@ export function ScenarioBuilder({
                       }
               }
               keptOf={tree && !reviewProgram ? shownRun.keptOf : undefined}
+              sources={{
+                environment: environmentInfo
+                  ? { name: environmentInfo.name, values: environmentValues ?? {} }
+                  : null,
+                inputs: declaredInputs.map(([name]) => name),
+                kept: keptValues.map((item) => ({ name: item.name, number: item.number })),
+              }}
               current={shownRun.current}
               breakpoints={
                 debuggable && !reviewProgram
