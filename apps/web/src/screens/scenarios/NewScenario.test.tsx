@@ -17,9 +17,12 @@ import { NewScenarioScreen } from "./NewScenario";
 function Probe() {
   const { target, open } = useDiscuss();
   return (
-    <output aria-label="discuss">
-      {open ? "open" : "closed"}|{target?.kind ?? ""}|{target?.starters?.[0]?.message ?? ""}
-    </output>
+    <>
+      <output aria-label="discuss">
+        {open ? "open" : "closed"}|{target?.kind ?? ""}|{target?.starters?.[0]?.message ?? ""}
+      </output>
+      <output aria-label="brief">{target?.brief ?? ""}</output>
+    </>
   );
 }
 
@@ -93,12 +96,18 @@ describe("NewScenarioScreen", () => {
     const body = (await put?.clone().json()) as {
       pack: string;
       base_content_hash: string | null;
-      document: { nodes: { id: string; type: string }[] };
+      document: { version: number; nodes?: unknown; stages: { name: string; steps: unknown[] }[] };
     };
     expect(body.base_content_hash).toBeNull();
     expect(body.pack).toBe("orders");
-    expect(body.document.nodes).toEqual([
-      expect.objectContaining({ id: "first-step", type: "approval" }),
+    // Written as blocks: one stage holding the one block to replace.
+    expect(body.document.version).toBe(2);
+    expect(body.document.nodes).toBeUndefined();
+    expect(body.document.stages).toEqual([
+      {
+        name: "First stage",
+        steps: [{ you: "Replace this block with the first step of the scenario." }],
+      },
     ]);
   });
 
@@ -138,6 +147,11 @@ describe("NewScenarioScreen", () => {
       key.startsWith("ah.chat.draft.discuss.scenario-new:agent-hub:"),
     );
     expect(window.localStorage.getItem(draft ?? "")).toContain("order-to-invoice");
+    // Claude is taught the blocks format, so the scenario it writes opens as stages.
+    const brief = screen.getByRole("status", { name: "brief" });
+    expect(brief).toHaveTextContent("version: 2");
+    expect(brief).toHaveTextContent("wait_until: <read action>");
+    expect(brief).not.toHaveTextContent("schema v1");
   });
 
   it("takes a new pack's name and refuses one that is not kebab-case", async () => {

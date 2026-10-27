@@ -11,6 +11,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Fixed
+
+- hub web's New scenario writes the new scenario as blocks (`version: 2`), so it opens in the builder as stages and
+  its runs can be debugged. The blank scenario is one stage holding one You block, and the brief Claude gets teaches
+  the blocks format. Saving a new scenario written as blocks no longer fails with "Field required".
+
 ## [0.25.0] - 2026-10-26
 
 ### Added

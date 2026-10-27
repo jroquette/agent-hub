@@ -20,6 +20,16 @@ const TREE = [
   BLOCK_ADDRESS,
 ];
 
+/** How a scenario written as blocks is laid out and what each block holds: the builder's
+ * Describe teaches it, and New scenario, since a new scenario is written as blocks. */
+export const TREE_FORMAT: readonly string[] = [
+  "- The scenario is `version: 2` with `stages`: an ordered list of named stages (`name`, optional `description`, `steps`), each an ordered list of blocks. Position is order: a block runs after the one before it, a stage after the stage before it. No `nodes`, `depends_on`, `trigger_rule` or `when`.",
+  '- One block per thing that happens, each one key: `do: <action>` with `with`, `capture`, `retry`, `timeout` (a message to a queue, an API call, a DB change, a script in a container); `wait_until: <read action>` with `until`, `every`, `timeout` ("wait until X is Y", "check that X"); `you: <what to do by hand>` with `decisions` and `capture_response: true` when I type a value back (read later as `$<id>.output.text`); `wait: {duration: 30s}` for a fixed pause; `include: <scenario>` with `with`.',
+  '- Blocks that hold blocks: `repeat: {max, until, steps}` ("run X until Y", no Repeat or Include inside a Repeat); `if: <condition>` with `then` and an optional `else` (its complement, computed for you; an If with no `else` never opens a list of blocks); `together: [[...], [...]]` for paths at the same time, joined by the next block.',
+  "- Values that later blocks need are kept with `capture: {name: $self.output.<field>}` and read as `$CTX.<name>`; scenario inputs (ids, environments' services) go in `inputs` and are read as `$INPUTS.<name>`.",
+  "- Give a block an `id` (kebab-case) only when another block reads its output (`$<id>.output.<field>`, a Repeat's `until`); without one it gets an id from its place.",
+];
+
 const ACTIONS =
   'An action declares `version`, `name`, `description`, `effect` (`read`, `write`, `destroy`), `runtime` (`sh` or `python`), `script`, `timeout`, `inputs` (string, integer, number, boolean or service) and `output_format` (a JSON Schema). Its script reads one JSON object on stdin (`mode` plan|run, `inputs`, `endpoint`) and prints one JSON value; in plan mode `{"summary": "..."}`, changing nothing.';
 
@@ -31,5 +41,5 @@ export function scenarioBrief(tree = false): string {
   return [FILES, ...(tree ? TREE : GRAPH), ACTIONS, CHECKS].join("\n");
 }
 
-/** The brief for a scenario written as a graph (`version: 1`). */
-export const SCENARIO_BRIEF = scenarioBrief();
+/** The brief for a new scenario: it is written as blocks (`version: 2`), so it says how. */
+export const NEW_SCENARIO_BRIEF = [FILES, ...TREE, ...TREE_FORMAT, ACTIONS, CHECKS].join("\n");

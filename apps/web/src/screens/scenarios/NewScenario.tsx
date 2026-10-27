@@ -8,7 +8,7 @@ import { useScope } from "../../lib/scope";
 import { writeStored } from "../../lib/storage";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { useDiscuss, useDiscussTarget, type DiscussTarget } from "../../shell/discuss";
-import { SCENARIO_BRIEF } from "./brief";
+import { NEW_SCENARIO_BRIEF } from "./brief";
 import { Page } from "./parts";
 import { scenarioHref, useScenarios } from "./queries";
 
@@ -105,7 +105,8 @@ export function NewScenarioScreen() {
   const badPack = packChoice === NEW_PACK && newPack !== "" && !KEBAB.test(newPack);
   const ready = chosenProject !== "" && what.trim().length >= 10 && !badName && !badPack;
 
-  // A blank scenario: one manual step to replace, written by the builder's save (no Claude).
+  // A blank scenario, written as blocks: one stage holding one manual block to replace, written
+  // by the builder's save (no Claude).
   const navigate = useNavigate();
   const blankReady = chosenProject !== "" && KEBAB.test(name) && KEBAB.test(pack);
   const blank = useMutation<unknown, ApiProblem>({
@@ -116,15 +117,14 @@ export function NewScenarioScreen() {
           pack,
           base_content_hash: null,
           document: {
-            version: 1,
+            version: 2,
             kind: "scenario",
             name,
             description: what.trim() || `What ${name} checks`,
-            nodes: [
+            stages: [
               {
-                id: "first-step",
-                type: "approval",
-                message: "Replace this block with the first step of the scenario.",
+                name: "First stage",
+                steps: [{ you: "Replace this block with the first step of the scenario." }],
               },
             ],
           },
@@ -146,7 +146,7 @@ export function NewScenarioScreen() {
       project: chosenProject,
       kind: "New scenario",
       title: name || "a new scenario",
-      brief: SCENARIO_BRIEF,
+      brief: NEW_SCENARIO_BRIEF,
       openOnArrive: true,
       starters: [{ label: "Create it", message }],
     });

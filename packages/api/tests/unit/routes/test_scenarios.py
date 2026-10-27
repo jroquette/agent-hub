@@ -1976,6 +1976,36 @@ def test_writes_next_revision_when_builder_saves(scenarios: Any) -> None:
     assert (reread["description"], reread["revision"]) == ("Edited in the builder", 2)
 
 
+def test_writes_revision_one_when_new_scenario_saved_as_blocks(scenarios: Any) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    # What New scenario sends for a blank scenario: blocks, no revision yet.
+    document = {
+        "version": 2,
+        "kind": "scenario",
+        "name": "fresh",
+        "description": "What fresh checks",
+        "stages": [
+            {
+                "name": "First stage",
+                "steps": [{"you": "Replace this block with the first step of the scenario."}],
+            }
+        ],
+    }
+
+    saved = scenarios.client.put(
+        "/api/v1/scenarios/demo/fresh",
+        json={"pack": "demo", "document": document, "base_content_hash": None},
+        headers=_origin(scenarios),
+    )
+
+    assert saved.status_code == 200, saved.text
+    assert (saved.json()["revision"], saved.json()["path"]) == (1, "scenarios/demo/fresh.yaml")
+    reread = scenarios.client.get("/api/v1/scenarios/demo/fresh").json()
+    assert (reread["document"]["version"], reread["revision"]) == (2, 1)
+    assert reread["document"]["stages"][0]["name"] == "First stage"
+
+
 def test_refuses_stale_invalid_and_taken_when_builder_saves(scenarios: Any) -> None:
     writes = _DiskWrites()
     scenarios.wire(item_version_writes=writes)

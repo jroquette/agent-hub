@@ -251,6 +251,8 @@ class ScenarioBuilder:
         document["name"] = name
         document["kind"] = "scenario"
         current = _revision(on_disk)
+        # A scenario written as blocks needs a revision to load: a new one gets its first here.
+        document.setdefault("revision", current + 1)
         found = discover_actions(hub)
         checked = _validate(hub, request.pack, document, found=found)
         if not checked.loads:
