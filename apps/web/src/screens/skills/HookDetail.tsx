@@ -3,6 +3,7 @@
 import "./SkillDetail.css";
 
 import type { components } from "../../api/schema";
+import { HighlightedCode } from "../../components";
 import { RailFact } from "./RailFact";
 import { HookStateTags } from "./SkillCard";
 
@@ -51,7 +52,7 @@ export function HookDetail({ hook }: { hook: HookFacts }) {
             {/* A scrolling region must take keyboard focus (axe scrollable-region-focusable). */}
             {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
             <pre className="ah-skill-raw" tabIndex={0}>
-              <code>{hook.command}</code>
+              <HighlightedCode text={hook.command} lang="bash" />
             </pre>
             <p className="ah-small ah-muted" style={{ margin: "6px 0 0" }}>
               Shown as text: Claude Code runs it on the event; this page never runs it.

@@ -2469,6 +2469,10 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.click(screen.getByRole("button", { name: "YAML" }));
 
     expect(screen.getByLabelText("Generated YAML")).toHaveTextContent("kind: scenario");
+    // Coloured as YAML, as every file and code the page shows.
+    await waitFor(() => {
+      expect(screen.getByLabelText("Generated YAML").querySelector("code")).toHaveClass("hljs");
+    });
   });
 
   it("scenario builder renames a step in place with F2, and Esc leaves it as it was", async () => {

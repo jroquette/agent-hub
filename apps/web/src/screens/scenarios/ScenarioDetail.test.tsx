@@ -23,6 +23,7 @@ import {
 } from "../../testing/builders";
 import { DiscussProvider, useDiscuss } from "../../shell/discuss";
 import { ScenarioDetailScreen } from ".";
+import { codeText } from "../../testing/text";
 
 /** What the Discuss panel would be handed on this page. */
 function BriefProbe() {
@@ -270,8 +271,8 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
       "1 draft action to commitYou can plan now. A scenario run starts once this action is committed in the hub checkout: one commit does it.",
     );
     // The commit command is written once on the page, in Before you start.
-    expect(screen.getAllByText(COMMIT)).toHaveLength(1);
-    expect(within(before).getByText(COMMIT)).toBeInTheDocument();
+    expect(screen.getAllByText(codeText(COMMIT))).toHaveLength(1);
+    expect(within(before).getByText(codeText(COMMIT))).toBeInTheDocument();
     expect(startButton()).toBeDisabled();
   });
 
@@ -808,7 +809,9 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
       renderDetail({ [PLAN]: aProblem({ status: 502, title: "Bad gateway" }) });
       await planIn("qa");
       expect(await screen.findByText(/The plan did not finish in 5 min/)).toBeInTheDocument();
-      expect(screen.getByText("./hub scenario plan order-lifecycle --env qa")).toBeInTheDocument();
+      expect(
+        screen.getByText(codeText("./hub scenario plan order-lifecycle --env qa")),
+      ).toBeInTheDocument();
     });
   });
 

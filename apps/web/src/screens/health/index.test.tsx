@@ -14,6 +14,7 @@ import {
   type ApiRoutes,
 } from "../../testing/builders";
 import { HealthScreen } from "./index";
+import { codeText } from "../../testing/text";
 
 const findings = [
   aFinding({
@@ -97,7 +98,7 @@ describe("HealthScreen", () => {
     const drift = group("lock.drift");
     expect(within(drift).getAllByText("How to fix")).toHaveLength(2);
     expect(within(drift).getByText("Managed file edited by hand")).toBeInTheDocument();
-    expect(within(drift).getAllByText("./hub sync").length).toBeGreaterThan(0);
+    expect(within(drift).getAllByText(codeText("./hub sync")).length).toBeGreaterThan(0);
   });
 
   it("copies a finding's fix and the finding as Markdown", async () => {
@@ -218,7 +219,9 @@ describe("HealthScreen", () => {
       expect(
         await screen.findByText("No findings. The hub passed every doctor check."),
       ).toBeInTheDocument();
-      expect(screen.getByText("cd /home/dev/agent-hub-hub && ./hub doctor")).toBeInTheDocument();
+      expect(
+        screen.getByText(codeText("cd /home/dev/agent-hub-hub && ./hub doctor")),
+      ).toBeInTheDocument();
     });
 
     it("shows the problem in the findings region with Try again", async () => {

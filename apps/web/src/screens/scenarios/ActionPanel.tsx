@@ -9,8 +9,9 @@ import {
   PathText,
   SidePanel,
   Tabs,
-  highlightable,
-  useHighlight,
+  HighlightedCode,
+  languageName,
+  languageOf,
 } from "../../components";
 import { DraftLine, EffectBadge } from "./parts";
 import type { ScenarioAction, ScenarioStep } from "./queries";
@@ -23,39 +24,6 @@ const EFFECT_WORDS: Readonly<Record<string, string>> = {
   read: "It reads; it never changes the system.",
   write: "It changes data.",
   destroy: "It deletes or replaces data.",
-};
-
-/** The language of a file by its extension, as the highlighter names it ("" when none fits). */
-export function languageOf(path: string): string {
-  const extension = /\.([a-z0-9]+)$/i.exec(path)?.[1]?.toLowerCase() ?? "";
-  const languages: Readonly<Record<string, string>> = {
-    py: "python",
-    sh: "bash",
-    bash: "bash",
-    zsh: "bash",
-    yaml: "yaml",
-    yml: "yaml",
-    json: "json",
-    js: "javascript",
-    mjs: "javascript",
-    ts: "typescript",
-    sql: "sql",
-    go: "go",
-    rs: "rust",
-  };
-  return languages[extension] ?? "";
-}
-
-const LANGUAGE_WORDS: Readonly<Record<string, string>> = {
-  python: "Python",
-  bash: "Bash",
-  yaml: "YAML",
-  json: "JSON",
-  javascript: "JavaScript",
-  typescript: "TypeScript",
-  sql: "SQL",
-  go: "Go",
-  rust: "Rust",
 };
 
 /** A file's text, read-only, with its path, its language and Copy; coloured by its language. */
@@ -72,11 +40,6 @@ export function FileText({
   caption?: ReactNode;
 }) {
   const language = languageOf(path);
-  const nodes = useHighlight(
-    text ?? "",
-    language,
-    language !== "" && text !== null && text !== undefined && highlightable(text),
-  );
   return (
     <div className="ah-stack sc-file" style={{ gap: 6 }}>
       <div className="ah-row" style={{ gap: 6 }}>
@@ -85,7 +48,7 @@ export function FileText({
           <PathText path={path} max={72} dimDir />
         </span>
         {language !== "" && (
-          <span className="ah-badge ah-badge-quiet">{LANGUAGE_WORDS[language] ?? language}</span>
+          <span className="ah-badge ah-badge-quiet">{languageName(language)}</span>
         )}
         <span className="ah-grow" />
         {text && <CopyButton text={text} label={`Copy the text of ${path}`} compact />}
@@ -97,7 +60,7 @@ export function FileText({
         // A scrollable region must be reachable by keyboard.
         // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
         <pre className="ah-json" tabIndex={0} aria-label={`Text of ${path}`}>
-          <code className={nodes ? "hljs" : undefined}>{nodes ?? text}</code>
+          <HighlightedCode text={text} lang={language} />
         </pre>
       )}
       {truncated && (

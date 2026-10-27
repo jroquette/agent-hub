@@ -4,7 +4,7 @@ import "./SkillDetail.css";
 import { useState } from "react";
 import type { MouseEvent, ReactNode } from "react";
 
-import { Markdown, SegmentedControl, plainHeadingText } from "../../components";
+import { HighlightedCode, Markdown, SegmentedControl, plainHeadingText } from "../../components";
 import type { MarkdownProps } from "../../components";
 import type { components } from "../../api/schema";
 import { tocAnchors } from "../../lib/brainLinks";
@@ -100,7 +100,7 @@ export function BodyView({ body, raw, toc, localLink, view, onViewChange }: Body
           // A scrolling region must take keyboard focus (axe scrollable-region-focusable).
           // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
           <pre className="ah-skill-raw" tabIndex={0}>
-            {raw}
+            <HighlightedCode text={raw} lang="markdown" />
           </pre>
         ) : (
           <div className="ah-skill-body">

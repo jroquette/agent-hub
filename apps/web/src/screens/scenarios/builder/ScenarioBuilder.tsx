@@ -17,6 +17,7 @@ import {
   Banner,
   Button,
   CopyButton,
+  HighlightedCode,
   Icon,
   IconButton,
   MenuItem,
@@ -2400,7 +2401,7 @@ export function ScenarioBuilder({
               </div>
               {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- a scrollable region */}
               <pre className="ah-json sb-yaml-text" tabIndex={0} aria-label="Generated YAML">
-                {draft.check?.yaml ?? ""}
+                <HighlightedCode text={draft.check?.yaml ?? ""} lang="yaml" />
               </pre>
             </div>
           )}

@@ -4,6 +4,7 @@ import type { KeyboardEvent, ReactNode } from "react";
 import { cx } from "../lib/cx";
 import { fmtDuration } from "../lib/format";
 import { IconButton, AppLink, PathText, CopyButton, copyText } from "./core";
+import { HighlightedCode } from "./HighlightedCode";
 import { Icon, type IconName } from "./Icon";
 import { DerivedLabel, ExpiredContent, RedactionChip } from "./status";
 
@@ -14,14 +15,16 @@ export interface CodeBlockProps {
   label?: string | undefined;
   noCopy?: boolean | undefined;
   wrap?: boolean | undefined;
+  /** The code's language for its colours; a command (the `$` prompt, the default) reads as shell. */
+  lang?: string | undefined;
 }
-export function CodeBlock({ code, prompt = "$", label, noCopy, wrap }: CodeBlockProps) {
+export function CodeBlock({ code, prompt = "$", label, noCopy, wrap, lang }: CodeBlockProps) {
   return (
     <div className="ah-code" role={label ? "group" : undefined} aria-label={label}>
       {prompt && <span className="ah-code-prompt">{prompt}</span>}
       {/* A command that does not wrap scrolls sideways, so the keyboard must reach it (axe). */}
       <pre style={wrap ? { whiteSpace: "pre-wrap" } : undefined} tabIndex={wrap ? undefined : 0}>
-        {code}
+        <HighlightedCode text={code} lang={lang ?? (prompt === "$" ? "bash" : "")} />
       </pre>
       {!noCopy && <CopyButton text={code} label="Copy command" />}
     </div>
