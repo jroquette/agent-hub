@@ -588,6 +588,13 @@ function ConfigBody({
   useEffect(() => {
     onRepoFormOpen(repoForm !== null);
   }, [repoForm, onRepoFormOpen]);
+  // The body gives way (a reload error): no form is open any more.
+  useEffect(
+    () => () => {
+      onRepoFormOpen(false);
+    },
+    [onRepoFormOpen],
+  );
   // The repo being changed left hub.json (changed on disk): the form has nothing to change.
   const changing = repoForm?.kind === "change" ? repoForm.dir : null;
   const changedRepo = view.repos.find((repo) => repo.dir === changing) ?? null;
@@ -595,6 +602,10 @@ function ConfigBody({
     setRepoForm(null);
     setGone(changing);
   }
+  // Its card is gone with it: focus goes to Add repo, as after a remove.
+  useEffect(() => {
+    if (gone !== null) document.getElementById(ADD_REPO_ID)?.focus();
+  }, [gone]);
   useEffect(() => {
     if (focusNext.current === null) return;
     const target = document.getElementById(focusNext.current);
@@ -743,42 +754,47 @@ function ConfigBody({
             {gone !== null && (
               <Banner tone="warning">{gone} is no longer in hub.json. Nothing was saved.</Banner>
             )}
-            {view.repos.map((repo, index) => (
-              <RepoCard
-                key={repo.dir}
-                repo={repo}
-                open={openRepo === null ? index === 0 : openRepo === repo.dir}
-                onToggle={(isOpen) => {
-                  if (isOpen && openRepo !== repo.dir) setOpenRepo(repo.dir);
-                }}
-                form={
-                  changedRepo !== null && changedRepo.dir === repo.dir ? (
-                    <RepoForm
-                      view={view}
-                      repo={changedRepo}
-                      labelledBy={nameId(repo.dir)}
-                      onCancel={() => {
-                        setRepoForm(null);
-                        setFocusId(changeId(repo.dir));
-                      }}
-                      onSaved={(dir) => {
-                        setRepoForm(null);
-                        setFocusId(changeId(dir));
-                        onRepoSaved(`Updated repo ${dir}`, nextLines("change", dir));
-                      }}
-                    />
-                  ) : null
-                }
-                offReason={formReason}
-                removeOff={removeOff}
-                onChange={() => {
-                  openForm({ kind: "change", dir: repo.dir });
-                }}
-                onRemove={() => {
-                  setRemoving(repo.dir);
-                }}
-              />
-            ))}
+            {view.repos.map((repo, index) => {
+              const open = openRepo === null ? index === 0 : openRepo === repo.dir;
+              return (
+                <RepoCard
+                  key={repo.dir}
+                  repo={repo}
+                  open={open}
+                  onToggle={(isOpen) => {
+                    // Only a card the person opens names itself: the first one, open by
+                    // default, leaves ?repo= alone.
+                    if (isOpen && !open) setOpenRepo(repo.dir);
+                  }}
+                  form={
+                    changedRepo !== null && changedRepo.dir === repo.dir ? (
+                      <RepoForm
+                        view={view}
+                        repo={changedRepo}
+                        labelledBy={nameId(repo.dir)}
+                        onCancel={() => {
+                          setRepoForm(null);
+                          setFocusId(changeId(repo.dir));
+                        }}
+                        onSaved={(dir) => {
+                          setRepoForm(null);
+                          setFocusId(changeId(dir));
+                          onRepoSaved(`Updated repo ${dir}`, nextLines("change", dir));
+                        }}
+                      />
+                    ) : null
+                  }
+                  offReason={formReason}
+                  removeOff={removeOff}
+                  onChange={() => {
+                    openForm({ kind: "change", dir: repo.dir });
+                  }}
+                  onRemove={() => {
+                    setRemoving(repo.dir);
+                  }}
+                />
+              );
+            })}
             {repoForm?.kind === "add" && (
               <div className="ah-config-repo ah-config-repo-new">
                 <h3 className="ah-h3" id="repos-new-title">

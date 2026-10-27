@@ -29,6 +29,9 @@ export async function postRepoEdit(
     throw error;
   }
   client.setQueryData(key, fresh);
+  // The Portfolio counts each project's repos.
+  if (body.op !== "set_repo")
+    void client.invalidateQueries({ queryKey: apiKey("/api/v1/projects") });
   return fresh;
 }
 
@@ -86,10 +89,6 @@ export function startValues(repo: RepoConfigView): RepoValues {
   };
 }
 
-function timeoutOf(text: string): number {
-  return Number(text);
-}
-
 const WHOLE = /^\d+$/;
 
 /** The folder another repo already has, compared ignoring case, else null. */
@@ -112,7 +111,7 @@ export function addBody(values: RepoValues): AddRepo {
   const role = values.role.trim();
   const branch = values.default_branch.trim();
   if (fast) body.check_fast = fast;
-  if (timeout) body.check_fast_timeout = timeoutOf(timeout);
+  if (timeout) body.check_fast_timeout = Number(timeout);
   if (role) body.role = role;
   if (branch) body.default_branch = branch;
   return body;
@@ -132,10 +131,10 @@ export function setBody(start: RepoValues, values: RepoValues): SetRepo | null {
   for (const field of REPO_FIELDS) {
     if (field === "dir") continue;
     const now = values[field].trim();
-    if (same(field, start[field], now)) continue;
+    if (same(field, start[field].trim(), now)) continue;
     changed = true;
     if (now === "" && OPTIONAL.includes(field)) body.unset.push(field);
-    else if (field === "check_fast_timeout") body.check_fast_timeout = timeoutOf(now);
+    else if (field === "check_fast_timeout") body.check_fast_timeout = Number(now);
     else body[field] = now;
   }
   return changed ? body : null;
