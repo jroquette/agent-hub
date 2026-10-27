@@ -2651,6 +2651,19 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const field = within(fetch).getByRole("button", { name: "target: payments-queue" });
     expect(field).toHaveTextContent("payments-queue-personal");
     expect(screen.getByText("Unsaved")).toBeInTheDocument();
+    // No kind was chosen: the picked service sets it.
+    const kind = within(fetch).getByRole("combobox", { name: "Kind of service for target" });
+    expect(kind).toHaveValue("sqs");
+    // A kind chosen filters the list.
+    await user.selectOptions(kind, "database");
+    await user.click(within(fetch).getByRole("button", { name: "target: payments-queue" }));
+    const filtered = screen.getByRole("dialog", { name: "Choose target" });
+    expect(
+      within(filtered)
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual([expect.stringContaining("orders-db")]);
+    await user.keyboard("{Escape}");
     // The side panel picks it the same way: a field, never a text box.
     const panel = screen.getByRole("region", { name: /^Inspector: / });
     expect(
