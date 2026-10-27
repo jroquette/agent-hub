@@ -1189,8 +1189,119 @@ textarea.sb-json-text {
   flex-direction: column;
   min-height: 100%;
 }
-.sb-graph-picture > [role="note"] {
-  padding: var(--space-3) var(--space-4) 0;
+.sb-graph-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+/* The graph of a scenario written as blocks: a band per stage, its blocks left to right. */
+.sg-graph {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6) var(--space-8);
+}
+.sg-start {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: var(--space-1);
+  padding: 2px var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.sg-band {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+}
+.sg-band-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 14px;
+}
+.sg-band-count {
+  font-size: 12px;
+  color: var(--text-subtle);
+}
+.sg-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  row-gap: var(--space-3);
+}
+.sg-step {
+  display: flex;
+  align-items: center;
+}
+.sg-arrow {
+  display: inline-flex;
+  padding: 0 var(--space-2);
+  color: var(--text-subtle);
+}
+.sg-cell {
+  display: flex;
+  border-radius: var(--radius-lg);
+}
+.sg-cell[data-current="true"] > .sg-card {
+  border-color: var(--live);
+  box-shadow: inset 3px 0 0 var(--live);
+}
+.sg-frame {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+}
+.sg-frame-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  font-weight: 600;
+}
+.sg-frame-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.sg-paths {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.sg-path {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--border);
+}
+.sg-path-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.sg-empty {
+  font-size: 12px;
+  color: var(--text-subtle);
 }
 
 /* Migrate: what a graph scenario cannot be written as blocks with, step by step. */

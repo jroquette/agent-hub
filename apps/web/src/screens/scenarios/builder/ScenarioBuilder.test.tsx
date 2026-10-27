@@ -760,6 +760,17 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(screen.queryByRole("button", { name: /^Add a block/ })).not.toBeInTheDocument();
     // Each card is the block as the Blocks list names it: its number, then its kind and title.
     expect(screen.getByRole("button", { name: /^Block 1\.1, / })).toBeInTheDocument();
+    // Each stage is a band of its own, its blocks inside it.
+    const band = screen.getByRole("region", { name: /^Stage 1: Fix shipping/ });
+    const first = within(band).getByRole("button", { name: /^Block 1\.1, / });
+    // A card selects its block; Open it in Blocks goes to it there.
+    await user.click(first);
+    expect(first).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "Open it in Blocks" }));
+    expect(await screen.findByRole("treeitem", { name: /^Step 1\.1,/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 
   it("scenario builder shows Claude's proposal for a scenario written as blocks by block address", async () => {
