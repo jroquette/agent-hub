@@ -114,6 +114,26 @@ def test_rejects_body_when_unknown_key(body: dict[str, Any]) -> None:
         _EDIT.validate_python(body)
 
 
+# The CLI refuses a ``set`` with no option as a usage error; the body is refused before any read.
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"op": "set_repo", "dir": "demo-web"},
+        {"op": "set_repo", "dir": "demo-web", "unset": []},
+        {"op": "set_repo", "dir": "demo-web", "role": None, "check": None},
+    ],
+    ids=["bare", "unset-empty", "nulls"],
+)
+def test_rejects_body_when_set_repo_changes_nothing(tmp_path: Path, body: dict[str, Any]) -> None:
+    write_files(tmp_path, RepoFiles(a_repos_document(), None))
+    before = snapshot(tmp_path)
+
+    with pytest.raises(ValidationError, match="nothing to change"):
+        edit(tmp_path, body)
+
+    assert snapshot(tmp_path) == before
+
+
 def test_rejects_body_when_timeout_not_integer() -> None:
     for timeout in (1.5, "120", True):
         with pytest.raises(ValidationError):

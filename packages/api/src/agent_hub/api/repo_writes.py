@@ -14,9 +14,9 @@ names, a non-blank ``check``, a safe ``dir``, a timeout of 1 to 160) are the mod
 screen gets the same line as the CLI.
 """
 
-from typing import Annotated, Final, Literal
+from typing import Annotated, Final, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
 from agent_hub.api.environment_writes import INVALID_TITLE, HubFiles, write_documents
 from agent_hub.core.hub_config.environment_edits import Document
@@ -73,6 +73,16 @@ class SetRepo(_RepoEdit):
     default_branch: Text | None = None
     # Any text, so a key that cannot be unset gets core's line, as with ``--unset``.
     unset: tuple[Text, ...] = Field(default=(), max_length=_MAX_NAMES)
+
+    @model_validator(mode="after")
+    def _changes_something(self) -> Self:
+        # The CLI refuses a ``set`` with no option as a usage error: refused before any read.
+        if not self.unset and not _given(self):
+            raise ValueError(
+                "nothing to change: give github, role, check_fast, check_fast_timeout, check,"
+                " default_branch or unset"
+            )
+        return self
 
 
 class RemoveRepo(_RepoEdit):
