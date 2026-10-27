@@ -2651,5 +2651,11 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const field = within(fetch).getByRole("button", { name: "target: payments-queue" });
     expect(field).toHaveTextContent("payments-queue-personal");
     expect(screen.getByText("Unsaved")).toBeInTheDocument();
+    // The side panel picks it the same way: a field, never a text box.
+    const panel = screen.getByRole("region", { name: /^Inspector: / });
+    expect(
+      within(panel).getByRole("button", { name: "target: payments-queue" }),
+    ).toBeInTheDocument();
+    expect(within(panel).queryByRole("textbox", { name: /target/ })).not.toBeInTheDocument();
   });
 });
