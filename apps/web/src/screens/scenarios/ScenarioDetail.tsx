@@ -1,6 +1,6 @@
 import { CardSkeleton } from "./builder/CardParts";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { useParams, useSearchParams } from "react-router";
+import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import {
   AppLink,
@@ -25,6 +25,7 @@ import { InputField, parsed, type InputSpec } from "../runs-list/StartRun";
 import { ActionPanel, FileText } from "./ActionPanel";
 import { isTree } from "./builder/program";
 import { ScenarioBuilder } from "./builder/ScenarioBuilder";
+import { DeleteScenarioDialog, ScenarioMenu, scenarioPath } from "./DeleteScenario";
 import { useLatestRun } from "./LiveRun";
 import { scenarioBrief } from "./brief";
 import { Page, ScenarioRunBadge, shortId, useWaitingRows, WaitingCard } from "./parts";
@@ -799,6 +800,9 @@ function Crumbs({ scenario }: { scenario: ScenarioDetail }) {
 
 function Header({ scenario }: { scenario: ScenarioDetail }) {
   useScenarioDiscuss(scenario);
+  const navigate = useNavigate();
+  const [deleting, setDeleting] = useState(false);
+  const inProgress = (scenario.runs[0] ?? scenario.last_run)?.status === "running";
   return (
     <>
       <Breadcrumbs
@@ -817,8 +821,32 @@ function Header({ scenario }: { scenario: ScenarioDetail }) {
         <span className="ah-grow" />
         <StaleStamp />
         <DiscussButton />
+        <ScenarioMenu
+          name={scenario.name}
+          inProgress={inProgress}
+          onDelete={() => {
+            setDeleting(true);
+          }}
+        />
       </div>
       {scenario.description && <p style={{ margin: 0 }}>{scenario.description}</p>}
+      {deleting && (
+        <DeleteScenarioDialog
+          target={{
+            project: scenario.project,
+            name: scenario.name,
+            pack: scenario.pack,
+            path: scenarioPath(scenario),
+          }}
+          onCancel={() => {
+            setDeleting(false);
+          }}
+          onDeleted={(deleted) => {
+            // Replace: Back does not land on the page of a scenario that is gone.
+            void navigate("/scenarios", { replace: true, state: { deleted } });
+          }}
+        />
+      )}
     </>
   );
 }
@@ -975,7 +1003,7 @@ function DetailBody({ scenario }: { scenario: ScenarioDetail }) {
   }
   return (
     <Page>
-      <div className="sc-detail ah-stack" style={{ gap: 16 }}>
+      <div className="sc-page ah-stack" style={{ gap: 16 }}>
         <Header scenario={scenario} />
         <div className="ah-row ah-wrap" style={{ gap: 12 }}>
           {modeSwitch}

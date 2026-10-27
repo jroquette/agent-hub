@@ -831,6 +831,10 @@ class ScenarioCatalog:
             proposal=last.proposal.proposal, investigation=last.number, options=options
         )
 
+    def last_run(self, project: str, name: str) -> ScenarioRunRef | None:
+        """Scenario ``name``'s newest scenario run, or ``None``."""
+        return self._last_runs(project, self.hub_of(project)).get(scenario_label(name))
+
     def _last_runs(self, project: str, hub: str) -> dict[str, ScenarioRunRef]:
         """The newest scenario run of each label, from one page of the project's scenario
         runs."""

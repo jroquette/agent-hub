@@ -32,8 +32,9 @@
   overflow-wrap: anywhere;
 }
 
-/* Scenario detail: centred, at most 1440 px; the storyline beside a sticky run panel. */
-.sc-detail {
+/* The Scenarios list and a scenario: centred, at most 1440 px, so both line up; on a
+ * scenario the storyline sits beside a sticky run panel. */
+.sc-page {
   width: 100%;
   max-width: 1440px;
   margin: 0 auto;
@@ -191,4 +192,60 @@
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* The Scenarios list: the Features list's rows (features.css) with three fixed columns, Steps,
+ * Last scenario run and the row menu. The card lets the menu open past its edge, so its own
+ * corners are drawn by its first and last parts. */
+.ft-card.sc-list {
+  --ft-meta: 56px 240px 28px;
+  overflow: visible;
+}
+.sc-list .ft-cols {
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+.sc-list .ft-row:last-child {
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+.sc-list .sc-steps {
+  text-align: right;
+}
+.sc-menu {
+  position: relative;
+  display: inline-flex;
+  justify-content: flex-end;
+}
+.sc-menu-off {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: 6px 10px;
+  color: var(--text-subtle);
+  cursor: default;
+}
+.sc-toast {
+  position: fixed;
+  right: var(--space-6);
+  bottom: var(--space-6);
+  z-index: 50;
+}
+/* Steps goes first (it stays in the row's name and on the scenario's page), then the time. */
+@media (max-width: 1279px) {
+  .ft-card.sc-list {
+    --ft-meta: 240px 28px;
+  }
+  .sc-list .sc-steps {
+    display: none;
+  }
+}
+@media (max-width: 1099px) {
+  .ft-card.sc-list {
+    --ft-meta: 160px 28px;
+  }
+  .sc-list .ft-row-head {
+    flex-wrap: wrap;
+  }
+  .sc-list .sc-last-time {
+    display: none;
+  }
 }

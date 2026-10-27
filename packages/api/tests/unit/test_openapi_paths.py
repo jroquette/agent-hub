@@ -340,6 +340,7 @@ SCENARIO_SPEC_PATHS = {
     ("post", "/api/v1/projects/{project}/scenarios/validate"),
     ("get", "/api/v1/projects/{project}/actions"),
     ("put", "/api/v1/scenarios/{project}/{name}"),
+    ("delete", "/api/v1/scenarios/{project}/{name}"),
     ("get", "/api/v1/scenarios/{project}/{name}/proposal"),
     ("post", "/api/v1/scenarios/{project}/{name}/proposal/dismiss"),
     ("post", "/api/v1/projects/{project}/actions"),

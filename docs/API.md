@@ -780,6 +780,11 @@ environment minus `LINEAR_API_KEY`); no problem quotes its output.
     scenario, 409 `name_taken` when another pack holds the name). The server sets `revision` (the file's plus one);
     a document whose canonical bytes with the file's own `revision` equal the file's writes nothing and keeps the
     revision (`changed: false`), a graph or a tree alike.
+  - `DELETE /api/v1/scenarios/{project}/{name}` → 204 removes the scenario's file and Claude's proposal for it from
+    the hub folder (never through a link, 409 `link_in_path`; not while its newest scenario run is in progress or
+    waits for you, 409 `scenario_run_in_progress`; no git command, so the file comes back only from the
+    hub's git history); its recorded scenario runs stay. 404 when no scenario of that name loads. A DELETE sends no
+    body, so it needs no JSON content type; its Origin is checked as any strict write's.
   - `GET /api/v1/scenarios/{project}/{name}/proposal` → 200 `ProposalView`: the document Claude wrote for the scenario
     under the hub's ignored `.agent-runs/`, checked as Save would check it; 404 when there is none. `POST
     …/proposal/dismiss` → 204 removes it once the owner accepted it into the draft or rejected it (never through a
@@ -789,7 +794,7 @@ environment minus `LINEAR_API_KEY`); no problem quotes its output.
     document and its script as a draft (409 `name_taken`, `document_invalid`); it runs and commits nothing. `PUT
     /api/v1/projects/{project}/actions/{pack}/{name}` rewrites an action of the hub the same way (409
     `unknown_action`); the action is a draft until it is committed again.
-  - The save, the dismiss and the two action writes are item writes (`ITEM_WRITES`): strict Origin rules and the
+  - The save, the delete, the dismiss and the two action writes are item writes (`ITEM_WRITES`): strict Origin rules and the
     launch cookie, and 409 `hub_read_only` in the container ([Local security](#local-security)).
 - `POST /api/v1/scenarios/{project}/{name}/plan` with `{environment, inputs?}` → 200 `ScenarioPlanView`: what `hub
   scenario plan NAME --env ENV --json` prints (`scenario`, `environment`, `access` (`null` when undeclared),

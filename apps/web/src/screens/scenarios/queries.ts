@@ -3,6 +3,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import type { components } from "../../api/schema";
 import {
   apiCommand,
+  apiDelete,
   apiGet,
   apiKey,
   apiPost,
@@ -215,6 +216,36 @@ export function useMigrateScenario(project: string, name: string) {
     onSuccess: (result) => {
       if (!result.written) return;
       void client.invalidateQueries({
+        queryKey: apiKey("/api/v1/scenarios/{project}/{name}", { path: { project, name } }),
+      });
+      void client.invalidateQueries({ queryKey: apiKey("/api/v1/scenarios") });
+    },
+  });
+}
+
+/** The scenario a delete names. */
+export interface ScenarioRef {
+  project: string;
+  name: string;
+}
+
+/** `DELETE /scenarios/{project}/{name}`: removes the scenario's file from the hub folder (409
+ * while a scenario run of it is in progress). A 404 counts as done: the file is already gone.
+ * Either way the list reads the hub again and the scenario's page is forgotten. */
+export function useDeleteScenario() {
+  const client = useQueryClient();
+  return useMutation<"deleted" | "gone", ApiProblem, ScenarioRef>({
+    mutationFn: async ({ project, name }) => {
+      try {
+        await apiDelete("/api/v1/scenarios/{project}/{name}", { path: { project, name } });
+        return "deleted";
+      } catch (error) {
+        if ((error as ApiProblem).status === 404) return "gone";
+        throw error;
+      }
+    },
+    onSuccess: (_result, { project, name }) => {
+      client.removeQueries({
         queryKey: apiKey("/api/v1/scenarios/{project}/{name}", { path: { project, name } }),
       });
       void client.invalidateQueries({ queryKey: apiKey("/api/v1/scenarios") });
