@@ -3,10 +3,15 @@
 import json
 import stat
 from collections.abc import Callable
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from agent_hub.core.json_form import dump_json
 from agent_hub.core.testing.builders import an_event
+from agent_hub.core.testing.repo_edit_cases import MODEL_CASES, REFUSAL_CASES, RepoEditCase
 
 HUBS = "/api/v1/hubs"
 # The registry writes require this server's Origin (A11).
@@ -216,3 +221,86 @@ def test_refuses_unprocessable_and_writes_nothing_when_edit_refused(
     assert response.json()["title"] == "This change was not saved"
     assert (hub / "hub.json").read_bytes() == before
     assert not (hub / "hub.local.json").exists()
+
+
+REPOS = "/api/v1/projects/demo/config/repos"
+
+
+# AGH-578 AC-6: the composed POST /projects/{project}/config/repos adds the repo to the
+# registered hub's hub.json and answers the new Hub config view.
+def test_adds_repo_when_config_repos_posted(composed: Any, make_hub: Callable[..., Path]) -> None:
+    hub = make_hub()
+    assert composed.client.post(HUBS, json={"path": str(hub)}, headers=OWN).status_code == 201
+
+    response = composed.client.post(
+        REPOS,
+        json={
+            "op": "add_repo",
+            "dir": "demo-web",
+            "github": "acme/demo-web",
+            "check": "make check",
+            "check_fast": "make check-fast",
+            "default_branch": "trunk",
+        },
+        headers=OWN,
+    )
+
+    assert response.status_code == 200, response.text
+    assert [repo["dir"] for repo in response.json()["repos"]] == ["demo-api", "demo-web"]
+    written = json.loads((hub / "hub.json").read_text(encoding="utf-8"))
+    assert written["repos"][-1] == {
+        "dir": "demo-web",
+        "github": "acme/demo-web",
+        "check_fast": "make check-fast",
+        "check": "make check",
+        "default_branch": "trunk",
+    }
+    assert not (hub / "hub.local.json").exists()
+
+
+# AGH-578 AC-6: each refusal of the shared case table answers one problem per CLI line, at its
+# path, and writes nothing.
+@pytest.mark.parametrize(
+    ("case", "by_model"),
+    [
+        *(pytest.param(case, False, id=case.id) for case in REFUSAL_CASES),
+        *(pytest.param(case, True, id=case.id) for case in MODEL_CASES),
+    ],
+)
+def test_refuses_repo_edit_when_case_refused(
+    composed: Any, make_hub: Callable[..., Path], case: RepoEditCase, *, by_model: bool
+) -> None:
+    hub = make_hub()
+    assert composed.client.post(HUBS, json={"path": str(hub)}, headers=OWN).status_code == 201
+    files = case.setup()
+    document = {**files.hub, "platform": {"version": version("agent-hub-cli")}}
+    (hub / "hub.json").write_bytes(dump_json(document))
+    if files.local is not None:
+        (hub / "hub.local.json").write_bytes(dump_json(files.local))
+    before = {path.name: path.read_bytes() for path in hub.glob("hub*.json")}
+
+    response = composed.client.post(REPOS, json=case.body, headers=OWN)
+
+    assert response.status_code == 422, response.text
+    assert response.headers["content-type"] == "application/problem+json"
+    problem = response.json()
+    assert problem["title"] == "This change was not saved"
+    lead = "hub.json: " if by_model else ""
+    assert [(error["pointer"], error["message"]) for error in problem["errors"]] == [
+        (path, f"{lead}{message}") for path, message in case.expected
+    ]
+    assert {path.name: path.read_bytes() for path in hub.glob("hub*.json")} == before
+
+
+# AGH-578 AC-6: a repo edit without this server's Origin is refused as config/environments is.
+def test_refuses_repo_edit_when_origin_missing(
+    composed: Any, make_hub: Callable[..., Path]
+) -> None:
+    hub = make_hub()
+    assert composed.client.post(HUBS, json={"path": str(hub)}, headers=OWN).status_code == 201
+    before = (hub / "hub.json").read_bytes()
+
+    response = composed.client.post(REPOS, json={"op": "remove_repo", "dir": "demo-api"})
+
+    assert response.status_code == 403, response.text
+    assert (hub / "hub.json").read_bytes() == before
