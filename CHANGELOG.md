@@ -11,6 +11,20 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- `hub repo list|add|set|remove` lists a hub's repos and changes them in `hub.json` without a hand edit. Each change
+  is checked before it is written, and a refused change leaves the file as it was. `remove` refuses a repo that
+  something else in `hub.json` or your `hub.local.json` still names, and lists each place. Nothing is cloned, synced or
+  deleted: the command prints the next steps (`./hub sync`, `./hub setup`, `/onboard`). hub web's Hub config screen
+  adds, changes and removes repos the same way, through `POST /api/v1/projects/{project}/config/repos`.
+
+### Changed
+
+- The guard asks before `hub repo add|set|remove`, as it does for `hub env`, because a change can alter the
+  `check_fast` the Stop hook runs. Both now also ask when a `--` comes before the subcommand. Run `hub sync` after
+  bumping `platform.version` to get the new guard and the `AGENTS.md` line that names `./hub repo`.
+
 ## [0.26.0] - 2026-10-27
 
 ### Added
