@@ -1,21 +1,23 @@
 """``features.tracker``'s light check of a feature folder's agent outputs (AGH-139 S9, P10).
 
 Warnings only. An ``evals/<name>.json`` needs its ``evals/<name>.md`` and a
-``reviews/<ticket>/<file>.json`` its ``reviews/<ticket>.md``, each a listed regular file; an output
-without one gets that warning only and is not validated. The others are validated by
-``agent_outputs`` (an eval with the sibling's first ``EVAL_HEAD_BYTES`` and the folder's
-``features.json`` as the record), and an invalid one gets one warning: its problem count and first
-problem, and the ``hub validate-output`` command that lists them all. An output that is not a
-regular file, or whose read failed, gets the rule's usual read warning.
+``reviews/<ticket>/<file>.json`` (or ``reviews/<ticket>/<repo>/<file>.json``, a round of a ticket
+that owns several repos, checked against the folder's ``features.json``) its
+``reviews/<ticket>.md``, each a listed regular file; an output without one gets that warning only
+and is not validated. The others are validated by ``agent_outputs`` (an eval with the sibling's
+first ``EVAL_HEAD_BYTES`` and the folder's ``features.json`` as the record), and an invalid one gets
+one warning: its problem count and first problem, and the ``hub validate-output`` command that lists
+them all. An output that is not a regular file, or whose read failed, gets the rule's usual read
+warning.
 
-The work is bounded. Per feature, the first ``MAX_EVAL_FILES`` eval and ``MAX_REVIEW_FILES``
-review outputs by path are checked (the caps of the records they sit beside). Per run, one budget of
-``MAX_VALIDATED_BYTES`` is shared by every feature in listing order: an output is validated when
-the bytes it hands core fit the remaining budget (its own bytes; for an eval also the sibling's
-head and the record; a file core refuses over its bound costs nothing). The outputs left out by a
-cap or the budget get no finding of their own: ``OutputBudget.skipped`` counts them, and the rule
-reports the count in one info finding per run (``skipped_message``); ``hub validate-output``
-checks any file.
+The work is bounded. Per feature, the first ``MAX_EVAL_FILES`` eval and ``MAX_REVIEW_FILES`` review
+outputs by path are checked (the caps of the records they sit beside). Per run, one budget of
+``MAX_VALIDATED_BYTES`` is shared by every feature in listing order: an output is validated when the
+bytes it hands core fit the remaining budget (its own bytes; for an eval also the sibling's head and
+the record, for a round in a repo's folder the record; a file core refuses over its bound costs
+nothing). The outputs left out by a cap or the budget get no finding of their own:
+``OutputBudget.skipped`` counts them, and the rule reports the count in one info finding per run
+(``skipped_message``); ``hub validate-output`` checks any file.
 """
 
 import shlex
@@ -67,6 +69,8 @@ class _Output(NamedTuple):
     name: str
     folder_name: str
     note: str
+    # The ticket folder above a round's repo folder (``reviews/<ticket>/<repo>/``), else None.
+    parent_name: str | None = None
 
 
 class _Inputs(NamedTuple):
@@ -132,8 +136,10 @@ def _output(folder: str, path: str) -> _Output | None:
     if len(parts) == 2 and parts[0] == EVALS_FOLDER:
         note = f"{folder}{EVALS_FOLDER}/{stem}{NOTE_SUFFIX}"
         return _Output(path, "eval", name, EVALS_FOLDER, note)
-    if len(parts) == 3 and parts[0] == REVIEWS_FOLDER:
+    if len(parts) in {3, 4} and parts[0] == REVIEWS_FOLDER:
         note = f"{folder}{REVIEWS_FOLDER}/{parts[1]}{NOTE_SUFFIX}"
+        if len(parts) == 4:  # noqa: PLR2004 -- reviews/<ticket>/<repo>/<file>
+            return _Output(path, "review", name, parts[2], note, parent_name=parts[1])
         return _Output(path, "review", name, parts[1], note)
     return None
 
@@ -155,7 +161,9 @@ def _inputs(
     if isinstance(content, Problem):
         return content._replace(warning=True)
     if output.kind == "review":
-        return _Inputs(content, b"", _parsed(content, MAX_OUTPUT_BYTES))
+        # A round in a repo's folder also hands core the record it is checked against.
+        nested = 0 if output.parent_name is None else _parsed(record, MAX_RECORD_BYTES)
+        return _Inputs(content, b"", _parsed(content, MAX_OUTPUT_BYTES) + nested)
     if note.content is None:
         # The note's own check already reports its failed read.
         return None
@@ -174,7 +182,11 @@ def _validated(
 ) -> tuple[OutputProblem, ...]:
     if output.kind == "review":
         return agent_outputs.review_problems(
-            inputs.content, file_name=output.name, folder_name=output.folder_name
+            inputs.content,
+            file_name=output.name,
+            folder_name=output.folder_name,
+            parent_name=output.parent_name,
+            record=None if output.parent_name is None else record,
         )
     return agent_outputs.eval_problems(
         inputs.content, file_name=output.name, sibling_head=inputs.sibling_head, record=record

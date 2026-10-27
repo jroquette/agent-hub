@@ -5,7 +5,9 @@ every input is opened by name from a folder's descriptor with ``O_NOFOLLOW`` (``
 the output itself, read up to ``MAX_OUTPUT_BYTES + 1`` bytes; for an eval output
 ``evals/<stem>.md`` beside it, its first ``EVAL_HEAD_BYTES``; and ``features.json`` in the parent
 of the folder that actually holds the output (``..`` opened from that folder's descriptor), up to
-``MAX_RECORD_BYTES + 1`` bytes. One byte over a bound is read so core can refuse the size.
+``MAX_RECORD_BYTES + 1`` bytes. A review output's record is the feature's ``features.json`` three
+folders up (``reviews/<ticket>/<repo>/``), read to check a round saved in a repo's folder. One byte
+over a bound is read so core can refuse the size.
 
 Each read is the bytes, a one-line cause (a link, not a regular file, an OS error), or, for the
 sibling and the record, None when absent. Nothing is written.
@@ -42,6 +44,30 @@ class EvalInputs:
     content: bytes | str
     sibling_head: bytes | str | None
     record: bytes | str | None
+
+
+@dataclass(frozen=True, kw_only=True)
+class ReviewInputs:
+    """What a review output check reads: the output, the name of the folder above its folder,
+    and the feature record a round in a repo's folder is checked against (None when absent)."""
+
+    content: bytes | str
+    parent_name: str
+    record: bytes | str | None
+
+
+def read_review_inputs(path: Path) -> ReviewInputs:
+    """The review output and, for a round saved as ``reviews/<ticket>/<repo>/<file>``, the
+    feature record three folders up, read from the output's folder."""
+    parent_name = path.parent.resolve().parent.name
+    with _folder(path) as folder:
+        if isinstance(folder, str):
+            return ReviewInputs(content=folder, parent_name=parent_name, record=None)
+        content = _content(folder, path.name)
+        if isinstance(content, str):
+            return ReviewInputs(content=content, parent_name=parent_name, record=None)
+        record = _record(folder, up=os.path.join("..", "..", ".."))
+        return ReviewInputs(content=content, parent_name=parent_name, record=record)
 
 
 def read_output(path: Path) -> bytes | str:
@@ -99,9 +125,9 @@ def _sibling(folder: int, name: str) -> bytes | str | None:
     return None if read is None else _shown(read)
 
 
-def _record(folder: int) -> bytes | str | None:
+def _record(folder: int, *, up: str = "..") -> bytes | str | None:
     try:
-        parent = os.open("..", _FOLDER_FLAGS, dir_fd=folder)
+        parent = os.open(up, _FOLDER_FLAGS, dir_fd=folder)
     except OSError as error:
         return _cause(error)
     try:

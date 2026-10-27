@@ -371,6 +371,53 @@ def test_names_folder_when_review_path_relative_in_other_folder(
     assert result.stderr == "spec-r1.json: ticket: the ticket is DEM-7 but the folder is DEM-8\n"
 
 
+SEVERAL = json.dumps(
+    {
+        "tickets": [
+            {"key": "T2", "id": "DEM-7", "repos": [{"repo": "backend"}, {"repo": "frontend"}]}
+        ],
+        "acs": [],
+    }
+).encode()
+
+
+def a_repo_round(root: Path, repo: str, *, record: bytes | None = SEVERAL) -> Path:
+    """``spec-r1.json`` of DEM-7 in its repo folder ``reviews/DEM-7/<repo>/`` (AGH-589)."""
+    feature = root / "feature"
+    folder = feature / "reviews" / "DEM-7" / repo
+    folder.mkdir(parents=True)
+    if record is not None:
+        (feature / "features.json").write_bytes(record)
+    path = folder / "spec-r1.json"
+    path.write_text(json.dumps(a_review_document()))
+    return path
+
+
+@pytest.mark.parametrize("record", [SEVERAL, None], ids=["planned", "no record"])
+def test_prints_valid_when_round_in_a_repo_folder_of_its_ticket(
+    tmp_path: Path, record: bytes | None
+) -> None:
+    path = a_repo_round(tmp_path, "frontend", record=record)
+
+    result = run_unchanged(tmp_path, "review", path)
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == f"{path}: valid\n"
+
+
+def test_names_the_repos_when_round_in_a_folder_that_is_not_a_repo_of_its_ticket(
+    tmp_path: Path,
+) -> None:
+    path = a_repo_round(tmp_path, "web")
+
+    result = run_unchanged(tmp_path, "review", path)
+
+    assert result.exit_code == 1
+    assert result.stderr == (
+        f"{path}: ticket: the folder web is not a repo of DEM-7 (backend, frontend)\n"
+    )
+
+
 def a_preflight_file(root: Path, document: object) -> Path:
     folder = root / "feature" / "tickets" / "DEM-7"
     folder.mkdir(parents=True, exist_ok=True)

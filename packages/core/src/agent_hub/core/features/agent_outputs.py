@@ -21,7 +21,8 @@ from typing import Any, Final, Literal
 from pydantic import BaseModel, ValidationError
 
 from agent_hub.core.features.eval_output_checks import eval_cross_problems
-from agent_hub.core.features.eval_output_scope import eval_scope_problems
+from agent_hub.core.features.eval_output_scope import eval_scope_problems, parsed_record
+from agent_hub.core.features.feature_record import RECORD_FILE, ticket_repos
 from agent_hub.core.features.output_models import (
     MAX_EVAL_ACS,
     MAX_EVAL_TICKETS,
@@ -72,18 +73,48 @@ _EVAL_LISTS: Final[tuple[tuple[str, int], ...]] = (
 
 
 def review_problems(
-    content: bytes, *, file_name: str, folder_name: str
+    content: bytes,
+    *,
+    file_name: str,
+    folder_name: str,
+    parent_name: str | None = None,
+    record: bytes | str | None = None,
 ) -> tuple[OutputProblem, ...]:
     """Every problem of a review output saved as ``<folder_name>/<file_name>``; () when valid.
 
-    ``file_name`` and ``folder_name`` are the file's own name and its ticket folder's name.
+    ``file_name`` and ``folder_name`` are the file's own name and its folder's name: its ticket's,
+    or one repo's of a ticket that owns several, under the ticket's folder ``parent_name``. Such a
+    repo must be one of the ticket's in ``record`` (``features.json``'s bytes, or why it could not
+    be read) when given.
     """
     document = parse_document(content)
     if isinstance(document, OutputProblem):
         return (document,)
     shape = _shape(document, model=ReviewOutput, overlong=_overlong_review_lists)
-    cross = review_cross_problems(document, file_name=file_name, folder_name=folder_name)
+    cross = review_cross_problems(
+        document,
+        file_name=file_name,
+        folder_name=folder_name,
+        parent_name=parent_name,
+        owned=None if record is None else _owned_repos(record),
+    )
     return (*shape, *cross)
+
+
+def _owned_repos(record: bytes | str) -> Mapping[str, tuple[str, ...]] | str:
+    """Each planned ticket's key and id, upper case, to the repos it owns; or the record's
+    problem."""
+    if isinstance(record, str):
+        return f"{RECORD_FILE} could not be read ({record})"
+    parsed = parsed_record(record)
+    if isinstance(parsed, OutputProblem):
+        return parsed.message
+    return {
+        name.upper(): tuple(repo.repo for repo in ticket_repos(ticket))
+        for ticket in (() if parsed is None else parsed.tickets)
+        for name in (ticket.key, ticket.id)
+        if name is not None
+    }
 
 
 def eval_problems(

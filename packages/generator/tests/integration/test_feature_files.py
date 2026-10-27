@@ -584,6 +584,32 @@ def test_lists_round_tickets_when_ticket_folders_hold_rounds(
     assert (MAX_ROUND_TICKETS, MAX_ROUND_ENTRIES) == (500, 20_000)
 
 
+def test_lists_round_tickets_when_rounds_sit_in_repo_folders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # AGH-589: a ticket that owns several repos keeps each repo's rounds in reviews/<t>/<repo>/.
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    reviews = folder / "reviews"
+    for path in (
+        "AGH-6/backend/notes.txt",
+        "AGH-6/frontend/spec-r1.json",
+        "AGH-7/backend/notes.txt",
+        "AGH-8/backend/deeper/spec-r1.json",
+        "AGH-9/.hidden/spec-r1.json",
+    ):
+        (reviews / path).parent.mkdir(parents=True, exist_ok=True)
+        (reviews / path).write_bytes(b"{}")
+    (reviews / "AGH-10").mkdir()
+    (reviews / "AGH-10" / "backend").symlink_to(reviews / "AGH-6" / "frontend")
+    reads = Reads(monkeypatch)
+
+    read = read_feature_folder(tmp_path, "demo-feature")
+    assert read is not None
+
+    assert read.review_round_tickets == ("AGH-6",)
+    assert "spec-r1.json" not in reads.opened
+
+
 def test_stops_at_first_round_when_ticket_folder_holds_several(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
