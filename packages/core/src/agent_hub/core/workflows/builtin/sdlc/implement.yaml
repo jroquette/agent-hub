@@ -8,7 +8,7 @@
 # ticket-pass (preflight, the plan change gate on plan drift, the worktree once a preflight
 # passed, the ticket plan and the review rounds) up to three times, unrolled (A2): pass-2 runs
 # when pass-1 ended with a discovery, pass-3 likewise, and a discovery in pass-3 ends the run
-# blocked (D-3; a superseded approval is re-checked inside its pass and spends no loop). The ticket's repo is the plan's (ticket-brief prints it). After a pass that passed review, the evaluator scoped to the ticket
+# blocked (D-3; a superseded approval is re-checked inside its pass and spends no loop). The ticket's repo is the plan's (ticket-brief prints it); a ticket that owns several repos ends the run at once, naming /implement. After a pass that passed review, the evaluator scoped to the ticket
 # (evals/<delivery>.json, agent-hub/eval/1); then the commits, the PR only on SHIP or
 # SHIP-WITH-OWNER-STEPS, and the delivery: hub step report's, plus this run's hub files for the
 # owner's hub PR (delivery.py, D-1). The run never commits in the hub and has no tracker side.
@@ -42,6 +42,13 @@ nodes:
         repo: {type: string}
         commit: {type: string}
       required: [path, hub, repo, commit]
+
+  - id: several
+    type: halt
+    description: A ticket that owns several repos is conducted by /implement, not by this run.
+    depends_on: [context]
+    when: "$context.output.repo == ''"
+    reason: "$INPUTS.issue owns several repos: run /implement $INPUTS.issue, which conducts such a ticket (a worktree, review rounds and a pull request per repo)."
 
   - id: pending
     type: shell

@@ -181,7 +181,9 @@ under the feature's lock `.agent-runs/locks/<slug>.lock` (never committed); a ru
 | `pending-decision --feature --ticket` | nothing: prints `{request, decision, input, note, summary, superseded}`, the decision on the request the ticket's last preflight run opened (`drift: plan`, its `input` not `declined_change`), or else on this ticket's newest decided request that no run names, opened after its last run (its run failed before the preflight run was written); else `request: null` and empty texts. An approval the plan moved past (A23) has an empty `decision` (nothing to amend) and its `note` and `superseded` say so; `input` is `declined_change` for a decline, else `none`; `summary` is the proposal's first line | a record the readers could not read |
 
 The `implement` workflow (built-in `sdlc` pack, with its `ticket-pass`, which includes `preflight-check`; A1, A2,
-A22, A23) runs them in this order: `ticket-brief`; `pending-decision`, then `amend-plan` for a decision approved while
+A22, A23) refuses a ticket that owns several repos: `ticket-brief` prints no single `repo`, and the run ends
+`cancelled` at once, its reason naming `/implement`, which conducts such a ticket (AGH-593; engine support is
+AGH-594). For a ticket of one repo it runs them in this order: `ticket-brief`; `pending-decision`, then `amend-plan` for a decision approved while
 no run waited (AC-2.14); then each pass: the preflight agent (fresh, `mutates_checkout: false`, in the ticket repo's main checkout, reading
 main at `ticket-brief`'s commit with git: no checkout, no branch), `change-request` on `plan` drift, `preflight`, the
 gate (`approve`, `decline` with its note, `capture_response`), `decide` (`--by` the gate's `approver`) and `amend-plan`
