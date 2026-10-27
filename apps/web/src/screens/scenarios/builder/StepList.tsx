@@ -14,7 +14,7 @@ import { Button, Icon, IconButton } from "../../../components";
 import { EffectBadge, PolicyBadge } from "../parts";
 import type { ScenarioAction, ScenarioPlanRow } from "../queries";
 import { pace } from "../story";
-import { TokenText, ValueToken, cardTitle, tokenOf } from "./CardParts";
+import { TokenText, ValueToken, cardTitle, firstSentence, tokenOf } from "./CardParts";
 import { kindLook } from "./FlowCanvas";
 import { conditionWords, shown, text, type BuilderNode, type Json } from "./model";
 import { itemId, listsOf, type Item, type Slot } from "./program";
@@ -200,7 +200,7 @@ function nodeLines(
   node: BuilderNode,
   action: ScenarioAction | null,
   inner: number,
-): { title: string; detail: ReactNode; detailText: string } {
+): { title: string; detail: ReactNode; tech: ReactNode; detailText: string } {
   const named = typeof node.description === "string" && node.description.trim() !== "";
   const title = cardTitle(node, action);
   const parts: ReactNode[] = [];
@@ -209,9 +209,12 @@ function nodeLines(
     parts.push(<span key={parts.length}>{part}</span>);
     words.push(word);
   };
+  // Line 2 says what the step does, in words; the action and the values it sets go on a quieter
+  // technical line under it (and open as chips to edit while the row is selected).
   const ref = text(node.action);
-  if (node.type === "action" || node.type === "expect") {
-    if (ref) add(<span className="st-mono">{action?.name ?? ref}</span>, ref);
+  if (node.type === "action" && action?.description) {
+    const said = firstSentence(action.description).replace(/\.$/, "");
+    if (said !== title.replace(/\.$/, "")) add(said, said);
   }
   if (node.type === "expect") {
     if (named && text(node.until_when)) {
@@ -221,17 +224,41 @@ function nodeLines(
     const every = text(node.every);
     const timeout = text(node.timeout);
     if (every && timeout) {
-      const timing = `every ${pace(every)}, up to ${pace(timeout)}`;
+      const timing = `checks every ${pace(every)}, up to ${pace(timeout)}`;
       add(timing, timing);
     }
   }
+  const techParts: ReactNode[] = [];
+  const techWords: string[] = [];
+  if ((node.type === "action" || node.type === "expect") && ref) {
+    techParts.push(
+      <span key="ref" className="st-mono">
+        {action?.name ?? ref}
+      </span>,
+    );
+    techWords.push(ref);
+  }
   if (node.type === "action" || node.type === "expect" || node.type === "include") {
+    let more = 0;
     for (const [name, value] of ownValues(node, action)) {
-      add(
-        <>
+      // A long or structured value (a JSON body) is the open row's: here it is only counted.
+      if (!editableValue(value) || compact(value).length > 40) {
+        more += 1;
+        techWords.push(`${name} ${compact(value)}`);
+        continue;
+      }
+      techParts.push(
+        <span key={name}>
           <span className="st-key">{name}</span> <Value value={value} />
-        </>,
-        `${name} ${compact(value)}`,
+        </span>,
+      );
+      techWords.push(`${name} ${compact(value)}`);
+    }
+    if (more > 0) {
+      techParts.push(
+        <span key="more" className="st-key">
+          +{more} {more === 1 ? "value" : "values"}
+        </span>,
       );
     }
   }
@@ -251,7 +278,8 @@ function nodeLines(
   return {
     title,
     detail: parts.length > 0 ? interleave(parts) : null,
-    detailText: words.join(" · "),
+    tech: techParts.length > 0 ? interleave(techParts) : null,
+    detailText: [...words, ...techWords].join(" · "),
   };
 }
 
@@ -566,7 +594,7 @@ export function StepList(props: StepListProps) {
     group: boolean,
     spoken = "",
     stage = false,
-    extra: { news?: ReactNode; titleEditor?: ReactNode } = {},
+    extra: { news?: ReactNode; titleEditor?: ReactNode; tech?: ReactNode } = {},
   ) => {
     const number = numbers.get(id) ?? "";
     const isSelected = selected === id;
@@ -726,6 +754,7 @@ export function StepList(props: StepListProps) {
         <span className="st-lines">
           {extra.titleEditor ?? <span className="st-title">{title}</span>}
           {detail && <span className="st-detail">{detail}</span>}
+          {extra.tech && <span className="st-tech">{extra.tech}</span>}
           {extra.news}
         </span>
         <span className="st-right">
@@ -769,19 +798,6 @@ export function StepList(props: StepListProps) {
               <Icon name={status.icon} size="sm" /> {status.label}
             </span>
           )
-        )}
-        {action?.draft === true && (
-          <a
-            className="st-chip st-chip-link"
-            href="#before-you-start"
-            tabIndex={-1}
-            title="A draft action: commit it before a scenario run can start. The command is in Before you start."
-            onClick={(event) => {
-              event.stopPropagation();
-            }}
-          >
-            <Icon name="pencil" size="sm" /> Draft action
-          </a>
         )}
       </>
     );
@@ -856,7 +872,8 @@ export function StepList(props: StepListProps) {
           }))
         : undefined;
     // Line 2 with its values as chips: a click edits one in place (the row is selected).
-    let detail: ReactNode = lines.detail;
+    const detail: ReactNode = lines.detail;
+    let tech: ReactNode = lines.tech;
     const values =
       node.type === "action" || node.type === "expect" || node.type === "include"
         ? ownValues(node, action)
@@ -872,10 +889,6 @@ export function StepList(props: StepListProps) {
             {action?.name ?? ref}
           </span>,
         );
-      const named = typeof node.description === "string" && node.description.trim() !== "";
-      if (node.type === "expect" && named && text(node.until_when)) {
-        parts.push(<span key="until">until {conditionWords(text(node.until_when))}</span>);
-      }
       if (node.type === "expect") {
         const every = text(node.every);
         const timeout = text(node.timeout);
@@ -943,9 +956,7 @@ export function StepList(props: StepListProps) {
           );
         }
       }
-      const keeps = Object.keys(record(node.capture));
-      if (keeps.length > 0) parts.push(<span key="keeps">keeps {keeps.join(", ")}</span>);
-      detail = <span className="st-detail-edit">{interleave(parts)}</span>;
+      tech = <span className="st-detail-edit">{interleave(parts)}</span>;
     }
     return row(
       id,
@@ -965,7 +976,7 @@ export function StepList(props: StepListProps) {
         status ? ` ${status.label}.` : "",
       ].join(""),
       false,
-      { news, titleEditor },
+      { news, titleEditor, tech },
     );
   };
 

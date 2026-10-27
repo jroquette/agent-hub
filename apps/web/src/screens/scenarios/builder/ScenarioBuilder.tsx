@@ -1828,6 +1828,22 @@ export function ScenarioBuilder({
               ]}
             />
           </span>
+          <span className="sb-runbar-sep" aria-hidden />
+          {asksAtStart.length > 0 && (
+            <Button
+              size="sm"
+              variant="ghost"
+              icon="braces"
+              aria-expanded={menu === "preview"}
+              onClick={() => {
+                setMenu(menu === "preview" ? null : "preview");
+              }}
+            >
+              {missingToPlan.length > 0
+                ? `Inputs · ${String(missingToPlan.length)} to fill`
+                : `Inputs · ${String(asksAtStart.length)} set`}
+            </Button>
+          )}
           <span className="sb-menu-anchor">
             <Button
               type="submit"
@@ -1893,21 +1909,6 @@ export function ScenarioBuilder({
               </div>
             )}
           </span>
-          {asksAtStart.length > 0 && (
-            <Button
-              size="sm"
-              variant="ghost"
-              icon="braces"
-              aria-expanded={menu === "preview"}
-              onClick={() => {
-                setMenu(menu === "preview" ? null : "preview");
-              }}
-            >
-              {missingToPlan.length > 0
-                ? `Inputs · ${String(missingToPlan.length)} to fill`
-                : `Inputs · ${String(asksAtStart.length)} set`}
-            </Button>
-          )}
           {preview && (
             <Button
               size="sm"

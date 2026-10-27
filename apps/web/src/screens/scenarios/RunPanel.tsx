@@ -409,36 +409,72 @@ export function StartScenarioRun({
   );
 }
 
-/** The draft actions a start would refuse, each with its commit command, gathered once. */
+/** One commit for every draft action: their `git add` paths together, one message. Each
+ * command is the server's `git add -- <paths> && git commit -m '<message>'`; any other shape
+ * keeps the commands as they are, one after the other. */
+export function oneCommit(commands: readonly string[], refs: readonly string[]): string {
+  const paths: string[] = [];
+  for (const command of commands) {
+    const found = /^git add -- (.+?) && git commit -m '[^']*'$/.exec(command.trim());
+    if (found?.[1] === undefined) return commands.join(" && ");
+    for (const path of found[1].split(/\s+/)) if (!paths.includes(path)) paths.push(path);
+  }
+  return `git add -- ${paths.join(" ")} && git commit -m 'Accept actions ${refs.join(", ")}'`;
+}
+
+/** The draft actions a start would refuse, gathered once: plans work now, and one commit in the
+ * hub checkout lets a scenario run start. The commands themselves stay folded. */
 export function BeforeYouStart({ scenario }: { scenario: ScenarioDetail }) {
   const drafts = scenario.actions.filter((action) => action.draft);
   if (drafts.length === 0) return null;
   const commands = drafts.flatMap((action) =>
     action.accept_command ? [action.accept_command] : [],
   );
+  const all = oneCommit(
+    commands,
+    drafts.map((action) => action.ref),
+  );
   return (
     <section
       aria-label="Before you start"
       id="before-you-start"
-      className="ah-card ah-card-body ah-stack"
-      style={{ gap: 10 }}
+      className="ah-card ah-card-body ah-stack sc-before"
+      style={{ gap: 8 }}
       tabIndex={-1}
     >
       <span className="ah-row" style={{ gap: 8 }}>
+        <Icon name="pencil" size="sm" />
         <h2 className="ah-h3" style={{ margin: 0 }}>
-          Before you start ({drafts.length})
+          {counted(drafts.length, "draft action")} to commit
         </h2>
-        <span className="ah-grow" />
-        {commands.length > 1 && (
-          <CopyButton text={commands.join(" && ")} label="Copy all the commit commands" />
-        )}
       </span>
       <span className="ah-small ah-muted">
-        {drafts.length === 1
-          ? `${drafts[0]?.name ?? ""} is a draft action: a scenario run cannot start until it is committed.`
-          : `${names(drafts.map((action) => action.name))} are draft actions: a scenario run cannot start until they are committed.`}
+        You can plan now. A scenario run starts once{" "}
+        {drafts.length === 1 ? "this action is" : "these actions are"} committed in the hub
+        checkout: one commit does it.
       </span>
-      <DraftLine commands={commands} action="the draft actions" then="plan again" />
+      {commands.length > 0 && (
+        <span className="ah-row" style={{ gap: 8 }}>
+          <CopyButton text={all} label="Copy the commit command" />
+          <span className="ah-small ah-subtle">then plan again</span>
+        </span>
+      )}
+      <details className="sc-before-more">
+        <summary className="ah-small">Which actions ({drafts.length}) and the command</summary>
+        <ul className="ah-small sc-before-list">
+          {drafts.map((action) => (
+            <li key={action.ref}>
+              <span className="ah-mono">{action.name}</span>
+              {action.description ? (
+                <span className="ah-muted"> · {action.description}</span>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+        {commands.length > 0 && (
+          <DraftLine commands={[all]} action="the draft actions" then="plan again" />
+        )}
+      </details>
     </section>
   );
 }

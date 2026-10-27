@@ -849,10 +849,23 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: var(--space-3);
+  gap: var(--space-3) var(--space-5);
 }
 .sb-runbar-controls .sb-env {
   margin-left: 0;
+  gap: var(--space-2);
+}
+.sb-runbar-controls .sb-env select {
+  height: var(--control);
+  min-width: 240px;
+  /* Room for the native arrow: the text never runs under it. */
+  padding-right: 32px;
+}
+.sb-runbar-sep {
+  align-self: stretch;
+  width: 1px;
+  margin: 2px 0;
+  background: var(--border);
 }
 .sb-runbar-verdict {
   display: inline-flex;
@@ -1075,4 +1088,34 @@
   .st-row {
     transition: none;
   }
+}
+
+/* Before you start: one quiet card, its commands folded. */
+.sc-before .ah-h3 {
+  font-size: 14px;
+}
+.sc-before-more summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.sc-before-list {
+  margin: var(--space-2) 0;
+  padding-left: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* The technical line under the sentence: the action and its short values. */
+.st-tech {
+  display: block;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-row[data-selected="true"] .st-tech {
+  white-space: normal;
 }
