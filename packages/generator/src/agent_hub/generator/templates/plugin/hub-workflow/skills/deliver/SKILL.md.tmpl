@@ -11,7 +11,7 @@ Takes over once `/feature`, `/fix` or `hub ship` opened the PR(s); reads and wri
 Each step names its type: `script` is deterministic, `agent` needs judgement, `gate` is a condition checked before going on, `human` waits for the user.
 
 1. **Read the state** (`script`): the tracker issue and every PR linked to it (if it cannot be read, say so and stop); per PR: head SHA, CI per check, mergeability, open review threads, linked tracker issue.
-   Several repos (the PRs `hub ship` linked): take the merge order from the plan's contract order (`brain/features/<slug>/plan.md`); if there is no plan, ask the user for it.
+   Several repos (the PRs `hub ship` linked, or one ticket that owns several repos): take the merge order from the ticket's `prs` in `brain/features/<slug>/reviews/<ticket>.md` when it lists them, else from the plan's contract order (`brain/features/<slug>/plan.md`); if there is neither, ask the user for it.
 2. **Fix what blocks it** (`agent`), in this order, in the PR's worktree:
    - **Conflict**: merge the default branch into the head (a merge commit); never rebase, never rewrite history. Regenerate lockfiles with the repo's own tooling, never by hand.
    - **CI red**: per failing check, the summary names the failing check, its root cause and the fix; "flake" is not a cause. Re-run a job at most once, and only when it died before the tests ran (runner lost, checkout or setup failed). Still red after that re-run: root-cause it like any other.
