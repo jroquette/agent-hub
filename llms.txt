@@ -94,3 +94,4 @@ License: Apache-2.0.
 - [0047. The release tag is created by a dispatched workflow](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0047-release-tag-by-workflow-dispatch.md): `docs/adr/0047-release-tag-by-workflow-dispatch.md`
 - [0048. Scheduled and event starts run inside hub web](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0048-scheduled-and-event-starts-in-hub-web.md): `docs/adr/0048-scheduled-and-event-starts-in-hub-web.md`
 - [0049. Scenarios as ordered blocks, and a debugger as engine run control](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0049-scenario-blocks-and-run-control.md): `docs/adr/0049-scenario-blocks-and-run-control.md`
+- [0050. `/implement` is conducted in its own session, each agent stage a subagent](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0050-implement-conducted-in-its-own-session.md): `docs/adr/0050-implement-conducted-in-its-own-session.md`
