@@ -23,8 +23,9 @@ first ``UX_HEAD_BYTES`` (``ux_skipped`` counts the rest). In ``reviews/``, the f
 the same way and read only until their first review round: a regular file named as the review
 check names one (``<reviewer>-r<N>.json``), never read, in the folder or, for a ticket that owns
 several repos, in one of its repo folders (one level, the same way); ``MAX_ROUND_ENTRIES`` entries
-at most in all. ``review_round_tickets`` names the folders holding one; only ``read_feature_folder`` (one
-feature, as the tickets view reads it) looks for them, so the listing leaves it empty.
+at most in all. ``review_round_tickets`` names the folders holding one; only
+``read_feature_folder`` (one feature, as the tickets view reads it) looks for them, so the listing
+leaves it empty.
 ``change-requests/`` is read as ``evals/`` is, at most ``MAX_CHANGE_REQUEST_FILES`` heads of
 ``CHANGE_REQUEST_HEAD_BYTES`` (requests and their decisions; ``change_requests_skipped`` counts the
 rest), by the listing too: the golden path's Plan signal and ``waiting_on_owner`` need them.

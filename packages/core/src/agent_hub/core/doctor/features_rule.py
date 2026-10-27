@@ -29,13 +29,12 @@ eval finding naming the eval. A cycle of ``blocked_by`` is a warning. A withdraw
 cross-check (the spec keeps naming it, under ``## Amendments``) and skips the pending-command check.
 
 AGH-139 (``feature_output_checks``): the folder's agent outputs, ``evals/*.json`` and
-``reviews/<ticket>/*.json`` or ``reviews/<ticket>/<repo>/*.json`` (hidden names skipped), get warnings only: one without its ``.md``
-record, one that fails ``agent_outputs``' validation (its problem count and first problem), within
-per-feature file caps and one validation budget per run, which the records spend in listing
-order; an output is validated when it fits the remaining budget, and the skipped outputs are
-counted in one info finding per run, on ``brain/features``. Only folders with a listed record are
-checked; the outputs change no other finding.
-"""
+``reviews/<ticket>/*.json`` or ``reviews/<ticket>/<repo>/*.json`` (hidden names skipped), get
+warnings only: one without its ``.md`` record, one that fails ``agent_outputs``' validation (its
+problem count and first problem), within per-feature file caps and one validation budget per run,
+which the records spend in listing order; an output is validated when it fits the remaining budget,
+and the skipped outputs are counted in one info finding per run, on ``brain/features``. Only folders
+with a listed record are checked; the outputs change no other finding."""
 
 import re
 import unicodedata
