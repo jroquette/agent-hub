@@ -18,6 +18,7 @@ from typer.testing import CliRunner, Result
 
 from agent_hub.cli.child_process import ChildResult
 from agent_hub.cli.main import app
+from agent_hub.cli.step_stages import STAGES
 from agent_hub.cli.workflow_executors import WorkflowExecutors
 from agent_hub.core.features.output_models import PreflightRecord
 from agent_hub.core.features.ticket_records import preflight_record
@@ -347,3 +348,14 @@ def test_needs_the_texts_or_the_findings_when_change_request_opens_one(
     assert result.exit_code == 2, result.output
     assert "give --evidence and --proposal, or --findings" in result.output
     assert not (hub / FEATURE / "change-requests").exists()
+
+
+def test_names_the_stages_the_skill_names_when_stages_listed() -> None:
+    # The /implement skill's render test pins the same map (generator tests import no cli).
+    assert {name.value: (s.workflow, s.node) for name, s in STAGES.items()} == {
+        "preflight": ("preflight-check", "preflight"),
+        "ticket-plan": ("ticket-pass", "plan"),
+        "spec-lens": ("ticket-pass", "spec"),
+        "quality-lens": ("ticket-pass", "quality"),
+        "ticket-eval": ("implement", "eval"),
+    }

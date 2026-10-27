@@ -87,8 +87,9 @@ entries until the first regular file named as the review check names a round (`<
 
 ### `tickets/<ticket>/` and `change-requests/`
 
-The ticket flow's records (two-level-flows S2, S3), written by the `implement` and `preflight` workflows' nodes and
-by `/merge` (`hub step outcome`), never by the app, with one exception: hub web creates a request's
+The ticket flow's records (two-level-flows S2, S3), written by the `implement` and `preflight` workflows' nodes, by
+the session `/implement` conducts (the same `hub step` writers, its run id `session-<ticket>`; ADR 0050) and by
+`/merge` (`hub step outcome`), never by the app, with one exception: hub web creates a request's
 `<n>.decision.md` when its run is gone (AC-2.14, D-10; [API.md](../API.md) "Plan change requests").
 `<ticket>` is the ticket's plan key or tracker id, matched in any case.
 
@@ -144,8 +145,10 @@ counted first; a ticket whose folder was left out reads Context and Preflight `u
 more than that is a record problem on Plan's signal. A file that cannot be read or parsed reads "<file> could not be
 read (…). Fix it in a hub PR." on the step it feeds.
 
-The `implement` run writes them with `hub step` (P7), in the hub's main checkout, never committing (its report names
-the files for the owner's hub PR). Every writer checks its record as the readers above read it, follows no link (the
+The `implement` run, or the `/implement` session, writes them with `hub step` (P7), in the hub's main checkout, never
+committing (its report names the files for the owner's hub PR). The session gets each agent stage's prompt and output
+contract from the workflow (`hub step prompt`, `hub step output`), so a record it writes from an agent's reply is the
+one a run writes from the same reply, but for the time and the run's id. Every writer checks its record as the readers above read it, follows no link (the
 feature folder, `tickets/`, `change-requests/` and each file) and writes nothing when it refuses
 (`agent_hub.core.features.ticket_writes`, `agent_hub.cli.step_records`). A ticket must be planned in `features.json`,
 and its records go to one folder whatever name the run gives: the existing `tickets/` folder the ticket flow reads for

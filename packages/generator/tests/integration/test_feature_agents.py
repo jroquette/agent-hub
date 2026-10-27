@@ -464,6 +464,9 @@ def test_follows_implement_per_can_start_ticket_when_feature_build_rendered(
     assert "once **Tickets** is done" in build
     assert "follow `/implement`'s steps once per ticket the planning lists as can-start" in build
     assert "one ticket at a time" in build
+    # AGH-579: each ticket is conducted in its own session, no workflow run.
+    assert "in its own session, each stage a subagent" in build
+    assert "run paused" not in build
 
 
 def test_points_a_planned_ticket_to_implement_when_feature_rendered(
@@ -484,7 +487,7 @@ def test_sends_a_no_ship_to_implement_and_finishes_in_line_only_when_feature_bui
     finish = verify[verify.index("**Finish**") :]
 
     assert (
-        "On the Build path, a `NO-SHIP` goes to a new `/implement` run of each ticket"
+        "On the Build path, a `NO-SHIP` goes to a new `/implement` of each ticket"
         " its failing `results` name" in verify
     )
     assert finish.startswith("**Finish** (the in-line path of step 6 only;")
