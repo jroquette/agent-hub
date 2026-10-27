@@ -7757,6 +7757,8 @@ export interface components {
      *     its blockers not done yet. ``reviewed`` is None when unknown (no snapshot and no record).
      *     ``parent`` is the ref of the epic it belongs to (the plan's ``parent`` or Linear's parent
      *     issue), ``children`` the refs of the rows whose parent it is: a row with children is an epic.
+     *     ``repo`` is the plan's repo of a ticket that names one, ``repos`` every repo the ticket owns in
+     *     contract order (its pull requests merge in that order; empty when the plan names none).
      *     ``pr_url`` is the ticket's pull request on GitHub, from its review record, None when unknown.
      *     ``flow`` is the ticket's own steps, served by the tickets route (None for an epic).
      */
@@ -7794,6 +7796,11 @@ export interface components {
       ref: string;
       /** Repo */
       repo: string | null;
+      /**
+       * Repos
+       * @default []
+       */
+      repos: string[];
       /** Reviewed */
       reviewed: boolean | null;
       state: components["schemas"]["IssueState"] | null;

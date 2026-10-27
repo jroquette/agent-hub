@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Final
 from urllib.parse import urlsplit
 
-from agent_hub.core.features.feature_record import PlannedTicket, RecordAc
+from agent_hub.core.features.feature_record import PlannedTicket, RecordAc, ticket_repos
 from agent_hub.core.features.ticket_view import (
     EdgeSource,
     ExternalBlocker,
@@ -531,6 +531,7 @@ def _row(
         parent=node.parent,
         children=children,
         pr_url=pr_url,
+        repos=() if planned is None else tuple(owned.repo for owned in ticket_repos(planned)),
     )
 
 

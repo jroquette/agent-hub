@@ -658,6 +658,7 @@ EVAL_ACS_FIX = "name only AC ids of features.json in the eval's acs"
 DELIVERY_FIX = "make `delivery` the file name; a re-run is a new file <delivery>-r2.md"
 RENAME_FIX = "rename the eval to <delivery>.md: lower-case letters, digits and -"
 EVALS = "brain/features/demo/evals"
+AC_REPO_FIX = "name one of its ticket's repos in the AC's repo, or add the repo to the ticket"
 
 
 def a_ticket(key: str, **changes: object) -> dict[str, Any]:
@@ -753,6 +754,49 @@ def test_accepts_tickets_when_plan_well_formed(snapshot_of: SnapshotFactory) -> 
             [("tickets[2]: must be an object", RECORD_FIX)],
             id="not-object",
         ),
+        pytest.param(
+            [a_ticket("T1", repos=[{"repo": "api"}]), a_ticket("T2")],
+            [("T1: give `repo` or `repos`, not both", RECORD_FIX)],
+            id="repo-and-repos",
+        ),
+        pytest.param(
+            [a_ticket("T1", repo=None, repos=[]), a_ticket("T2", repo=None, repos="api")],
+            [
+                ("T1: `repos` must be a list of 1 to 4 objects {repo, slices}", RECORD_FIX),
+                ("T2: `repos` must be a list of 1 to 4 objects {repo, slices}", RECORD_FIX),
+            ],
+            id="repos-not-list",
+        ),
+        pytest.param(
+            [
+                a_ticket("T1", repo=None, repos=[{"repo": f"r{n}"} for n in range(5)]),
+                a_ticket("T2", repo=None, repos=["api"]),
+            ],
+            [
+                ("T1: `repos` must be a list of 1 to 4 objects {repo, slices}", RECORD_FIX),
+                ("T2: `repos` must be a list of 1 to 4 objects {repo, slices}", RECORD_FIX),
+            ],
+            id="repos-many-or-not-objects",
+        ),
+        pytest.param(
+            [
+                a_ticket(
+                    "T1",
+                    repo=None,
+                    repos=[{"repo": "other"}, {"repo": "api"}, {"repo": "api"}],
+                ),
+                a_ticket("T2", repo=None, repos=[{"repo": "api", "slices": ["BE 1"]}]),
+            ],
+            [
+                ("T1: repos[0]: repo must be one of api, demo-hub, web", RECORD_FIX),
+                ("T1: repos[2]: repo api is listed twice", RECORD_FIX),
+                (
+                    "T2: repos[0]: `slices` must be a list of at most 20 plan ids such as BE-1",
+                    RECORD_FIX,
+                ),
+            ],
+            id="repos-items",
+        ),
     ],
 )
 def test_reports_ticket_plan_when_tickets_malformed(
@@ -779,6 +823,39 @@ def test_reports_ac_ticket_when_not_in_tickets_or_linear(snapshot_of: SnapshotFa
     assert checked(snapshot_of, record) == [
         (RECORD, "AC-3: ticket T7 is not a key or id of `tickets` or `linear`", AC_TICKET_FIX),
         (RECORD, "AC-4: `ticket` must be null or a string", RECORD_FIX),
+    ]
+
+
+def test_accepts_repos_when_ticket_owns_several(snapshot_of: SnapshotFactory) -> None:
+    record = a_planned_record(
+        a_ticket(
+            "T1",
+            repo=None,
+            repos=[{"repo": "api", "slices": ["BE-1"]}, {"repo": "web", "slices": []}],
+        ),
+        a_ticket("T2", repo=None, repos=[{"repo": "web"}]),
+    )
+    record["acs"][1]["repo"] = "web"
+
+    assert checked(snapshot_of, record) == []
+
+
+def test_warns_ac_repo_when_its_ticket_does_not_own_it(snapshot_of: SnapshotFactory) -> None:
+    record = a_planned_record(
+        a_ticket("T1", id="TST-7", repo=None, repos=[{"repo": "web"}]), a_ticket("T2")
+    )
+    record["acs"] += [an_ac(3, ticket="TST-7", repo="web"), an_ac(4, ticket="T2", repo="web")]
+    files = {RECORD: json.dumps(record).encode()}
+    message = "AC-1: repo api is not a repo of its ticket T1 (web)"
+
+    assert shown_with_level(snapshot_of(config=a_config(), files=files)) == [
+        (Severity.WARNING, RECORD, message, AC_REPO_FIX),
+        (
+            Severity.WARNING,
+            RECORD,
+            "AC-4: repo web is not a repo of its ticket T2 (api)",
+            AC_REPO_FIX,
+        ),
     ]
 
 

@@ -221,6 +221,14 @@ decides an open request at once; `change-request` takes its evidence, proposal a
 when not given. The session runs `hub worktree`, the push and `gh` as bare calls, which the sandbox excludes. The
 `implement` workflow itself is unchanged, for hub web's Workflow runs and the CLI.
 
+A ticket can own several repos (AGH-585, [ADR 0051](adr/0051-a-ticket-owns-one-or-more-repos.md)): its
+`features.json` entry names `repos`, each repo with the plan slices that are its part, in contract order, instead of
+one `repo`. The ticket keeps one brief, one preflight (over every checkout), one ticket plan and one eval (a base and
+a commit per repo); each repo gets its own worktree, gates, review rounds (`reviews/<ticket>/<repo>/`) and pull
+request, opened and merged in the list's order and recorded as `prs`. A ticket with one repo keeps every record,
+schema and command it has today. The `implement` workflow refuses a ticket with several repos and names
+`/implement`, which conducts it (full engine support is AGH-594). Delivered in slices AGH-586 to AGH-595.
+
 `hub step config` prints the `hub.json` values the built-in packs' scripts need, read through the CLI's own loader with
 the developer's `hub.local.json` first (AGH-480): the project's `default_branch`, the `branch_prefix` (null when no
 source gives one; `--branch` then exits 2), the author, the

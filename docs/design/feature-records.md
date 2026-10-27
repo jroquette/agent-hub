@@ -23,6 +23,11 @@ in [API.md](../API.md) "Feature tickets"; the screens are in
   - `key`: a draft key (`T1`…), `^[A-Za-z][A-Za-z0-9_-]{0,31}$`, unique in the record.
   - `id`: `null` until `/feature` creates the issue, then the tracker id (`ACME-1520`).
   - `title` (≤ 200 characters), `repo`, `order` (a whole number ≥ 0, the plan's order): optional.
+  - `repos` (optional, never with `repo`): a ticket whose work spans several repos, 1 to 4 `{"repo", "slices"}`
+    in contract order, which is also the order its pull requests merge in (ADR 0051). `repo` is a `hub.json` dir,
+    listed once; `slices` (at most 20, `^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$`) are the plan ids of that repo's part
+    (`BE-1` for a `### Slice BE-1 (backend)` heading). A ticket's repos are its `repos`, else its `repo`
+    (`feature_record.ticket_repos`); the tickets route serves them as each row's `repos`.
   - `blocked_by`: at most 50 keys or ids of other tickets of the plan, never the ticket itself.
   - `parent` (optional): the key or id of the plan's epic the ticket belongs to (the tracking ticket that groups
     the work and is never worked on itself), never the ticket itself.
@@ -355,9 +360,10 @@ above the flow with its children's progress. Linear titles, assignees and state 
   whatever the order. No ticket step is `pending` while a later step of the same ticket has evidence.
 - Linear's text is untrusted: titles and assignees are redacted and clipped, and a `url` outside `https://linear.app/`
   is dropped.
-- `hub doctor`'s `features.tracker` rule checks the shapes above: an unknown `blocked_by`, a duplicate key, an AC
-  `ticket` that names no ticket, an eval without `verdict` or scope or naming an unknown AC are findings, and a
-  withdrawn AC stays in the spec cross-check (the spec keeps naming it); a `blocked_by` cycle is a warning.
+- `hub doctor`'s `features.tracker` rule checks the shapes above: an unknown `blocked_by`, a duplicate key, a ticket
+  with both `repo` and `repos` or a malformed `repos`, an AC `ticket` that names no ticket, an eval without `verdict` or scope or naming an unknown AC are findings, and a
+  withdrawn AC stays in the spec cross-check (the spec keeps naming it); a `blocked_by` cycle is a warning, and so is
+  an AC whose `repo` is not one of its ticket's repos.
 
 ## Decisions
 

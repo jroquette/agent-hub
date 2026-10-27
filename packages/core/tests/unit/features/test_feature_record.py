@@ -4,10 +4,14 @@ from pydantic import ValidationError
 from agent_hub.core.features.feature_record import (
     MAX_BLOCKED_BY,
     MAX_RECORD_BYTES,
+    MAX_SLICES,
+    MAX_TICKET_REPOS,
     MAX_TICKETS,
     FeatureRecordFile,
     PlannedTicket,
+    TicketRepo,
     record_from_bytes,
+    ticket_repos,
 )
 
 _AC = {"id": "AC-7.1", "description": "Given x, when y, then z", "passes": False}
@@ -66,6 +70,11 @@ def test_parses_tickets_when_record_lists_them() -> None:
         _ticket(blocked_by=["T 1"]),
         _ticket(blocked_by=[f"T{n}" for n in range(MAX_BLOCKED_BY + 1)]),
         _ticket(order="1"),
+        _ticket(repos=[]),
+        _ticket(repos=[{"repo": f"r{n}"} for n in range(MAX_TICKET_REPOS + 1)]),
+        _ticket(repos=[{"repo": 3}]),
+        _ticket(repos=[{"repo": "api", "slices": ["BE 1"]}]),
+        _ticket(repos=[{"repo": "api", "slices": [f"S{n}" for n in range(MAX_SLICES + 1)]}]),
     ],
     ids=[
         "key-digit",
@@ -76,11 +85,56 @@ def test_parses_tickets_when_record_lists_them() -> None:
         "blocker-bad",
         "blockers-many",
         "order-text",
+        "repos-empty",
+        "repos-many",
+        "repos-repo-not-text",
+        "repos-slice-bad",
+        "repos-slices-many",
     ],
 )
 def test_refuses_ticket_when_over_bounds(ticket: dict[str, object]) -> None:
     with pytest.raises(ValidationError, match="tickets"):
         FeatureRecordFile.model_validate({"tickets": [ticket], "acs": []})
+
+
+def test_parses_repos_in_order_when_ticket_owns_several() -> None:
+    record = FeatureRecordFile.model_validate(
+        {
+            "tickets": [
+                _ticket(
+                    repo=None,
+                    repos=[{"repo": "backend", "slices": ["BE-1"]}, {"repo": "frontend"}],
+                )
+            ],
+            "acs": [],
+        }
+    )
+
+    assert record.tickets[0].repos == (
+        TicketRepo(repo="backend", slices=("BE-1",)),
+        TicketRepo(repo="frontend", slices=()),
+    )
+
+
+@pytest.mark.parametrize(
+    ("ticket", "repos"),
+    [
+        (_ticket(), (TicketRepo(repo="demo-api"),)),
+        (_ticket(repo=None), ()),
+        (
+            _ticket(repo=None, repos=[{"repo": "b", "slices": ["BE-1"]}, {"repo": "f"}]),
+            (TicketRepo(repo="b", slices=("BE-1",)), TicketRepo(repo="f")),
+        ),
+        (_ticket(repos=[{"repo": "b"}]), (TicketRepo(repo="b"),)),
+    ],
+    ids=["repo-only", "none", "repos", "repos-over-repo"],
+)
+def test_gives_owned_repos_when_ticket_repos_read(
+    ticket: dict[str, object], repos: tuple[TicketRepo, ...]
+) -> None:
+    planned = PlannedTicket.model_validate(ticket)
+
+    assert ticket_repos(planned) == repos
 
 
 def test_refuses_tickets_when_over_bounds_in_count() -> None:

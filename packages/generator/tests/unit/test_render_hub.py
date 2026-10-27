@@ -5401,13 +5401,13 @@ def test_ignores_local_file_when_gitignore_rendered(demo_config: HubConfig) -> N
 AGENTS_FOLDER = "plugin/hub-workflow/agents"
 AGENT_FILES_SHA256 = {
     f"{AGENTS_FOLDER}/architect.md": (
-        "65f87843553ecc602d854a6c7f2f9389b188ced0ceff5cc5ef03c9d43f2b616f"
+        "c05495f6c642331142aa43dc9df5cacac3dabf7ea14c16758846ed23c2096554"
     ),
     f"{AGENTS_FOLDER}/evaluator.md": (
         "efc8f4c7e5f7865f1b8c7f8a57ba0d59155492015e0f86529fd0780eb92865f5"
     ),
     f"{AGENTS_FOLDER}/planner.md": (
-        "9c80e0c912359f9b59b78482f444f475be8756b648c83d91b32f3a352eb45c12"
+        "e4b36eaa358fa185fcbe09e7f3dad87ab35b0ca9efae4b907001dc33f2881715"
     ),
     f"{AGENTS_FOLDER}/quality-reviewer.md": (
         "3847f076fcc122041375afccbc8fa87caf9345d3368939e314682f61c0fe33bb"

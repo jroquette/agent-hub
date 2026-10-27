@@ -2,12 +2,14 @@
 
 ``tickets`` (optional, at most ``MAX_TICKETS``) holds objects with a unique draft ``key``
 (``KEY_PATTERN``), an ``id`` (null or a tracker id), a ``title`` (null or at most
-``MAX_TITLE_CHARS``), a ``repo`` (null or a repo name), ``blocked_by`` (at most ``MAX_BLOCKED_BY``
+``MAX_TITLE_CHARS``), a ``repo`` (null or a repo name) or ``repos`` (1 to ``MAX_TICKET_REPOS``
+objects, each a repo name listed once and its ``slices``, at most ``MAX_SLICES`` plan ids), never
+both, ``blocked_by`` (at most ``MAX_BLOCKED_BY``
 keys or ids of ``tickets``, never the ticket itself) and an ``order`` (null or a whole number, 0 or
 more) and a ``parent`` (null, or the key or id of the epic of ``tickets`` it belongs to, never the
 ticket itself). A cycle of ``blocked_by`` is a warning: the plan still reads, its tickets wait. An
 AC's ``ticket`` names a key or id of ``tickets`` or a ``linear`` id; its ``withdrawn`` is true or
-false.
+false. An AC whose ticket owns repos, but not the AC's ``repo``, is a warning.
 
 Each ``evals/<delivery>.md`` starts with a frontmatter block holding a ``verdict`` (one of
 ``VERDICTS``), a scope (``acs``: AC ids of ``features.json`` or ``all``; and/or ``tickets``) and a
@@ -22,8 +24,11 @@ from agent_hub.core.brain.frontmatter import FENCE, split_frontmatter
 from agent_hub.core.features.feature_record import (
     KEY_PATTERN,
     MAX_BLOCKED_BY,
+    MAX_SLICES,
+    MAX_TICKET_REPOS,
     MAX_TICKETS,
     MAX_TITLE_CHARS,
+    SLICE_PATTERN,
 )
 from agent_hub.core.hub_config.versions import cut_echo
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, TreeEntry
@@ -39,6 +44,9 @@ TICKET_FIX: Final = "name a key or id of `tickets` (or add that ticket)"
 SELF_FIX: Final = "remove it from blocked_by"
 PARENT_FIX: Final = "name the key or id of the epic in `tickets`, or set parent to null"
 CYCLE_FIX: Final = "remove one blocked_by edge of the cycle"
+AC_REPO_FIX: Final = (
+    "name one of its ticket's repos in the AC's repo, or add the repo to the ticket"
+)
 AC_TICKET_FIX: Final = (
     "name the ticket that delivers the AC: a key or id of `tickets`, or a `linear` id"
 )
@@ -52,6 +60,8 @@ DELIVERY_PATTERN: Final = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 ALL_ACS: Final = "all"
 
 _KEY: Final = re.compile(KEY_PATTERN)
+_SLICE: Final = re.compile(SLICE_PATTERN)
+_REPOS_SHAPE: Final = f"`repos` must be a list of 1 to {MAX_TICKET_REPOS} objects {{repo, slices}}"
 
 
 class Problem(NamedTuple):
@@ -76,14 +86,16 @@ class _Ticket(NamedTuple):
     id: str | None
     blocked_by: tuple[str, ...]
     parent: str | None = None
+    repos: tuple[str, ...] = ()
 
 
 def ticket_plan(
     data: Mapping[str, JsonValue], *, names: Sequence[str]
-) -> tuple[tuple[Problem, ...], frozenset[str] | None]:
+) -> tuple[tuple[Problem, ...], Mapping[str, tuple[str, ...]] | None]:
     """The plan's problems, and the refs an AC's ``ticket`` may name (``None``: not checked).
 
-    ``names`` are the repo names a ticket's ``repo`` may take.
+    ``names`` are the repo names a ticket's ``repo`` may take. Each ref maps to the repos its ticket
+    owns (none for a ``linear`` id or a ticket that names none).
     """
     raw = data.get("tickets", [])
     if not isinstance(raw, list) or len(raw) > MAX_TICKETS:
@@ -105,7 +117,8 @@ def ticket_plan(
     linear_ids = (
         {item for item in linear if isinstance(item, str)} if isinstance(linear, list) else set()
     )
-    return tuple(problems), frozenset({*to_key, *linear_ids})
+    owned = {ref: tickets[key].repos for ref, key in to_key.items()}
+    return tuple(problems), {**dict.fromkeys(linear_ids, ()), **owned}
 
 
 def _refs(ticket: _Ticket) -> tuple[str, ...]:
@@ -137,8 +150,22 @@ def _ticket_problems(
         id=issue_id if isinstance(issue_id, str) else None,
         blocked_by=_blockers(blocked_by),
         parent=parent if isinstance(parent, str) else None,
+        repos=_owned(item, names),
     )
     return problems
+
+
+def _owned(item: Mapping[str, JsonValue], names: Sequence[str]) -> tuple[str, ...]:
+    """The known repo names a ticket owns, from its ``repos`` or its ``repo``, each once.
+
+    An unknown name is already the ticket's problem, so it never adds an AC warning.
+    """
+    repos = item.get("repos")
+    if isinstance(repos, list):
+        given = [entry.get("repo") for entry in repos if isinstance(entry, dict)]
+    else:
+        given = [item.get("repo")]
+    return tuple(dict.fromkeys(repo for repo in given if isinstance(repo, str) and repo in names))
 
 
 def _field_messages(item: Mapping[str, JsonValue], names: Sequence[str]) -> Iterator[str]:
@@ -150,9 +177,7 @@ def _field_messages(item: Mapping[str, JsonValue], names: Sequence[str]) -> Iter
     title = item.get("title")
     if title is not None and not (isinstance(title, str) and len(title) <= MAX_TITLE_CHARS):
         yield f"`title` must be null or at most {MAX_TITLE_CHARS} characters"
-    repo = item.get("repo")
-    if repo is not None and repo not in names:
-        yield f"repo must be one of {', '.join(names)}"
+    yield from _repo_messages(item, names)
     blocked_by = item.get("blocked_by", [])
     if (
         not isinstance(blocked_by, list)
@@ -166,6 +191,47 @@ def _field_messages(item: Mapping[str, JsonValue], names: Sequence[str]) -> Iter
     order = item.get("order")
     if order is not None and (isinstance(order, bool) or not isinstance(order, int) or order < 0):
         yield "`order` must be null or a whole number, 0 or more"
+
+
+def _repo_messages(item: Mapping[str, JsonValue], names: Sequence[str]) -> Iterator[str]:
+    repo = item.get("repo")
+    if repo is not None and repo not in names:
+        yield f"repo must be one of {', '.join(names)}"
+    repos = item.get("repos")
+    if repos is not None:
+        if repo is not None:
+            yield "give `repo` or `repos`, not both"
+        yield from _repos_messages(repos, names)
+
+
+def _repos_messages(repos: JsonValue, names: Sequence[str]) -> Iterator[str]:
+    entries = (
+        [entry for entry in repos if isinstance(entry, dict)] if isinstance(repos, list) else []
+    )
+    if (
+        not isinstance(repos, list)
+        or not 1 <= len(repos) <= MAX_TICKET_REPOS
+        or len(entries) != len(repos)
+    ):
+        yield _REPOS_SHAPE
+        return
+    seen: set[str] = set()
+    for index, entry in enumerate(entries):
+        where = f"repos[{index}]"
+        repo = entry.get("repo")
+        if not isinstance(repo, str) or repo not in names:
+            yield f"{where}: repo must be one of {', '.join(names)}"
+        elif repo in seen:
+            yield f"{where}: repo {repo} is listed twice"
+        else:
+            seen.add(repo)
+        slices = entry.get("slices", [])
+        if (
+            not isinstance(slices, list)
+            or len(slices) > MAX_SLICES
+            or not all(isinstance(name, str) and _SLICE.fullmatch(name) for name in slices)
+        ):
+            yield f"{where}: `slices` must be a list of at most {MAX_SLICES} plan ids such as BE-1"
 
 
 def _blockers(blocked_by: JsonValue) -> tuple[str, ...]:
@@ -228,15 +294,24 @@ def _reachable(start: str, edges: Mapping[str, tuple[str, ...]]) -> frozenset[st
 
 
 def ac_plan_problems(
-    where: str, ac: Mapping[str, JsonValue], *, refs: frozenset[str] | None
+    where: str, ac: Mapping[str, JsonValue], *, refs: Mapping[str, tuple[str, ...]] | None
 ) -> Iterator[Problem]:
     """An AC's ``ticket`` and ``withdrawn``; ``refs`` ``None`` leaves the ticket unchecked."""
     ticket = ac.get("ticket")
+    repo = ac.get("repo")
     if ticket is not None and not isinstance(ticket, str):
         yield Problem(f"{where}: `ticket` must be null or a string", RECORD_FIX)
     elif isinstance(ticket, str) and refs is not None and ticket not in refs:
         message = f"{where}: ticket {cut_echo(ticket)} is not a key or id of `tickets` or `linear`"
         yield Problem(message, AC_TICKET_FIX)
+    elif isinstance(ticket, str) and refs is not None and isinstance(repo, str):
+        owned = refs[ticket]
+        if owned and repo not in owned:
+            message = (
+                f"{where}: repo {cut_echo(repo)} is not a repo of its ticket {cut_echo(ticket)}"
+                f" ({', '.join(owned)})"
+            )
+            yield Problem(message, AC_REPO_FIX, warning=True)
     if not isinstance(ac.get("withdrawn", False), bool):
         yield Problem(f"{where}: `withdrawn` must be true or false", RECORD_FIX)
 

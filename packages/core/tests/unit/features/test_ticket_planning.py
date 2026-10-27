@@ -336,6 +336,22 @@ def test_reads_plan_edges_when_no_snapshot() -> None:
     assert board.plan.order == ("T1", "DEM-2")
 
 
+def test_lists_owned_repos_in_order_when_ticket_names_repo_or_repos() -> None:
+    planned = (
+        _planned(1, repo="demo-api"),
+        _planned(2, repos=({"repo": "demo-api", "slices": ("BE-1",)}, {"repo": "demo-web"})),
+        _planned(3),
+    )
+
+    board = _board(planned, None)
+
+    assert [(row.repo, row.repos) for row in board.rows] == [
+        ("demo-api", ("demo-api",)),
+        (None, ("demo-api", "demo-web")),
+        (None, ()),
+    ]
+
+
 def test_marks_reviewed_when_completed_or_approved_record() -> None:
     planned = (_planned(1), _planned(2), _planned(3))
     summaries = (_summary(1, state=_DONE), _summary(2), _summary(3))

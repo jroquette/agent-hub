@@ -386,7 +386,7 @@ def _ac_problems(
     *,
     project: _Project,
     seen: dict[str, None],
-    refs: frozenset[str] | None,
+    refs: Mapping[str, tuple[str, ...]] | None,
 ) -> list[_Problem]:
     where = f"acs[{index}]"
     if not isinstance(ac, dict):
