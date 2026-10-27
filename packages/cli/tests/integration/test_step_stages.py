@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from click import unstyle
 from typer.testing import CliRunner, Result
 
 from agent_hub.cli.child_process import ChildResult
@@ -281,10 +282,8 @@ def test_writes_the_runs_records_when_a_session_records_the_same_preflight(
         run_command(hub, "workflow", "run", "implement", *given, "--live", "--run-id", "impl-1")
     )
     assert "run impl-1: paused at " in started
-    by_run = {
-        "preflight": (feature / "tickets/DEM-8/preflight.json").read_bytes(),
-        "request": (feature / "change-requests/1.md").read_text(),
-    }
+    run_preflight = (feature / "tickets/DEM-8/preflight.json").read_bytes()
+    run_request = (feature / "change-requests/1.md").read_text()
     shutil.rmtree(feature)
     shutil.copytree(pristine, feature)
 
@@ -323,19 +322,17 @@ def test_writes_the_runs_records_when_a_session_records_the_same_preflight(
         )
     )
 
-    in_session = {
-        "preflight": (feature / "tickets/DEM-8/preflight.json").read_bytes(),
-        "request": (feature / "change-requests/1.md").read_text(),
-    }
-    session_record = preflight_record(in_session["preflight"], folder="DEM-8")
-    run_record = preflight_record(by_run["preflight"], folder="DEM-8")
+    session_preflight = (feature / "tickets/DEM-8/preflight.json").read_bytes()
+    session_request = (feature / "change-requests/1.md").read_text()
+    session_record = preflight_record(session_preflight, folder="DEM-8")
+    run_record = preflight_record(run_preflight, folder="DEM-8")
     assert runs_without_time(session_record) == runs_without_time(run_record)
     assert isinstance(session_record, PreflightRecord)
     assert [run.run_id for run in session_record.runs] == [SESSION_RUN]
-    assert without_lines(in_session["request"], "opened_at:", "run_id:") == without_lines(
-        by_run["request"], "opened_at:", "run_id:"
+    assert without_lines(session_request, "opened_at:", "run_id:") == without_lines(
+        run_request, "opened_at:", "run_id:"
     )
-    assert f"run_id: {SESSION_RUN}" in in_session["request"]
+    assert f"run_id: {SESSION_RUN}" in session_request
 
 
 def test_needs_the_texts_or_the_findings_when_change_request_opens_one(
@@ -346,7 +343,9 @@ def test_needs_the_texts_or_the_findings_when_change_request_opens_one(
     )
 
     assert result.exit_code == 2, result.output
-    assert "give --evidence and --proposal, or --findings" in result.output
+    # The usage box may be colored and wrap the message: compare its words alone.
+    words = " ".join(unstyle(result.output).replace("│", " ").split())
+    assert "give --evidence and --proposal, or --findings" in words
     assert not (hub / FEATURE / "change-requests").exists()
 
 
