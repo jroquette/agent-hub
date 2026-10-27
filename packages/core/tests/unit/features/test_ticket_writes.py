@@ -271,7 +271,7 @@ class TestPreflight:
         assert [canonical(entry) for entry in after[:-1]] == [canonical(e) for e in before]
         assert after[-1]["drift"] == "local"
 
-    def test_writes_schema_2_when_a_run_names_a_commit_per_repo(self) -> None:
+    def test_writes_the_per_repo_schema_when_a_run_names_a_commit_per_repo(self) -> None:
         # AGH-591: a ticket that owns several repos checks main in each of them.
         commits = [
             {"repo": "demo-api", "commit": "4e1a9c2"},
@@ -287,7 +287,7 @@ class TestPreflight:
         assert isinstance(record, PreflightRecordV2)
         assert record.runs[0].commits is not None
 
-    def test_carries_earlier_runs_into_schema_2_when_a_run_names_a_commit_per_repo(
+    def test_carries_earlier_runs_into_the_per_repo_schema_when_a_run_names_a_commit_per_repo(
         self,
     ) -> None:
         first, _ = appended_preflight(None, a_run(), folder="DEM-8")
@@ -301,7 +301,7 @@ class TestPreflight:
         assert after[0] == before[0] | {"commits": None}
         assert after[1]["commits"] == commits
 
-    def test_keeps_schema_2_when_a_later_run_names_one_commit(self) -> None:
+    def test_keeps_the_per_repo_schema_when_a_later_run_names_one_commit(self) -> None:
         commits = [{"repo": "demo-api", "commit": "4e1a9c2"}, {"repo": "web", "commit": "7b2c3d4"}]
         first, _ = appended_preflight(None, a_run(commits=commits), folder="DEM-8")
 

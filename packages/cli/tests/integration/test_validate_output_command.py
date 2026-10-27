@@ -466,7 +466,7 @@ def test_prints_valid_when_preflight_record_valid(tmp_path: Path) -> None:
     ],
     ids=["per repo", "one repo", "empty"],
 )
-def test_checks_commits_per_repo_when_preflight_record_is_schema_2(
+def test_checks_commits_per_repo_when_preflight_record_names_them(
     tmp_path: Path, commits: object, stderr: str
 ) -> None:
     document = a_preflight_document(commits=commits) | {"schema": "agent-hub/preflight/2"}
