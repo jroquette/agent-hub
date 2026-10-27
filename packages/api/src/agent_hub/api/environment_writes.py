@@ -231,7 +231,7 @@ type EnvironmentEdit = Annotated[
 ]
 
 
-class _Files:
+class HubFiles:
     """Both files as read: each one's bytes (``None``: absent), document and config."""
 
     def __init__(self, hub_path: str) -> None:
@@ -253,7 +253,7 @@ class _Files:
 class _Documents:
     """Both documents as the edits so far left them, and whether each was changed."""
 
-    def __init__(self, files: _Files) -> None:
+    def __init__(self, files: HubFiles) -> None:
         self.hub: Document = files.hub_document
         self.local: Document = files.local_document
         self.hub_changed = False
@@ -276,7 +276,7 @@ def write_environment_edit(hub_path: str, edit: EnvironmentEdit) -> None:
     """Make ``edit`` in the file its scope names (an ``AddService``: in the file of each
     address's environment; an ``EditBatch``: each of its edits in turn, written together);
     ``HubInvalidError`` (422) when refused."""
-    files = _Files(hub_path)
+    files = HubFiles(hub_path)
     documents = _Documents(files)
     ops = edit.ops if isinstance(edit, EditBatch) else (edit,)
     for index, op in enumerate(ops):
@@ -284,15 +284,15 @@ def write_environment_edit(hub_path: str, edit: EnvironmentEdit) -> None:
         if refusal is not None:
             lead = f"op {index + 1}: " if isinstance(edit, EditBatch) else ""
             raise _invalid("$", f"{lead}{refusal.message}")
-    _write(
+    write_documents(
         files,
         hub_document=documents.hub if documents.hub_changed else None,
         local_document=documents.local if documents.local_changed else None,
     )
 
 
-def _write(
-    files: _Files, *, hub_document: Document | None, local_document: Document | None
+def write_documents(
+    files: HubFiles, *, hub_document: Document | None, local_document: Document | None
 ) -> None:
     """Check the changed documents as a read checks them, then write them, ``hub.json`` first.
 
