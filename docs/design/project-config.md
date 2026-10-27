@@ -187,6 +187,48 @@ Linear MCP server ([ADR 0015](../adr/0015-linear-mcp-tracker-transport.md)). Bot
 next` calls `list_ready` once per team, in order; `hub start` calls `get_issue`, then `move_state` (`only_if_unstarted`
 on a resume; [hub-start.md](hub-start.md)).
 
+### `hub repo`
+
+`list [--json]`, `add DIR --github OWNER/NAME --check C [--check-fast F] [--check-fast-timeout N] [--role R]
+[--default-branch B]`, `set DIR` (the same options but `DIR`, at least one, and `--unset KEY`…, repeatable, for `role`,
+`check_fast`, `check_fast_timeout` or `default_branch`; `github` and `check` cannot be unset, and a key both set and
+unset is refused), `remove DIR`. The hub is `AGENT_HUB_ROOT` or the current folder. None prompts; none runs `git`,
+`gh`, `hub sync` or a clone.
+
+- **`list`** reads `hub.json` only (a broken `hub.local.json` does not stop it) and prints one line per repo,
+  `<dir> (<github>, <role>, branch <B>): check_fast=<X>, check=<Y>`, where `B` is the repo's `default_branch`, else
+  `project.default_branch`, and `X` is `-` when the repo has no `check_fast`. `--json` prints one object
+  `{"repos": [...]}`, each with `dir`, `github`, `role`, `check_fast` (`null` when absent), `check` and the effective
+  `default_branch`.
+- **The dir match.** `add` refuses a `DIR` equal to an existing one ignoring case, naming it (`repos[<i>]`). `set` and
+  `remove` find the repo by its exact `dir`; one that differs only in case is refused with `did you mean <dir>?`.
+- **`add`** appends the entry last, keys in the model's order (`dir, github, role, check_fast, check_fast_timeout,
+  check, default_branch`), the ones not given left out. **`set`** changes a present key in place and puts a new one
+  after the entry's last key; `services`, `conventions` and `ui_paths` are untouched.
+- **`remove`** refuses, one line per place and all at once, while the repo is still named: a `guard.ask_before_edit`
+  path whose first segment is `DIR` exactly (as the model checks it), a `guard.deny_paths` path whose first segment is
+  `DIR` ignoring case (as the guard matches it), `events[<i>].repo`, `modules.contract-sync.source` or `.target`, and
+  the developer's `hub.local.json` `repos[<i>].dir`. It also refuses the only repo (`hub.json` needs one). The entry
+  goes with its `services`; `../<dir>` and its worktrees stay.
+- **Output.** A success prints `hub.json: added repo <dir>` (or `updated`, `removed`), then what to run next: after
+  `add`, `run ./hub sync to update AGENTS.md and .claude/settings.json`, `run ./hub setup to clone ../<dir>` and
+  `run /onboard to set <dir>'s gates and project rules`; after `set`, the sync line; after `remove`, the sync line,
+  `../<dir> and its worktrees are left in place` and the teammates line below. A refusal is `hub.json: not changed:
+  <reason>`; a model rule (a bad `github`, a blank `check`, an unsafe `dir`, a timeout outside 1..160) gives the
+  reader's `hub.json: repos[<i>].<key>: <message>`. Exit 0 on success, 1 on a refused change or an invalid file (both
+  files unchanged), 2 on a usage error (`add` without `--github` or `--check`, `set` with no option).
+- **The writer** is `hub env`'s ([environments.md](environments.md)): the result is checked as a read checks
+  `hub.json`, then the rules across it and `hub.local.json`, before anything is written; every key and its order is
+  kept in indent 2 (another indent is normalised once, and the output says `hub.json: rewritten with indent 2`); a file
+  changed since it was read and a symlinked file are refused (exit 1); the file is replaced through a temporary one in
+  the same folder.
+
+**Known limits.** A remove is checked against this developer's `hub.local.json` only: a teammate whose
+`hub.local.json` still names the removed repo in `repos` gets exit 1 from the CLI until they drop that entry, which the
+remove output says. The guard asks before `add`, `set` and `remove` (`list` passes), with or without a `--` before the
+subcommand; like `hub env`, a text that only mentions one (`grep 'hub repo add'`, a commit message) asks too, an
+accepted false ask. It does not see the module form (`python -m agent_hub.cli repo …`), as for `hub env`.
+
 ### Example (synthetic project)
 
 ```json
@@ -199,7 +241,7 @@ on a resume; [hub-start.md](hub-start.md)).
 ## Invariants
 
 - `hub.json` is the only committed file of project values; no template or command hard-codes one; no field is a secret.
-  It stays readable by Python 3.9's `json`, only `hub init` and `hub env` write it ([ADR 0038](../adr/0038-declared-environments-and-blocked-words.md)), and a hook never fails because of it.
+  It stays readable by Python 3.9's `json`, only `hub init`, `hub env` and `hub repo` (and their `hub web` routes) write it ([ADR 0038](../adr/0038-declared-environments-and-blocked-words.md)), and a hook never fails because of it.
 - The CLI and `hub doctor` validate with the same model; the exported schema never drifts from it.
 
 ## Decisions
