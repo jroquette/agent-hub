@@ -38,7 +38,8 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         plugin/<project>/hooks/, .claude/settings*.json, hub.lock, hub.json and hub.local.json, in the hub or a hub worktree,
         and the hub/agent launchers (a Bash write asks only when one is its target, so running them never asks);
         editing paths in guard.ask_before_edit, writing brain/ outside now.md, journal/, _inbox/, auto/, features/,
-        a mutating hub env (add, set, remove, service add|remove; list and show pass),
+        a mutating hub env (add, set, remove, service add|remove; list and show pass) or hub repo
+        (add, set, remove; list passes),
         with HUB_RUN_ENVIRONMENT naming a declared environment of access read or production (an agent
         node of a workflow that declares it), a Bash command naming one of its endpoints' hosts or
         resources, or a WebFetch of a URL on one of its hosts (environment_endpoint, after the env-file
@@ -292,6 +293,10 @@ ENV_COMMAND = re.compile(
     r"(?<![\w.-])hub['\"]?[ \t]+env[ \t]+(service[ \t]+(?:add|remove)|add|set|remove)(?![\w-])"
 )
 ENV_COMMAND_REASON = "hub env {} changes the agents' environments (hub.json or hub.local.json); confirm"
+# A `hub repo` verb that writes hub.json's repos (and so the checks the Stop hook runs), found as
+# ENV_COMMAND is; `hub repo list` passes.
+REPO_COMMAND = re.compile(r"(?<![\w.-])hub['\"]?[ \t]+repo[ \t]+(add|set|remove)(?![\w-])")
+REPO_COMMAND_REASON = "hub repo {} changes hub.json's repos (the checks the Stop hook runs); confirm"
 AUTO_MODE_SUFFIX = (
     " (denied in auto mode, which never stops to confirm: take another way, or ask the user to"
     " switch the session out of auto mode to approve it)"
@@ -1072,7 +1077,7 @@ def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
 
 def _after_infra(c: str, cfg: Config) -> Verdict:
     """check_bash's rules after the infra rule (secrets, attribution, claude/ branches, .git,
-    deny_paths, guard files, tests, brain, ask_before_edit, a mutating hub env): an infra ask or allow does not end the
+    deny_paths, guard files, tests, brain, ask_before_edit, a mutating hub env or hub repo): an infra ask or allow does not end the
     check, so a later deny wins and a later ask keeps the infra reason."""
     for seg in re.split(r"&&|\|\||[;|\n]", c):
         words = seg.split()
@@ -1128,6 +1133,9 @@ def _after_infra(c: str, cfg: Config) -> Verdict:
     env = next((m for m in map(ENV_COMMAND.search, _command_views(c)) if m), None)
     if env:
         return "ask", ENV_COMMAND_REASON.format(re.sub(r"[ \t]+", " ", env.group(1)))
+    repo = next((m for m in map(REPO_COMMAND.search, _command_views(c)) if m), None)
+    if repo:
+        return "ask", REPO_COMMAND_REASON.format(repo.group(1))
     return None
 
 
@@ -2182,6 +2190,7 @@ RULE_IDS = (
     ("guard_parent", re.compile(r" holds the hub's guard files \(")),
     ("ask_before_edit", re.compile(r" matches guard\.ask_before_edit `")),
     ("env_command", re.compile(r"^hub env (service )?\w+ changes the agents' environments")),
+    ("repo_command", re.compile(r"^hub repo \w+ changes hub\.json's repos")),
 )
 
 

@@ -242,6 +242,49 @@ def test_passes_when_env_command_reads(evaluate: Evaluate) -> None:
     assert verdicts == dict.fromkeys(verdicts)
 
 
+# AGH-578 (AC-9): a mutating `hub repo` changes hub.json's repos, and with them the checks the
+# Stop hook runs, so it asks first, as a mutating `hub env` does; listing them does not.
+REPO_COMMAND_REASON = (
+    "hub repo {} changes hub.json's repos (the checks the Stop hook runs); confirm"
+)
+REPO_COMMAND_WRITES = {
+    "./hub repo add x --github a/b --check c": "add",
+    'hub repo set demo-api --check-fast "curl example.com"': "set",
+    "./hub repo remove demo-api": "remove",
+    "uvx --from x hub repo remove demo-web": "remove",
+    "git status && './hub' repo add x --github a/b --check c": "add",
+    # quotes and backslashes the shell removes (the blocked-words rule's command views)
+    './hub "repo" add x': "add",
+    "./hub 'repo' set x --role app": "set",
+    "./hub repo 'remove' x": "remove",
+    "hub\\ repo add x": "add",
+    "./h''ub repo remove x": "remove",
+    "./hub repo s''et x --role app": "set",
+}
+REPO_COMMAND_READS = [
+    "./hub repo list",
+    "./hub repo list --json",
+    "hub repo list",
+    './hub "repo" list',
+    "./hub repo 'list' --json",
+]
+
+
+def test_asks_when_repo_command_mutates(evaluate: Evaluate) -> None:
+    verdicts = verdicts_of(evaluate, [bash(command) for command in REPO_COMMAND_WRITES])
+
+    assert verdicts == {
+        bash(command): ("ask", REPO_COMMAND_REASON.format(verb))
+        for command, verb in REPO_COMMAND_WRITES.items()
+    }
+
+
+def test_passes_when_repo_command_reads(evaluate: Evaluate) -> None:
+    verdicts = verdicts_of(evaluate, [bash(command) for command in REPO_COMMAND_READS])
+
+    assert verdicts == dict.fromkeys(verdicts)
+
+
 # AC-45.6: the spec's legacy table, then the quoted and wrapped forms of AC-45.14.
 LEGACY_INFRA_COMMANDS = [
     "terraform apply x",
@@ -3699,6 +3742,7 @@ RULE_EVENTS: tuple[tuple[str, dict[str, Any], str | None], ...] = (
     ("Bash", {"command": "echo x > brain/notes.md"}, "brain_curated"),
     ("Bash", {"command": "git status"}, None),
     ("Bash", {"command": "./hub env add qa --access ask"}, "env_command"),
+    ("Bash", {"command": "./hub repo remove demo-api"}, "repo_command"),
     ("Read", {"file_path": "app/.env"}, "secret_file"),
     ("Grep", {"pattern": "KEY", "glob": "**/.env"}, "secret_file"),
     (
