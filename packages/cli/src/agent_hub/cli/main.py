@@ -16,6 +16,7 @@ from agent_hub.cli.env_command import env_app
 from agent_hub.cli.generator import init
 from agent_hub.cli.mcp_command import mcp
 from agent_hub.cli.next_command import next_command
+from agent_hub.cli.repo_command import repo_app
 from agent_hub.cli.run_engine import run
 from agent_hub.cli.scenario_command import scenario_app
 from agent_hub.cli.search_command import search
@@ -76,6 +77,7 @@ app.command("skill-usage")(skill_usage)
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(step_app, name="step")
 app.add_typer(env_app, name="env")
+app.add_typer(repo_app, name="repo")
 app.add_typer(action_app, name="action")
 app.add_typer(scenario_app, name="scenario")
 app.add_typer(brain_app, name="brain")
