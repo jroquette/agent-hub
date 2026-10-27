@@ -61,63 +61,61 @@ function matches(option: ServiceOption, value: string): boolean {
   return value === option.name || value === `${option.repo ?? ""}/${option.name}`;
 }
 
-/** The field: the picked service and its address; a press opens the list. */
-export function ServiceField({
-  label,
-  value,
-  options,
-  environment,
-  onPick,
-}: {
+interface ServiceFieldProps {
   label: string;
   value: string;
   options: readonly ServiceOption[];
   environment: string | null;
   onPick: (value: string) => void;
-}) {
+}
+
+/** A service input's two controls: the kind (a filter, set by the picked service unless one is
+ * chosen) and the field that opens the list. They share one state, so a row can lay them apart:
+ * the kind where the input's name goes, the service where its value goes. */
+export function useServiceField({ label, value, options, environment, onPick }: ServiceFieldProps) {
   const [anchor, setAnchor] = useState<DOMRect | null>(null);
   const picked = options.find((option) => matches(option, value)) ?? null;
-  // The kind filters the list. Chosen, it stays; else it is the picked service's own kind, so
-  // picking a service sets it.
   const [chosenKind, setChosenKind] = useState<string | null>(null);
   const kind = chosenKind ?? picked?.kind ?? "";
   const kinds = [...new Set(options.map((option) => option.kind ?? "").filter(Boolean))].sort(
     (a, b) => (KIND_ONE[a] ?? a).localeCompare(KIND_ONE[b] ?? b),
   );
   const listed = kind === "" ? options : options.filter((option) => option.kind === kind);
-  return (
-    <span className="st-service-pair">
-      <select
-        className="ah-input st-service-kind"
-        aria-label={`Kind of service for ${label}`}
-        value={kind}
-        onClick={(event) => {
-          event.stopPropagation();
-        }}
-        onChange={(event) => {
-          setChosenKind(event.target.value);
-        }}
-      >
-        <option value="">Any kind</option>
-        {kinds.map((each) => (
-          <option key={each} value={each}>
-            {KIND_ONE[each] ?? each}
-          </option>
-        ))}
-      </select>
+  const kindSelect = (
+    <select
+      className="ah-input st-service-kind"
+      aria-label={`Kind of service for ${label}`}
+      value={kind}
+      onClick={(event) => {
+        event.stopPropagation();
+      }}
+      onChange={(event) => {
+        setChosenKind(event.target.value);
+      }}
+    >
+      <option value="">Any kind</option>
+      {kinds.map((each) => (
+        <option key={each} value={each}>
+          {KIND_ONE[each] ?? each}
+        </option>
+      ))}
+    </select>
+  );
+  const field = (
+    <>
       <button
         type="button"
         className="st-service"
         aria-haspopup="dialog"
         aria-expanded={anchor !== null}
-        aria-label={`${label}: ${value || "choose a service"}`}
+        aria-label={`${label}: ${picked?.name ?? (value || "choose a service")}`}
         title={picked?.address ?? undefined}
         onClick={(event) => {
           event.stopPropagation();
           setAnchor(event.currentTarget.getBoundingClientRect());
         }}
       >
-        <span className="st-service-name">{value || "Choose a service"}</span>
+        <span className="st-service-name">{picked?.name ?? (value || "Choose a service")}</span>
         {picked?.address && <span className="st-service-address">{picked.address}</span>}
         {value !== "" && picked === null && (
           <span className="st-service-missing">
@@ -148,6 +146,18 @@ export function ServiceField({
           />,
           document.body,
         )}
+    </>
+  );
+  return { kindSelect, field };
+}
+
+/** Both controls side by side (the side panel, under the input's name). */
+export function ServiceField(props: ServiceFieldProps) {
+  const { kindSelect, field } = useServiceField(props);
+  return (
+    <span className="st-service-pair">
+      {kindSelect}
+      {field}
     </span>
   );
 }

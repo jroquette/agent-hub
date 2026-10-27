@@ -1387,3 +1387,7 @@
 .st-service-pair > .st-service {
   min-width: 0;
 }
+/* In an open step the kind takes the input name's place: left, at its own width. */
+.st-g-label > .st-service-kind {
+  align-self: flex-start;
+}
