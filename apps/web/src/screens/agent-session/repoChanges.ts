@@ -178,7 +178,10 @@ export function repoOf(
 }
 
 /** A repository's short name: its folder, without the worktree after it ("demo-web"). */
-export const repoName = (repo: RepoChanges) => repo.label.split("/")[0] || repo.label;
+export function repoName(repo: RepoChanges): string {
+  const cut = repo.label.indexOf("/");
+  return cut > 0 ? repo.label.slice(0, cut) : repo.label;
+}
 
 /** The base and commit count the code tab names: "against origin/main · 12 commits". */
 export function repoSummary(repos: readonly RepoChanges[] | undefined): string | null {
