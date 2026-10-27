@@ -924,6 +924,13 @@ export function StepList(props: StepListProps) {
               }
             : null
         }
+        onSet={
+          editable
+            ? (name, value) => {
+                onEditNode(id, { ...node, with: { ...given, [name]: value } });
+              }
+            : null
+        }
       />
     ) : null;
     return row(
