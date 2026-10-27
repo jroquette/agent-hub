@@ -171,6 +171,15 @@ otherwise, this list wins. Each item is an acceptance criterion.
   and preflight and its Context and Preflight steps are recorded; the prompt never sends the session through
   `/feature`'s in-line steps. A stacked ticket (AC-268.22) keeps `/feature <ticket>` from step 6 (Implement), since the
   `implement` workflow cannot start a worktree from a blocker's branch.
+- **AC-579.1 Start opens one session that conducts the ticket** (AGH-579, supersedes AC-521.2.1's workflow run and
+  its stacked exception; ADR 0050). Given a created ticket free to start, or stacked on a blocker in review, then
+  Start's session opens with `/implement <ticket>` and conducts the whole ticket itself: context brief, preflight, a
+  plan change request on drift (the owner decides it in that chat or in the ticket panel), worktree, ticket plan,
+  implementation, review rounds and ticket eval, each agent stage a subagent whose result the chat reports, then asks
+  the owner before the PR. No workflow run or other session starts, so the ticket's sessions list that one session and
+  the ticket's steps read as recorded (Context, Preflight, change requests, Implement and Review from its review
+  records, Eval, PR). A stacked ticket's prompt adds its blocker's pull request: `./hub worktree <ticket> --stack-on
+  <url>`, and its pull request targets the blocker's branch. Start's tooltip says what the session does.
 
 ---
 

@@ -103,8 +103,8 @@ the shared `FacetMenu`, `DerivedLabel`, `EmptyState`, `ProblemError` and `Skelet
 
 ## Departures
 
-- Feature tickets start from the feature (main's `StartTicketButton`: a named ticket, `/feature <id>` at step 5, a
-  stacked branch when its blocker is in review). Start ticket here has no ticket row yet, so it opens the New session
+- Feature tickets start from the feature (main's `StartTicketButton`: a named ticket, `/implement <id>` conducted in
+  that one session, a stacked branch when its blocker is in review; AC-579.1 in [17-features.md](17-features.md)). Start ticket here has no ticket row yet, so it opens the New session
   dialog instead and the owner writes the issue.
 - The list is derived on the client from the newest 200 sessions: an older ticket drops off until a session works on
   it again. A server read model for tickets outside features is not built.

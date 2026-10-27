@@ -11,6 +11,26 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-27
+
+### Added
+
+- `hub step prompt --stage STAGE --with NAME=VALUE…` prints the prompt the `implement` workflow gives one of its
+  agents (preflight, ticket plan, spec and quality lenses, ticket eval), and `hub step output --stage STAGE` checks a
+  subagent's reply against that agent's output contract, as a workflow run does. `hub step change-request` takes its
+  evidence, proposal and affected tickets from `--findings` when they are not given.
+
+### Changed
+
+- `/implement` (and so hub web's Start on a ticket) no longer runs `./hub workflow run implement`, which the hub's
+  sandbox stopped at its first agent step. The session conducts the ticket itself: context brief, preflight, a plan
+  change request the owner decides in that chat or in the ticket panel, worktree, ticket plan, implementation, review
+  rounds, ticket eval and, after the owner's OK, the PR. Each agent stage is a subagent with the workflow's own prompt
+  and checks, and the chat reports each stage. The records are the ones a run writes, so the ticket page shows each
+  stage, and the ticket's sessions list that one session. A ticket stacked on a blocker in review now goes through
+  `/implement` too. The `implement` workflow is unchanged for the Workflow runs screen and the CLI. Run `hub sync`
+  after bumping `platform.version` to get the new skill.
+
 ### Fixed
 
 - hub web's New scenario writes the new scenario as blocks (`version: 2`), so it opens in the builder as stages and
@@ -1338,7 +1358,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/jroquette/agent-hub/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/jroquette/agent-hub/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/jroquette/agent-hub/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/jroquette/agent-hub/compare/v0.22.0...v0.23.0

@@ -3,7 +3,11 @@
 ``implement`` run writes into the hub (``step_records``), ``pending-decision``, the owner's
 decision a new run follows, ``outcome``, a merged ticket's outcome (written once),
 ``preflight-due``, whether a dependent still has to read a blocker's outcome, and ``config``, the
-``hub.json`` values a pack script needs (read-only; the scripts never open ``hub.json``).
+``hub.json`` values a pack script needs (read-only; the scripts never open ``hub.json``); and
+``hub step prompt|output``, an ``implement`` stage's agent prompt and its output checked, for a
+session that runs the stage as its own subagent (``step_stages``, ADR 0050). ``prompt`` prints
+the rendered prompt as text, the subagent's task; ``output`` reads the subagent's reply on stdin
+and prints the checked output as the others print theirs.
 
 The issue-to-pr workflow (ADR 0032) runs them as ``hub step`` nodes. Each prints one JSON object
 on stdout, the ``output_format`` its node declares, and exits 0; a failure is one
@@ -55,7 +59,7 @@ from typing import Annotated, Final, NoReturn, TextIO
 import typer
 from typer._click.exceptions import ClickException
 
-from agent_hub.cli import step_records
+from agent_hub.cli import step_records, step_stages
 from agent_hub.cli.command_exits import fail
 from agent_hub.cli.effective_config import (
     EffectiveConfig,
@@ -149,6 +153,9 @@ Feature = Annotated[
     str, typer.Option("--feature", metavar="SLUG", help="The folder under brain/features/.")
 ]
 Ticket = Annotated[str, typer.Option("--ticket", metavar="TICKET", help="The ticket's key or id.")]
+StageOption = Annotated[
+    step_stages.StageName, typer.Option("--stage", help="The ticket stage whose agent it is.")
+]
 Request = Annotated[
     int, typer.Option("--request", metavar="N", min=1, help="The change request's number.")
 ]
@@ -504,18 +511,39 @@ def change_request(
     *,
     feature: Feature,
     ticket: Ticket,
-    evidence: Annotated[str, typer.Option("--evidence", help="What the plan got wrong.")],
-    proposal: Annotated[str, typer.Option("--proposal", help="The plan change asked.")],
+    evidence: Annotated[
+        str | None, typer.Option("--evidence", help="What the plan got wrong (else the findings').")
+    ] = None,
+    proposal: Annotated[
+        str | None, typer.Option("--proposal", help="The plan change asked (else the findings').")
+    ] = None,
     affected: Annotated[
-        str,
-        typer.Option("--affected", metavar="TICKETS", help="Affected tickets, comma-separated."),
-    ] = "",
+        str | None,
+        typer.Option(
+            "--affected",
+            metavar="TICKETS",
+            help="Affected tickets, comma-separated (else the findings').",
+        ),
+    ] = None,
     findings: Annotated[
         str, typer.Option("--findings", metavar="JSON", help="The preflight's, checked first.")
     ] = "",
     commit: Annotated[str, typer.Option("--commit", help="Main's commit it read.")] = "",
 ) -> None:
-    """Open change-requests/<n>.md against the plan's current version."""
+    """Open change-requests/<n>.md against the plan's current version; a text not given is the
+    preflight's findings' (a session passes them whole, never pasting the agent's text)."""
+    if findings and None in (evidence, proposal, affected):
+        evidence, proposal, affected = (
+            _found_text(findings, name) if given is None else given
+            for name, given in (
+                ("evidence", evidence),
+                ("proposal", proposal),
+                ("affected", affected),
+            )
+        )
+    if evidence is None or proposal is None:
+        raise typer.BadParameter("give --evidence and --proposal, or --findings")
+    affected = affected or ""
     hub = _hub()
     names = [name.strip() for name in affected.split(",")]
     run_id = os.environ.get(RUN_ID_VARIABLE, "")
@@ -545,6 +573,16 @@ def change_request(
             facts=facts,
         ),
     )
+
+
+def _found_text(findings: str, name: str) -> str:
+    """The findings' text ``name``, ``""`` when they hold none (the record step refuses then)."""
+    try:
+        found = json.loads(findings)
+    except ValueError:
+        raise typer.BadParameter("not a JSON object", param_hint="--findings") from None
+    value = found.get(name) if isinstance(found, dict) else None
+    return value if isinstance(value, str) else ""
 
 
 @step_app.command("pending-decision")
@@ -639,6 +677,48 @@ def preflight_due(
         "preflight-due",
         lambda: step_records.preflight_due(hub, feature=feature, ticket=ticket, blocker=blocker),
     )
+
+
+@step_app.command("prompt")
+def prompt(
+    *,
+    stage: StageOption,
+    values: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--with", metavar="NAME=VALUE", help="A value of the stage's prompt; one per name."
+        ),
+    ] = None,
+) -> None:
+    """Print the stage's prompt, the workflow's own, rendered with the values given."""
+    given: dict[str, str] = {}
+    for item in values or ():
+        name, equals, value = item.partition("=")
+        if not equals or not name:
+            raise typer.BadParameter("use NAME=VALUE", param_hint="--with")
+        if name in given:
+            raise typer.BadParameter(f"{name} is given twice", param_hint="--with")
+        given[name] = value
+    hub = _hub()
+    try:
+        text = step_stages.stage_prompt(hub, stage, given)
+    except step_stages.StageError as error:
+        _fail("prompt", str(error))
+    typer.echo(text, nl=False)
+
+
+@step_app.command("output")
+def output(*, stage: StageOption) -> None:
+    """Read a subagent's reply on stdin; print its output, checked as the workflow checks it."""
+    data = sys.stdin.buffer.read(MAX_REPLY_BYTES + 1)
+    if len(data) > MAX_REPLY_BYTES:
+        _fail("output", "the reply is larger than 1 MiB")
+    hub = _hub()
+    try:
+        value = step_stages.stage_output(hub, stage, data.decode(errors="replace"))
+    except step_stages.StageError as error:
+        _fail("output", str(error))
+    _print(value)
 
 
 @step_app.command("config")

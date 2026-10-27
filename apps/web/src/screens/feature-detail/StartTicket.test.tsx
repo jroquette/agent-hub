@@ -91,7 +91,7 @@ describe("StartTicket", () => {
     expect(canStartTicket({ ...stacked, waiting_on: ["T2", "T9"] }, rows)).toBe(false);
   });
 
-  it("tells /feature to build on the blocker's branch and stack its pull request", () => {
+  it("tells /implement to build on the blocker's branch and stack its pull request", () => {
     const prompt = ticketPrompt("agent-hub", "claims", { ...stacked, id: "AGH-3" }, [
       done,
       inReview,
@@ -204,21 +204,60 @@ describe("StartTicket", () => {
     expect(prompt).toContain("`brain/features/claims/`");
     expect(prompt).toContain("Its blockers are done: AGH-1.");
     expect(prompt).toContain("Work on no other ticket.");
-    // The implement workflow does the steps: the prompt never sends the session in-line.
+    // /implement conducts the steps: the prompt never sends the session in-line.
     expect(prompt).not.toMatch(/(^|\s)\/feature\b/);
     expect(prompt).not.toContain("step 6");
   });
 
-  it("keeps a stacked ticket on /feature's in-line steps, which can build on a branch", () => {
+  it("tells the session to conduct the ticket itself, stage by stage, and ask before the PR (AGH-579)", () => {
+    const prompt = ticketPrompt("agent-hub", "claims", { ...ready, id: "AGH-2" }, [done, ready]);
+
+    expect(prompt).toContain("Repo: api.");
+    expect(prompt).toContain(
+      "Conduct the whole ticket in this session: run each stage as a subagent and tell me its result here.",
+    );
+    expect(prompt).toContain("Ask me before you push or open the pull request.");
+    expect(prompt).not.toContain("workflow run");
+  });
+
+  it("starts a stacked ticket with /implement too, its worktree on the blocker's branch (AGH-579)", () => {
     const prompt = ticketPrompt("agent-hub", "claims", { ...stacked, id: "AGH-3" }, [
       done,
       inReview,
       stacked,
     ]);
 
-    expect(prompt.split("\n")[0]).toBe("/feature AGH-3");
-    expect(prompt).toContain("from step 6 (Implement), for this ticket only");
-    expect(prompt).toContain("For the workspace (the start of step 6)");
+    expect(prompt.split("\n")[0]).toBe("/implement AGH-3");
+    expect(prompt).not.toMatch(/(^|\s)\/feature\b/);
+    expect(prompt).not.toContain("step 6");
+    expect(prompt).toContain(`For the workspace, create the worktrees with exactly`);
+  });
+
+  it("says in Start's tooltip what the one session does (AGH-579)", async () => {
+    renderWithApi(
+      <TicketsTab
+        evals={[]}
+        openerRef={{ current: null }}
+        project="agent-hub"
+        slug="claims"
+        data={aFeatureTickets({
+          tickets: [done, ready, waiting],
+          planning: aTicketPlan({ layers: [["T1"], ["T2"], ["T3"]], can_start: ["T2"] }),
+        })}
+        onRefresh={() => undefined}
+      />,
+      { routes: driving, path: "/?tickets=table" },
+    );
+
+    const start = await within(rowOf("T2")).findByRole("button", { name: "Start AGH-2" });
+    await waitFor(() => {
+      expect(start).toBeEnabled();
+    });
+    const wrap = start.closest(".ah-tip-wrap");
+    if (!(wrap instanceof HTMLElement)) throw new Error("no tooltip around Start");
+    expect(within(wrap).getByRole("tooltip", { hidden: true })).toHaveTextContent(
+      "Start one Claude session that conducts AGH-2: context, preflight, build, review and eval as its own subagents, each reported in its chat. It asks you before the pull request.",
+    );
   });
 
   it("starts a session in the hub folder and opens its chat", async () => {

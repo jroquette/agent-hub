@@ -210,6 +210,18 @@ The `implement` run's hub writes are `hub step` writers too (two-level-flows P7)
 prints the hub-relative `path` it wrote, follows no link and never commits; a refusal writes nothing. The records and
 their rules are in [feature-records.md](design/feature-records.md).
 
+`/implement <ticket>` writes the same records without a workflow run (AGH-579, [ADR 0050](adr/0050-implement-conducted-in-its-own-session.md)): the
+session hub web's Start opens conducts the ticket itself, each agent stage (preflight, ticket plan, the spec and
+quality lenses, the ticket eval) a subagent it dispatches with the Agent tool, so the owner reopens that one session
+to see every stage and talk to it. `hub step prompt --stage STAGE --with NAME=VALUE…` prints the stage's prompt as the
+`implement` workflow renders it, from the workflows the hub would run (its `workflows/` over the built-ins), and needs
+exactly the node's `with` names; `hub step output --stage STAGE` reads the subagent's reply on stdin, takes its last
+JSON line as the workflow's agent runner does and checks it against the node's `output_format`, printing it or
+exiting 1 with the problems. The records name `session-<ticket>` as their run (`AGENT_HUB_RUN_ID`), so hub web
+decides an open request at once; `change-request` takes its evidence, proposal and affected tickets from `--findings`
+when not given. The session runs `hub worktree`, the push and `gh` as bare calls, which the sandbox excludes. The
+`implement` workflow itself is unchanged, for hub web's Workflow runs and the CLI.
+
 `hub step config` prints the `hub.json` values the built-in packs' scripts need, read through the CLI's own loader with
 the developer's `hub.local.json` first (AGH-480): the project's `default_branch`, the `branch_prefix` (null when no
 source gives one; `--branch` then exits 2), the author, the
@@ -1009,7 +1021,7 @@ The MVP goes up to Phase 2: generate hubs from Loki and see the agents' sessions
 | 3 · Knowledge and decisions | Provenance in the brain, inbox triage in the UI (accept and reject moved to Phase 2 by AGH-201; snooze stays here), extracted decisions, learning metrics | One learning traced from the session to the rule |
 | 4 · Workflows as data and actions | Generic executor reading the workflow ([ADR 0032](adr/0032-workflow-engine.md)), gates approved from the UI, adapters for other agents | — |
 
-Status (2026-10-26, latest release v0.25.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
+Status (2026-10-27, latest release v0.26.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
 Phase 1 in progress: `init`, `sync` (`--adopt`), `doctor`, `worktree`, `brief`, `agent`, `next`, `run` and `bench`
 shipped in v0.8.0, and `setup`, `start` and `ship` in v0.9.0. Phase 2's first slice is shipped too: the control plane
 `hub web` (AGH-200) in v0.9.0 and its clarity pass (AGH-201: session labels, problems, learning accept and reject

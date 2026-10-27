@@ -347,7 +347,7 @@ this table, and a new hub's `README.md` ends with the same one. A flow's scripts
 | `retro` (`retro` pack) | The week's run metrics, at most five evidence-backed changes, and issue drafts for the ones the owner keeps. | `/retro` | The owner keeps some of the changes (their numbers, or all), or none. | own prompts |
 | `review-incoming` (`review-incoming` pack) | Someone else's PR through the spec, quality and security lenses, drafted as one review posted only after the owner approves it. | `/review` | The owner edits the review file, then picks how it is posted, or rejects it. | `/plain-language`, `security-reviewer` agent |
 | `deliver` (`sdlc` pack) | One issue to a PR, implemented and reviewed in rounds until the check and both reviewers pass. | `./hub workflow run deliver` | none | own prompts |
-| `implement` (`sdlc` pack) | One ticket of a planned feature to a PR - context, preflight and plan change gate, review rounds, ticket eval. | `/implement` | The owner approves the plan change, or declines it with a note. | own prompts |
+| `implement` (`sdlc` pack) | One ticket of a planned feature to a PR - context, preflight and plan change gate, review rounds, ticket eval. | `./hub workflow run implement` | The owner approves the plan change, or declines it with a note. | own prompts |
 | `preflight` (`sdlc` pack) | A dependent ticket's read-only preflight after a blocker's merge - once per outcome, a plan change gate on plan drift. | `./hub workflow run preflight` | The owner approves the plan change, or declines it with a note. | own prompts |
 | `preflight-check` (`sdlc` pack) | One ticket's preflight - the read-only check, a plan change gate on plan drift, and the re-check after the owner's decision. | inside `preflight`, inside `ticket-pass` | The owner approves the plan change, or declines it with a note. | own prompts |
 | `review` (`sdlc` pack) | The spec and quality lenses on a checkout, then one verdict. | `./hub workflow run review` | none | own prompts |
@@ -463,7 +463,7 @@ Source: `README.md` (https://raw.githubusercontent.com/jroquette/agent-hub/main/
   <a href="https://github.com/jroquette/agent-hub/actions/workflows/ci.yml"><img alt="CI status" src="https://github.com/jroquette/agent-hub/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python 3.14" src="https://img.shields.io/badge/python-3.14-3776AB?logo=python&logoColor=white">
   <!-- Static badge: bump with each release tag (scripts/check_release.py keeps the package versions in lockstep; follow-up: automate). -->
-  <img alt="Version 0.25.0" src="https://img.shields.io/badge/version-0.25.0-blue">
+  <img alt="Version 0.26.0" src="https://img.shields.io/badge/version-0.26.0-blue">
   <img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-orange">
 </p>
 
@@ -591,14 +591,14 @@ hub's `README.md`, **Join this hub**); the steps below create a new hub.
 little longer.
 
 ```bash
-uvx --from 'git+https://github.com/jroquette/agent-hub@v0.25.0#subdirectory=packages/agent-hub' hub --version
+uvx --from 'git+https://github.com/jroquette/agent-hub@v0.26.0#subdirectory=packages/agent-hub' hub --version
 ```
 
-You should see `0.25.0`.
+You should see `0.26.0`.
 
 > [!TIP]
 > To have `hub` on your `PATH`, install it once with
-> `uv tool install 'git+https://github.com/jroquette/agent-hub@v0.25.0#subdirectory=packages/agent-hub'`.
+> `uv tool install 'git+https://github.com/jroquette/agent-hub@v0.26.0#subdirectory=packages/agent-hub'`.
 > Generated hubs never need this: their `./hub` shim runs the release pinned in `hub.json`.
 
 **2. Create an empty folder for the hub.** It should be a sibling of the project's repos.
@@ -613,7 +613,7 @@ mkdir -p demo-hub && cd demo-hub && git init
 from your git `user.name` and `user.email` unless you pass `--author-name` and `--author-email`.
 
 ```bash
-uvx --from 'git+https://github.com/jroquette/agent-hub@v0.25.0#subdirectory=packages/agent-hub' \
+uvx --from 'git+https://github.com/jroquette/agent-hub@v0.26.0#subdirectory=packages/agent-hub' \
   hub init demo --repos acme/backend,acme/frontend --tracker linear:DEMO --branch-prefix jdoe/ --hub-repo acme/demo-hub
 ```
 
@@ -1308,7 +1308,7 @@ Example (synthetic project):
 {
   "$schema": "./hub.schema.json",
   "schema_version": 1,
-  "platform": { "version": "0.25.0" },         // the release ./hub runs
+  "platform": { "version": "0.26.0" },         // the release ./hub runs
   "project": {
     "name": "demo",
     "hub_repo": "acme/demo-hub",
