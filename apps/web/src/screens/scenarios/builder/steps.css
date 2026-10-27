@@ -1129,8 +1129,12 @@
 .st-row[data-selected="true"] {
   align-items: start;
 }
-.st-row[data-selected="true"]:has(> .st-open) {
+/* Open, the row keeps its accent edge on a neutral ground; its settings span the whole row. */
+.st-row[data-open="true"] {
   background: var(--surface);
+}
+.st-open-group {
+  grid-column: 1 / -1;
 }
 .st-row[data-selected="true"] > .st-num,
 .st-row[data-selected="true"] > .st-tile,
@@ -1138,12 +1142,10 @@
   margin-top: 2px;
 }
 .st-open {
-  /* From the row's left edge: the open part uses the whole width of the row. */
-  grid-column: 1 / -1;
+  margin-top: var(--space-2);
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  margin-top: var(--space-2);
   padding: var(--space-3) 0 var(--space-1);
   border-top: 1px solid var(--border);
   font-size: 13px;
@@ -1384,4 +1386,59 @@
 }
 .st-service-pair > .st-service {
   min-width: 0;
+}
+
+/* What the step still needs, said with an icon and a word (not a colour alone). */
+.st-g-missing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--text);
+}
+.st-g-missing > svg {
+  color: var(--waiting);
+}
+/* A quiet link to where a value is changed. */
+.st-g-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--control-sm);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.st-g-link:hover {
+  text-decoration: underline;
+}
+.st-open-value-ref {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+}
+/* The body, a value of the step: its name and tools, then its code well across the row. */
+.st-g-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.st-g-body-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.st-open-draft {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  white-space: normal;
 }
