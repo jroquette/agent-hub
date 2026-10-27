@@ -18,29 +18,19 @@ line. Exit 0 on success, 1 on an invalid file or a refused change, 2 on a usage 
 import os
 import re
 from collections.abc import Callable
-from importlib.metadata import version
-from pathlib import Path
-from typing import Annotated, Final, NamedTuple, cast
+from typing import Annotated, Final, cast
 
 import typer
 
 from agent_hub.cli.command_exits import fail
 from agent_hub.cli.effective_config import load_effective_config_or_exit
 from agent_hub.cli.env_files import document_bytes, is_reformatted, write_document
-from agent_hub.cli.hub_config_reader import (
-    DISTRIBUTION,
-    FILE_LABEL,
-    hub_lines,
-    load_hub_json_or_exit,
-    local_lines,
-)
-from agent_hub.cli.hub_root import hub_root_or_exit, local_home
-from agent_hub.cli.run_children import SESSION_HIDDEN, without
-from agent_hub.core.hub_config.document_check import check_hub_document
+from agent_hub.cli.hub_config_reader import FILE_LABEL, local_lines
+from agent_hub.cli.hub_edit_files import HubFiles, checked_documents, read_hub_files
+from agent_hub.cli.hub_root import hub_root_or_exit
 from agent_hub.core.hub_config.effective_environments import (
     EffectiveEnvironments,
     effective_environments,
-    local_environment_problems,
 )
 from agent_hub.core.hub_config.environment_edits import (
     Document,
@@ -57,10 +47,7 @@ from agent_hub.core.hub_config.local_config import (
     LOCAL_FILE,
     LOCAL_FILE_MAX_BYTES,
     TOO_LARGE_MESSAGE,
-    LocalConfig,
-    check_local_document,
 )
-from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ROOT_PATH, ConfigProblem
 from agent_hub.core.json_form import JsonValue, dump_json, load_json_bytes
 from agent_hub.core.workspace.environment_lines import (
@@ -70,7 +57,6 @@ from agent_hub.core.workspace.environment_lines import (
     production_line,
     show_lines,
 )
-from agent_hub.generator.hub_config_files import UnreadFile, parse_json, read_file_bytes
 
 VALUE_NAME: Final = re.compile(VALUE_NAME_PATTERN)
 
@@ -118,18 +104,7 @@ Repo = Annotated[str, typer.Argument(metavar="REPO", help="The repo's dir in hub
 Service = Annotated[str, typer.Argument(metavar="SERVICE", help="The service's name.")]
 
 # What an edit sees: the document it changes, and the file it is in.
-type Edit = Callable[[Document, "_Files"], Document | EditRefusal]
-
-
-class _Files(NamedTuple):
-    """Both files as read: each one's bytes (``None``: no ``hub.local.json``) and config."""
-
-    hub_path: Path
-    hub_content: bytes
-    config: HubConfig
-    local_path: Path
-    local_content: bytes | None
-    local: LocalConfig
+type Edit = Callable[[Document, HubFiles], Document | EditRefusal]
 
 
 @env_app.command("list")
@@ -200,7 +175,7 @@ def add_command(
     if given_values:
         entry["values"] = dict(given_values)
 
-    def edit(document: Document, files: _Files) -> Document | EditRefusal:
+    def edit(document: Document, files: HubFiles) -> Document | EditRefusal:
         other = files.config.environments if local else files.local.environments
         other_file = FILE_LABEL if local else LOCAL_FILE
         return add_environment(
@@ -257,7 +232,7 @@ def set_command(
             " --env-file, --value or --unset-value"
         )
 
-    def edit(document: Document, files: _Files) -> Document | EditRefusal:
+    def edit(document: Document, files: HubFiles) -> Document | EditRefusal:
         return set_environment(
             document,
             name,
@@ -275,7 +250,7 @@ def set_command(
 def remove_command(name: Name, *, local: Local = False) -> None:
     """Remove an environment no endpoint uses."""
 
-    def edit(document: Document, files: _Files) -> Document | EditRefusal:
+    def edit(document: Document, files: HubFiles) -> Document | EditRefusal:
         edited = remove_environment(document, name, file=_file(is_local=local))
         if not isinstance(edited, EditRefusal) and not local and name in files.local.environments:
             # Removed from hub.json, the local tightening would become an environment of its own.
@@ -316,7 +291,7 @@ def service_add_command(
     if note is not None:
         endpoint["note"] = note
 
-    def edit(document: Document, files: _Files) -> Document | EditRefusal:
+    def edit(document: Document, files: HubFiles) -> Document | EditRefusal:
         return add_endpoint(
             document,
             repo=repo,
@@ -350,7 +325,7 @@ def service_remove_command(
 ) -> None:
     """Remove a service, or with --env only its endpoint in that environment."""
 
-    def edit(document: Document, _files: _Files) -> Document | EditRefusal:
+    def edit(document: Document, _files: HubFiles) -> Document | EditRefusal:
         return remove_endpoint(
             document,
             repo=repo,
@@ -407,35 +382,9 @@ def _file(*, is_local: bool) -> str:
     return LOCAL_FILE if is_local else FILE_LABEL
 
 
-def _read_files() -> _Files:
-    """Both files, each read once as bytes; exit 1 when either is unusable."""
-    root = hub_root_or_exit(os.environ, command=COMMAND)
-    loaded = load_hub_json_or_exit(root / FILE_LABEL)
-    # No token reaches git, which only looks for the main checkout.
-    home = local_home(root, environ=without(os.environ, SESSION_HIDDEN))
-    local_path = home / LOCAL_FILE
-    found = read_file_bytes(local_path, max_bytes=LOCAL_FILE_MAX_BYTES)
-    content: bytes | None = None
-    local = LocalConfig()
-    if isinstance(found, UnreadFile):
-        if not found.is_missing:
-            fail(*local_lines((found.problem,)))
-    else:
-        content = found
-        parsed = parse_json(content)
-        checked = (parsed,) if isinstance(parsed, ConfigProblem) else check_local_document(parsed)
-        if not isinstance(checked, LocalConfig):
-            fail(*local_lines(checked))
-        local = checked
-    across = local_environment_problems(loaded.config, local)
-    if across:
-        fail(*local_lines(across))
-    return _Files(root / FILE_LABEL, loaded.content, loaded.config, local_path, content, local)
-
-
 def _write(edit: Edit, *, is_local: bool, action: str, environment: str | None) -> None:
     """Make ``edit`` on one file, check the result, write it, then print what was done."""
-    files = _read_files()
+    files = read_hub_files(command=COMMAND)
     path, content = (
         (files.local_path, files.local_content) if is_local else (files.hub_path, files.hub_content)
     )
@@ -444,7 +393,7 @@ def _write(edit: Edit, *, is_local: bool, action: str, environment: str | None) 
     edited = edit(document, files)
     if isinstance(edited, EditRefusal):
         fail(edited.message)
-    config, local = _checked(edited, files, is_local=is_local)
+    config, local = checked_documents(edited, files, is_local=is_local)
     new_content = document_bytes(edited)
     if is_local and len(new_content) > LOCAL_FILE_MAX_BYTES:
         fail(*local_lines((ConfigProblem(ROOT_PATH, TOO_LARGE_MESSAGE),)))
@@ -464,28 +413,3 @@ def _print_production_line(view: EffectiveEnvironments, name: str | None) -> Non
     for item in view.environments:
         if item.name == name and item.production:
             typer.echo(production_line(item.name, item.access, item.source))
-
-
-def _checked(edited: Document, files: _Files, *, is_local: bool) -> tuple[HubConfig, LocalConfig]:
-    """Both configs after the edit, checked as a read checks them; exit 1 with their lines."""
-    config, local = files.config, files.local
-    if is_local:
-        checked_local = check_local_document(edited)
-        if not isinstance(checked_local, LocalConfig):
-            fail(*local_lines(checked_local))
-        local = checked_local
-    else:
-        checked = check_hub_document(edited, running_version=version(DISTRIBUTION))
-        if not isinstance(checked, HubConfig):
-            fail(*hub_lines(checked))
-        config = checked
-    across = local_environment_problems(config, local)
-    if across:
-        # A hub.json change refused for the developer's file says so before that file's lines.
-        prefix = (
-            ()
-            if is_local
-            else (f"{FILE_LABEL}: not changed: {LOCAL_FILE} would no longer be valid",)
-        )
-        fail(*prefix, *local_lines(across))
-    return config, local
