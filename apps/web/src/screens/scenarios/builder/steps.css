@@ -1135,6 +1135,9 @@
 }
 .st-open-group {
   grid-column: 1 / -1;
+  /* The row pads its left by 4px only (its drag handle sits there): the open part takes the
+   * row's right padding on its left too, so its text and groups sit 12px in from both edges. */
+  padding-left: var(--space-2);
 }
 .st-row[data-selected="true"] > .st-num,
 .st-row[data-selected="true"] > .st-tile,
