@@ -41,7 +41,9 @@ from agent_hub.core.features.feature_record import (
     RECORD_FILE,
     FeatureRecordFile,
     PlannedTicket,
+    TicketRepo,
     record_from_bytes,
+    ticket_repos,
 )
 from agent_hub.core.features.feature_reviews import names_pull_request
 from agent_hub.core.features.feature_status import MAX_PLAN_BYTES
@@ -68,6 +70,7 @@ from agent_hub.core.features.ticket_writes import (
     Blocker,
     PlanMovedError,
     PreflightFacts,
+    RepoMain,
     TicketBrief,
     TicketOutcomeText,
     TicketRecordError,
@@ -111,14 +114,19 @@ def ticket_brief(
     folder = _feature(hub, feature)
     record = _record(folder)
     planned = _planned_or_refuse(record.tickets, ticket)
-    # Main as last fetched, read once: the preflight reads this commit and its run records it.
-    main = _main_commit(hub, config, planned)
+    owned = ticket_repos(planned) or (TicketRepo(repo=planned.repo or "none"),)
+    # Main as last fetched, read once per repo: the preflight reads these commits and its run
+    # records them.
+    mains = tuple(_main_commit(hub, config, repo.repo) for repo in owned)
     plan = _required(folder / PLAN, MAX_PLAN_BYTES)
-    names = (*plan_ids(planned.key), *_names(planned)[1:])
+    slices = (name for repo in owned for name in repo.slices)
+    names = (*plan_ids(planned.key), *_names(planned)[1:], *slices)
     section = plan_section(plan.decode("utf-8", "replace"), names)
-    commits, note = _commits(
-        hub, config, planned=planned, folder=folder, paths=named_paths(section)
+    paths = named_paths(section)
+    read = tuple(
+        _commits(hub, config, repo=repo.repo, folder=folder, paths=paths) for repo in owned
     )
+    several = len(owned) > 1
     target = _ticket_folder(folder, planned)
     brief = TicketBrief(
         ticket=target.name,
@@ -130,19 +138,31 @@ def ticket_brief(
             _blocker(folder, _planned(record.tickets, key), key) for key in planned.blocked_by
         ),
         adrs=cited_adrs(section),
-        commits=commits,
-        commits_note=note,
+        commits=() if several else read[0][0],
+        commits_note=None if several else read[0][1],
+        repos=tuple(
+            RepoMain(repo=repo.repo, commit=main, commits=commits, note=note)
+            for repo, main, (commits, note) in zip(owned, mains, read, strict=True)
+        )
+        if several
+        else (),
     )
     with _feature_lock(hub, feature):
         written, version = appended_brief(_read(target / TICKET_BRIEF, MAX_BRIEF_BYTES), brief)
         _replace(target, TICKET_BRIEF, written)
-    # The hub, the ticket's repo (the plan's, not a caller's) and main's commit the preflight reads.
+    # The hub, the ticket's repos (the plan's, not a caller's) and main's commits the preflight
+    # reads; ``repo`` and ``commit`` only for a ticket that owns one, so no reader of them covers
+    # part of a ticket that owns several.
     return {
         "path": _relative(hub, target / TICKET_BRIEF),
         "version": version,
         "hub": str(hub),
-        "repo": planned.repo,
-        "commit": main,
+        "repo": "" if several else owned[0].repo,
+        "commit": "" if several else mains[0],
+        "repos": [
+            {"repo": repo.repo, "commit": main, "slices": list(repo.slices)}
+            for repo, main in zip(owned, mains, strict=True)
+        ],
     }
 
 
@@ -198,14 +218,12 @@ def _superseded(folder: Path, n: int, plan: bytes) -> str:
     return pending_decision(n, request=request, decision=decision, plan=plan).superseded
 
 
-def _main_commit(hub: Path, config: HubConfig, planned: PlannedTicket) -> str:
-    """``origin/<default branch>``'s commit in the ticket's repo checkout: main as last fetched,
+def _main_commit(hub: Path, config: HubConfig, repo: str) -> str:
+    """``origin/<default branch>``'s commit in a repo checkout of the ticket: main as last fetched,
     read without a checkout."""
-    entry = next((repo for repo in config.repos if repo.dir == planned.repo), None)
+    entry = next((entry for entry in config.repos if entry.dir == repo), None)
     if entry is None:
-        raise TicketRecordError(
-            f"the ticket's repo {one_line(planned.repo or 'none')} is not in hub.json"
-        )
+        raise TicketRecordError(f"the ticket's repo {one_line(repo)} is not in hub.json")
     base = f"origin/{config.default_branch_for(entry.dir)}"
     try:
         found = git_output(
@@ -563,14 +581,15 @@ def _blocker(folder: Path, planned: PlannedTicket | None, key: str) -> Blocker:
 
 
 def _commits(
-    hub: Path, config: HubConfig, *, planned: PlannedTicket, folder: Path, paths: Sequence[str]
+    hub: Path, config: HubConfig, *, repo: str, folder: Path, paths: Sequence[str]
 ) -> tuple[tuple[str, ...], str | None]:
-    """Main's commits since the plan's last hub commit on ``paths``; else why none were read."""
+    """Main's commits in ``repo`` since the plan's last hub commit on ``paths``; else why none
+    were read."""
     if not paths:
         return (), "the plan section names no file"
-    entry = next((repo for repo in config.repos if repo.dir == planned.repo), None)
+    entry = next((entry for entry in config.repos if entry.dir == repo), None)
     if entry is None:
-        return (), f"the ticket's repo {one_line(planned.repo or 'none')} is not in hub.json"
+        return (), f"the ticket's repo {one_line(repo)} is not in hub.json"
     timeout = step_timeouts().git
     try:
         since = git_output(

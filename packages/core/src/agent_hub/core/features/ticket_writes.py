@@ -104,9 +104,20 @@ class Blocker:
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
+class RepoMain:
+    """One repo of a ticket that owns several: main's commit there, and the commits since the plan
+    on the files its plan section names (``commits``), or why none were read (``note``)."""
+
+    repo: str
+    commit: str
+    commits: tuple[str, ...]
+    note: str | None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
 class TicketBrief:
     """What one context run read: ``commits`` as lines, or ``commits_note`` saying why none were
-    read."""
+    read; for a ticket that owns several repos, ``repos`` holds each repo's instead."""
 
     ticket: str
     at: datetime
@@ -117,6 +128,7 @@ class TicketBrief:
     adrs: tuple[str, ...]
     commits: tuple[str, ...]
     commits_note: str | None
+    repos: tuple[RepoMain, ...] = ()
 
 
 def appended_brief(existing: bytes | None, brief: TicketBrief) -> tuple[bytes, int]:
@@ -136,7 +148,7 @@ def appended_brief(existing: bytes | None, brief: TicketBrief) -> tuple[bytes, i
 
 
 def _brief_section(brief: TicketBrief, version: int) -> str:
-    fields = {
+    fields: dict[str, object] = {
         "plan_version": brief.plan_version,
         "blockers": [
             {"id": b.id, "outcome_path": b.outcome_path, "recorded_at": b.recorded_at}
@@ -144,6 +156,8 @@ def _brief_section(brief: TicketBrief, version: int) -> str:
         ],
         "adrs": list(brief.adrs),
     }
+    if brief.repos:
+        fields["repos"] = [{"repo": repo.repo, "commit": repo.commit} for repo in brief.repos]
     acs = [f"- **{ac.id}** {one_line(ac.description)}" for ac in brief.acs]
     quoted = [f"> {line}".rstrip() for line in brief.plan_section.splitlines()]
     blockers = [
@@ -152,7 +166,11 @@ def _brief_section(brief: TicketBrief, version: int) -> str:
         else f"- {b.id}: none recorded"
         for b in brief.blockers
     ]
-    commits = list(brief.commits) or [f"None read: {brief.commits_note or 'none found'}."]
+    commits = _commit_lines(brief.commits, brief.commits_note)
+    if brief.repos:
+        commits = "\n\n".join(
+            f"#### {repo.repo}\n\n" + _commit_lines(repo.commits, repo.note) for repo in brief.repos
+        )
     parts = [
         f"## Brief v{version} ({brief.at.isoformat()})",
         f"```json\n{json.dumps(fields, ensure_ascii=False)}\n```",
@@ -160,10 +178,15 @@ def _brief_section(brief: TicketBrief, version: int) -> str:
         "### Plan section\n\n"
         + ("\n".join(quoted) or f"No heading of plan.md names {brief.ticket}."),
         "### Blockers\n\n" + ("\n".join(blockers) or "None."),
-        "### Main commits since the plan\n\n" + "\n".join(f"- {line}" for line in commits),
+        "### Main commits since the plan\n\n" + commits,
         "### ADRs cited\n\n" + ("\n".join(f"- {adr}" for adr in brief.adrs) or "None."),
     ]
     return "\n" + "\n\n".join(parts) + "\n"
+
+
+def _commit_lines(commits: tuple[str, ...], note: str | None) -> str:
+    lines = list(commits) or [f"None read: {note or 'none found'}."]
+    return "\n".join(f"- {line}" for line in lines)
 
 
 def plan_ids(key: str) -> tuple[str, ...]:
