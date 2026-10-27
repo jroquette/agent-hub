@@ -73,12 +73,14 @@ scenarios/orders/returns.yaml:14   nodes[2].type   shell nodes are not allowed i
 - **AC-521.12.3 Hand-off to Claude.** Given a valid form, when the owner clicks Create with Claude, then the Discuss
   panel opens in the hub folder with the request (name, pack, environment, what to check) and the scenario format
   brief (`scenarios/brief.ts`, shared with the scenario page) as its first message, kept as a draft in this browser,
-  as New workflow does.
+  as New workflow does. The brief teaches the blocks format (`version: 2`, stages and what each block holds, as
+  Describe with Claude does), so the scenario Claude writes opens in the builder as stages.
 - **AC-521.12.4 Watch the catalog.** Given the request sent, then the page watches the scenario catalog and, once a
   scenario of that name loads, links to it.
 - **AC-521.12.5 Blank scenario.** Given a project, a kebab-case name and a pack, when the owner clicks "Create it blank
-  and build with blocks", then a one-step scenario (a You step to replace) is saved through the builder's save, with
-  no Claude, and its page opens in the builder; the button stays off until the name and pack are set.
+  and build with blocks", then a scenario written as blocks (`version: 2`: one stage, "First stage", holding one You
+  block to replace) is saved through the builder's save as revision 1, with no Claude, and its page opens in the
+  builder as stages; the button stays off until the name and pack are set.
 
 ## Screen 2: Scenario detail (`/scenarios/:project/:name`)
 

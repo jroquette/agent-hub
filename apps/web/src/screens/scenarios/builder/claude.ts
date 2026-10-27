@@ -1,4 +1,4 @@
-import { BLOCK_ADDRESS, scenarioBrief } from "../brief";
+import { BLOCK_ADDRESS, scenarioBrief, TREE_FORMAT } from "../brief";
 import type { LibraryAction } from "./useScenarioDraft";
 
 /* What the builder asks Claude, through the Discuss panel (the owner's click sends it; nothing
@@ -114,14 +114,7 @@ function graphStructure(pack: string): string[] {
 
 /** The structure of a scenario written as blocks (`version: 2`), as the prompt teaches it. */
 function treeStructure(pack: string): string[] {
-  return [
-    "- The scenario is `version: 2` with `stages`: an ordered list of named stages (`name`, optional `description`, `steps`), each an ordered list of blocks. Position is order: a block runs after the one before it, a stage after the stage before it. No `nodes`, `depends_on`, `trigger_rule` or `when`.",
-    '- One block per thing that happens, each one key: `do: <action>` with `with`, `capture`, `retry`, `timeout` (a message to a queue, an API call, a DB change, a script in a container); `wait_until: <read action>` with `until`, `every`, `timeout` ("wait until X is Y", "check that X"); `you: <what to do by hand>` with `decisions` and `capture_response: true` when I type a value back (read later as `$<id>.output.text`); `wait: {duration: 30s}` for a fixed pause; `include: <scenario>` with `with`.',
-    '- Blocks that hold blocks: `repeat: {max, until, steps}` ("run X until Y", no Repeat or Include inside a Repeat); `if: <condition>` with `then` and an optional `else` (its complement, computed for you; an If with no `else` never opens a list of blocks); `together: [[...], [...]]` for paths at the same time, joined by the next block.',
-    "- Values that later blocks need are kept with `capture: {name: $self.output.<field>}` and read as `$CTX.<name>`; scenario inputs (ids, environments' services) go in `inputs` and are read as `$INPUTS.<name>`.",
-    "- Give a block an `id` (kebab-case) only when another block reads its output (`$<id>.output.<field>`, a Repeat's `until`); without one it gets an id from its place.",
-    reuse(pack),
-  ];
+  return [...TREE_FORMAT, reuse(pack)];
 }
 
 function reuse(pack: string): string {
