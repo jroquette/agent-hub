@@ -238,6 +238,27 @@ def test_writes_same_bytes_as_cli_when_accepted(tmp_path: Path, change: str) -> 
     assert sorted(path.name for path in tmp_path.iterdir()) == ["hub.json"]
 
 
+def test_refuses_edit_when_file_changed_since_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_files(tmp_path, RepoFiles(a_repos_document(), None))
+    changed = hub_bytes({**a_repos_document(), "_comment": "changed by someone else"})
+
+    class ChangedAfterRead(repo_writes.HubFiles):
+        def __init__(self, hub_path: str) -> None:
+            super().__init__(hub_path)
+            (tmp_path / "hub.json").write_bytes(changed)
+
+    monkeypatch.setattr(repo_writes, "HubFiles", ChangedAfterRead)
+
+    problems = refused(tmp_path, {"op": "remove_repo", "dir": "demo-web"})
+
+    assert [message for _, message in problems] == [
+        "hub.json changed since the page read it; reload and try again"
+    ]
+    assert (tmp_path / "hub.json").read_bytes() == changed
+
+
 def test_unsets_keys_when_unset_given(tmp_path: Path) -> None:
     document: dict[str, Any] = a_repos_document()
     document["repos"][1]["check_fast"] = "make check-fast"
