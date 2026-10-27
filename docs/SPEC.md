@@ -818,7 +818,9 @@ AGH-458.
 - **Hub config** (`/projects/{project}/config`, sidebar, `g c`) shows per repo the default branch, the branch, commit
   and PR title patterns, the checks, who commits, guard and blocked words, the tracker and the models, each with its
   layer (`GET /projects/{project}/config`), and edits the developer's `hub.local.json`
-  (`PUT /projects/{project}/config/local`).
+  (`PUT /projects/{project}/config/local`). Its Repositories section adds, changes and removes a repo in `hub.json`
+  as `hub repo` does (`POST /projects/{project}/config/repos`, ops `add_repo`, `set_repo`, `remove_repo`; a refusal
+  is a 422 "This change was not saved" with the CLI's lines; the change is left uncommitted, ADR 0040; AGH-578).
 - The Portfolio, Brain note frontmatter and the shell's scrolling are calmer; every screen above has a visual test on
   the demo data ([TESTING.md](TESTING.md)).
 

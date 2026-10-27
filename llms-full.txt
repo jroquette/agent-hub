@@ -1840,6 +1840,20 @@ benchmark) and `marketplace` (plugin marketplace) take `{}` only; `contract-sync
   `tracker.teams` (not a non-empty list of non-empty strings) counts as absent. No hook reads `conventions` or
   `models`.
 
+#### From hub web
+
+The Hub config screen's Repositories section adds, changes and removes a repo as `hub repo add|set|remove` does
+([24-hub-config-repos.md](control-plane/specs/24-hub-config-repos.md)), through
+`POST /api/v1/projects/{project}/config/repos` with one `op`: `add_repo` (`dir`, `github`, `check`, and any of
+`check_fast`, `check_fast_timeout`, `role`, `default_branch`), `set_repo` (`dir` names the repo and never changes; the
+keys to change, and `unset` for `role`, `check_fast`, `check_fast_timeout` or `default_branch`; a body with neither is
+refused before any read, as the CLI refuses a bare `set`) or `remove_repo` (`dir`). Core's `repo_edits` makes the
+change, so the API accepts and refuses what the CLI does: a refusal is a 422 "This change was not saved" whose
+`errors[]` hold one line each, its JSON path as `pointer` (`$` when it has none) and the CLI's text without the
+`hub.json: not changed: ` lead, and nothing is written. An accepted change is written to `hub.json` in the CLI's bytes
+and left uncommitted ([ADR 0040](../adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md)). hub
+web runs no `./hub sync`, `./hub setup` or `/onboard` and deletes no folder; the screen names those next steps.
+
 ### Tracker
 
 `tracker.kind` and `tracker.transport` pick the `TrackerClient` adapter: `api` is `LinearGraphqlTrackerClient` (key only
