@@ -14984,6 +14984,33 @@
         "title": "TicketPlan",
         "type": "object"
       },
+      "TicketPr": {
+        "additionalProperties": false,
+        "description": "One pull request of a ticket: the hub repo it is in (None outside the hub's repos) and its\nGitHub URL.",
+        "properties": {
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo",
+          "url"
+        ],
+        "title": "TicketPr",
+        "type": "object"
+      },
       "TicketRecords": {
         "additionalProperties": false,
         "description": "``GET /features/{project}/{slug}/tickets/{ticket}`` (two-level-flows A7, A20): what the\nticket panel shows that no tickets row carries: ``preflight``, its record (None without one),\nand ``change_requests``, the plan change requests it asks or is held by, each with its\nevidence and proposal (``body``).",
@@ -15043,7 +15070,7 @@
       },
       "TicketRow": {
         "additionalProperties": false,
-        "description": "One ticket of the feature.\n\n``key`` is the plan's draft key (None for a ticket only Linear or ``linear`` lists), ``id``\nthe tracker identifier (None until created). ``title``, ``state``, ``assignee`` and ``url``\ncome from Linear when read, else ``title`` from the plan and the others None. ``acs`` are the\nAC ids whose ``ticket`` names it; ``blocks`` the refs it blocks; ``waiting_on`` the refs of\nits blockers not done yet. ``reviewed`` is None when unknown (no snapshot and no record).\n``parent`` is the ref of the epic it belongs to (the plan's ``parent`` or Linear's parent\nissue), ``children`` the refs of the rows whose parent it is: a row with children is an epic.\n``repo`` is the plan's repo of a ticket that names one, ``repos`` every repo the ticket owns in\ncontract order (its pull requests merge in that order; empty when the plan names none).\n``pr_url`` is the ticket's pull request on GitHub, from its review record, None when unknown.\n``flow`` is the ticket's own steps, served by the tickets route (None for an epic).",
+        "description": "One ticket of the feature.\n\n``key`` is the plan's draft key (None for a ticket only Linear or ``linear`` lists), ``id``\nthe tracker identifier (None until created). ``title``, ``state``, ``assignee`` and ``url``\ncome from Linear when read, else ``title`` from the plan and the others None. ``acs`` are the\nAC ids whose ``ticket`` names it; ``blocks`` the refs it blocks; ``waiting_on`` the refs of\nits blockers not done yet. ``reviewed`` is None when unknown (no snapshot and no record).\n``parent`` is the ref of the epic it belongs to (the plan's ``parent`` or Linear's parent\nissue), ``children`` the refs of the rows whose parent it is: a row with children is an epic.\n``repo`` is the plan's repo of a ticket that names one, ``repos`` every repo the ticket owns in\ncontract order (its pull requests merge in that order; empty when the plan names none).\n``pr_url`` is the ticket's pull request on GitHub, from its review record, None when unknown;\n``prs`` every pull request it names, in merge order (one per repo for a ticket that owns\nseveral; ``pr_url`` is the first).\n``flow`` is the ticket's own steps, served by the tickets route (None for an epic).",
         "properties": {
           "acs": {
             "items": {
@@ -15171,6 +15198,14 @@
               }
             ],
             "title": "Priority"
+          },
+          "prs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TicketPr"
+            },
+            "title": "Prs",
+            "type": "array"
           },
           "readiness": {
             "$ref": "#/components/schemas/Readiness"

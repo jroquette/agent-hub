@@ -358,7 +358,7 @@ def outcome(
     *,
     feature: str,
     ticket: str,
-    pr: str,
+    prs: Sequence[str],
     merged_at: str,
     built: str,
     changes: str,
@@ -375,9 +375,10 @@ def outcome(
         raise TicketRecordError(f"{OUTCOME} is a link; no link is followed")
     if existing is not None and (existing / OUTCOME).exists():
         return _kept(hub, existing, dependents)
-    if not names_pull_request(pr.strip()):
-        # The writer's own input, named as given (the record's reader would say the same).
-        raise TicketRecordError(f"--pr: names no pull request: {one_line(pr)[:64]}")
+    for pr in prs or ("",):
+        if not names_pull_request(pr.strip()):
+            # The writer's own input, named as given (the record's reader would say the same).
+            raise TicketRecordError(f"--pr: names no pull request: {one_line(pr)[:64]}")
     try:
         when = aware_time(merged_at, "merged_at")
     except RecordFieldError as error:
@@ -387,7 +388,7 @@ def outcome(
         TicketOutcomeText(
             ticket=(planned.id or planned.key) if existing is None else existing.name,
             merged_at=when,
-            pr=pr.strip(),
+            prs=tuple(dict.fromkeys(pr.strip() for pr in prs)),
             dependents=dependents,
             built=built,
             changes=changes,

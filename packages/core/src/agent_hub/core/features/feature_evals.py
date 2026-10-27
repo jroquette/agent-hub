@@ -442,6 +442,14 @@ def _verdict(fields: dict[str, FrontmatterValue]) -> Verdict:
     return cast("Verdict", verdict)
 
 
+def text_items(
+    fields: dict[str, FrontmatterValue], name: str, pattern: re.Pattern[str]
+) -> tuple[str, ...]:
+    """The field ``name`` as a list (one value reads as a list of one), each item matching
+    ``pattern``, repeats dropped; () when absent or empty."""
+    return _items(fields, name, pattern)
+
+
 def _items(
     fields: dict[str, FrontmatterValue], name: str, pattern: re.Pattern[str]
 ) -> tuple[str, ...]:

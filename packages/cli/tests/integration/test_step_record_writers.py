@@ -1047,6 +1047,18 @@ class TestOutcome:
         ):
             assert f"{heading}\n\n{body}\n" in text
 
+    def test_records_every_pull_request_in_order_when_given_more_than_once(self, hub: Hub) -> None:
+        # AGH-592: a ticket that owns several repos merged one pull request per repo.
+        texts = ("--pr", "demo-api#12", "--pr", "demo-web#7", *OUTCOME_TEXTS[2:])
+
+        output = hub.ok("outcome", "--feature", "demo-flow", "--ticket", "T3", *texts)
+
+        content = (hub.root / output["path"]).read_bytes()
+        assert "\nprs: [demo-api#12, demo-web#7]\n" in content.decode()
+        read = outcome_record(content, folder="T3")
+        assert isinstance(read, TicketOutcome)
+        assert (read.pr, read.prs) == ("demo-api#12", ("demo-api#12", "demo-web#7"))
+
     def test_writes_nothing_when_the_outcome_is_already_recorded(self, hub: Hub) -> None:
         first = hub.ok("outcome", "--feature", "demo-flow", "--ticket", "T3", *OUTCOME_TEXTS)
         path = hub.root / first["path"]

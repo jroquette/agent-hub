@@ -512,7 +512,7 @@ def an_outcome_text(built: str = "The reader.", pr: str = "demo-api#4") -> Ticke
     return TicketOutcomeText(
         ticket="DEM-7",
         merged_at=datetime(2026, 10, 22, 8, 0, tzinfo=UTC),
-        pr=pr,
+        prs=(pr,),
         dependents=("DEM-8",),
         built=built,
         changes="None.",

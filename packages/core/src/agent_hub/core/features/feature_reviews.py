@@ -4,13 +4,15 @@
 ``ticket``, ``outcome`` (``approved`` or ``changes-requested``), ``pr`` and ``reviewed_at``. A
 ticket with an ``approved`` record counts as reviewed; a malformed record carries its ``problem``
 and counts for nothing. ``pr`` names the ticket's pull request as ``<repo>#<number>`` (the
-repo's ``dir`` or its GitHub name) or as its GitHub URL; ``#pending`` names none yet.
+repo's ``dir`` or its GitHub name) or as its GitHub URL; ``#pending`` names none yet. A ticket
+that owns several repos names one per repo instead, ``prs: [...]``, in the order they merge
+(AGH-592); a record with both is malformed.
 """
 
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final, Literal, cast
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, cast
 
 from agent_hub.core.brain.brain_note import FrontmatterValue
 from agent_hub.core.features.feature_evals import (
@@ -20,6 +22,7 @@ from agent_hub.core.features.feature_evals import (
     record_fields,
     record_type,
     text_field,
+    text_items,
 )
 from agent_hub.core.features.feature_record import KEY_PATTERN
 from agent_hub.core.hub_config.problems import one_line
@@ -49,7 +52,9 @@ _PR_URL: Final = re.compile(
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ReviewRecord:
     """One review record. ``ticket`` is the frontmatter's, else the file name's; ``path`` is
-    relative to the hub's ``brain/``. With a ``problem``, ``outcome`` and the rest are None."""
+    relative to the hub's ``brain/``. With a ``problem``, ``outcome`` and the rest are None.
+    ``prs`` are the pull requests it names in merge order (``prs``, else ``pr``); ``pr`` is the
+    first."""
 
     ticket: str
     path: str
@@ -57,6 +62,15 @@ class ReviewRecord:
     pr: str | None
     reviewed_at: str | None
     problem: str | None
+    prs: tuple[str, ...] = ()
+
+
+class ReviewPullRequest(NamedTuple):
+    """A reviewed ticket's pull request: the hub repo it is in (its ``dir``; None outside the
+    hub's repos) and its GitHub URL."""
+
+    repo: str | None
+    url: str
 
 
 def review_records(heads: Sequence[RecordHead], *, slug: str) -> tuple[ReviewRecord, ...]:
@@ -75,8 +89,8 @@ def approved_tickets(records: Iterable[ReviewRecord]) -> frozenset[str]:
 
 def review_pull_requests(
     records: Iterable[ReviewRecord], repos: Mapping[str, str]
-) -> dict[str, str]:
-    """Each reviewed ticket's pull request URL, by ticket (upper case, as named).
+) -> dict[str, tuple[ReviewPullRequest, ...]]:
+    """Each reviewed ticket's pull requests, in merge order, by ticket (upper case, as named).
 
     ``repos`` maps each hub repo's ``dir`` to its GitHub ``owner/name``. A ``<repo>#<number>``
     whose repo is no hub repo (by dir or name, any case), a placeholder such as ``#pending`` and a
@@ -84,12 +98,18 @@ def review_pull_requests(
     """
     github = {name.lower(): full for dir_name, full in repos.items() for name in (dir_name, full)}
     github.update({full.rpartition("/")[2].lower(): full for full in repos.values()})
-    urls: dict[str, str] = {}
+    dirs = {full.lower(): dir_name for dir_name, full in repos.items()}
+    found: dict[str, tuple[ReviewPullRequest, ...]] = {}
     for record in records:
-        url = None if record.problem is not None else _pull_request_url(record.pr, github)
-        if url is not None:
-            urls[record.ticket.upper()] = url
-    return urls
+        urls = () if record.problem is not None else record.prs
+        linked = tuple(
+            ReviewPullRequest(dirs.get(_github_name(url)), url)
+            for pr in urls
+            if (url := _pull_request_url(pr, github)) is not None
+        )
+        if linked:
+            found[record.ticket.upper()] = linked
+    return found
 
 
 def names_pull_request(pr: str | None) -> bool:
@@ -98,6 +118,11 @@ def names_pull_request(pr: str | None) -> bool:
     return pr is not None and (
         _PR_URL.fullmatch(pr) is not None or _PR_REF.fullmatch(pr) is not None
     )
+
+
+def _github_name(url: str) -> str:
+    """The ``owner/name`` of a GitHub pull request URL, lower case."""
+    return "/".join(url.split("/")[3:5]).lower()
 
 
 def _pull_request_url(pr: str | None, github: Mapping[str, str]) -> str | None:
@@ -131,13 +156,18 @@ def _parsed(stem: str, path: str, fields: dict[str, FrontmatterValue]) -> Review
     outcome = text_field(fields, "outcome")
     if outcome not in _OUTCOMES:
         raise RecordFieldError(f"outcome must be one of {', '.join(_OUTCOMES)}")
+    pr = text_field(fields, "pr", _PR)
+    prs = text_items(fields, "prs", _PR)
+    if pr is not None and prs:
+        raise RecordFieldError("give pr or prs, not both")
     return ReviewRecord(
         ticket=ticket or stem,
         path=path,
         outcome=cast("ReviewOutcome", outcome),
-        pr=text_field(fields, "pr", _PR),
+        pr=prs[0] if prs else pr,
         reviewed_at=text_field(fields, "reviewed_at", ISO_TIME),
         problem=None,
+        prs=prs or (() if pr is None else (pr,)),
     )
 
 

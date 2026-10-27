@@ -540,11 +540,18 @@ class TicketOutcomeText:
 
     ticket: str
     merged_at: datetime
-    pr: str
+    # One pull request, or one per repo in merge order for a ticket that owns several.
+    prs: tuple[str, ...]
     dependents: tuple[str, ...]
     built: str
     changes: str
     interfaces: str
+
+
+def _prs_line(prs: tuple[str, ...]) -> str:
+    if len(prs) == 1:
+        return f"pr: {scalar(prs[0])}\n"
+    return f"prs: [{', '.join(prs)}]\n"
 
 
 def outcome_text(outcome: TicketOutcomeText) -> bytes:
@@ -559,7 +566,7 @@ def outcome_text(outcome: TicketOutcomeText) -> bytes:
             raise TicketRecordError(what)
     front = (
         f"---\ntype: {OUTCOME_TYPE}\nticket: {outcome.ticket}\n"
-        f"merged_at: {outcome.merged_at.isoformat()}\npr: {scalar(outcome.pr)}\n"
+        f"merged_at: {outcome.merged_at.isoformat()}\n{_prs_line(outcome.prs)}"
         f"dependents: [{', '.join(outcome.dependents)}]\n---\n"
     )
     text = (
