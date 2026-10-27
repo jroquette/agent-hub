@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, Navigate, useLocation, useParams, useSearchParams } from "react-router";
 
@@ -17,6 +17,8 @@ import { KnowledgeProjectIndex } from "../knowledge-index";
 import { count, environmentsPage } from "./environments";
 import { SavedToast, UncommittedNotice, useSaveNotices } from "./notices";
 import { LocalSettingsDialog } from "./LocalSettingsDialog";
+import { RepoForm, RepoRemoval } from "./RepoForm";
+import { nextLines } from "./repos";
 import { AskBlocked, ConfigRow, ConfigSource, Mono, NoneText, Section, useAttach } from "./parts";
 import type { RowAsk, Source } from "./parts";
 export { ConfigSource } from "./parts";
@@ -292,16 +294,43 @@ const SECTIONS = [
   { id: "models", label: "Models" },
 ];
 
+/** The id of a repo's Change button and of its card's summary, where focus returns. */
+function changeId(dir: string): string {
+  return `repo-change-${dir}`;
+}
+function summaryId(dir: string): string {
+  return `repo-summary-${dir}`;
+}
+function nameId(dir: string): string {
+  return `repo-name-${dir}`;
+}
+const ADD_REPO_ID = "repos-add";
+
 function RepoCard({
   repo,
   open,
   onToggle,
+  form,
+  offReason,
+  removeOff,
+  onChange,
+  onRemove,
 }: {
   repo: RepoConfigView;
   open: boolean;
   onToggle: (open: boolean) => void;
+  /** The repo form, while this repo is being changed: it takes the rows' place. */
+  form: ReactNode;
+  /** Why Change and Remove are off (another repo form is open), else null. */
+  offReason: string | null;
+  /** Why Remove is off (the only repo), else null. */
+  removeOff: string | null;
+  onChange: () => void;
+  onRemove: () => void;
 }) {
   const { attach, isAttached } = useAttach();
+  const removeTip = useId();
+  const removeReason = offReason ?? removeOff;
   const ask = (
     key: string,
     label: string,
@@ -337,74 +366,125 @@ function RepoCard({
   return (
     <details
       className="ah-config-repo"
-      open={open}
+      open={open || form !== null}
       onToggle={(event) => {
         onToggle(event.currentTarget.open);
       }}
     >
-      <summary>
+      <summary id={summaryId(repo.dir)}>
         <Icon name="chevron-right" className="ah-config-chevron" />
         <Icon name="book" />
-        <span className="ah-config-repo-name">{repo.dir}</span>
+        <span className="ah-config-repo-name" id={nameId(repo.dir)}>
+          {repo.dir}
+        </span>
         <span className="ah-muted ah-small">
           {repo.role} · {repo.github}
         </span>
       </summary>
-      <div className="ah-config-rows">
-        <ConfigRow
-          label="Default branch"
-          source={sourceOf(repo.default_branch)}
-          ask={ask(
-            "default_branch",
-            "Default branch",
-            repo.default_branch.value ?? "",
-            repo.default_branch.source,
-            repo.default_branch.where,
-          )}
-        >
-          <Mono>{repo.default_branch.value}</Mono>
-        </ConfigRow>
-        {pattern("branch", "Branch")}
-        {pattern("commit_title", "Commit title")}
-        {pattern("pr_title", "PR title")}
-        <ConfigRow
-          label="Fast check"
-          source={repo.check_fast ? teamOrBuiltIn(true, fastWhere) : null}
-          ask={ask(
-            "check_fast",
-            "Fast check",
-            repo.check_fast ?? "",
-            "team",
-            `hub.json → ${fastWhere}`,
-          )}
-        >
-          {repo.check_fast ? (
-            <span>
-              <Mono>{repo.check_fast}</Mono>{" "}
-              <span className="ah-small ah-muted">
-                · timeout {String(repo.check_fast_timeout ?? 150)} s
-                {repo.check_fast_timeout === null ? " (built-in)" : ""}
-              </span>
-            </span>
-          ) : (
-            <NoneText>None · agents stop without a fast check</NoneText>
-          )}
-        </ConfigRow>
-        <ConfigRow
-          label="Full check"
-          source={teamOrBuiltIn(true, `repos[${String(repo.index)}].check`)}
-          ask={ask(
-            "check",
-            "Full check",
-            repo.check,
-            "team",
-            `hub.json → repos[${String(repo.index)}].check`,
-          )}
-        >
-          <Mono>{repo.check}</Mono>
-        </ConfigRow>
-      </div>
+      {form !== null ? (
+        <div className="ah-config-repo-body">{form}</div>
+      ) : (
+        <>
+          <div className="ah-repo-card-actions">
+            <Tooltip label={offReason ?? undefined}>
+              <Button
+                size="sm"
+                id={changeId(repo.dir)}
+                aria-label={`Change repo ${repo.dir}`}
+                disabled={offReason !== null}
+                onClick={onChange}
+              >
+                Change
+              </Button>
+            </Tooltip>
+            <Tooltip label={removeReason ?? undefined} id={removeTip}>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="x"
+                aria-label={`Remove repo ${repo.dir}`}
+                aria-describedby={removeReason !== null ? removeTip : undefined}
+                disabled={removeReason !== null}
+                onClick={onRemove}
+              >
+                Remove
+              </Button>
+            </Tooltip>
+          </div>
+          <RepoRows repo={repo} ask={ask} pattern={pattern} fastWhere={fastWhere} />
+        </>
+      )}
     </details>
+  );
+}
+
+/** A repo card's read rows: default branch, patterns and checks. */
+function RepoRows({
+  repo,
+  ask,
+  pattern,
+  fastWhere,
+}: {
+  repo: RepoConfigView;
+  ask: (key: string, label: string, value: string, source: Source, where: string) => RowAsk;
+  pattern: (key: "branch" | "commit_title" | "pr_title", label: string) => ReactNode;
+  fastWhere: string;
+}) {
+  return (
+    <div className="ah-config-rows">
+      <ConfigRow
+        label="Default branch"
+        source={sourceOf(repo.default_branch)}
+        ask={ask(
+          "default_branch",
+          "Default branch",
+          repo.default_branch.value ?? "",
+          repo.default_branch.source,
+          repo.default_branch.where,
+        )}
+      >
+        <Mono>{repo.default_branch.value}</Mono>
+      </ConfigRow>
+      {pattern("branch", "Branch")}
+      {pattern("commit_title", "Commit title")}
+      {pattern("pr_title", "PR title")}
+      <ConfigRow
+        label="Fast check"
+        source={repo.check_fast ? teamOrBuiltIn(true, fastWhere) : null}
+        ask={ask(
+          "check_fast",
+          "Fast check",
+          repo.check_fast ?? "",
+          "team",
+          `hub.json → ${fastWhere}`,
+        )}
+      >
+        {repo.check_fast ? (
+          <span>
+            <Mono>{repo.check_fast}</Mono>{" "}
+            <span className="ah-small ah-muted">
+              · timeout {String(repo.check_fast_timeout ?? 150)} s
+              {repo.check_fast_timeout === null ? " (built-in)" : ""}
+            </span>
+          </span>
+        ) : (
+          <NoneText>None · agents stop without a fast check</NoneText>
+        )}
+      </ConfigRow>
+      <ConfigRow
+        label="Full check"
+        source={teamOrBuiltIn(true, `repos[${String(repo.index)}].check`)}
+        ask={ask(
+          "check",
+          "Full check",
+          repo.check,
+          "team",
+          `hub.json → repos[${String(repo.index)}].check`,
+        )}
+      >
+        <Mono>{repo.check}</Mono>
+      </ConfigRow>
+    </div>
   );
 }
 
@@ -477,11 +557,73 @@ function BlockedRow({
   );
 }
 
-function ConfigBody({ view, onSaved }: { view: HubConfigView; onSaved: () => void }) {
+type RepoFormState = { kind: "add" } | { kind: "change"; dir: string } | null;
+
+function ConfigBody({
+  view,
+  onSaved,
+  onRepoSaved,
+  onRepoFormOpen,
+}: {
+  view: HubConfigView;
+  onSaved: () => void;
+  /** A repo write's toast and its next steps for the uncommitted notice. */
+  onRepoSaved: (message: string, lines: readonly string[]) => void;
+  /** Whether a repo form is open: the header's Ask then gives Save the one primary. */
+  onRepoFormOpen: (open: boolean) => void;
+}) {
   const [params, setParams] = useSearchParams();
   const openRepo = params.get("repo");
   const { attach, isAttached } = useAttach();
   const [editing, setEditing] = useState<string | null>(null);
+  const [repoForm, setRepoForm] = useState<RepoFormState>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [gone, setGone] = useState<string | null>(null);
+  // Where focus goes once the next render shows it (a card's Change, its summary, Add repo).
+  const focusNext = useRef<string | null>(null);
+  const setFocusId = (id: string) => {
+    focusNext.current = id;
+  };
+
+  useEffect(() => {
+    onRepoFormOpen(repoForm !== null);
+  }, [repoForm, onRepoFormOpen]);
+  // The repo being changed left hub.json (changed on disk): the form has nothing to change.
+  const changing = repoForm?.kind === "change" ? repoForm.dir : null;
+  const changedRepo = view.repos.find((repo) => repo.dir === changing) ?? null;
+  if (changing !== null && changedRepo === null) {
+    setRepoForm(null);
+    setGone(changing);
+  }
+  useEffect(() => {
+    if (focusNext.current === null) return;
+    const target = document.getElementById(focusNext.current);
+    if (!target) return;
+    target.focus();
+    focusNext.current = null;
+  });
+
+  const setOpenRepo = (dir: string | null) => {
+    setParams(
+      (prev) => {
+        if (dir === null) prev.delete("repo");
+        else prev.set("repo", dir);
+        return prev;
+      },
+      { replace: true },
+    );
+  };
+  const openForm = (next: RepoFormState) => {
+    setGone(null);
+    setRepoForm(next);
+  };
+  const formReason =
+    repoForm === null
+      ? null
+      : repoForm.kind === "add"
+        ? "Save or cancel the change to the new repo first."
+        : `Save or cancel the change to ${repoForm.dir} first.`;
+  const removeOff = view.repos.length === 1 ? "The only repo: hub.json needs at least one." : null;
 
   const askSection = (id: string, label: string, quote: string) => () => {
     attach({ id: `config:section:${id}`, label, source: "hub.json", quote });
@@ -582,24 +724,83 @@ function ConfigBody({ view, onSaved }: { view: HubConfigView; onSaved: () => voi
                 )
                 .join("\n"),
             )}
+            actions={
+              <Tooltip label={formReason ?? undefined}>
+                <Button
+                  size="sm"
+                  icon="plus"
+                  id={ADD_REPO_ID}
+                  disabled={formReason !== null}
+                  onClick={() => {
+                    openForm({ kind: "add" });
+                  }}
+                >
+                  Add repo
+                </Button>
+              </Tooltip>
+            }
           >
+            {gone !== null && (
+              <Banner tone="warning">{gone} is no longer in hub.json. Nothing was saved.</Banner>
+            )}
             {view.repos.map((repo, index) => (
               <RepoCard
                 key={repo.dir}
                 repo={repo}
                 open={openRepo === null ? index === 0 : openRepo === repo.dir}
                 onToggle={(isOpen) => {
-                  if (isOpen && openRepo !== repo.dir)
-                    setParams(
-                      (prev) => {
-                        prev.set("repo", repo.dir);
-                        return prev;
-                      },
-                      { replace: true },
-                    );
+                  if (isOpen && openRepo !== repo.dir) setOpenRepo(repo.dir);
+                }}
+                form={
+                  changedRepo !== null && changedRepo.dir === repo.dir ? (
+                    <RepoForm
+                      view={view}
+                      repo={changedRepo}
+                      labelledBy={nameId(repo.dir)}
+                      onCancel={() => {
+                        setRepoForm(null);
+                        setFocusId(changeId(repo.dir));
+                      }}
+                      onSaved={(dir) => {
+                        setRepoForm(null);
+                        setFocusId(changeId(dir));
+                        onRepoSaved(`Updated repo ${dir}`, nextLines("change", dir));
+                      }}
+                    />
+                  ) : null
+                }
+                offReason={formReason}
+                removeOff={removeOff}
+                onChange={() => {
+                  openForm({ kind: "change", dir: repo.dir });
+                }}
+                onRemove={() => {
+                  setRemoving(repo.dir);
                 }}
               />
             ))}
+            {repoForm?.kind === "add" && (
+              <div className="ah-config-repo ah-config-repo-new">
+                <h3 className="ah-h3" id="repos-new-title">
+                  New repo
+                </h3>
+                <RepoForm
+                  view={view}
+                  repo={null}
+                  labelledBy="repos-new-title"
+                  onCancel={() => {
+                    setRepoForm(null);
+                    setFocusId(ADD_REPO_ID);
+                  }}
+                  onSaved={(dir) => {
+                    setRepoForm(null);
+                    setOpenRepo(dir);
+                    setFocusId(summaryId(dir));
+                    onRepoSaved(`Added repo ${dir}`, nextLines("add", dir));
+                  }}
+                />
+              </div>
+            )}
           </Section>
 
           <Section
@@ -844,6 +1045,21 @@ function ConfigBody({ view, onSaved }: { view: HubConfigView; onSaved: () => voi
             </div>
           </Section>
         </div>
+        {removing !== null && (
+          <RepoRemoval
+            view={view}
+            dir={removing}
+            onCancel={() => {
+              setRemoving(null);
+            }}
+            onRemoved={(dir) => {
+              setRemoving(null);
+              if (openRepo === dir) setOpenRepo(null);
+              setFocusId(ADD_REPO_ID);
+              onRepoSaved(`Removed repo ${dir}`, nextLines("remove", dir));
+            }}
+          />
+        )}
         {editing !== null && (
           <LocalSettingsDialog
             view={view}
@@ -865,6 +1081,7 @@ export function HubConfigScreen() {
   const config = useApi("/api/v1/projects/{project}/config", { path: { project } });
   const { setOpen, addReference } = useDiscuss();
   const [editing, setEditing] = useState(false);
+  const [repoFormOpen, setRepoFormOpen] = useState(false);
   const location = useLocation();
   const notices = useSaveNotices();
   const capabilities = useAgentCapabilities();
@@ -932,7 +1149,14 @@ export function HubConfigScreen() {
     body = (
       <>
         <WhereValuesComeFrom hubRepo={view.hub_repo} localSet={localSet} />
-        <ConfigBody view={view} onSaved={onSaved} />
+        <ConfigBody
+          view={view}
+          onSaved={onSaved}
+          onRepoSaved={(message, lines) => {
+            notices.onSaved(message, true, lines);
+          }}
+          onRepoFormOpen={setRepoFormOpen}
+        />
       </>
     );
   }
@@ -966,7 +1190,7 @@ export function HubConfigScreen() {
             </Button>
             <Tooltip label={blocked ?? undefined}>
               <Button
-                variant="primary"
+                variant={repoFormOpen ? "default" : "primary"}
                 icon="message-square"
                 disabled={blocked !== null}
                 onClick={() => {
@@ -1004,7 +1228,11 @@ export function HubConfigScreen() {
           </Banner>
         )}
         {notices.teamChanged && (
-          <UncommittedNotice blocked={blocked} onDismiss={notices.dismissTeamChanged} />
+          <UncommittedNotice
+            blocked={blocked}
+            lines={notices.lines}
+            onDismiss={notices.dismissTeamChanged}
+          />
         )}
         {body}
         {editing && view && (

@@ -463,7 +463,8 @@ keyboard. axe reports no serious or critical violation in the panel, Compare or 
   ("You set 2 values on this machine"); Hide hides it and remembers it (`ah.config.explainer` = hidden), and "Show
   where values come from" brings it back.
 - **AC-382.31** Given a row I may set, when shown, then it has "Change for me" (lists: "Add for me"), which opens
-  "Change my settings"; team-only rows (guard paths, tracker labels, models) have none.
+  "Change my settings"; team-only rows (guard paths, tracker labels, models) have none, except the Repositories
+  section's Change, Remove and Add repo, which change `hub.json` ([24-hub-config-repos.md](24-hub-config-repos.md)).
 - **AC-382.32** Given the settings dialog, when saved, then the button says "Save my settings" and the confirmation
   "Saved your settings".
 - **AC-382.33** Given a row's Ask button, when the row is hovered or focused, then it shows; once attached it stays,

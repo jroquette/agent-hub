@@ -1,12 +1,26 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { createElement } from "react";
 import { describe, expect, it } from "vitest";
 
+import { ApiProblem, apiKey } from "../../lib/api";
+import { DiscussProvider, useDiscuss } from "../../shell/discuss";
 import { seriousViolations } from "../../testing/axe";
-import { renderWithApi, type ApiRoutes } from "../../testing/builders";
+import {
+  aHubConfigView,
+  aProblem,
+  aRepoConfigView,
+  renderWithApi,
+  stubApi,
+  testQueryClient,
+  type ApiRoutes,
+  type HubConfigView,
+} from "../../testing/builders";
 import { AddEnvironmentScreen } from "./AddEnvironmentFlow";
 import { AddServiceScreen } from "./AddServiceFlow";
 import { flowOrigin } from "./environments";
+import { HubConfigScreen } from "./index";
+import { postRepoEdit, repoRefusalOf } from "./repos";
 
 const CONFIG = "/api/v1/projects/demo/config";
 const WRITE = "POST /api/v1/projects/demo/config/environments";
@@ -297,5 +311,394 @@ describe("flowOrigin", () => {
       config,
     );
     expect(flowOrigin(null, "demo")).toEqual(config);
+  });
+});
+
+/* ---------- Repositories: add, change and remove (AGH-578, 24-hub-config-repos.md) ---------- */
+
+const REPOS = "POST /api/v1/projects/demo/config/repos";
+
+/** demo-api (the project's main) and demo-web (its own trunk, a role and a fast check). */
+function twoRepos(overrides: Partial<HubConfigView> = {}): HubConfigView {
+  return aHubConfigView({
+    repos: [
+      aRepoConfigView(),
+      aRepoConfigView({
+        index: 1,
+        dir: "demo-web",
+        github: "acme/demo-web",
+        role: "web",
+        default_branch: {
+          value: "trunk",
+          source: "team",
+          where: "hub.json → repos[1].default_branch",
+        },
+        check_fast: "make check-fast",
+        check_fast_timeout: 120,
+      }),
+    ],
+    ...overrides,
+  });
+}
+
+function References() {
+  const { references } = useDiscuss();
+  return createElement(
+    "ul",
+    { "aria-label": "references" },
+    references.map((r) => createElement("li", { key: r.id }, `${r.label}: ${r.quote}`)),
+  );
+}
+
+function openConfig(routes: ApiRoutes) {
+  return renderWithApi(
+    createElement(DiscussProvider, null, createElement(HubConfigScreen), createElement(References)),
+    { routes, path: "/projects/demo/config", route: "projects/:project/config" },
+  );
+}
+
+function refusal(...errors: { pointer: string; message: string }[]) {
+  return aProblem({ status: 422, title: "This change was not saved", errors });
+}
+
+async function posted(requests: Request[]): Promise<unknown> {
+  const post = requests.find((r) => r.method === "POST");
+  return post?.clone().json();
+}
+
+async function repoSection() {
+  return screen.findByRole("region", { name: /Repositories/ });
+}
+
+describe("Repositories", () => {
+  it("repos: posts the edit and stores the returned config", async () => {
+    const fresh = twoRepos();
+    const requests = stubApi({ [REPOS]: fresh });
+    const client = testQueryClient();
+
+    const answer = await postRepoEdit(client, "demo", { op: "remove_repo", dir: "demo-web" });
+
+    expect(answer).toEqual(fresh);
+    const key = apiKey("/api/v1/projects/{project}/config", { path: { project: "demo" } });
+    expect(client.getQueryData(key)).toEqual(fresh);
+    expect(new URL(requests[0]?.url ?? "http://x").pathname).toBe(
+      "/api/v1/projects/demo/config/repos",
+    );
+    expect(await requests[0]?.json()).toEqual({ op: "remove_repo", dir: "demo-web" });
+  });
+
+  it("repos: keeps the refusal lines", () => {
+    const shown = repoRefusalOf(
+      new ApiProblem({
+        status: 422,
+        title: "This change was not saved",
+        errors: [
+          {
+            pointer: "repos[1].check_fast_timeout",
+            message: "hub.json: Input should be less than or equal to 160",
+          },
+          {
+            pointer: "repos[1].github",
+            message: "hub.json: String should match pattern '^[A-Za-z0-9_]+$'",
+          },
+          { pointer: "guard.ask_before_edit[0]", message: "repo demo-web is still named at x" },
+          {
+            pointer: "repos[0].dir",
+            message: "repo demo-web is still named in hub.local.json at repos[0].dir",
+          },
+        ],
+      }),
+    );
+
+    expect(shown.title).toBe("This change was not saved");
+    expect(shown.changed).toBe(false);
+    expect(shown.lines).toEqual([
+      {
+        field: "check_fast_timeout",
+        message: "hub.json: Input should be less than or equal to 160",
+      },
+      { field: "github", message: "hub.json: owner/name, e.g. acme/demo-web." },
+      { field: null, message: "repo demo-web is still named at x" },
+      { field: null, message: "repo demo-web is still named in hub.local.json at repos[0].dir" },
+    ]);
+    expect(repoRefusalOf(new TypeError("offline")).lines).toEqual([
+      { field: null, message: "Could not reach the server. Nothing was saved." },
+    ]);
+    expect(
+      repoRefusalOf(
+        new ApiProblem({
+          status: 422,
+          title: "This change was not saved",
+          errors: [{ pointer: "$", message: "hub.json changed since this page read it" }],
+        }),
+      ).changed,
+    ).toBe(true);
+  });
+
+  it("repos: adds a repo and names ./hub sync", async () => {
+    const added = twoRepos();
+    const { requests, router } = openConfig({ [CONFIG]: aHubConfigView(), [REPOS]: added });
+    const section = await repoSection();
+
+    await userEvent.click(within(section).getByRole("button", { name: "Add repo" }));
+    const form = within(section).getByRole("form", { name: "New repo" });
+    const folder = within(form).getByRole("textbox", { name: "Folder" });
+    expect(folder).toHaveFocus();
+    const save = within(form).getByRole("button", { name: "Add repo" });
+    expect(save).toBeDisabled();
+    expect(within(form).getByText("Fill in the folder, GitHub repo and full check.")).toBeVisible();
+    expect(folder).toHaveAttribute("aria-required", "true");
+    expect(
+      within(form).getByRole("textbox", { name: "Role (optional)" }),
+    ).toHaveAccessibleDescription("A word for what the repo is, e.g. api or web. Empty: app.");
+
+    await userEvent.type(folder, "DEMO-API");
+    expect(
+      within(form).getByText("Already a repo here: demo-api (folders are compared ignoring case)."),
+    ).toBeVisible();
+    await userEvent.clear(folder);
+    await userEvent.type(folder, "demo-web");
+    await userEvent.type(
+      within(form).getByRole("textbox", { name: "GitHub repo" }),
+      "acme/demo-web",
+    );
+    await userEvent.type(within(form).getByRole("textbox", { name: "Full check" }), "make check");
+    await userEvent.type(within(form).getByRole("textbox", { name: "Role (optional)" }), "web");
+    await userEvent.click(save);
+
+    expect(await screen.findByText("Added repo demo-web")).toBeVisible();
+    expect(await posted(requests)).toEqual({
+      op: "add_repo",
+      dir: "demo-web",
+      github: "acme/demo-web",
+      check: "make check",
+      role: "web",
+    });
+    expect(within(section).queryByRole("form", { name: "New repo" })).toBeNull();
+    const notice = screen
+      .getByText(/hub\.json has changes that are not committed/)
+      .closest(".ah-banner");
+    expect(notice).toHaveTextContent(
+      "Run ./hub sync to update AGENTS.md and .claude/settings.json, then review the diff and open a hub PR.",
+    );
+    expect(notice).toHaveTextContent("Run ./hub setup to clone ../demo-web.");
+    expect(notice).toHaveTextContent("Run /onboard to set demo-web's gates and project rules.");
+    expect(router.state.location.search).toBe("?repo=demo-web");
+    await waitFor(() => {
+      expect(within(section).getByText("demo-web").closest("summary")).toHaveFocus();
+    });
+  });
+
+  it("repos: shows a 422 message verbatim", async () => {
+    openConfig({
+      [CONFIG]: aHubConfigView(),
+      [REPOS]: refusal({
+        pointer: "repos[1].check_fast_timeout",
+        message: "hub.json: Input should be less than or equal to 160",
+      }),
+    });
+    const section = await repoSection();
+
+    await userEvent.click(within(section).getByRole("button", { name: "Add repo" }));
+    const form = within(section).getByRole("form", { name: "New repo" });
+    await userEvent.type(within(form).getByRole("textbox", { name: "Folder" }), "demo-web");
+    await userEvent.type(
+      within(form).getByRole("textbox", { name: "GitHub repo" }),
+      "acme/demo-web",
+    );
+    await userEvent.type(within(form).getByRole("textbox", { name: "Full check" }), "make check");
+    const timeout = within(form).getByRole("textbox", { name: "Fast check timeout (optional)" });
+    await userEvent.type(timeout, "x");
+    expect(within(form).getByText("Fast check timeout: a whole number of seconds.")).toBeVisible();
+    await userEvent.clear(timeout);
+    await userEvent.type(timeout, "200{Enter}");
+
+    const alert = await within(form).findByRole("alert");
+    expect(alert).toHaveTextContent("This change was not saved");
+    expect(within(alert).getByRole("listitem")).toHaveTextContent(
+      "hub.json: Input should be less than or equal to 160",
+    );
+    expect(timeout).toHaveAttribute("aria-invalid", "true");
+    expect(timeout).toHaveValue("200");
+    expect(within(form).getByRole("textbox", { name: "Folder" })).toHaveValue("demo-web");
+  });
+
+  it("repos: changes a repo in place", async () => {
+    const changed = twoRepos();
+    const { requests } = openConfig({ [CONFIG]: twoRepos(), [REPOS]: changed });
+    const section = await repoSection();
+
+    await userEvent.click(within(section).getByRole("button", { name: "Change repo demo-api" }));
+    const form = within(section).getByRole("form", { name: "demo-api" });
+    expect(within(form).getByRole("textbox", { name: "GitHub repo" })).toHaveFocus();
+    expect(within(form).queryByRole("textbox", { name: "Folder" })).toBeNull();
+    expect(within(form).getByRole("textbox", { name: "Default branch (optional)" })).toHaveValue(
+      "",
+    );
+    expect(within(form).getByText("Nothing changed yet.")).toBeVisible();
+    // One form at a time: the other actions wait for it.
+    expect(within(section).getByRole("button", { name: "Add repo" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Ask Claude to change the config" })).not.toHaveClass(
+      "ah-btn-primary",
+    );
+
+    const check = within(form).getByRole("textbox", { name: "Full check" });
+    await userEvent.clear(check);
+    expect(within(form).getByText("GitHub repo and full check cannot be empty.")).toBeVisible();
+    await userEvent.type(check, "make ci");
+    await userEvent.click(within(form).getByRole("button", { name: "Save repo" }));
+
+    expect(await screen.findByText("Updated repo demo-api")).toBeVisible();
+    expect(await posted(requests)).toEqual({
+      op: "set_repo",
+      dir: "demo-api",
+      check: "make ci",
+      unset: [],
+    });
+    expect(within(section).queryByRole("form")).toBeNull();
+    expect(within(section).getByRole("button", { name: "Change repo demo-api" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Ask Claude to change the config" })).toHaveClass(
+      "ah-btn-primary",
+    );
+  });
+
+  it("repos: unsets an optional key", async () => {
+    const { requests } = openConfig({ [CONFIG]: twoRepos(), [REPOS]: twoRepos() });
+    const section = await repoSection();
+
+    await userEvent.click(within(section).getByRole("button", { name: "Change repo demo-web" }));
+    const form = within(section).getByRole("form", { name: "demo-web" });
+    expect(within(form).getByRole("textbox", { name: "Default branch (optional)" })).toHaveValue(
+      "trunk",
+    );
+    await userEvent.clear(within(form).getByRole("textbox", { name: "Fast check (optional)" }));
+    await userEvent.clear(within(form).getByRole("textbox", { name: "Role (optional)" }));
+    await userEvent.clear(within(form).getByRole("textbox", { name: "Default branch (optional)" }));
+    await userEvent.click(within(form).getByRole("button", { name: "Save repo" }));
+
+    await screen.findByText("Updated repo demo-web");
+    expect(await posted(requests)).toEqual({
+      op: "set_repo",
+      dir: "demo-web",
+      unset: ["check_fast", "role", "default_branch"],
+    });
+  });
+
+  it("repos: keeps only the touched fields when hub.json changed on disk", async () => {
+    let reads = 0;
+    const later = twoRepos();
+    later.repos[0] = aRepoConfigView({ github: "acme/api-renamed" });
+    openConfig({
+      [CONFIG]: () => {
+        reads += 1;
+        return reads === 1 ? twoRepos() : later;
+      },
+      [REPOS]: refusal({ pointer: "$", message: "hub.json changed since this page read it" }),
+    });
+    const section = await repoSection();
+
+    await userEvent.click(within(section).getByRole("button", { name: "Change repo demo-api" }));
+    const form = within(section).getByRole("form", { name: "demo-api" });
+    const check = within(form).getByRole("textbox", { name: "Full check" });
+    await userEvent.clear(check);
+    await userEvent.type(check, "make ci{Enter}");
+
+    expect(
+      await within(form).findByText(
+        "hub.json changed on disk since this page loaded. Nothing was saved. The page now shows the file as it is; check and save again.",
+      ),
+    ).toBeVisible();
+    await waitFor(() => {
+      expect(within(form).getByRole("textbox", { name: "GitHub repo" })).toHaveValue(
+        "acme/api-renamed",
+      );
+    });
+    expect(check).toHaveValue("make ci");
+  });
+
+  it("repos: removes a repo", async () => {
+    const left = aHubConfigView();
+    const { requests, router } = openConfig({
+      [CONFIG]: twoRepos({
+        environments: {
+          ...aHubConfigView().environments,
+          services: [
+            { repo: "demo-web", name: "web", kind: "web", description: null, endpoints: [] },
+          ],
+        },
+      }),
+      [REPOS]: left,
+    });
+    const section = await repoSection();
+
+    await userEvent.click(within(section).getByText("demo-web"));
+    await userEvent.click(within(section).getByRole("button", { name: "Remove repo demo-web" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Remove repo demo-web?" });
+    expect(dialog).toHaveTextContent("Agents stop working in demo-web after ./hub sync.");
+    expect(dialog).toHaveTextContent("Its 1 services go with it: web.");
+    expect(dialog).toHaveTextContent("../demo-web and its worktrees stay on disk.");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Remove repo" }));
+
+    expect(await screen.findByText("Removed repo demo-web")).toBeVisible();
+    expect(await posted(requests)).toEqual({ op: "remove_repo", dir: "demo-web" });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    const notice = screen
+      .getByText(/hub\.json has changes that are not committed/)
+      .closest(".ah-banner");
+    expect(notice).toHaveTextContent("../demo-web and its worktrees are left in place.");
+    expect(notice).toHaveTextContent(
+      "A teammate whose hub.local.json names demo-web in repos must drop that entry.",
+    );
+    // ?repo= no longer names the removed repo (the first card, open again, may name itself).
+    expect(new URLSearchParams(router.state.location.search).get("repo")).not.toBe("demo-web");
+    expect(within(section).getByRole("button", { name: "Add repo" })).toHaveFocus();
+  });
+
+  it("repos: lists each reference when remove is refused", async () => {
+    openConfig({
+      [CONFIG]: twoRepos(),
+      [REPOS]: refusal(
+        {
+          pointer: "guard.ask_before_edit[0]",
+          message: "repo demo-web is still named at guard.ask_before_edit[0]",
+        },
+        {
+          pointer: "repos[0].dir",
+          message: "repo demo-web is still named in hub.local.json at repos[0].dir",
+        },
+      ),
+    });
+    const section = await repoSection();
+
+    await userEvent.click(within(section).getByText("demo-web"));
+    await userEvent.click(within(section).getByRole("button", { name: "Remove repo demo-web" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Remove repo demo-web?" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Remove repo" }));
+
+    const alert = await within(dialog).findByRole("alert");
+    expect(
+      within(alert)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual([
+      "repo demo-web is still named at guard.ask_before_edit[0]",
+      "repo demo-web is still named in hub.local.json at repos[0].dir",
+    ]);
+    expect(within(dialog).getByRole("button", { name: "Remove repo" })).toBeEnabled();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Ask Claude to drop these" }));
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.getByRole("list", { name: "references" })).toHaveTextContent(
+      "repo demo-web is still named in hub.local.json at repos[0].dir",
+    );
+  });
+
+  it("repos: keeps Remove off with its reason when there is one repo", async () => {
+    openConfig({ [CONFIG]: aHubConfigView() });
+    const section = await repoSection();
+
+    const remove = within(section).getByRole("button", { name: "Remove repo demo-api" });
+    expect(remove).toBeDisabled();
+    expect(remove).toHaveAccessibleDescription("The only repo: hub.json needs at least one.");
   });
 });

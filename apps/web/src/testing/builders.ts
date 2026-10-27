@@ -2488,3 +2488,96 @@ export function aFindingIssue(overrides: Partial<FindingIssue> = {}): FindingIss
     ...overrides,
   };
 }
+
+/* ---------- Hub configuration (AGH-578) ---------- */
+
+export type HubConfigView = Schemas["HubConfigView"];
+export type RepoConfigView = Schemas["RepoConfigView"];
+
+const COMMIT_TITLE = "{type}({scope}): {summary} ({ISSUE})";
+
+function aPatternView(overrides: Partial<Schemas["PatternView"]> = {}): Schemas["PatternView"] {
+  return {
+    pattern: COMMIT_TITLE,
+    source: "default",
+    where: "built-in default",
+    example: "feat(api): add the hub config view (DEM-42)",
+    ...overrides,
+  };
+}
+
+/** One repo of the Hub config view; `index` and `dir` name it. */
+export function aRepoConfigView(overrides: Partial<RepoConfigView> = {}): RepoConfigView {
+  const index = overrides.index ?? 0;
+  return {
+    index,
+    dir: "demo-api",
+    github: "acme/demo-api",
+    role: "app",
+    default_branch: { value: "main", source: "default", where: "built-in default (main)" },
+    branch: aPatternView({ pattern: "{prefix}{issue_lower}-{slug}", example: "jdoe/dem-42-x" }),
+    commit_title: aPatternView(),
+    pr_title: aPatternView({ source: "commit_title", where: "follows the commit title" }),
+    check_fast: "make check-fast",
+    check_fast_timeout: null,
+    check: "make check",
+    ...overrides,
+  };
+}
+
+/** A hub's configuration as `GET /projects/demo/config` gives it: one repo, no environments. */
+export function aHubConfigView(overrides: Partial<HubConfigView> = {}): HubConfigView {
+  const empty = { team: [], local: [] };
+  return {
+    project: "demo",
+    hub_path: "/hubs/demo-hub",
+    hub_repo: "acme/demo-hub",
+    team_file: { name: "hub.json", path: "/hubs/demo-hub/hub.json", problems: [] },
+    local_file: { name: "hub.local.json", path: "/hubs/demo-hub/hub.local.json", problems: [] },
+    author_name: { value: "Jane Doe", source: "team", where: "hub.json → project.author_name" },
+    author_email: {
+      value: "jane@example.com",
+      source: "team",
+      where: "hub.json → project.author_email",
+    },
+    branch_prefix: { value: "jdoe/", source: "team", where: "hub.json → project.branch_prefix" },
+    default_branch: { value: "main", source: "default", where: "built-in default (main)" },
+    conventions: [aPatternView(), aPatternView(), aPatternView()],
+    repos: [aRepoConfigView()],
+    tracker: {
+      kind: "linear",
+      teams: ["DEM"],
+      transport: { value: "api", source: "default", where: "built-in default (api)" },
+      ready_label: "agent-ready",
+      failed_label: "agent-failed",
+      blocked_label: null,
+      started_state: "In Progress",
+      review_state: "In Review",
+      team_set: [],
+    },
+    guard: {
+      blocked_words: empty,
+      blocked_words_files: empty,
+      blocked_words_env: empty,
+      deny_paths: [],
+      ask_before_edit: [],
+      deny_hosts: [],
+      secret_env_files: [],
+      readable_env_files: [],
+      infra_on: false,
+    },
+    model_tiers: { small: "haiku", medium: "sonnet", large: "opus" },
+    model_tiers_set: [],
+    agent_models: [],
+    modules: [],
+    platform_version: "0.2.0",
+    environments: {
+      environments: [],
+      services: [],
+      blocked_words: [],
+      blocked_files: [],
+      blocked_env: [],
+    },
+    ...overrides,
+  };
+}

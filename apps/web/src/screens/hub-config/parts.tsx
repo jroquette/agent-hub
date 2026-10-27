@@ -146,10 +146,21 @@ export interface SectionProps {
   purpose: string;
   icon: IconName;
   onAsk?: (() => void) | undefined;
+  /** More buttons after the Ask button, such as Add repo. */
+  actions?: ReactNode;
   children: ReactNode;
 }
 
-export function Section({ id, title, askName, purpose, icon, onAsk, children }: SectionProps) {
+export function Section({
+  id,
+  title,
+  askName,
+  purpose,
+  icon,
+  onAsk,
+  actions,
+  children,
+}: SectionProps) {
   const blocked = useContext(AskBlocked);
   return (
     <section className="ah-card ah-config-section" aria-labelledby={`${id}-title`} id={id}>
@@ -160,12 +171,17 @@ export function Section({ id, title, askName, purpose, icon, onAsk, children }: 
           </h2>
           <p className="ah-small ah-muted">{purpose}</p>
         </div>
-        {onAsk && (
-          <Tooltip label={blocked ?? undefined}>
-            <Button size="sm" icon="message-square" disabled={blocked !== null} onClick={onAsk}>
-              Ask Claude to change {askName}
-            </Button>
-          </Tooltip>
+        {(onAsk !== undefined || actions !== undefined) && (
+          <div className="ah-config-section-actions">
+            {onAsk && (
+              <Tooltip label={blocked ?? undefined}>
+                <Button size="sm" icon="message-square" disabled={blocked !== null} onClick={onAsk}>
+                  Ask Claude to change {askName}
+                </Button>
+              </Tooltip>
+            )}
+            {actions}
+          </div>
         )}
       </header>
       {children}
