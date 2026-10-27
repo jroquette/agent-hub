@@ -288,14 +288,20 @@ HUB_PREFIX = "@hub"
 # runner's `--from x hub`), searched in each of the blocked-words rule's command views, so quotes and
 # backslashes the shell removes (`'hub'`, `"env"`, `a''dd`, `hub\ env`) do not hide it; a mention
 # (`grep 'hub env add'`) asks too. Each part of the pattern is a fixed word or one run of blanks,
-# so a search stays linear in the command's length.
+# so a search stays linear in the command's length. An optional `--` (the end of options, which Click
+# accepts before each subcommand: `hub -- env add`, `hub env -- set`) may sit between the words.
 ENV_COMMAND = re.compile(
-    r"(?<![\w.-])hub['\"]?[ \t]+env[ \t]+(service[ \t]+(?:add|remove)|add|set|remove)(?![\w-])"
+    r"(?<![\w.-])hub['\"]?[ \t]+(?:--[ \t]+)?env[ \t]+(?:--[ \t]+)?"
+    r"(service[ \t]+(?:--[ \t]+)?(?:add|remove)|add|set|remove)(?![\w-])"
 )
+# The blanks and `--` inside the matched verb (`service -- add`) that the reason shows as one space.
+ENV_VERB_GAP = re.compile(r"[ \t]+(?:--[ \t]+)?")
 ENV_COMMAND_REASON = "hub env {} changes the agents' environments (hub.json or hub.local.json); confirm"
 # A `hub repo` verb that writes hub.json's repos (and so the checks the Stop hook runs), found as
-# ENV_COMMAND is; `hub repo list` passes.
-REPO_COMMAND = re.compile(r"(?<![\w.-])hub['\"]?[ \t]+repo[ \t]+(add|set|remove)(?![\w-])")
+# ENV_COMMAND is (an optional `--` included); `hub repo list` passes.
+REPO_COMMAND = re.compile(
+    r"(?<![\w.-])hub['\"]?[ \t]+(?:--[ \t]+)?repo[ \t]+(?:--[ \t]+)?(add|set|remove)(?![\w-])"
+)
 REPO_COMMAND_REASON = "hub repo {} changes hub.json's repos (the checks the Stop hook runs); confirm"
 AUTO_MODE_SUFFIX = (
     " (denied in auto mode, which never stops to confirm: take another way, or ask the user to"
@@ -1132,7 +1138,7 @@ def _after_infra(c: str, cfg: Config) -> Verdict:
                     return "ask", f"{tok} matches guard.ask_before_edit `{pat}` (hub.json); confirm this change is intended"
     env = next((m for m in map(ENV_COMMAND.search, _command_views(c)) if m), None)
     if env:
-        return "ask", ENV_COMMAND_REASON.format(re.sub(r"[ \t]+", " ", env.group(1)))
+        return "ask", ENV_COMMAND_REASON.format(ENV_VERB_GAP.sub(" ", env.group(1)))
     repo = next((m for m in map(REPO_COMMAND.search, _command_views(c)) if m), None)
     if repo:
         return "ask", REPO_COMMAND_REASON.format(repo.group(1))

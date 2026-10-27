@@ -215,6 +215,11 @@ ENV_COMMAND_WRITES = {
     "./hub env a''dd x": "add",
     "./hub env ad\\d x": "add",
     "./hub env service 'remove' demo-api api": "service remove",
+    # `--` ends the options before a subcommand (Click accepts it at each group)
+    "./hub -- env add x": "add",
+    "./hub env -- set live --access write": "set",
+    "./hub env service -- remove demo-api api": "service remove",
+    "./hub -- env -- service -- add demo-api cache": "service add",
 }
 ENV_COMMAND_READS = [
     "./hub env list",
@@ -224,6 +229,8 @@ ENV_COMMAND_READS = [
     './hub "env" list',
     "./hub env 'show' staging",
     "h''ub env l''ist",
+    "./hub -- env list",
+    "./hub env -- show staging",
 ]
 
 
@@ -260,6 +267,11 @@ REPO_COMMAND_WRITES = {
     "hub\\ repo add x": "add",
     "./h''ub repo remove x": "remove",
     "./hub repo s''et x --role app": "set",
+    # `--` ends the options before a subcommand (Click accepts it at each group)
+    "./hub -- repo add x --github a/b --check c": "add",
+    "./hub repo -- set x --role app": "set",
+    "hub -- repo -- remove demo-api": "remove",
+    "./hub '--' repo 'remove' x": "remove",
 }
 REPO_COMMAND_READS = [
     "./hub repo list",
@@ -267,6 +279,8 @@ REPO_COMMAND_READS = [
     "hub repo list",
     './hub "repo" list',
     "./hub repo 'list' --json",
+    "./hub repo -- list",
+    "./hub -- repo list --json",
 ]
 
 
