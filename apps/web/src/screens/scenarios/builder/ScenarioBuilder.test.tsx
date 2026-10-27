@@ -2567,7 +2567,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     ).toBeInTheDocument();
   });
 
-  it("scenario builder folds what an open step runs, its script and its action file, under Runs", async () => {
+  it("scenario builder folds the code an open step runs, coloured, its script apart from its action file", async () => {
     const user = userEvent.setup();
     renderBuilder();
     const tree = await screen.findByRole("tree", { name: "Steps of order-lifecycle" });
@@ -2579,9 +2579,17 @@ describe("ScenarioBuilder (scenario builder)", () => {
     );
     // Folded until asked for.
     expect(script).not.toBeVisible();
-    await user.click(within(fetch).getByText("What it runs"));
+    await user.click(within(fetch).getByText("Show the code it runs"));
     expect(script).toBeVisible();
     expect(script).toHaveTextContent("print('{}')");
-    expect(within(fetch).getByText(/name: send-queue-message/)).toBeVisible();
+    // Coloured as Python, its file says it is the one that runs; the action file only declares.
+    await waitFor(() => {
+      expect(script.querySelector("code")).toHaveClass("hljs");
+    });
+    expect(within(fetch).getByText("Runs.")).toBeInTheDocument();
+    expect(within(fetch).getByText("Declares.")).toBeInTheDocument();
+    expect(within(fetch).getByText("Declares.").closest(".sc-file")).toHaveTextContent(
+      "name: send-queue-message",
+    );
   });
 });

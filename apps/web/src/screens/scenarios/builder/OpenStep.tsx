@@ -217,18 +217,31 @@ export function OpenStep({ node, action, sources, values, editor, onEdit }: Open
             <details className="st-code">
               <summary>
                 <Icon name="chevron-right" size="sm" />
-                What it runs
-                <span className="st-open-quiet">
-                  {[action.script, action.path ? "action file" : null].filter(Boolean).join(" · ")}
-                </span>
+                Show the code it runs
+                <span className="st-open-quiet">{action.script ?? ""}</span>
               </summary>
               <div className="st-code-files">
                 <FileText
                   path={action.script ?? "script"}
                   text={action.script_text}
                   truncated={action.script_truncated}
+                  caption={
+                    <>
+                      <b>Runs.</b> The code this step executes: the hub calls it with the values
+                      above as its inputs.
+                    </>
+                  }
                 />
-                <FileText path={action.path ?? "action file"} text={action.document_text} />
+                <FileText
+                  path={action.path ?? "action file"}
+                  text={action.document_text}
+                  caption={
+                    <>
+                      <b>Declares.</b> The action file is not run: it names the script, the inputs
+                      it takes, whether it changes data and what it answers.
+                    </>
+                  }
+                />
               </div>
             </details>
           </li>
