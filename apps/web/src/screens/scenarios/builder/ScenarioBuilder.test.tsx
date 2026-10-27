@@ -2649,13 +2649,14 @@ describe("ScenarioBuilder (scenario builder)", () => {
 
     expect(screen.queryByRole("dialog", { name: "Choose target" })).not.toBeInTheDocument();
     const field = within(fetch).getByRole("button", { name: "target: payments-queue" });
-    expect(field).toHaveTextContent("payments-queue-personal");
+    // The address is the field's tooltip (and the list's second line), not repeated in it.
+    expect(field).toHaveAttribute("title", "payments-queue-personal");
     expect(screen.getByText("Unsaved")).toBeInTheDocument();
     // No kind was chosen: the picked service sets it.
     const kind = within(fetch).getByRole("combobox", { name: "Kind of service for target" });
     expect(kind).toHaveValue("sqs");
     // The kind takes the input name's place; the name moves to the note under it.
-    expect(kind.closest(".st-g-label")).toHaveTextContent("target · required · Where it is sent.");
+    expect(kind.closest(".st-g-row")).toHaveTextContent("target · Required · Where it is sent.");
     // A kind chosen filters the list.
     await user.selectOptions(kind, "database");
     await user.click(within(fetch).getByRole("button", { name: "target: payments-queue" }));
@@ -2672,5 +2673,59 @@ describe("ScenarioBuilder (scenario builder)", () => {
       within(panel).getByRole("button", { name: "target: payments-queue" }),
     ).toBeInTheDocument();
     expect(within(panel).queryByRole("textbox", { name: /target/ })).not.toBeInTheDocument();
+  });
+
+  it("scenario builder has no serious a11y violation with a service input open and its list shown (a11y)", async () => {
+    const user = userEvent.setup();
+    renderBuilder({
+      "/api/v1/projects/demo/actions": {
+        ...library,
+        items: [
+          {
+            ...library.items[0],
+            action: aScenarioAction({
+              ref: "orders/send-queue-message",
+              name: "send-queue-message",
+              effect: "write",
+              inputs: [{ name: "target", type: "service", required: true }],
+            }),
+          },
+          library.items[1],
+        ],
+      },
+      "/api/v1/projects/demo/config": {
+        project: "demo",
+        local_file: null,
+        repos: [],
+        environments: {
+          environments: [],
+          services: [
+            {
+              repo: "",
+              name: "orders-queue",
+              kind: "sqs",
+              description: null,
+              endpoints: [
+                {
+                  environment: "personal",
+                  source: "hub.local.json",
+                  endpoint: { resource: "orders-queue-personal" },
+                },
+              ],
+            },
+          ],
+          blocked_words: [],
+          blocked_files: [],
+          blocked_env: [],
+        },
+      },
+    });
+    const fetch = await screen.findByRole("treeitem", { name: FETCH });
+    await user.click(fetch);
+    // The page's body (the list opens on it); `document` here is the scenario's fixture.
+    expect(await seriousViolations(globalThis.document.body)).toEqual([]);
+    await user.click(within(fetch).getByRole("button", { name: "target: choose a service" }));
+    expect(screen.getByRole("dialog", { name: "Choose target" })).toBeInTheDocument();
+    expect(await seriousViolations(globalThis.document.body)).toEqual([]);
   });
 });
