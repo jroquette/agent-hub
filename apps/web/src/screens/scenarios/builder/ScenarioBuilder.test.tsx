@@ -758,6 +758,8 @@ describe("ScenarioBuilder (scenario builder)", () => {
       await screen.findByText("The graph shows how the blocks run: edit them in Blocks."),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Add a block/ })).not.toBeInTheDocument();
+    // Each card is the block as the Blocks list names it: its number, then its kind and title.
+    expect(screen.getByRole("button", { name: /^Block 1\.1, / })).toBeInTheDocument();
   });
 
   it("scenario builder shows Claude's proposal for a scenario written as blocks by block address", async () => {

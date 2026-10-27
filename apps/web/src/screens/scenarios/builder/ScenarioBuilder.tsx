@@ -2333,6 +2333,11 @@ export function ScenarioBuilder({
               nodes={document.nodes}
               actionOf={actionFacts}
               problemsOf={(id) => problems.filter((problem) => problem.node === id)}
+              numberOf={(id) => numbersNow.get(id)}
+              statusOf={(id) => {
+                const step = fresh.steps.find((each) => each.id === id);
+                return step ? shownRun.stepState(step) : null;
+              }}
               selected={selected}
               onSelect={setSelected}
               onAdd={onGraphAdd}
@@ -2347,6 +2352,8 @@ export function ScenarioBuilder({
                 nodes={document.nodes}
                 actionOf={actionFacts}
                 problemsOf={(id) => problemsOf(keyOf(id))}
+                numberOf={(id) => numbersNow.get(keyOf(id))}
+                statusOf={(id) => shownRun.blockState(keyOf(id))}
                 selected={selected ? nodeIdOf(selected) : null}
                 onSelect={(id) => {
                   setSelected(id === null ? null : keyOf(id));

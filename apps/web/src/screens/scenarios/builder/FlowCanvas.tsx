@@ -4,19 +4,18 @@ import { Icon, type IconName } from "../../../components";
 import { useNodeBoxes, type NodeBox } from "../../../lib/nodeBoxes";
 import { EffectBadge } from "../parts";
 import type { ScenarioAction, ScenarioStep } from "../queries";
-import { whatItDoes } from "../story";
+import { TokenText } from "./CardParts";
 import {
   conditionWords,
   dependsOn,
   edgesOf,
   layersOf,
-  refInWords,
   shown,
-  text,
   type BlockKind,
   type BuilderNode,
   type Json,
 } from "./model";
+import { nodeLines } from "./rowLines";
 import type { BuilderProblem } from "./useScenarioDraft";
 
 /* The flow canvas: the scenario's blocks laid out top to bottom in the engine's layers (a block
@@ -131,52 +130,16 @@ export function asStep(node: BuilderNode): ScenarioStep {
   };
 }
 
-/** One line under a block's title saying what it calls or does, in words. */
-function callLine(node: BuilderNode): ReactNode {
-  if (node.type === "approval") {
-    return node.capture_response === true ? "Stops for you · you type a value" : "Stops for you";
-  }
-  if (node.type === "wait")
-    return `Waits ${typeof node.duration === "string" ? node.duration : ""}`;
-  if (node.type === "include") return `Runs the steps of ${text(node.include, "…")}`;
-  if (node.type === "loop_group") {
-    const until =
-      typeof node.until_when === "string" && node.until_when !== ""
-        ? `, until ${conditionWords(node.until_when)}`
-        : "";
-    return `Up to ${text(node.max_iterations, "1")} rounds${until}`;
-  }
-  const values =
-    typeof node.with === "object" && node.with !== null && !Array.isArray(node.with)
-      ? Object.entries(node.with)
-      : [];
-  return (
-    <>
-      <span className="ah-mono">{text(node.action) || "choose an action"}</span>
-      {values.length > 0 && (
-        <span className="sb-chips">
-          {values.slice(0, 3).map(([key, value]) => {
-            const words = refInWords(shown(value));
-            return (
-              <span key={key} className="sb-chip" title={`${key} = ${shown(value)}`}>
-                {key} = {words.ref && <Icon name="bookmark" size="sm" />}
-                {words.text}
-              </span>
-            );
-          })}
-          {values.length > 3 && <span className="ah-subtle">+{values.length - 3}</span>}
-        </span>
-      )}
-    </>
-  );
-}
-
+/** A block on the graph, as the Blocks list says it (`rowLines`): its number, kind tile and
+ * title, the sentence of what it does, a quiet technical line that never runs past the card,
+ * then its effect and, while a scenario run is shown, its state in it. */
 export function FlowBlock({
   node,
   action,
   problems,
   selected,
   status,
+  number,
   onSelect,
 }: {
   node: BuilderNode;
@@ -184,65 +147,66 @@ export function FlowBlock({
   problems: readonly BuilderProblem[];
   selected: boolean;
   status?: ReactNode;
+  /** The block's number, as the Blocks list numbers it (`1.2`, `2.1.then.1`). */
+  number?: string | undefined;
   onSelect: (id: string) => void;
 }) {
   const look = kindLook(node.type);
-  const step = asStep(node);
-  const message = node.type === "approval" ? (text(node.message).split("\n")[0] ?? "") : "";
-  const title = step.description ?? (message !== "" ? message : whatItDoes(step, action));
+  const inner = Array.isArray(node.nodes) ? node.nodes.length : 0;
+  const lines = nodeLines(node, action, inner);
   const errors = problems.filter((problem) => problem.severity === "error");
-  const kept = Object.keys(step.capture ?? {});
   const when = typeof node.when === "string" && node.when !== "" ? node.when : null;
+  const calls = node.type === "action" || node.type === "expect";
   return (
     <button
       type="button"
       data-node-id={node.id}
-      className="sb-block"
+      className="sg-card"
       data-selected={selected || undefined}
       data-invalid={errors.length > 0 || undefined}
-      style={{ ["--kind" as string]: look.tint }}
       aria-pressed={selected}
-      aria-label={`${look.label} ${node.id}: ${title}`}
+      aria-label={`${number ? `Block ${number}, ` : ""}${look.label}: ${lines.title}`}
+      title={lines.detailText ? `${lines.title}\n${lines.detailText}` : lines.title}
       onClick={() => {
         onSelect(node.id);
       }}
     >
       {when && (
-        <span className="sb-when">
+        <span className="sg-when">
           <Icon name="split" size="sm" /> Only if {conditionWords(when)}
         </span>
       )}
-      <span className="sb-block-head">
-        <span className="sb-kind" aria-hidden>
+      <span className="sg-head">
+        {number && <span className="sg-num">{number}</span>}
+        <span
+          className="st-tile"
+          style={{ ["--tile" as string]: look.tint, ["--tile-soft" as string]: look.soft }}
+          aria-hidden
+        >
           <Icon name={look.icon} size="sm" />
         </span>
-        <span className="sb-kind-word">{look.label}</span>
-        <span className="ah-mono sb-id">{node.id}</span>
-        <span className="ah-grow" />
-        {action?.effect && <EffectBadge effect={action.effect} />}
+        <span className="sg-title">
+          <TokenText value={lines.title} />
+        </span>
+      </span>
+      {lines.detail && <span className="sg-sentence">{lines.detail}</span>}
+      {lines.tech && <span className="sg-tech">{lines.tech}</span>}
+      <span className="sg-foot">
+        {calls && action && <EffectBadge effect={action.effect} words />}
         {action?.draft && (
-          <span className="ah-badge ah-badge-quiet" title="Draft: needs acceptance">
-            <Icon name="pencil" /> Draft
+          <span className="sg-quiet" title="Draft: needs acceptance">
+            <Icon name="pencil" size="sm" /> Draft
           </span>
         )}
         {errors.length > 0 && (
           <span className="sb-errors" title={errors.map((problem) => problem.message).join("\n")}>
-            <Icon name="circle-x" size="sm" /> {errors.length}
+            <Icon name="circle-x" size="sm" /> {errors.length}{" "}
+            {errors.length === 1 ? "problem" : "problems"}
           </span>
         )}
+        <span className="ah-grow" />
+        {status}
       </span>
-      <span className="sb-title">{title}</span>
-      <span className="sb-call ah-small ah-muted">{callLine(node)}</span>
-      {kept.length > 0 && (
-        <span className="sb-chips">
-          {kept.map((name) => (
-            <span key={name} className="sb-chip sb-chip-kept">
-              <Icon name="bookmark" size="sm" /> keeps {name}
-            </span>
-          ))}
-        </span>
-      )}
-      {status && <span className="sb-status">{status}</span>}
     </button>
   );
 }
@@ -328,6 +292,8 @@ export interface CanvasProps {
   problemsOf: (id: string) => readonly BuilderProblem[];
   selected: string | null;
   statusOf?: (id: string) => ReactNode;
+  /** A block's number, as the Blocks list numbers it. */
+  numberOf?: (id: string) => string | undefined;
   onSelect: (id: string | null) => void;
   onAdd: (choice: AddChoice, after: string | null, group: string | null) => void;
   readOnly?: boolean;
@@ -362,6 +328,7 @@ function Layers({
                     problems={props.problemsOf(node.id)}
                     selected={props.selected === node.id}
                     status={props.statusOf?.(node.id)}
+                    number={props.numberOf?.(node.id)}
                     onSelect={props.onSelect}
                   />
                   <div className="sb-frame-body">
@@ -388,6 +355,7 @@ function Layers({
                   problems={props.problemsOf(node.id)}
                   selected={props.selected === node.id}
                   status={props.statusOf?.(node.id)}
+                  number={props.numberOf?.(node.id)}
                   onSelect={props.onSelect}
                 />
               )}
