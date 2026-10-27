@@ -2566,4 +2566,22 @@ describe("ScenarioBuilder (scenario builder)", () => {
       within(fetch).getByText("scenario input · asked when the scenario run starts"),
     ).toBeInTheDocument();
   });
+
+  it("scenario builder folds what an open step runs, its script and its action file, under Runs", async () => {
+    const user = userEvent.setup();
+    renderBuilder();
+    const tree = await screen.findByRole("tree", { name: "Steps of order-lifecycle" });
+    const fetch = within(tree).getByRole("treeitem", { name: FETCH });
+    await user.click(fetch);
+
+    const script = within(fetch).getByLabelText(
+      "Text of actions/orders/scripts/send_queue_message.py",
+    );
+    // Folded until asked for.
+    expect(script).not.toBeVisible();
+    await user.click(within(fetch).getByText("What it runs"));
+    expect(script).toBeVisible();
+    expect(script).toHaveTextContent("print('{}')");
+    expect(within(fetch).getByText(/name: send-queue-message/)).toBeVisible();
+  });
 });

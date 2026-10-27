@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { CopyButton, Icon } from "../../../components";
+import { FileText } from "../ActionPanel";
 import type { ScenarioAction } from "../queries";
 import { pace } from "../story";
 import { ValueToken, tokenOf } from "./CardParts";
@@ -209,6 +210,28 @@ export function OpenStep({ node, action, sources, values, editor, onEdit }: Open
         )}
         {node.type === "expect" && text(node.until_when) && (
           <Row label="Until" value={conditionWords(text(node.until_when))} />
+        )}
+        {action && (action.script_text != null || action.document_text != null) && (
+          <li className="st-g-row st-g-more">
+            {/* Folded: what will run is one click away, never in the way. */}
+            <details className="st-code">
+              <summary>
+                <Icon name="chevron-right" size="sm" />
+                What it runs
+                <span className="st-open-quiet">
+                  {[action.script, action.path ? "action file" : null].filter(Boolean).join(" · ")}
+                </span>
+              </summary>
+              <div className="st-code-files">
+                <FileText
+                  path={action.script ?? "script"}
+                  text={action.script_text}
+                  truncated={action.script_truncated}
+                />
+                <FileText path={action.path ?? "action file"} text={action.document_text} />
+              </div>
+            </details>
+          </li>
         )}
       </Group>
 
