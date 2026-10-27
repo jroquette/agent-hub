@@ -6,8 +6,10 @@
   padding: var(--space-6) var(--space-5) var(--space-8);
 }
 .st-column {
-  max-width: 800px;
-  margin: 0 auto;
+  /* Against the left column: on a wide screen the free width is never between the palette and
+   * the blocks. */
+  max-width: 960px;
+  margin: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -817,4 +819,260 @@
 }
 .st-row.st-stage[data-selected="true"] {
   background: var(--accent-soft);
+}
+
+/* ---------- Build and run on one screen ---------- */
+/* The page box: capped and centred on a wide screen, so the blocks stay near the palette. */
+.sb-page {
+  width: 100%;
+  max-width: 1920px;
+  margin: 0 auto;
+}
+.sb-description {
+  max-width: 640px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The run bar: environment, mode, plan, inputs, Start, then the verdict in one line. */
+.sb-runbar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.sb-runbar-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+.sb-runbar-controls .sb-env {
+  margin-left: 0;
+}
+.sb-runbar-verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+}
+.sb-runbar-verdict[data-tone="ok"] {
+  color: var(--text);
+}
+.sb-runbar-verdict[data-tone="ok"] svg {
+  color: var(--done);
+}
+.sb-runbar-verdict[data-tone="bad"] {
+  color: var(--failed);
+}
+.sb-runbar-verdict a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+/* The run strip: the scenario run shown on the blocks, in one line. */
+.sb-strip-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.sb-strip {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  font-size: 13px;
+}
+.sb-strip[data-status="running"] {
+  border-color: var(--live);
+}
+.sb-strip[data-status="running"] > svg {
+  color: var(--live);
+}
+.sb-strip[data-status="waiting"] {
+  border-color: var(--waiting);
+  background: var(--waiting-soft);
+}
+.sb-strip[data-status="waiting"] > svg {
+  color: var(--waiting);
+}
+.sb-strip[data-status="failed"] > svg {
+  color: var(--failed);
+}
+.sb-strip[data-status="done"] > svg {
+  color: var(--done);
+}
+.sb-strip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-follow {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+/* The run panel (right column while no block is open in the editor). */
+.sb-run-panel .ah-card {
+  box-shadow: none;
+}
+.sc-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.sc-runs-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+}
+.sc-runs-row[data-shown="true"] {
+  background: var(--accent-soft);
+}
+
+/* A block in the scenario run shown: its state at the right, the current one marked. */
+.st-run-state {
+  display: inline-flex;
+  align-items: center;
+}
+.st-row[data-current="true"] {
+  border-color: var(--live);
+  box-shadow: inset 3px 0 0 var(--live);
+}
+.st-row[data-current="true"]:has([data-status="waiting"]) {
+  border-color: var(--waiting);
+  box-shadow: inset 3px 0 0 var(--waiting);
+}
+
+/* Line 3: only when there is news (the plan, what the block kept). */
+.st-news {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-3);
+  font-size: 12px;
+  line-height: 18px;
+}
+.st-news svg {
+  vertical-align: -2px;
+}
+.st-kept {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* Quick actions: on hover and keyboard focus of the row; a set breakpoint always shows. */
+.st-quick {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.st-quick-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-subtle);
+  cursor: pointer;
+}
+.st-quick-btn:hover {
+  background: var(--surface-sunken);
+  color: var(--text);
+}
+.st-quick-btn.st-break-on {
+  color: var(--accent);
+}
+.st-quick > .st-quick-btn:not(.st-break-on) {
+  opacity: 0;
+}
+.st-row:hover .st-quick > .st-quick-btn,
+.st-row:focus-visible .st-quick > .st-quick-btn,
+.st-row:focus-within .st-quick > .st-quick-btn,
+.st-row[data-selected="true"] .st-quick > .st-quick-btn {
+  opacity: 1;
+}
+@media (hover: none) {
+  .st-quick > .st-quick-btn:not(.st-break-on) {
+    opacity: 1;
+  }
+}
+.st-chip-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+/* Editing on the row: the sentence and the values open in place. */
+.st-inline-input {
+  height: 26px;
+  padding: 0 6px;
+  font-size: 13px;
+  max-width: 100%;
+}
+.st-lines > .st-inline-input {
+  font-weight: 600;
+  font-size: 14px;
+}
+.st-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.st-detail-edit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  row-gap: 4px;
+  white-space: normal;
+}
+.st-row[data-selected="true"] .st-detail {
+  white-space: normal;
+}
+.st-chip-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 1px 6px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  font: inherit;
+  cursor: text;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.st-chip-edit:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+@media (prefers-reduced-motion: reduce) {
+  .st-row {
+    transition: none;
+  }
 }

@@ -1,6 +1,7 @@
 import "./steps.css";
 
 import {
+  useEffect,
   useRef,
   useState,
   type KeyboardEvent,
@@ -10,7 +11,7 @@ import {
 } from "react";
 
 import { Button, Icon, IconButton } from "../../../components";
-import { EffectBadge } from "../parts";
+import { EffectBadge, PolicyBadge } from "../parts";
 import type { ScenarioAction, ScenarioPlanRow } from "../queries";
 import { pace } from "../story";
 import { TokenText, ValueToken, cardTitle, tokenOf } from "./CardParts";
@@ -70,6 +71,21 @@ export interface StepListProps {
   externalTarget?: InsertTarget | null;
   /** The list's scrolling element, for a drag from the palette. */
   scrollRef?: RefObject<HTMLDivElement>;
+  /** The state of a row in the scenario run shown on the blocks (null: none shown). */
+  runStateOf?: ((id: string) => ReactNode) | undefined;
+  /** The values a row kept in the scenario run shown, as `name = value` words. */
+  keptOf?: ((id: string) => readonly string[]) | undefined;
+  /** The row the shown scenario run is at now. */
+  current?: string | null | undefined;
+  /** Breakpoints before blocks (a scenario written as blocks, off production). */
+  breakpoints?:
+    | { on: (id: string) => boolean; toggle: (id: string) => void; busy?: boolean }
+    | null
+    | undefined;
+  /** Edits made on the row itself: its sentence, a value it sets, its timing. */
+  onEditNode?: ((id: string, node: BuilderNode) => void) | undefined;
+  onDuplicate?: ((id: string) => void) | undefined;
+  onDelete?: ((id: string) => void) | undefined;
 }
 
 function record(value: Json | undefined): Record<string, Json> {
@@ -150,6 +166,27 @@ function ownValues(node: BuilderNode, action: ScenarioAction | null): [string, J
       const ib = order.indexOf(b[0]);
       return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
     });
+}
+
+/** A value written on the row can be edited there: a plain string, number or boolean. */
+function editableValue(value: Json): boolean {
+  if (typeof value === "number" || typeof value === "boolean") return true;
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  return !/^[[{]/.test(trimmed) && !trimmed.includes("\n") && !trimmed.includes("$");
+}
+
+/** What was typed, as the value's own type. */
+function typedAs(previous: Json, typed: string): Json {
+  if (typeof previous === "number") {
+    const n = Number(typed);
+    return typed.trim() !== "" && Number.isFinite(n) ? n : typed;
+  }
+  if (typeof previous === "boolean") {
+    if (typed.trim() === "true") return true;
+    if (typed.trim() === "false") return false;
+  }
+  return typed;
 }
 
 function Value({ value }: { value: Json }) {
@@ -256,6 +293,8 @@ interface Status {
   label: string;
   tone: string;
   title: string;
+  /** A plan's decision, shown as the run panel shows it (an ask is neutral until it waits). */
+  decision?: string;
 }
 
 function statusOf(
@@ -268,8 +307,9 @@ function statusOf(
     return {
       icon: plan.decision === "ask" ? "hand" : "octagon-x",
       label: DECISION[plan.decision] ?? plan.decision,
-      tone: plan.decision === "ask" ? "waiting" : "failed",
+      tone: plan.decision === "ask" ? "quiet" : "failed",
       title: plan.reason ?? plan.plan,
+      decision: plan.decision,
     };
   }
   return null;
@@ -317,6 +357,17 @@ export function StepList(props: StepListProps) {
   const [dragging, setDragging] = useState<{ id: string; target: InsertTarget | null } | null>(
     null,
   );
+  // Edited on the row: its sentence (`title`), one value it sets (`with:<name>`) or a timing.
+  const [editing, setEditing] = useState<{ id: string; field: string } | null>(null);
+  // The row an edit on it ended on: focus goes back to it once the field is gone.
+  // A new object each time, so the same row can be focused again.
+  const [refocus, setRefocus] = useState<{ id: string } | null>(null);
+  useEffect(() => {
+    if (refocus === null) return;
+    listRef.current
+      ?.querySelector<HTMLElement>(`[data-row="${CSS.escape(refocus.id)}"]`)
+      ?.focus();
+  }, [refocus, listRef]);
   const order = ["__start__", ...rowIds(items)];
   const current = focused && order.includes(focused) ? focused : (selected ?? "__start__");
 
@@ -325,10 +376,45 @@ export function StepList(props: StepListProps) {
     listRef.current?.querySelector<HTMLElement>(`[data-row="${CSS.escape(id)}"]`)?.focus();
   };
 
+  const {
+    runStateOf,
+    keptOf,
+    current: runAt = null,
+    breakpoints,
+    onEditNode,
+    onDuplicate,
+    onDelete,
+  } = props;
+  const nodeOfRow = (id: string): BuilderNode | null => {
+    const find = (list: readonly Item[]): BuilderNode | null => {
+      for (const item of list) {
+        if (itemId(item) === id) {
+          return item.kind === "block" || item.kind === "repeat" ? item.node : null;
+        }
+        for (const inner of listsOf(item)) {
+          const found = find(inner);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+    return find(items);
+  };
+
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
     const id = target.dataset.row;
     if (!id) return;
+    if (event.key === "F2" && !readOnly && onEditNode && nodeOfRow(id)) {
+      event.preventDefault();
+      setEditing({ id, field: "title" });
+      return;
+    }
+    if (event.key === "b" && !event.metaKey && !event.ctrlKey && breakpoints && id !== "__start__") {
+      event.preventDefault();
+      breakpoints.toggle(id);
+      return;
+    }
     const at = order.indexOf(id);
     const go = (to: number) => {
       const next = order[Math.max(0, Math.min(order.length - 1, to))];
@@ -476,10 +562,98 @@ export function StepList(props: StepListProps) {
     group: boolean,
     spoken = "",
     stage = false,
+    extra: { news?: ReactNode; titleEditor?: ReactNode } = {},
   ) => {
     const number = numbers.get(id) ?? "";
     const isSelected = selected === id;
     const noun = stage ? "stage" : "step";
+    const state = runStateOf?.(id) ?? null;
+    const isCurrent = runAt === id;
+    const marked = breakpoints?.on(id) ?? false;
+    const quick =
+      readOnly || id === "__start__" ? null : (
+        <span className="st-quick" data-pinned={marked ? "true" : undefined}>
+          {breakpoints && (
+            <button
+              type="button"
+              className={marked ? "st-quick-btn st-break-on" : "st-quick-btn"}
+              tabIndex={-1}
+              aria-pressed={marked}
+              aria-label={`Breakpoint before block ${number || id} (b)`}
+              title={
+                marked
+                  ? `The scenario run pauses before block ${number || id}. Press to remove the breakpoint (b).`
+                  : `Pause the scenario run before block ${number || id} (b).`
+              }
+              aria-disabled={breakpoints.busy === true || undefined}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (!breakpoints.busy) breakpoints.toggle(id);
+              }}
+            >
+              <Icon name={marked ? "circle-dot" : "circle"} size="sm" />
+            </button>
+          )}
+          {!stage && onEditNode && nodeOfRow(id) && (
+            <button
+              type="button"
+              className="st-quick-btn st-quick-hover"
+              tabIndex={-1}
+              aria-label={`Rename ${noun} ${number} (F2)`}
+              title={`Rename ${noun} ${number} (F2)`}
+              onClick={(event) => {
+                event.stopPropagation();
+                setEditing({ id, field: "title" });
+              }}
+            >
+              <Icon name="pencil" size="sm" />
+            </button>
+          )}
+          {!stage && onDuplicate && (
+            <button
+              type="button"
+              className="st-quick-btn st-quick-hover"
+              tabIndex={-1}
+              aria-label={`Duplicate ${noun} ${number} (⌘D)`}
+              title={`Duplicate ${noun} ${number} (⌘D)`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onDuplicate(id);
+              }}
+            >
+              <Icon name="copy" size="sm" />
+            </button>
+          )}
+          {onDelete && (
+            <button
+              type="button"
+              className="st-quick-btn st-quick-hover"
+              tabIndex={-1}
+              aria-label={`Delete ${noun} ${number} (Delete)`}
+              title={`Delete ${noun} ${number} (Delete)`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete(id);
+              }}
+            >
+              <Icon name="trash" size="sm" />
+            </button>
+          )}
+          <button
+            type="button"
+            className="st-quick-btn st-quick-hover"
+            tabIndex={-1}
+            aria-label={`More for ${noun} ${number} (Shift F10)`}
+            title={`More for ${noun} ${number} (Shift F10)`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onRowMenu(id, event.currentTarget.getBoundingClientRect());
+            }}
+          >
+            <Icon name="ellipsis" size="sm" />
+          </button>
+        </span>
+      );
     return (
       // The tree handles the keys of its rows (roving focus: j / k, Enter, Alt ↑ / ↓).
       // eslint-disable-next-line jsx-a11y/click-events-have-key-events
@@ -500,6 +674,9 @@ export function StepList(props: StepListProps) {
         data-suggested={suggested?.has(id) ? "true" : undefined}
         data-problem={problemsOf(id).some((p) => p.severity === "error") ? "true" : undefined}
         data-dragging={dragging?.id === id ? "true" : undefined}
+        data-current={isCurrent ? "true" : undefined}
+        data-run={state !== null ? "true" : undefined}
+        aria-current={isCurrent ? "step" : undefined}
         title={detailText ? `${titleText}\n${detailText}` : titleText}
         onClick={() => {
           setFocused(id);
@@ -543,12 +720,15 @@ export function StepList(props: StepListProps) {
           <Icon name={look.icon} size="sm" />
         </span>
         <span className="st-lines">
-          <span className="st-title">{title}</span>
+          {extra.titleEditor ?? <span className="st-title">{title}</span>}
           {detail && <span className="st-detail">{detail}</span>}
+          {extra.news}
         </span>
         <span className="st-right">
           {suggested?.has(id) && <span className="st-chip">Suggested</span>}
           {right}
+          {state !== null && <span className="st-run-state">{state}</span>}
+          {quick}
         </span>
       </div>
     );
@@ -577,22 +757,179 @@ export function StepList(props: StepListProps) {
           (node.type === "action" || node.type === "expect") &&
           action && <EffectBadge effect={action.effect} words />
         )}
-        {status && (
-          <span className="st-status" data-tone={status.tone} title={status.title}>
-            <Icon name={status.icon} size="sm" /> {status.label}
-          </span>
+        {status?.decision !== undefined ? (
+          <PolicyBadge decision={status.decision} reason={null} />
+        ) : (
+          status && (
+            <span className="st-status" data-tone={status.tone} title={status.title}>
+              <Icon name={status.icon} size="sm" /> {status.label}
+            </span>
+          )
+        )}
+        {action?.draft === true && (
+          <a
+            className="st-chip st-chip-link"
+            href="#before-you-start"
+            tabIndex={-1}
+            title="A draft action: commit it before a scenario run can start. The command is in Before you start."
+            onClick={(event) => {
+              event.stopPropagation();
+            }}
+          >
+            <Icon name="pencil" size="sm" /> Draft action
+          </a>
         )}
       </>
     );
-    const detail = plan?.plan ? (
-      <span className={planStale ? "st-plan st-plan-stale" : "st-plan"}>
-        <Icon name={planStale ? "clock" : "scan-eye"} size="sm" />{" "}
-        {planStale ? "Planned before your changes · " : ""}
-        {plan.plan}
-      </span>
-    ) : (
-      lines.detail
+    const kept = keptOf?.(id) ?? [];
+    const news =
+      plan?.plan || kept.length > 0 ? (
+        <span className="st-news">
+          {plan?.plan && (
+            <span className={planStale ? "st-plan st-plan-stale" : "st-plan"}>
+              <Icon name={planStale ? "clock" : "scan-eye"} size="sm" />{" "}
+              {planStale ? "Planned before your changes · " : "Plan: "}
+              {plan.plan}
+            </span>
+          )}
+          {kept.length > 0 && (
+            <span className="st-kept">
+              <Icon name="bookmark" size="sm" /> Kept {kept.join(" · ")}
+            </span>
+          )}
+        </span>
+      ) : null;
+    const editable = !readOnly && onEditNode !== undefined;
+    const commitEdit = (next: BuilderNode) => {
+      setEditing(null);
+      onEditNode?.(id, next);
+    };
+    const field = (
+      name: string,
+      label: string,
+      initial: string,
+      write: (typed: string) => BuilderNode,
+    ) => (
+      <input
+        key={name}
+        className="ah-input st-inline-input"
+        aria-label={label}
+        defaultValue={initial}
+        // A field opened on purpose takes focus.
+        // eslint-disable-next-line jsx-a11y/no-autofocus
+        autoFocus
+        size={Math.max(8, Math.min(48, initial.length + 2))}
+        onClick={(event) => {
+          event.stopPropagation();
+        }}
+        onKeyDown={(event) => {
+          event.stopPropagation();
+          if (event.key === "Enter") {
+            event.preventDefault();
+            commitEdit(write(event.currentTarget.value));
+            setRefocus({ id });
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            setEditing(null);
+            setRefocus({ id });
+          }
+        }}
+        onBlur={(event) => {
+          if (editing?.id === id && editing.field === name) {
+            const typed = event.currentTarget.value;
+            if (typed !== initial) commitEdit(write(typed));
+            else setEditing(null);
+          }
+        }}
+      />
     );
+    const editingHere = editing?.id === id ? editing.field : null;
+    const titleEditor =
+      editable && editingHere === "title"
+        ? field("title", `What ${numbers.get(id) ?? id} does`, lines.title, (typed) => ({
+            ...node,
+            description: typed.trim(),
+          }))
+        : undefined;
+    // Line 2 with its values as chips: a click edits one in place (the row is selected).
+    let detail: ReactNode = lines.detail;
+    const values = node.type === "action" || node.type === "expect" || node.type === "include"
+      ? ownValues(node, action)
+      : [];
+    if (editable && selected === id && values.length > 0) {
+      const given = record(node.with);
+      const parts: ReactNode[] = [];
+      const ref = text(node.action);
+      if (ref) parts.push(<span key="ref" className="st-mono">{action?.name ?? ref}</span>);
+      if (node.type === "expect") {
+        const every = text(node.every);
+        const timeout = text(node.timeout);
+        if (every && timeout) {
+          parts.push(
+            editingHere === "timing" ? (
+              <span key="timing" className="st-inline">
+                every{" "}
+                {field("timing", `How often ${numbers.get(id) ?? id} checks`, every, (typed) => ({
+                  ...node,
+                  every: typed.trim() || every,
+                }))}
+              </span>
+            ) : (
+              <button
+                key="timing"
+                type="button"
+                className="st-chip-edit"
+                tabIndex={-1}
+                title="Edit how often it checks"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setEditing({ id, field: "timing" });
+                }}
+              >
+                every {pace(every)}, up to {pace(timeout)}
+              </button>
+            ),
+          );
+        }
+      }
+      for (const [name, value] of values) {
+        const key = `with:${name}`;
+        if (editingHere === key) {
+          parts.push(
+            <span key={key} className="st-inline">
+              <span className="st-key">{name}</span>{" "}
+              {field(key, `${name} of ${numbers.get(id) ?? id}`, compact(value), (typed) => ({
+                ...node,
+                with: { ...given, [name]: typedAs(value, typed) },
+              }))}
+            </span>,
+          );
+        } else if (editableValue(value)) {
+          parts.push(
+            <button
+              key={key}
+              type="button"
+              className="st-chip-edit"
+              tabIndex={-1}
+              title={`Edit ${name}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                setEditing({ id, field: key });
+              }}
+            >
+              <span className="st-key">{name}</span> <Value value={value} />
+            </button>,
+          );
+        } else {
+          parts.push(
+            <span key={key} title="Edit it in the panel">
+              <span className="st-key">{name}</span> <Value value={value} />
+            </span>,
+          );
+        }
+      }
+      detail = <span className="st-detail-edit">{interleave(parts)}</span>;
+    }
     return row(
       id,
       level,
@@ -610,6 +947,8 @@ export function StepList(props: StepListProps) {
           : "",
         status ? ` ${status.label}.` : "",
       ].join(""),
+      false,
+      { news, titleEditor },
     );
   };
 

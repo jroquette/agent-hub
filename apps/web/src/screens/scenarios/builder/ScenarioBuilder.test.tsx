@@ -274,7 +274,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     });
     expect(fetch).toHaveTextContent("send-queue-message");
     expect(check).toHaveTextContent("Reads only");
-    expect(await screen.findByText("Loads")).toBeInTheDocument();
+    expect(await screen.findByText("No problems")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save scenario" })).toBeDisabled();
   });
 
@@ -310,7 +310,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
       screen.queryByRole("region", { name: "Steps not in the order" }),
     ).not.toBeInTheDocument();
     // The check reads the very document the server parsed: opening rewrites nothing.
-    expect(await screen.findByText("Loads")).toBeInTheDocument();
+    expect(await screen.findByText("No problems")).toBeInTheDocument();
     const checked = requests.find((request) => request.url.endsWith("/scenarios/validate"));
     expect(((await checked?.clone().json()) as { document: unknown }).document).toStrictEqual(
       aTreeDocument(REFERENCE),
@@ -1820,7 +1820,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
       }),
     });
 
-    await screen.findByText("Loads");
+    await screen.findByText("No problems");
     // external_ref has no value anywhere: the plan asks for it first.
     await user.click(screen.getByRole("button", { name: "Plan in personal" }));
     const form = screen.getByRole("form", { name: "Values to plan with" });
@@ -2450,7 +2450,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
       }),
     });
 
-    await screen.findByText("Loads");
+    await screen.findByText("No problems");
     await user.click(screen.getByRole("button", { name: "YAML" }));
 
     expect(screen.getByLabelText("Generated YAML")).toHaveTextContent("kind: scenario");
