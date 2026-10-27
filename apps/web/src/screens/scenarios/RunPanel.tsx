@@ -413,6 +413,8 @@ export function StartScenarioRun({
  * command is the server's `git add -- <paths> && git commit -m '<message>'`; any other shape
  * keeps the commands as they are, one after the other. */
 export function oneCommit(commands: readonly string[], refs: readonly string[]): string {
+  // One draft: the server's own command, word for word.
+  if (commands.length === 1) return commands[0] ?? "";
   const paths: string[] = [];
   for (const command of commands) {
     const found = /^git add -- (.+?) && git commit -m '[^']*'$/.exec(command.trim());

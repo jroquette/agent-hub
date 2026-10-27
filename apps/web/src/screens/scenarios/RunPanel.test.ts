@@ -17,6 +17,11 @@ describe("oneCommit (scenario run panel)", () => {
     );
   });
 
+  it("keeps the server's command word for word for a single draft action", () => {
+    const command = "git add -- actions/a.yaml && git commit -m 'Accept action orders/a'";
+    expect(oneCommit([command], ["orders/a"])).toBe(command);
+  });
+
   it("keeps the commands as they are when one has another shape", () => {
     expect(oneCommit(["git add x && git commit", "echo y"], ["a", "b"])).toBe(
       "git add x && git commit && echo y",
