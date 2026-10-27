@@ -89,6 +89,8 @@ HUB_REGISTRY_WRITES = (
     ("PUT", re.compile(rf"^{re.escape(API_PREFIX)}/projects/[^/]+/config/local$")),
     # Rewrites hub.json or hub.local.json's environments and services (the Hub config screen).
     ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/projects/[^/]+/config/environments$")),
+    # Rewrites hub.json's repos (the Hub config screen).
+    ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/projects/[^/]+/config/repos$")),
     # Starts a read-only Claude session and records a discovery in the hub (ADR 0046).
     ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/projects/[^/]+/environment-discoveries$")),
     # Marks a discovery discarded and ends its session.

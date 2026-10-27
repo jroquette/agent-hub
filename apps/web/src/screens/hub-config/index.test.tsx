@@ -538,6 +538,67 @@ describe("HubConfigScreen", () => {
     );
   });
 
+  // AC-578.8: a change form with a refusal, then the add form.
+  it("has no serious a11y violations with repos forms", async () => {
+    const { container } = open("/projects/demo/config", {
+      [CONFIG]: aConfig(),
+      "POST /api/v1/projects/demo/config/repos": aProblem({
+        status: 422,
+        title: "This change was not saved",
+        errors: [
+          {
+            pointer: "repos[0].github",
+            message: "hub.json: String should match pattern '^[A-Za-z0-9_]+$'",
+          },
+        ],
+      }),
+    });
+    const section = await screen.findByRole("region", { name: /Repositories/ });
+
+    await userEvent.click(within(section).getByRole("button", { name: "Change repo demo-api" }));
+    const form = within(section).getByRole("form", { name: "demo-api" });
+    const github = within(form).getByRole("textbox", { name: "GitHub repo" });
+    await userEvent.clear(github);
+    await userEvent.type(github, "acme{Enter}");
+    expect(await within(form).findByRole("alert")).toHaveTextContent(
+      "hub.json: owner/name, e.g. acme/demo-web.",
+    );
+    expect(github).toHaveAttribute("aria-invalid", "true");
+    expect(await seriousViolations(container)).toEqual([]);
+
+    await userEvent.click(within(form).getByRole("button", { name: "Cancel" }));
+    await userEvent.click(within(section).getByRole("button", { name: "Add repo" }));
+    expect(within(section).getByRole("form", { name: "New repo" })).toBeVisible();
+    expect(await seriousViolations(container)).toEqual([]);
+  });
+
+  // AC-578.8: the remove dialog with its refusal.
+  it("has no serious a11y violations with the repo remove dialog refused", async () => {
+    const [api] = aConfig().repos;
+    const { container } = open("/projects/demo/config", {
+      [CONFIG]: aConfig({ repos: [api, { ...api, index: 1, dir: "demo-web" }] }),
+      "POST /api/v1/projects/demo/config/repos": aProblem({
+        status: 422,
+        title: "This change was not saved",
+        errors: [
+          {
+            pointer: "guard.ask_before_edit[0]",
+            message: "repo demo-api is still named at guard.ask_before_edit[0]",
+          },
+        ],
+      }),
+    });
+    const section = await screen.findByRole("region", { name: /Repositories/ });
+
+    await userEvent.click(within(section).getByRole("button", { name: "Remove repo demo-api" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Remove repo demo-api?" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Remove repo" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "repo demo-api is still named at guard.ask_before_edit[0]",
+    );
+    expect(await seriousViolations(container.ownerDocument.body)).toEqual([]);
+  });
+
   it("has no serious a11y violations with environments", async () => {
     const { container } = open("/projects/demo/config", { [CONFIG]: withEnvironments() });
     await screen.findByRole("region", { name: /Environments/ });

@@ -59,7 +59,7 @@ import type {
   SourcedService,
 } from "../hub-config/environments";
 import { SavedToast, UncommittedNotice, useSaveNotices } from "../hub-config/notices";
-import { AskBlocked, Mono } from "../hub-config/parts";
+import { AskBlocked, Mono, SectionForm } from "../hub-config/parts";
 import "../hub-config/hub-config.css";
 
 type SectionId = "access" | "secrets" | "description";
@@ -384,64 +384,12 @@ function Section({
   );
 }
 
-/** A section form's footer: Cancel, then the section's save verb; a refusal above it. Escape
- * cancels while no dialog is open above it. */
-function SectionForm({
-  children,
-  saveLabel,
-  pending,
-  refusal,
-  canSave = true,
-  onCancel,
-  onSave,
-}: {
-  children: ReactNode;
-  saveLabel: string;
-  pending: boolean;
-  refusal: Refusal | null;
-  canSave?: boolean;
-  onCancel: () => void;
-  onSave: () => void;
-}) {
-  const latest = useRef({ onCancel, pending });
-  useEffect(() => {
-    latest.current = { onCancel, pending };
-  });
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented || latest.current.pending) return;
-      if (document.querySelector("[data-ah-dialog], .ah-side-panel")) return;
-      latest.current.onCancel();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-    };
-  }, []);
+/** A section's refusal, above its form's actions. */
+function RefusalLine({ refusal }: { refusal: Refusal }) {
   return (
-    <form
-      className="ah-stack ah-env-section-form"
-      style={{ gap: 16 }}
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (canSave && !pending) onSave();
-      }}
-    >
-      {children}
-      {refusal && (
-        <p role="alert" className="ah-config-error">
-          {refusal.summary}
-        </p>
-      )}
-      <div className="ah-env-section-actions">
-        <Button variant="ghost" disabled={pending} onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button type="submit" variant="primary" disabled={!canSave || pending}>
-          {pending ? "Saving…" : saveLabel}
-        </Button>
-      </div>
-    </form>
+    <p role="alert" className="ah-config-error">
+      {refusal.summary}
+    </p>
   );
 }
 
@@ -556,7 +504,7 @@ function AccessForm({ view, environment, onDone, onSaved }: FormProps) {
     <SectionForm
       saveLabel="Save access"
       pending={pending}
-      refusal={refusal}
+      refusal={refusal && <RefusalLine refusal={refusal} />}
       onCancel={onDone}
       onSave={submit}
     >
@@ -659,7 +607,7 @@ function SecretsForm({ view, environment, onDone, onSaved }: FormProps) {
     <SectionForm
       saveLabel="Save secrets"
       pending={pending}
-      refusal={refusal}
+      refusal={refusal && <RefusalLine refusal={refusal} />}
       canSave={canSave}
       onCancel={onDone}
       onSave={() => {
@@ -729,7 +677,7 @@ function DescriptionForm({ view, environment, onDone, onSaved }: FormProps) {
     <SectionForm
       saveLabel="Save description"
       pending={pending}
-      refusal={refusal}
+      refusal={refusal && <RefusalLine refusal={refusal} />}
       onCancel={onDone}
       onSave={() => {
         save(
