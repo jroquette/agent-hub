@@ -856,11 +856,16 @@ export function StepList(props: StepListProps) {
     const values = node.type === "action" || node.type === "expect" || node.type === "include"
       ? ownValues(node, action)
       : [];
-    if (editable && selected === id && values.length > 0) {
+    const timed = node.type === "expect" && text(node.every) !== "" && text(node.timeout) !== "";
+    if (editable && selected === id && (values.length > 0 || timed)) {
       const given = record(node.with);
       const parts: ReactNode[] = [];
       const ref = text(node.action);
       if (ref) parts.push(<span key="ref" className="st-mono">{action?.name ?? ref}</span>);
+      const named = typeof node.description === "string" && node.description.trim() !== "";
+      if (node.type === "expect" && named && text(node.until_when)) {
+        parts.push(<span key="until">until {conditionWords(text(node.until_when))}</span>);
+      }
       if (node.type === "expect") {
         const every = text(node.every);
         const timeout = text(node.timeout);
@@ -928,6 +933,8 @@ export function StepList(props: StepListProps) {
           );
         }
       }
+      const keeps = Object.keys(record(node.capture));
+      if (keeps.length > 0) parts.push(<span key="keeps">keeps {keeps.join(", ")}</span>);
       detail = <span className="st-detail-edit">{interleave(parts)}</span>;
     }
     return row(
