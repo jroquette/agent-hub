@@ -14,8 +14,9 @@ from typing import Final, Protocol
 from agent_hub.core.agent_sessions.records import LogRecord, RecordKind
 from agent_hub.core.readmodels.view_types import ViewModel
 
-# The first prompt's slash command and the issue it names: ``/feature AGH-305`` (the Start of a
-# ticket, the hub's ``/feature <ISSUE>``); the issue's team is checked later against the hub's.
+# The first prompt's slash command and the issue it names: ``/implement AGH-305`` (the Start of a
+# ticket, the hub's ``/implement <ISSUE>``; ``/feature <ISSUE>`` too); the issue's team is checked
+# later against the hub's.
 _PROMPT_ISSUE: Final = re.compile(r"\s*/[\w:-]+\s+([A-Za-z][A-Za-z0-9]{0,9}-[1-9][0-9]{0,8})\b")
 _PROMPT_KINDS: Final[frozenset[RecordKind]] = frozenset({"user.message"})
 
