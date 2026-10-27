@@ -27,6 +27,7 @@ import { readStored, writeStored } from "../../../lib/storage";
 import { environmentsPage } from "../../hub-config/environments";
 import { DiscussButton, useDiscuss } from "../../../shell/discuss";
 import { DebugBar } from "../DebugBar";
+import { isRunControlOff } from "../Investigation";
 import { useShownRun } from "../LiveRun";
 import { EffectBadge, type WaitingRow } from "../parts";
 import {
@@ -1280,7 +1281,13 @@ export function ScenarioBuilder({
           ? `This plan is for ${planFor.environment}. Plan again to start in ${environment || "another environment"}.`
           : previewFor !== null && previewFor !== nodesNow
             ? `The ${noun}s changed since this plan. Plan again to start.`
-            : null;
+            : JSON.stringify(planFor.inputs) !== JSON.stringify(planValues)
+              ? `This plan is for ${Object.entries(planFor.inputs)
+                  .map(([name, value]) => `${name} ${String(value)}`)
+                  .join(", ")}. Plan again to start with the new values.`
+              : null;
+  // Plans and starts cannot run from the agent-hub container (no credentials, no env files).
+  const runControlOff = planner.isError && isRunControlOff(planner.error);
   const judged = preview === null ? null : verdict(preview, staleWords, noun);
   const onProduction = environmentInfo?.production === true;
   const shownRun = useShownRun({
@@ -1827,7 +1834,11 @@ export function ScenarioBuilder({
               variant={draft.dirty || canStart ? "default" : "primary"}
               icon="list-checks"
               disabled={
-                environment === "" || planner.isPending || draft.saving || errors.length > 0
+                environment === "" ||
+                planner.isPending ||
+                draft.saving ||
+                errors.length > 0 ||
+                runControlOff
               }
               title={
                 errors.length > 0

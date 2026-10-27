@@ -14,6 +14,7 @@ import {
 } from "../../components";
 import type { ApiProblem } from "../../lib/api";
 import { readStored, writeStored } from "../../lib/storage";
+import { isRunControlOff } from "./Investigation";
 import { DraftLine, ScenarioRunBadge, shortId } from "./parts";
 import {
   scenarioRunHref,
@@ -163,6 +164,19 @@ export function PlanProblem({
   name: string;
   environment: string;
 }) {
+  if (isRunControlOff(error)) {
+    return (
+      <Banner tone="info" boxed>
+        <span className="ah-stack" style={{ gap: 6 }}>
+          <span>
+            Plans and scenario runs cannot start from the agent-hub container: it has no credentials
+            and no env files. Run hub web on your machine, or plan from a terminal:
+          </span>
+          <CodeBlock code={`./hub scenario plan ${name} --env ${environment || "<environment>"}`} />
+        </span>
+      </Banner>
+    );
+  }
   if (error.status === 401) {
     return (
       <Banner tone="error" boxed>

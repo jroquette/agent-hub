@@ -538,9 +538,9 @@ export function StepList(props: StepListProps) {
             aria-label={label}
             title={label}
             tabIndex={-1}
-            // Written as blocks, the "+" is the pointer's way: a tree holds only its items, and
-            // the keys add from a row ("a"), the Blocks tab and Add step / Add stage below.
-            aria-hidden={tree ? true : undefined}
+            // The "+" is the pointer's way: a tree holds only its items, and the keys add from
+            // a row ("a"), the Blocks tab and Add step / Add stage below.
+            aria-hidden
             onClick={(event) => {
               if (kind === "stage") onInsertStage?.(index);
               else onInsert(at, event.currentTarget.getBoundingClientRect(), label);

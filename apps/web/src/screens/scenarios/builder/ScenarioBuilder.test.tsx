@@ -1955,7 +1955,8 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const user = userEvent.setup();
     const { requests } = renderBuilder({ [SAVE]: () => SAVED });
 
-    await user.click(await screen.findByRole("button", { name: "Add a step after step 1" }));
+    // The "+" is the pointer's way: hidden from the tree, which holds only its items.
+    await user.click(await screen.findByTitle("Add a step after step 1"));
     const menu = screen.getByRole("dialog", { name: "Add a step after step 1" });
     await user.type(within(menu).getByLabelText(/Find an action or a step type/), "pause");
     await user.keyboard("{Enter}");
