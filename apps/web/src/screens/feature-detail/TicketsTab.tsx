@@ -35,7 +35,7 @@ import {
   signalKind,
   StateBadge,
   TicketIdLine,
-  TicketPrLink,
+  TicketPrLinks,
   TicketRef,
   TicketStepBar,
   splitTitle,
@@ -82,7 +82,7 @@ function TicketId({ row }: { row: TicketRow }) {
 
 /** The ticket's pull request (`PR #69`), else a dash with the reason in its tooltip. */
 function PrCell({ row }: { row: TicketRow }) {
-  if (row.pr_url) return <TicketPrLink row={row} />;
+  if (row.pr_url) return <TicketPrLinks row={row} />;
   if (!row.id) return <span className="ah-subtle">—</span>;
   return (
     <span

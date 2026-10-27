@@ -656,7 +656,16 @@ def outcome(
     *,
     feature: Feature,
     ticket: Ticket,
-    pr: Annotated[str, typer.Option("--pr", help="The merged pull request (URL or repo#n).")],
+    pr: Annotated[
+        list[str],
+        typer.Option(
+            "--pr",
+            help=(
+                "The merged pull request (URL or repo#n); once per repo, in merge order, for a"
+                " ticket that owns several."
+            ),
+        ),
+    ],
     merged_at: Annotated[
         str, typer.Option("--merged-at", help="When it merged, ISO 8601 with an offset (now).")
     ] = "",
@@ -672,7 +681,7 @@ def outcome(
             hub,
             feature=feature,
             ticket=ticket,
-            pr=pr,
+            prs=pr,
             merged_at=merged_at or datetime.now(UTC).isoformat(),
             built=built,
             changes=changes,

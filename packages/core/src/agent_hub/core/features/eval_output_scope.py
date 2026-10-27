@@ -67,7 +67,7 @@ def eval_scope_problems(
 ) -> Iterator[OutputProblem]:
     """Every record and scope problem of an eval document, with ``record`` as ``features.json``
     (None when absent), in P7's order."""
-    parsed = _record(record)
+    parsed = parsed_record(record)
     if isinstance(parsed, OutputProblem):
         yield parsed
         parsed = None
@@ -108,7 +108,7 @@ def _repos_problems(
         yield OutputProblem("commits", message)
 
 
-def _record(content: bytes | None) -> FeatureRecordFile | OutputProblem | None:
+def parsed_record(content: bytes | None) -> FeatureRecordFile | OutputProblem | None:
     """The record ``content`` holds; one problem naming it when over its bound or unparseable."""
     if content is None:
         return None

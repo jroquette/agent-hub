@@ -707,6 +707,7 @@ export function aTicketRow(overrides: Partial<TicketRow> = {}): TicketRow {
     estimate: 3,
     repo: "agent-hub",
     repos: ["agent-hub"],
+    prs: [],
     order: 2,
     acs: ["AC-200.4"],
     blocked_by: [{ ref: "AGH-201", source: "both" }],

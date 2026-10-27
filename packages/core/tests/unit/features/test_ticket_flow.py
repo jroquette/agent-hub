@@ -2,6 +2,7 @@
 AC-3.3): its seven steps from records."""
 
 import json
+from dataclasses import replace
 from random import Random
 
 import pytest
@@ -188,6 +189,26 @@ def test_marks_pr_done_when_review_or_eval_names_a_pull_request(
     reviews: tuple[ReviewRecord, ...], evals: tuple[EvalRecord, ...], state: str
 ) -> None:
     assert _step(_flow(reviews=reviews, evals=evals), "pr")[0] == state
+
+
+@pytest.mark.parametrize(
+    ("prs", "evals", "found"),
+    [
+        (("demo-api#12",), (), ("current", "1 of 2 PRs")),
+        (("demo-api#12", "demo-web#7"), (), ("done", None)),
+        (("demo-api#12",), (_eval(prs=("demo-web#7",)),), ("done", None)),
+        (("demo-api#12", "demo-api#12"), (), ("current", "1 of 2 PRs")),
+    ],
+    ids=["one of two", "both", "one from the eval", "the same twice"],
+)
+def test_waits_for_a_pull_request_per_repo_when_ticket_owns_several(
+    prs: tuple[str, ...], evals: tuple[EvalRecord, ...], found: tuple[str, str | None]
+) -> None:
+    # AGH-592: a ticket that owns several repos opens one pull request per repo.
+    review = replace(_review(pr=prs[0]), prs=prs)
+    row = _row(repos=("demo-api", "demo-web"))
+
+    assert _step(_flow(row, reviews=(review,), evals=evals), "pr") == found
 
 
 def test_marks_merged_done_when_linear_says_completed() -> None:

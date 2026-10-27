@@ -68,11 +68,20 @@ export function ticketPrompt(
     `I am the owner of the agent-hub project "${project}", starting this ticket from the Tickets tab of the agent-hub web app.`,
     `Ticket: ${row.id}${row.title ? ` · ${row.title}` : ""}${row.url ? ` (${row.url})` : ""}.`,
     `Feature: \`${slug}\`; its record is in \`brain/features/${slug}/\` (spec.md, research.md, plan.md, features.json, issues.md).`,
-    row.repo ? `Repo: ${row.repo}.` : "",
+    repoLine(row),
     ...blockerLines(row, rows),
     "Set the ticket to In Progress in the tracker when you start. Conduct the whole ticket in this session: run each stage as a subagent and tell me its result here. Work on no other ticket. Ask me before you push or open the pull request.",
   ].filter(Boolean);
   return [`/implement ${row.id}`, "", ...context].join("\n");
+}
+
+/** The ticket's repo, or every repo of a ticket that owns several in their merge order. */
+function repoLine(row: TicketRow): string {
+  const repos = row.repos;
+  if (repos.length > 1) {
+    return `Repos, in the order their pull requests merge: ${repos.join(", then ")}.`;
+  }
+  return row.repo ? `Repo: ${row.repo}.` : "";
 }
 
 /**

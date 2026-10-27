@@ -10,7 +10,8 @@ Implement is done when a review round of the ticket exists
 (``reviews/<ticket>/<reviewer>-r<N>.json``), current once its ticket ``plan.md`` exists; Review
 when a review record of it is ``approved`` (``current`` while its records only request changes),
 Eval by the latest eval naming it (NO-SHIP is ``blocked``), PR when its review record or an eval
-naming it names a pull request, and Merged when Linear has it ``completed`` or its
+naming it names a pull request (one per repo for a ticket that owns several: ``current``, "1 of 2
+PRs", until then), and Merged when Linear has it ``completed`` or its
 ``tickets/<ticket>/outcome.md`` exists ("Outcome recorded", D-5; ``unknown`` when Linear was not
 read and no outcome is recorded, or when the outcome cannot be read). The flow's one ``signal``:
 waiting for the owner, then held by another ticket's open request, then a re-run needed, then
@@ -155,7 +156,7 @@ def ticket_flow(row: TicketRow, evidence: TicketEvidence) -> TicketFlow | None:
     completed = row.state is not None and row.state.type in DONE_TYPES
     merged = completed or isinstance(outcome, TicketOutcome)
     found, signal = _picked_up(names, evidence, merged=merged, row=row)
-    found |= _delivered(names, evidence, merged=completed, outcome=outcome)
+    found |= _delivered(names, evidence, merged=completed, outcome=outcome, repos=len(row.repos))
     last = max(
         (_STEPS.index(name) for name, (state, _) in found.items() if state != "unknown"),
         default=-1,
@@ -214,8 +215,10 @@ def _delivered(
     *,
     merged: bool,
     outcome: TicketOutcome | str | None,
+    repos: int = 1,
 ) -> dict[TicketStepName, _Found]:
-    """Implement (a review round), Review, Eval, PR and Merged from the feature's records; Merged
+    """Implement (a review round), Review, Eval, PR (``repos`` of them) and Merged from the
+    feature's records; Merged
     is done by a recorded outcome or by Linear (``merged``); an outcome that cannot be read is
     then its meta, and makes it unknown unless Linear has the ticket completed (``_merged``)."""
     reviews = [r for r in evidence.reviews if r.problem is None and r.ticket.upper() in names]
@@ -232,9 +235,17 @@ def _delivered(
     verdict = _verdict(evals, evidence._verdicts)
     if verdict is not None:
         found["eval"] = ("blocked" if verdict == "NO-SHIP" else "done", verdict)
-    prs = (*(review.pr for review in reviews), *(pr for record in evals for pr in record.prs))
-    if any(names_pull_request(pr) for pr in prs):
+    named = (
+        *(pr for review in reviews for pr in review.prs or (review.pr,)),
+        *(pr for record in evals for pr in record.prs),
+    )
+    opened = len({pr for pr in named if names_pull_request(pr)})
+    # A ticket that owns several repos opens one pull request per repo (AGH-592).
+    wanted = max(repos, 1)
+    if opened >= wanted:
         found["pr"] = ("done", None)
+    elif opened:
+        found["pr"] = ("current", f"{opened} of {wanted} PRs")
     step = _merged(outcome, merged=merged, unread=evidence.unread)
     if step is not None:
         found["merged"] = step

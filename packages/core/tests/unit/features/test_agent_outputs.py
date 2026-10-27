@@ -312,6 +312,101 @@ def test_reports_mismatch_when_review_file_name_differs(
     assert problems == (problem,)
 
 
+# A ticket that owns two repos (AGH-589): its rounds sit in reviews/<ticket>/<repo>/.
+SEVERAL_RECORD = json.dumps(
+    {
+        "tickets": [
+            {"key": "T2", "id": "AGH-7", "repos": [{"repo": "backend"}, {"repo": "frontend"}]},
+            {"key": "T3", "repo": "backend"},
+        ],
+        "acs": [],
+    }
+).encode()
+
+
+@pytest.mark.parametrize(
+    ("ticket", "folder_name", "record"),
+    [
+        ("AGH-7", "backend", SEVERAL_RECORD),
+        ("agh-7", "frontend", SEVERAL_RECORD),
+        ("T2", "frontend", SEVERAL_RECORD),
+        ("T3", "backend", SEVERAL_RECORD),
+        ("AGH-7", "backend", None),
+    ],
+    ids=["by id", "any case", "by key", "one repo", "no record"],
+)
+def test_accepts_round_when_saved_in_a_repo_folder_of_its_ticket(
+    *, ticket: str, folder_name: str, record: bytes | None
+) -> None:
+    content = review_bytes(a_review_document(ticket=ticket))
+
+    problems = review_problems(
+        content,
+        file_name=REVIEW_FILE,
+        folder_name=folder_name,
+        parent_name=ticket.upper(),
+        record=record,
+    )
+
+    assert problems == ()
+
+
+@pytest.mark.parametrize(
+    ("ticket", "folder_name", "parent_name", "problem"),
+    [
+        (
+            "AGH-7",
+            "web",
+            "AGH-7",
+            OutputProblem("ticket", "the folder web is not a repo of AGH-7 (backend, frontend)"),
+        ),
+        (
+            "AGH-9",
+            "backend",
+            "AGH-9",
+            OutputProblem("ticket", "the folder backend is not a repo of AGH-9 (none planned)"),
+        ),
+        (
+            "AGH-7",
+            "backend",
+            "AGH-8",
+            OutputProblem("ticket", "the ticket is AGH-7 but the folder is backend"),
+        ),
+    ],
+    ids=["other repo", "unplanned ticket", "other ticket"],
+)
+def test_reports_folder_when_round_is_not_in_a_repo_of_its_ticket(
+    *, ticket: str, folder_name: str, parent_name: str, problem: OutputProblem
+) -> None:
+    content = review_bytes(a_review_document(ticket=ticket))
+
+    problems = review_problems(
+        content,
+        file_name=REVIEW_FILE,
+        folder_name=folder_name,
+        parent_name=parent_name,
+        record=SEVERAL_RECORD,
+    )
+
+    assert problems == (problem,)
+
+
+def test_reports_record_when_round_in_a_repo_folder_and_record_unreadable() -> None:
+    content = review_bytes(a_review_document())
+
+    problems = review_problems(
+        content, file_name=REVIEW_FILE, folder_name="backend", parent_name="AGH-7", record=b"{"
+    )
+
+    assert problems == (
+        OutputProblem(
+            "$",
+            "features.json could not be parsed (not valid JSON: Expecting property name enclosed"
+            " in double quotes at line 1 column 2)",
+        ),
+    )
+
+
 @pytest.mark.parametrize(
     ("document", "file_name", "folder_name"),
     [

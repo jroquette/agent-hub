@@ -1347,6 +1347,35 @@ def test_warns_on_invalid_review_outputs_when_validation_fails(
     ]
 
 
+def test_checks_rounds_in_repo_folders_when_ticket_owns_several(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    # AGH-589: a ticket that owns several repos keeps each repo's rounds in its own folder.
+    record = a_planned_record(
+        a_ticket("T1", id="TST-7", repo=None, repos=[{"repo": "api"}, {"repo": "web"}]),
+        a_ticket("T2"),
+    )
+    path = f"{REVIEWS}/TST-7/other/spec-r1.json"
+    files = {
+        f"{REVIEWS}/TST-7.md": b"# Review\n",
+        f"{REVIEWS}/TST-7/api/spec-r1.json": a_review_output(),
+        f"{REVIEWS}/TST-7/web/spec-r1.json": a_review_output(),
+        f"{REVIEWS}/TST-7/web/quality-r2.json": a_review_output(reviewer="quality", round=2),
+        path: a_review_output(),
+        f"{REVIEWS}/TST-8/api/spec-r1.json": b"{}",
+    }
+
+    assert outputs_found(snapshot_of, files, record=json.dumps(record).encode()) == [
+        review_warning(
+            "TST-7/other/spec-r1.json",
+            "invalid review output: 1 problem, first: ticket: the folder other is not a repo of"
+            " TST-7 (api, web)",
+            validate_fix("review", path),
+        ),
+        review_warning("TST-8/api/spec-r1.json", NO_REVIEW_NOTE, NO_REVIEW_NOTE_FIX),
+    ]
+
+
 def test_skips_outputs_when_folder_has_no_record(snapshot_of: SnapshotFactory) -> None:
     other = "brain/features/other"
     files = {

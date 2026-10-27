@@ -83,12 +83,14 @@ in fenced code blocks do not count (`agent_hub.core.features.plan_version`).
 ### `reviews/<ticket>.md`
 
 Written by `/feature` step 7 once both reviewers pass: `type: review`, `ticket`, `outcome` (`approved` or
-`changes-requested`), `pr`, `reviewed_at`. At most 500 are read (first by name), heads of 8 KiB.
+`changes-requested`), `pr`, `reviewed_at`. A ticket that owns several repos lists one pull request per repo instead,
+`prs: [backend#101, frontend#55]`, in merge order (AGH-592); a record with both `pr` and `prs` is malformed. At most 500 are read (first by name), heads of 8 KiB.
 
 Beside them, `reviews/<ticket>/` holds the review rounds (below, "Agent outputs"). Only one feature's read (detail,
 tickets, owner sign-off) looks into them, never the Features list, and it only learns which tickets have one, never reading a
 round: of the first 500 ticket folders by name (not hidden, UTF-8 names, no link followed), it reads each folder's
-entries until the first regular file named as the review check names a round (`<reviewer>-r<N>.json`). A budget of
+entries until the first regular file named as the review check names a round (`<reviewer>-r<N>.json`), then, for a
+ticket that owns several repos, its repo folders' (`reviews/<ticket>/<repo>/`, one level, the same rules). A budget of
 20,000 entries covers the entries of those ticket folders together; listing `reviews/` itself is not counted.
 
 ### `tickets/<ticket>/` and `change-requests/`
@@ -132,7 +134,8 @@ the session `/implement` conducts (the same `hub step` writers, its run id `sess
   each earlier run copied with `commits: null`. A one-repo ticket keeps `/1`.
 - `tickets/<ticket>/outcome.md`: the merged ticket's outcome (S3, AC-3.1), created once by `hub step outcome` after
   the merge and never edited. Frontmatter `type: ticket-outcome`, `ticket` (its folder's ticket, ASCII case
-  ignored), `merged_at` (an ISO 8601 date and time with an offset), `pr` (`<repo>#<n>` or a GitHub pull request URL)
+  ignored), `merged_at` (an ISO 8601 date and time with an offset), `pr` (`<repo>#<n>` or a GitHub pull request URL;
+  for a ticket that owns several repos `prs`, each in merge order, written once the last one merged, never both)
   and `dependents` (ticket keys or ids: the tickets whose `blocked_by` names it), then `## What was built`,
   `## What changed against the plan` and `## Final interfaces`. Read whole up to 16 KiB (`MAX_OUTCOME_BYTES`); over
   it, a link, or a frontmatter that does not hold those fields, it is the Merged step's problem only, and it counts
@@ -173,7 +176,7 @@ under the feature's lock `.agent-runs/locks/<slug>.lock` (never committed); a ru
 | `change-request --feature --ticket --evidence --proposal [--affected TICKETS] [--findings JSON --commit SHA]` | `change-requests/<n>.md`, `n` the next free number, `status: open`, `plan_from` the plan's current version, `plan_to` the next, `run_id` from `AGENT_HUB_RUN_ID`, `affected` the comma-separated tickets; created exclusively. With the preflight's findings, the run that will name the request is checked first, so a run `preflight` would refuse opens no request that no run names | a field its reader could not read (no run id included), an empty evidence or proposal, a text over 256 KiB (what `decide` and `amend-plan` read), findings whose run would be refused |
 | `decide --feature --request N --decision approved\|declined --by WHO [--note]` | `change-requests/<n>.decision.md`, `decided_by` the gate's approver, `decided_at` now, `note` on one line (cut at 1,000 characters; the whole note is the body); created exclusively | a decision other than exactly `approved` or `declined`, a text over 256 KiB, a second decision, an approver that names no person (empty or `unknown`, A5), an approval whose approver `amend-plan` could not write (a `(` or `)`), a decline without a note, no request `n` |
 | `amend-plan --feature --request N --summary` | one entry `- A<k> (<decided_at date>, <decided_by>): <summary> ([change request n](change-requests/n.md))` at the end of `plan.md`, after a new `## Amendments` heading when the last section is another; every earlier byte kept; a re-run once the plan holds the request's entry writes nothing and answers `already amended as A<k>`; a plan whose version is no longer the request's `plan_from` (another amendment came first) writes nothing and answers `moved`: `change request <n> approved but superseded by plan v<k>: not applied` (A23) | a request not decided `approved`, an entry that would not read as `A<k>`, a lock another run holds |
-| `outcome --feature --ticket --pr PR [--merged-at TIME] --built --changes --interfaces` | `tickets/<ticket>/outcome.md` (S3, AC-3.1), `merged_at` the time given (now when none is), `dependents` the tickets whose `blocked_by` names it, by id once they have one; created exclusively. Prints `path`, `written`, `merged_at` and `dependents`; a second run, a run for a ticket whose outcome an earlier merge recorded, or one that another run beat to the file, writes nothing and prints `written: false` with the recorded `merged_at` (empty when its reader refuses it) | a ticket `features.json` does not plan, a `pr` that names no pull request, a `merged_at` without a time and an offset, an empty section, a result over 16 KiB, an `outcome.md` or folder that is a link |
+| `outcome --feature --ticket --pr PR... [--merged-at TIME] --built --changes --interfaces` (`--pr` once per repo, in merge order, writes `prs`) | `tickets/<ticket>/outcome.md` (S3, AC-3.1), `merged_at` the time given (now when none is), `dependents` the tickets whose `blocked_by` names it, by id once they have one; created exclusively. Prints `path`, `written`, `merged_at` and `dependents`; a second run, a run for a ticket whose outcome an earlier merge recorded, or one that another run beat to the file, writes nothing and prints `written: false` with the recorded `merged_at` (empty when its reader refuses it) | a ticket `features.json` does not plan, a `pr` that names no pull request, a `merged_at` without a time and an offset, an empty section, a result over 16 KiB, an `outcome.md` or folder that is a link |
 | `preflight-due --feature --ticket --blocker` | nothing: prints `{due, reason, input}`, whether dependent `ticket` still has to read the merged `blocker`'s outcome (AC-3.3): not when the ticket's own outcome is recorded ("<ticket> is merged"), nor when a preflight run at or after the outcome's `merged_at` lists the blocker (key or id, any case) in `blockers_read` ("<ticket> already read <blocker>'s outcome (preflight run at …)"); `input` is the automatic preflight's, `none` | a blocker the ticket's `blocked_by` does not name, a blocker with no `outcome.md` or one its reader refuses (over 16 KiB included), a `preflight.json` the readers could not read |
 | `pending-decision --feature --ticket` | nothing: prints `{request, decision, input, note, summary, superseded}`, the decision on the request the ticket's last preflight run opened (`drift: plan`, its `input` not `declined_change`), or else on this ticket's newest decided request that no run names, opened after its last run (its run failed before the preflight run was written); else `request: null` and empty texts. An approval the plan moved past (A23) has an empty `decision` (nothing to amend) and its `note` and `superseded` say so; `input` is `declined_change` for a decline, else `none`; `summary` is the proposal's first line | a record the readers could not read |
 
@@ -239,7 +242,11 @@ is required, unknown keys are refused, text is one line and non-empty.
 - Review, schema `agent-hub/review/1`: `reviewer` (`spec`, `quality`, `ux`, `overengineering`), `ticket`, `task`,
   `round`, `commit`, `verdict` (`PASS`, `FAIL`), `findings` (`severity` `blocking` or `minor`). The file name gives
   `reviewer` and `round` (`N` 1 to 9999); `ticket` is the folder's name, ASCII case ignored; `FAIL` iff a finding is
-  blocking; ids unique.
+  blocking; ids unique. A ticket that owns several repos keeps each repo's rounds in `reviews/<ticket>/<repo>/`
+  (AGH-589): the ticket is then the folder above, the folder names the repo, which must be one of the ticket's repos
+  in the feature's `features.json` when it exists ("the folder web is not a repo of ABC-12 (backend, frontend)"),
+  `commit` is that repo's HEAD and `N` counts per repo. A round directly in `reviews/<ticket>/` stays valid for any
+  ticket.
 - Eval, schema `agent-hub/eval/1`, beside `evals/<delivery>.md`: `delivery`, `verdict`, `commit`, `tickets`, `acs`
   (`"all"`, ids, or `[]` for the tickets' ACs), `results` and `gates` (`status` with `exit_code`), `red_on_parent`,
   `owner_steps`. `SHIP` needs `results` and `gates`, all `pass`; `SHIP-WITH-OWNER-STEPS` an owner step; `pass` exits 0,
@@ -333,7 +340,7 @@ for nothing.
 | Implement | `done` when a review round of the ticket exists (`reviews/<ticket>/<reviewer>-r<N>.json`); `current`, "Ticket plan written", when only `tickets/<ticket>/plan.md` exists |
 | Review | `done` when a review record of the ticket is `approved`; `current`, "Changes requested", while its records only request changes |
 | Eval | the latest eval whose `tickets` name the ticket (the order of "Decisions" below, conservative when unordered): SHIP or SHIP-WITH-OWNER-STEPS `done`, NO-SHIP `blocked`; the meta is the verdict |
-| PR | `done` when its review record's `pr` or an eval naming it lists a pull request (`<repo>#<n>` or a GitHub pull request URL; `#pending` is none) |
+| PR | `done` when its review record's `pr` or an eval naming it lists a pull request (`<repo>#<n>` or a GitHub pull request URL; `#pending` is none); for a ticket that owns several repos, once they list one per repo (`current`, "1 of 2 PRs", until then) |
 | Merged | `done`, "Outcome recorded", when `tickets/<ticket>/outcome.md` is recorded (D-5); else `done` when Linear has the ticket `completed`, the rule Build counts by (an outcome that cannot be read is then its meta); `unknown` with the problem when the outcome cannot be read and Linear has it open, or with Build's meta when Linear was not read |
 
 A step with no evidence reads `unrecorded` ("Not recorded") when a later step has some, else `pending` ("Not

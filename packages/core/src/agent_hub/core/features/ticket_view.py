@@ -58,6 +58,14 @@ class TicketEdge(ViewModel):
     source: EdgeSource
 
 
+class TicketPr(ViewModel):
+    """One pull request of a ticket: the hub repo it is in (None outside the hub's repos) and its
+    GitHub URL."""
+
+    repo: str | None
+    url: str
+
+
 class TicketRow(ViewModel):
     """One ticket of the feature.
 
@@ -70,7 +78,9 @@ class TicketRow(ViewModel):
     issue), ``children`` the refs of the rows whose parent it is: a row with children is an epic.
     ``repo`` is the plan's repo of a ticket that names one, ``repos`` every repo the ticket owns in
     contract order (its pull requests merge in that order; empty when the plan names none).
-    ``pr_url`` is the ticket's pull request on GitHub, from its review record, None when unknown.
+    ``pr_url`` is the ticket's pull request on GitHub, from its review record, None when unknown;
+    ``prs`` every pull request it names, in merge order (one per repo for a ticket that owns
+    several; ``pr_url`` is the first).
     ``flow`` is the ticket's own steps, served by the tickets route (None for an epic).
     """
 
@@ -96,6 +106,7 @@ class TicketRow(ViewModel):
     pr_url: str | None = None
     flow: TicketFlow | None = None
     repos: tuple[str, ...] = ()
+    prs: tuple[TicketPr, ...] = ()
 
 
 class ExternalBlocker(ViewModel):

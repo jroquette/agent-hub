@@ -45,7 +45,7 @@ import {
   TICKET_STEP_LABEL,
   TicketIdLine,
   TicketOpenLink,
-  TicketPrLink,
+  TicketPrLinks,
   signalKind,
   ticketParam,
   ticketSearch,
@@ -580,7 +580,7 @@ function StepDetail({
         </>
       );
     case "pr":
-      return row.pr_url ? <TicketPrLink row={row} /> : <>No PR recorded.</>;
+      return row.pr_url ? <TicketPrLinks row={row} /> : <>No PR recorded.</>;
     case "merged":
       if (step.state === "done") return <>Done in Linear.</>;
       return (
@@ -1070,7 +1070,7 @@ export function TicketPanel({
           <span className="ah-sr">Assignee: </span>
           <Assignee row={row} />
         </span>
-        <TicketPrLink row={row} />
+        <TicketPrLinks row={row} />
         {critical && (
           <span
             className="ah-small ah-flow-critical ah-ticket-panel-fact"

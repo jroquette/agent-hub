@@ -91,12 +91,15 @@ class OutcomeFile:
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class TicketOutcome:
-    """A merged ticket's outcome: when it merged, its pull request and the tickets it unblocks."""
+    """A merged ticket's outcome: when it merged, its pull request and the tickets it unblocks;
+    ``prs`` every pull request in merge order for a ticket that owns several repos (``pr`` is the
+    first), empty for one."""
 
     ticket: str
     merged_at: datetime
     pr: str
     dependents: tuple[str, ...]
+    prs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -242,8 +245,8 @@ def preflight_record(read: bytes | str | None, *, folder: str) -> AnyPreflightRe
 def outcome_record(read: bytes | str | None, *, folder: str) -> TicketOutcome | str | None:
     """The outcome of ``tickets/<folder>/``; its one-line problem when it cannot be read or its
     frontmatter does not hold a ``ticket-outcome`` of that ticket (ASCII case ignored) with
-    ``merged_at`` (a time with an offset), ``pr`` (a pull request) and ``dependents`` (ticket keys
-    or ids); None when absent."""
+    ``merged_at`` (a time with an offset), ``pr`` (a pull request) or ``prs`` (several, never
+    both) and ``dependents`` (ticket keys or ids); None when absent."""
     if read is None:
         return None
     if isinstance(read, str):
@@ -257,15 +260,28 @@ def outcome_record(read: bytes | str | None, *, folder: str) -> TicketOutcome | 
         if ticket.upper() != folder.upper():
             raise RecordFieldError(f"ticket: {ticket} is not the folder's ticket {folder}")
         merged_at = aware_time(text_field(fields, "merged_at"), "merged_at")
-        pr = text_field(fields, "pr")
-        if not names_pull_request(pr):
-            raise RecordFieldError(f"pr names no pull request: {(pr or 'none')[:64]}")
+        pr, prs = _pull_requests(fields)
         dependents = _names(fields.get("dependents"), "dependents")
     except RecordFieldError as problem:
         return _unreadable(OUTCOME_FILE, str(problem))
-    return TicketOutcome(
-        ticket=ticket, merged_at=merged_at, pr=cast("str", pr), dependents=dependents
-    )
+    return TicketOutcome(ticket=ticket, merged_at=merged_at, pr=pr, dependents=dependents, prs=prs)
+
+
+def _pull_requests(fields: dict[str, FrontmatterValue]) -> tuple[str, tuple[str, ...]]:
+    """The outcome's ``pr``, or its ``prs`` (several repos, AGH-592) and the first of them."""
+    pr = text_field(fields, "pr")
+    raw = fields.get("prs")
+    if raw is None or raw == "":
+        if not names_pull_request(pr):
+            raise RecordFieldError(f"pr names no pull request: {(pr or 'none')[:64]}")
+        return cast("str", pr), ()
+    if pr is not None:
+        raise RecordFieldError("give pr or prs, not both")
+    prs = tuple(dict.fromkeys(raw if isinstance(raw, list) else [raw]))
+    for item in prs:
+        if not names_pull_request(item):
+            raise RecordFieldError(f"prs names no pull request: {item[:64]}")
+    return prs[0], prs
 
 
 def recorded_outcomes(files: Iterable[OutcomeFile]) -> dict[str, TicketOutcome | str]:
