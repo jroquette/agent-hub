@@ -49,6 +49,7 @@ run; a re-run adds `-r2`, `-r3`. The frontmatter holds:
 | `tickets` | the tickets evaluated (keys or ids) |
 | `acs` | the AC ids evaluated, or `all` |
 | `prs`, `commit`, `evaluated_at` | the PRs, the commit evaluated and an ISO 8601 time |
+| `commits` | for a ticket that owns several repos, instead of `commit`: each `<repo>@<commit>` evaluated |
 
 At least one of `acs` and `tickets` is required. At most 200 eval files are read (the rest are counted as skipped),
 each head up to 16 KiB. A legacy `eval.md` is read as one delivery named `legacy`: its verdict is its first `Verdict`
@@ -227,7 +228,7 @@ note route gives for the record.
 
 JSON the agents hand to `/feature` ([ADR 0028](../adr/0028-agent-outputs-as-validated-json.md)), checked by
 `agent_hub.core.features.agent_outputs` (`review_problems`, `eval_problems`: bytes in, every problem at its JSON path
-out) against the models of `output_models.py`, exported as `review.v1.json` and `eval.v1.json` beside them (and
+out) against the models of `output_models.py`, exported as `review.v1.json`, `eval.v1.json` and `eval.v2.json` beside them (and
 `preflight.v1.json` for the ticket record above, `preflight_problems`). Every key
 is required, unknown keys are refused, text is one line and non-empty.
 
@@ -241,6 +242,12 @@ is required, unknown keys are refused, text is one line and non-empty.
   `not-run` null; list items are unique; the stem is `delivery`; the sibling exists and holds the same `verdict`,
   `tickets`, `acs` (as sets) and `commit`; `results` name each AC of the scope once. With `features.json`, `all` and a
   tickets-only scope mean the live ACs (of those tickets), and no listed id or result is withdrawn or unknown.
+- Eval, schema `agent-hub/eval/2` (AGH-590), for a ticket that owns several repos: the same keys, but `commits`
+  (1 to 4 `{"repo", "base", "commit"}`, each repo once, in contract order: the commit its change starts from and the
+  one evaluated) instead of `commit`, and a `repo` on each result. Every result's and gate's `repo` is one of
+  `commits`; the sibling holds `commits: [<repo>@<commit>, …]` (compared as a set) instead of `commit`; with
+  `features.json`, `commits` name exactly the repos the eval's tickets own, when they own any. The `implement`
+  workflow's eval accepts either schema; an `/1` eval of such a ticket stays valid.
 - Bounds, applied by core to the bytes it is given: `MAX_OUTPUT_BYTES` per output, each list's `MAX_*`, the sibling's
   first `EVAL_HEAD_BYTES`, `MAX_RECORD_BYTES` for the record; echoed values are cut to `ECHO_LIMIT`.
 

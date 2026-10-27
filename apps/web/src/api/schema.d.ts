@@ -3554,12 +3554,19 @@ export interface components {
      *     ``evaluated_at`` is the frontmatter's text (an ISO date or time). ``provenance`` says who ran
      *     it (e.g. ``agent``, ``agent-evaluator``, ``owner``), None when the note does not say.
      *     ``problem`` says why the file could not be read or parsed; its other fields are then empty.
+     *     ``commits`` holds, for a delivery that changes several repos, each ``<repo>@<commit>``
+     *     evaluated (``commit`` is then None).
      */
     EvalRecord: {
       /** Acs */
       acs: string[] | "all";
       /** Commit */
       commit: string | null;
+      /**
+       * Commits
+       * @default []
+       */
+      commits: string[];
       /** Delivery */
       delivery: string;
       /** Evaluated At */

@@ -120,6 +120,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/hooks/stop_gate.py",
     # AGH-139 D5, S8: the agent output JSON schemas.
     "plugin/hub-workflow/schemas/eval.v1.json",
+    "plugin/hub-workflow/schemas/eval.v2.json",
     "plugin/hub-workflow/schemas/review.v1.json",
     "plugin/hub-workflow/skills/adr/SKILL.md",
     "plugin/hub-workflow/skills/context-audit/SKILL.md",
@@ -4500,9 +4501,9 @@ def test_parses_every_json_when_rendered(config_name: str, request: pytest.Fixtu
 
     json_files = [file for file in render_hub(config).files if file.path.endswith(".json")]
 
-    # The two settings files, both manifests, `hooks.json`, the schema, the two agent output
-    # schemas (AGH-139) and `.mcp.json` (AGH-392).
-    assert len(json_files) == 9
+    # The two settings files, both manifests, `hooks.json`, the schema, the three agent output
+    # schemas (AGH-139, eval v2 AGH-590) and `.mcp.json` (AGH-392).
+    assert len(json_files) == 10
     for file in json_files:
         strict_json(file.content)
 
@@ -5404,7 +5405,7 @@ AGENT_FILES_SHA256 = {
         "c05495f6c642331142aa43dc9df5cacac3dabf7ea14c16758846ed23c2096554"
     ),
     f"{AGENTS_FOLDER}/evaluator.md": (
-        "efc8f4c7e5f7865f1b8c7f8a57ba0d59155492015e0f86529fd0780eb92865f5"
+        "adc603678389880e6a358d1a90bf827676058be16da5f2387fc3f8e3e3e365da"
     ),
     f"{AGENTS_FOLDER}/planner.md": (
         "e4b36eaa358fa185fcbe09e7f3dad87ab35b0ca9efae4b907001dc33f2881715"

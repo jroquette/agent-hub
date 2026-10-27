@@ -49,6 +49,7 @@ type Workspace = Any
 PACK = BUILTIN_WORKFLOWS / "sdlc"
 REVIEW_SCHEMA = Path(__file__).parents[3] / "core/src/agent_hub/core/features/review.v1.json"
 EVAL_SCHEMA = REVIEW_SCHEMA.with_name("eval.v1.json")
+EVAL_V2_SCHEMA = REVIEW_SCHEMA.with_name("eval.v2.json")
 IMPLEMENT_FIXTURES = (
     "implement-declined-still-plan",
     "implement-discovery-once",
@@ -223,14 +224,19 @@ def test_captures_a_decline_note_when_the_owner_answers_the_plan_change_gate() -
     assert gate.capture_response is True
 
 
-def test_declares_the_eval_schema_when_the_ticket_eval_runs() -> None:
-    schema = json.loads(EVAL_SCHEMA.read_text(encoding="utf-8"))
+def test_declares_the_eval_schemas_when_the_ticket_eval_runs() -> None:
+    # Schema 1 for a ticket that owns one repo, schema 2 for one that owns several (AGH-590).
+    schemas = [
+        json.loads(path.read_text(encoding="utf-8")) for path in (EVAL_SCHEMA, EVAL_V2_SCHEMA)
+    ]
     node = nodes_of("implement")["eval"]
 
     # The document's mappings are read-only: dict() them for JSON.
     declared = json.loads(json.dumps(node.output_format, default=dict))
 
-    assert resolved(declared, declared["$defs"]) == resolved(schema, schema["$defs"])
+    assert [resolved(arm, declared["$defs"]) for arm in declared["oneOf"]] == [
+        resolved(schema, schema["$defs"]) for schema in schemas
+    ]
 
 
 def test_checks_afresh_and_read_only_when_ticket_pass_runs_a_preflight() -> None:

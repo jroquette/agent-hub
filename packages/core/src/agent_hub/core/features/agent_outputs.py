@@ -9,8 +9,10 @@ bounds to the bytes it is given, whatever the caller read: ``MAX_OUTPUT_BYTES`` 
 ``MAX_RECORD_BYTES`` to the record, and the sibling's first ``EVAL_HEAD_BYTES`` only are read.
 
 The JSON Schemas of the outputs ship as package data beside this module (``review.v1.json``,
-``eval.v1.json``, ``preflight.v1.json``), regenerated with ``make output-schemas`` whenever a
-model changes; unit tests fail while a shipped file differs from the export.
+``eval.v1.json``, ``eval.v2.json``, ``preflight.v1.json``); an eval output is checked against the
+model its ``schema`` names (``agent-hub/eval/2``: ``EvalOutputV2``, else ``EvalOutput``),
+regenerated with ``make output-schemas`` whenever a model changes; unit tests fail while a shipped
+file differs from the export.
 """
 
 import json
@@ -23,6 +25,7 @@ from pydantic import BaseModel, ValidationError
 from agent_hub.core.features.eval_output_checks import eval_cross_problems
 from agent_hub.core.features.eval_output_scope import eval_scope_problems
 from agent_hub.core.features.output_models import (
+    EVAL_V2_SCHEMA_ID,
     MAX_EVAL_ACS,
     MAX_EVAL_TICKETS,
     MAX_FINDING_ACS,
@@ -33,6 +36,7 @@ from agent_hub.core.features.output_models import (
     MAX_RED_ON_PARENT,
     MAX_RESULTS,
     EvalOutput,
+    EvalOutputV2,
     OutputProblem,
     PreflightRecord,
     ReviewOutput,
@@ -47,16 +51,20 @@ from agent_hub.core.features.review_output_checks import review_cross_problems
 
 type _Document = dict[str, object]
 type OutputKind = Literal["review", "eval", "preflight"]
+# Each shipped schema: an output kind, or ``<kind>-<version>`` for a later version of one.
+type OutputSchema = Literal["review", "eval", "eval-2", "preflight"]
 
 OUTPUT_SCHEMA_PACKAGE: Final = "agent_hub.core.features"
-OUTPUT_SCHEMA_FILES: Final[Mapping[OutputKind, str]] = {
+OUTPUT_SCHEMA_FILES: Final[Mapping[OutputSchema, str]] = {
     "review": "review.v1.json",
     "eval": "eval.v1.json",
+    "eval-2": "eval.v2.json",
     "preflight": "preflight.v1.json",
 }
-_OUTPUT_MODELS: Final[Mapping[OutputKind, type[BaseModel]]] = {
+_OUTPUT_MODELS: Final[Mapping[OutputSchema, type[BaseModel]]] = {
     "review": ReviewOutput,
     "eval": EvalOutput,
+    "eval-2": EvalOutputV2,
     "preflight": PreflightRecord,
 }
 
@@ -97,7 +105,8 @@ def eval_problems(
     document = parse_document(content)
     if isinstance(document, OutputProblem):
         return (document,)
-    shape = _shape(document, model=EvalOutput, overlong=_overlong_eval_lists)
+    model = EvalOutputV2 if document.get("schema") == EVAL_V2_SCHEMA_ID else EvalOutput
+    shape = _shape(document, model=model, overlong=_overlong_eval_lists)
     cross = eval_cross_problems(document, file_name=file_name, sibling_head=sibling_head)
     return (*shape, *cross, *eval_scope_problems(document, record=record))
 
@@ -145,13 +154,13 @@ def _overlong_preflight_runs(document: _Document) -> Iterator[OutputProblem]:
     yield from overlong_problem("runs", document.get("runs"), MAX_PREFLIGHT_RUNS)
 
 
-def export_output_schema_text(kind: OutputKind) -> str:
+def export_output_schema_text(kind: OutputSchema) -> str:
     """The JSON Schema of one output as its shipped file holds it: indented, one final newline."""
     schema = _OUTPUT_MODELS[kind].model_json_schema()
     return json.dumps(schema, indent=2, ensure_ascii=False) + "\n"
 
 
-def read_shipped_output_schema(kind: OutputKind) -> dict[str, Any]:
+def read_shipped_output_schema(kind: OutputSchema) -> dict[str, Any]:
     """The JSON Schema of one output shipped with the package, read as package data."""
     package_file = files(OUTPUT_SCHEMA_PACKAGE).joinpath(OUTPUT_SCHEMA_FILES[kind])
     schema: dict[str, Any] = json.loads(package_file.read_text(encoding="utf-8"))

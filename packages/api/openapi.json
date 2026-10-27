@@ -3394,7 +3394,7 @@
       },
       "EvalRecord": {
         "additionalProperties": false,
-        "description": "One evaluation of a delivery: ``evals/<delivery>.md``, or the legacy ``eval.md``.\n\n``path`` is relative to the hub's ``brain/``. ``acs`` is the AC ids evaluated or ``\"all\"``;\n``evaluated_at`` is the frontmatter's text (an ISO date or time). ``provenance`` says who ran\nit (e.g. ``agent``, ``agent-evaluator``, ``owner``), None when the note does not say.\n``problem`` says why the file could not be read or parsed; its other fields are then empty.",
+        "description": "One evaluation of a delivery: ``evals/<delivery>.md``, or the legacy ``eval.md``.\n\n``path`` is relative to the hub's ``brain/``. ``acs`` is the AC ids evaluated or ``\"all\"``;\n``evaluated_at`` is the frontmatter's text (an ISO date or time). ``provenance`` says who ran\nit (e.g. ``agent``, ``agent-evaluator``, ``owner``), None when the note does not say.\n``problem`` says why the file could not be read or parsed; its other fields are then empty.\n``commits`` holds, for a delivery that changes several repos, each ``<repo>@<commit>``\nevaluated (``commit`` is then None).",
         "properties": {
           "acs": {
             "anyOf": [
@@ -3421,6 +3421,14 @@
               }
             ],
             "title": "Commit"
+          },
+          "commits": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Commits",
+            "type": "array"
           },
           "delivery": {
             "title": "Delivery",

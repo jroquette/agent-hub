@@ -4,7 +4,7 @@ import pytest
 
 from agent_hub.core.features.agent_outputs import (
     OUTPUT_SCHEMA_FILES,
-    OutputKind,
+    OutputSchema,
     export_output_schema_text,
 )
 from scripts.export_output_schemas import OUTPUT_SCHEMA_DIR, REPO_ROOT, main
@@ -21,6 +21,7 @@ def test_writes_every_schema_when_script_run(tmp_path: Path) -> None:
     assert written == {
         "review.v1.json": export_output_schema_text("review").encode(),
         "eval.v1.json": export_output_schema_text("eval").encode(),
+        "eval.v2.json": export_output_schema_text("eval-2").encode(),
         "preflight.v1.json": export_output_schema_text("preflight").encode(),
     }
     assert all(b"\r" not in content for content in written.values())
@@ -37,8 +38,8 @@ def test_exits_two_when_arguments_given(tmp_path: Path, capsys: pytest.CaptureFi
     assert list(folder.iterdir()) == []
 
 
-@pytest.mark.parametrize("kind", ["review", "eval", "preflight"])
-def test_matches_repo_files_when_schemas_exported(kind: OutputKind) -> None:
+@pytest.mark.parametrize("kind", ["review", "eval", "eval-2", "preflight"])
+def test_matches_repo_files_when_schemas_exported(kind: OutputSchema) -> None:
     shipped = REPO_ROOT / OUTPUT_SCHEMA_DIR / OUTPUT_SCHEMA_FILES[kind]
 
     assert shipped.read_bytes() == export_output_schema_text(kind).encode()

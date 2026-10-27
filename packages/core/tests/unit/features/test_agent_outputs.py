@@ -15,6 +15,7 @@ from agent_hub.core.features.agent_outputs import (
     OUTPUT_SCHEMA_FILES,
     OUTPUT_SCHEMA_PACKAGE,
     OutputKind,
+    OutputSchema,
     eval_problems,
     export_output_schema_text,
     preflight_problems,
@@ -26,6 +27,7 @@ from agent_hub.core.features.output_models import (
     MAX_OUTPUT_BYTES,
     AcResult,
     EvalOutput,
+    EvalOutputV2,
     OutputProblem,
     PreflightRecord,
     ReviewFinding,
@@ -498,7 +500,7 @@ def test_freezes_models_when_valid_eval_parsed() -> None:
 
 # One row per shape rule an eval breaks, and the path of its one problem.
 EVAL_SHAPE_BROKEN: list[tuple[dict[str, object], str]] = [
-    (an_eval_document(schema="agent-hub/eval/2"), "schema"),
+    (an_eval_document(schema="agent-hub/eval/3"), "schema"),
     (an_eval_document(verdict="MAYBE"), "verdict"),
     (an_eval_document(results=[a_result(status="skipped")]), "results[0].status"),
     (an_eval_document(results=[a_result(exit_code="1")]), "results[0].exit_code"),
@@ -525,7 +527,7 @@ EVAL_SHAPE_BROKEN: list[tuple[dict[str, object], str]] = [
     (an_eval_document(acs=[["AC-1"]]), "acs[0]"),
 ]
 EVAL_SHAPE_BROKEN_IDS = [
-    "schema version 2",
+    "schema version 3",
     "verdict maybe",
     "status skipped",
     "exit code string",
@@ -774,10 +776,11 @@ def test_drops_only_eval_acs_tag_when_output_path_built(
     assert output_path(loc) == path
 
 
-KINDS: tuple[OutputKind, ...] = ("review", "eval", "preflight")
-MODELS: dict[OutputKind, type[BaseModel]] = {
+KINDS: tuple[OutputSchema, ...] = ("review", "eval", "eval-2", "preflight")
+MODELS: dict[OutputSchema, type[BaseModel]] = {
     "review": ReviewOutput,
     "eval": EvalOutput,
+    "eval-2": EvalOutputV2,
     "preflight": PreflightRecord,
 }
 
@@ -810,7 +813,7 @@ def field(schema: dict[str, Any], owner: str | None, name: str) -> dict[str, Any
 
 
 @pytest.mark.parametrize("kind", KINDS)
-def test_matches_export_when_shipped_schema_read(kind: OutputKind) -> None:
+def test_matches_export_when_shipped_schema_read(kind: OutputSchema) -> None:
     shipped = files(OUTPUT_SCHEMA_PACKAGE).joinpath(OUTPUT_SCHEMA_FILES[kind]).read_bytes()
 
     assert shipped == export_output_schema_text(kind).encode()
@@ -818,6 +821,7 @@ def test_matches_export_when_shipped_schema_read(kind: OutputKind) -> None:
     assert OUTPUT_SCHEMA_FILES == {
         "review": "review.v1.json",
         "eval": "eval.v1.json",
+        "eval-2": "eval.v2.json",
         "preflight": "preflight.v1.json",
     }
     assert OUTPUT_SCHEMA_PACKAGE == "agent_hub.core.features"
@@ -828,18 +832,23 @@ def test_matches_export_when_shipped_schema_read(kind: OutputKind) -> None:
     [
         ("review", "agent-hub/review/1"),
         ("eval", "agent-hub/eval/1"),
+        ("eval-2", "agent-hub/eval/2"),
         ("preflight", "agent-hub/preflight/1"),
     ],
 )
-def test_states_schema_const_when_schema_exported(kind: OutputKind, schema_id: str) -> None:
+def test_states_schema_const_when_schema_exported(kind: OutputSchema, schema_id: str) -> None:
     schema = read_shipped_output_schema(kind)
 
     assert schema["properties"]["schema"]["const"] == schema_id
     assert "schema_id" not in json.dumps(schema)
 
 
-@pytest.mark.parametrize(("kind", "objects"), [("review", 2), ("eval", 4), ("preflight", 2)])
-def test_forbids_extra_keys_when_schema_object_nodes_walked(kind: OutputKind, objects: int) -> None:
+@pytest.mark.parametrize(
+    ("kind", "objects"), [("review", 2), ("eval", 4), ("eval-2", 5), ("preflight", 2)]
+)
+def test_forbids_extra_keys_when_schema_object_nodes_walked(
+    kind: OutputSchema, objects: int
+) -> None:
     nodes = list(object_nodes(read_shipped_output_schema(kind)))
 
     assert len(nodes) == objects
@@ -847,7 +856,7 @@ def test_forbids_extra_keys_when_schema_object_nodes_walked(kind: OutputKind, ob
 
 
 @pytest.mark.parametrize("kind", KINDS)
-def test_requires_every_key_when_schema_exported(kind: OutputKind) -> None:
+def test_requires_every_key_when_schema_exported(kind: OutputSchema) -> None:
     for node in object_nodes(read_shipped_output_schema(kind)):
         assert node["required"] == list(node["properties"])
 
@@ -1536,3 +1545,127 @@ def test_reports_run_when_preflight_fields_disagree(run: dict[str, object], mess
     document = a_preflight_document(runs=[a_preflight_run(**run)])
 
     assert preflight_problems(review_bytes(document)) == (OutputProblem("runs[0]", message),)
+
+
+# AGH-590: eval schema 2, one eval of a ticket that owns several repos, a base and commit each.
+def an_eval_v2_document(**overrides: object) -> dict[str, object]:
+    document = without(an_eval_document(), "commit") | {
+        "schema": "agent-hub/eval/2",
+        "commits": [
+            {"repo": "backend", "base": "0a1b2c3", "commit": "feb9c4c"},
+            {"repo": "frontend", "base": "1b2c3d4", "commit": "abc1234"},
+        ],
+        "results": [a_result(repo="backend")],
+        "gates": [a_gate(repo="backend"), a_gate(repo="frontend")],
+    }
+    return document | overrides
+
+
+def a_v2_sibling_head(commits: str = "[backend@feb9c4c, frontend@abc1234]") -> bytes:
+    """The head of ``evals/agh-7.md`` whose frontmatter matches ``an_eval_v2_document()``."""
+    return a_sibling_head().replace(b"commit: feb9c4c\n", f"commits: {commits}\n".encode())
+
+
+def test_accepts_eval_v2_when_every_repo_has_its_commit() -> None:
+    problems = eval_problems_of(an_eval_v2_document(), sibling_head=a_v2_sibling_head())
+
+    assert problems == ()
+
+
+@pytest.mark.parametrize(
+    ("document", "problem"),
+    [
+        (
+            an_eval_v2_document(results=[a_result(repo="web")]),
+            OutputProblem(
+                "results[0].repo", "the repo web is not one of commits (backend, frontend)"
+            ),
+        ),
+        (
+            an_eval_v2_document(gates=[a_gate(repo="backend"), a_gate(repo="agent-hub")]),
+            OutputProblem(
+                "gates[1].repo", "the repo agent-hub is not one of commits (backend, frontend)"
+            ),
+        ),
+        (
+            an_eval_v2_document(
+                commits=[
+                    {"repo": "backend", "base": "0a1b2c3", "commit": "feb9c4c"},
+                    {"repo": "backend", "base": "1b2c3d4", "commit": "abc1234"},
+                ],
+                gates=[a_gate(repo="backend")],
+            ),
+            OutputProblem("commits[1].repo", "the repo backend repeats commits[0].repo"),
+        ),
+    ],
+    ids=["result repo", "gate repo", "repeated repo"],
+)
+def test_reports_repo_when_eval_v2_names_one_outside_commits(
+    document: dict[str, object], problem: OutputProblem
+) -> None:
+    heads = [f"{item['repo']}@{item['commit']}" for item in document["commits"]]  # type: ignore[attr-defined]
+    head = a_v2_sibling_head(f"[{', '.join(heads)}]")
+
+    problems = eval_problems_of(document, sibling_head=head)
+
+    assert problems == (problem,)
+
+
+def test_reports_commits_when_eval_v2_sibling_differs() -> None:
+    head = a_v2_sibling_head("[backend@feb9c4c]")
+
+    problems = eval_problems_of(an_eval_v2_document(), sibling_head=head)
+
+    assert problems == (
+        OutputProblem(
+            "commits",
+            "the commits are [backend@feb9c4c, frontend@abc1234] but evals/agh-7.md says"
+            " [backend@feb9c4c]",
+        ),
+    )
+
+
+def test_reports_shape_when_eval_v2_keeps_one_commit() -> None:
+    document = an_eval_v2_document(commit="feb9c4c")
+
+    problems = eval_problems_of(document, sibling_head=a_v2_sibling_head())
+
+    assert [problem.path for problem in problems] == ["commit"]
+
+
+def several_repos_record(*repos: str) -> bytes:
+    tickets = [{"key": "T2", "id": "AGH-7", "repos": [{"repo": repo} for repo in repos]}]
+    acs = [a_record_ac("AC-139.1", ticket="T2")]
+    return json.dumps({"tickets": tickets, "acs": acs}).encode()
+
+
+@pytest.mark.parametrize(
+    ("repos", "problems"),
+    [
+        (("backend", "frontend"), ()),
+        (
+            ("backend", "frontend", "infra"),
+            (
+                OutputProblem(
+                    "commits",
+                    "the commits name backend, frontend but the tickets own backend, frontend,"
+                    " infra",
+                ),
+            ),
+        ),
+    ],
+    ids=["same repos", "a repo missing"],
+)
+def test_holds_commits_to_the_tickets_repos_when_eval_v2_has_record(
+    repos: tuple[str, ...], problems: tuple[OutputProblem, ...]
+) -> None:
+    content = review_bytes(an_eval_v2_document())
+
+    found = eval_problems(
+        content,
+        file_name=EVAL_FILE,
+        sibling_head=a_v2_sibling_head(),
+        record=several_repos_record(*repos),
+    )
+
+    assert found == problems
