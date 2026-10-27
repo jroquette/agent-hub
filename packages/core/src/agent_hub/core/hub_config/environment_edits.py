@@ -19,6 +19,7 @@ from collections.abc import Collection, Mapping
 from typing import Final, NamedTuple
 
 from agent_hub.core.hub_config.environments import MAX_NAME_CHARS
+from agent_hub.core.hub_config.problems import ROOT_PATH
 from agent_hub.core.hub_config.text_shapes import SAFE_SEGMENT
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.secret_shapes import secret_kind
@@ -31,9 +32,11 @@ _NAME = re.compile(SAFE_SEGMENT)
 
 
 class EditRefusal(NamedTuple):
-    """Why an edit is not made, as one line."""
+    """Why an edit is not made, as one line, and the JSON path of the key or reference it is
+    about (``$`` when it has no place in the file), which ``hub web`` shows it beside."""
 
     message: str
+    path: str = ROOT_PATH
 
 
 def _comment_refusal(*names: str | None) -> EditRefusal | None:
