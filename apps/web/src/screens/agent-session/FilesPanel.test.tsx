@@ -834,6 +834,75 @@ describe("FilesPanel (repositories)", () => {
   });
 });
 
+describe("FilesPanel (one repository at a time)", () => {
+  const TWO_REPOS = [
+    tool("r1", "Write", { file_path: "/ws/ui/wt/src/page.tsx", content: "x" }),
+    tool("r2", "Write", { file_path: "/ws/ui/wt/src/page.test.tsx", content: "it()" }),
+    tool("r3", "Write", { file_path: "/ws/api/wt/app/service.py", content: "y = 1" }),
+  ];
+  const repo = (root: string, label: string, number: number) => ({
+    source: "worktree" as const,
+    root,
+    label,
+    branch: "demo-1",
+    base: "origin/main",
+    base_sha: "f0",
+    head_sha: "h1",
+    pull_request: {
+      number,
+      url: `https://github.com/acme/x/pull/${String(number)}`,
+      state: "OPEN" as const,
+      head_sha: "h1",
+    },
+    commits: [],
+    files: [],
+    truncated: false,
+  });
+  const REPOS = [repo("/ws/ui/wt", "ui/wt", 7), repo("/ws/api/wt", "api/wt", 8)];
+  const rows = () =>
+    within(screen.getByRole("navigation", { name: "Files" }))
+      .getAllByRole("button")
+      .map((button) => button.dataset.filePath)
+      .filter(Boolean);
+
+  it("shows every repository together, then one apart with its own pull request and progress", async () => {
+    render(
+      <FilesPanel files={filesOf(TWO_REPOS)} sessionId="s1" onClose={vi.fn()} repos={REPOS} />,
+    );
+    const pick = screen.getByRole("group", { name: "Show the code of one repository" });
+    expect(within(pick).getByRole("button", { name: "All repos 3" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(rows()).toHaveLength(3);
+
+    await userEvent.click(within(pick).getByRole("button", { name: "api 1" }));
+    expect(rows()).toEqual(["/ws/api/wt/app/service.py"]);
+    expect(screen.getByText("0 of 1 viewed")).toBeInTheDocument();
+    const listed = screen.getByRole("list", { name: "Repositories" });
+    expect(within(listed).getByRole("link", { name: /PR #8/ })).toBeInTheDocument();
+    expect(within(listed).queryByRole("link", { name: /PR #7/ })).toBeNull();
+    // The code/tests split counts only the repository shown: api has no tests.
+    expect(screen.queryByRole("group", { name: "Show the code and its tests" })).toBeNull();
+
+    await userEvent.click(within(pick).getByRole("button", { name: "ui 2" }));
+    expect(rows()).toEqual(["/ws/ui/wt/src/page.tsx", "/ws/ui/wt/src/page.test.tsx"]);
+    expect(screen.getByRole("group", { name: "Show the code and its tests" })).toBeInTheDocument();
+  });
+
+  it("offers no pick with code in one repository only", () => {
+    render(
+      <FilesPanel
+        files={filesOf(TWO_REPOS.slice(0, 2))}
+        sessionId="s1"
+        onClose={vi.fn()}
+        repos={REPOS}
+      />,
+    );
+    expect(screen.queryByRole("group", { name: "Show the code of one repository" })).toBeNull();
+  });
+});
+
 describe("FilesPanel (code and tests)", () => {
   const MIXED = [
     tool("c1", "Write", { file_path: "/repo/src/provider.py", content: "x = 1" }),

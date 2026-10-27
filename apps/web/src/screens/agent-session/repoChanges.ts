@@ -165,6 +165,21 @@ export function withRepoChanges(
   return out;
 }
 
+/** The repository `path` is in: the one with the deepest root holding it, when git read one. */
+export function repoOf(
+  path: string,
+  repos: readonly RepoChanges[] | undefined,
+): RepoChanges | undefined {
+  let found: RepoChanges | undefined;
+  for (const repo of repos ?? []) {
+    if (inside(path, repo.root) && (!found || repo.root.length > found.root.length)) found = repo;
+  }
+  return found;
+}
+
+/** A repository's short name: its folder, without the worktree after it ("demo-web"). */
+export const repoName = (repo: RepoChanges) => repo.label.split("/")[0] || repo.label;
+
 /** The base and commit count the code tab names: "against origin/main · 12 commits". */
 export function repoSummary(repos: readonly RepoChanges[] | undefined): string | null {
   const compared = (repos ?? []).filter((repo) => repo.base);
