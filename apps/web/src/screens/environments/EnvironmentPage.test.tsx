@@ -1,11 +1,11 @@
 import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { DiscussProvider } from "../../shell/discuss";
 import { seriousViolations } from "../../testing/axe";
-import { aCapabilities, aProblem, renderWithApi } from "../../testing/builders";
+import { aCapabilities, aProblem, holdPosts, renderWithApi } from "../../testing/builders";
 import type { ApiRoutes, RouteReply } from "../../testing/builders";
 import { EnvironmentScreen } from "./EnvironmentPage";
 
@@ -181,6 +181,58 @@ describe("EnvironmentScreen", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/changed on disk/);
     expect(screen.getByRole("button", { name: "Save description" })).toBeVisible();
+  });
+
+  it("AC-417.7 leaves focus on Save through a refused save", async () => {
+    open("staging", {
+      [WRITE]: aProblem({
+        status: 422,
+        title: "This change was not saved",
+        errors: [{ pointer: "$", message: "hub.json changed since the page read it" }],
+      }),
+    });
+    const held = holdPosts();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Change description in staging" }),
+    );
+    const save = screen.getByRole("button", { name: "Save description" });
+    await userEvent.click(save);
+
+    expect(save).toHaveTextContent("Saving…");
+    expect(save).toHaveAttribute("aria-disabled", "true");
+    expect(save).not.toBeDisabled();
+    expect(save).toHaveFocus();
+    await userEvent.click(save);
+    expect(held.posts()).toBe(1);
+
+    held.release();
+    await screen.findByRole("alert");
+    expect(document.activeElement).toBe(save);
+  });
+
+  it("AC-417.7 Esc in the Discuss panel leaves a section form open; Esc in it cancels", async () => {
+    open("staging");
+    const panel = document.body.appendChild(document.createElement("aside"));
+    panel.className = "ah-discuss";
+    const composer = panel.appendChild(document.createElement("textarea"));
+    onTestFinished(() => {
+      panel.remove();
+    });
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Change description in staging" }),
+    );
+    const description = screen.getByRole("textbox", { name: "Description" });
+    composer.focus();
+    await userEvent.keyboard("{Escape}");
+
+    expect(screen.getByRole("textbox", { name: "Description" })).toBe(description);
+
+    description.focus();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("textbox", { name: "Description" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Change description in staging" })).toBeVisible();
   });
 
   it("AC-417.5 offers the team's access back on an environment I tightened", async () => {

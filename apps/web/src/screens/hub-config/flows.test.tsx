@@ -1,7 +1,7 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 
 import { ApiProblem, apiKey } from "../../lib/api";
 import { DiscussProvider, useDiscuss } from "../../shell/discuss";
@@ -10,6 +10,7 @@ import {
   aHubConfigView,
   aProblem,
   aRepoConfigView,
+  holdPosts,
   renderWithApi,
   stubApi,
   testQueryClient,
@@ -773,7 +774,7 @@ describe("Repositories", () => {
     await userEvent.click(within(section).getByRole("button", { name: "Remove repo demo-web" }));
     const dialog = screen.getByRole("alertdialog", { name: "Remove repo demo-web?" });
     expect(dialog).toHaveTextContent("Agents stop working in demo-web after ./hub sync.");
-    expect(dialog).toHaveTextContent("Its 1 services go with it: web.");
+    expect(dialog).toHaveTextContent("Its service goes with it: web.");
     expect(dialog).toHaveTextContent("../demo-web and its worktrees stay on disk.");
     await userEvent.click(within(dialog).getByRole("button", { name: "Remove repo" }));
 
@@ -844,5 +845,187 @@ describe("Repositories", () => {
     const remove = within(section).getByRole("button", { name: "Remove repo demo-api" });
     expect(remove).toBeDisabled();
     expect(remove).toHaveAccessibleDescription("The only repo: hub.json needs at least one.");
+  });
+
+  it("repos: names each service that goes with a removed repo", async () => {
+    openConfig({
+      [CONFIG]: twoRepos({
+        environments: {
+          ...aHubConfigView().environments,
+          services: [
+            { repo: "demo-web", name: "web", kind: "web", description: null, endpoints: [] },
+            { repo: "demo-web", name: "worker", kind: "worker", description: null, endpoints: [] },
+          ],
+        },
+      }),
+    });
+    const section = await repoSection();
+
+    await userEvent.click(within(section).getByText("demo-web"));
+    await userEvent.click(within(section).getByRole("button", { name: "Remove repo demo-web" }));
+
+    expect(screen.getByRole("alertdialog", { name: "Remove repo demo-web?" })).toHaveTextContent(
+      "Its 2 services go with it: web, worker.",
+    );
+  });
+
+  it("repos: keeps the card open while its form is open", async () => {
+    openConfig({ [CONFIG]: twoRepos() });
+    const section = await repoSection();
+
+    await userEvent.click(within(section).getByRole("button", { name: "Change repo demo-api" }));
+    const form = within(section).getByRole("form", { name: "demo-api" });
+    const check = within(form).getByRole("textbox", { name: "Full check" });
+    await userEvent.clear(check);
+    await userEvent.type(check, "make ci");
+    const summary = within(section).getByText("demo-api").closest("summary");
+    if (summary === null) throw new Error("no summary");
+    const card = summary.closest("details");
+
+    await userEvent.click(summary);
+    summary.focus();
+    await userEvent.keyboard("{Enter}");
+    await userEvent.keyboard(" ");
+    // The toggle event comes in a later task: let it run.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(card).toHaveAttribute("open");
+    expect(within(section).getByRole("form", { name: "demo-api" })).toBeVisible();
+    expect(check).toHaveValue("make ci");
+  });
+
+  it("repos: leaves focus on Save after a refused save", async () => {
+    openConfig({
+      [CONFIG]: twoRepos(),
+      [REPOS]: refusal({ pointer: "repos[0].check", message: "hub.json: check is wrong" }),
+    });
+    const held = holdPosts();
+    const section = await repoSection();
+
+    await userEvent.click(within(section).getByRole("button", { name: "Change repo demo-api" }));
+    const form = within(section).getByRole("form", { name: "demo-api" });
+    await userEvent.type(within(form).getByRole("textbox", { name: "Full check" }), " x");
+    const save = within(form).getByRole("button", { name: "Save repo" });
+    await userEvent.click(save);
+
+    // Pending: Save is off but keeps focus, and a second press sends nothing.
+    expect(save).toHaveTextContent("Saving…");
+    expect(save).toHaveAttribute("aria-disabled", "true");
+    expect(save).not.toBeDisabled();
+    expect(save).toHaveFocus();
+    await userEvent.click(save);
+    expect(held.posts()).toBe(1);
+    expect(within(form).getByRole("button", { name: "Cancel" })).toBeDisabled();
+
+    held.release();
+    expect(await within(form).findByRole("alert")).toHaveTextContent("hub.json: check is wrong");
+    expect(document.activeElement).toBe(save);
+    expect(save).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("repos: gives focus to Save after a refused save that lost it", async () => {
+    openConfig({
+      [CONFIG]: twoRepos(),
+      [REPOS]: refusal({ pointer: "repos[0].check", message: "hub.json: check is wrong" }),
+    });
+    const held = holdPosts();
+    const section = await repoSection();
+
+    await userEvent.click(within(section).getByRole("button", { name: "Change repo demo-api" }));
+    const form = within(section).getByRole("form", { name: "demo-api" });
+    const check = within(form).getByRole("textbox", { name: "Full check" });
+    await userEvent.type(check, " x");
+    // Enter in a field: a browser drops focus from the field once it turns disabled.
+    check.blur();
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.submit(form);
+    expect(check).toBeDisabled();
+
+    held.release();
+    await within(form).findByRole("alert");
+    expect(document.activeElement).toBe(within(form).getByRole("button", { name: "Save repo" }));
+  });
+
+  it("repos: Esc in the Discuss panel leaves the form open; Esc in the form cancels", async () => {
+    openConfig({ [CONFIG]: twoRepos() });
+    const section = await repoSection();
+    const panel = document.body.appendChild(document.createElement("aside"));
+    panel.className = "ah-discuss";
+    const composer = panel.appendChild(document.createElement("textarea"));
+    onTestFinished(() => {
+      panel.remove();
+    });
+
+    await userEvent.click(within(section).getByRole("button", { name: "Change repo demo-api" }));
+    const form = within(section).getByRole("form", { name: "demo-api" });
+    await userEvent.type(within(form).getByRole("textbox", { name: "Full check" }), " x");
+    composer.focus();
+    await userEvent.keyboard("{Escape}");
+
+    expect(within(section).getByRole("form", { name: "demo-api" })).toBe(form);
+    expect(within(form).getByRole("textbox", { name: "Full check" })).toHaveValue("make check x");
+
+    within(form).getByRole("textbox", { name: "Full check" }).focus();
+    await userEvent.keyboard("{Escape}");
+    expect(within(section).queryByRole("form")).toBeNull();
+    expect(within(section).getByRole("button", { name: "Change repo demo-api" })).toHaveFocus();
+  });
+
+  it("repos: drops the no-longer-in-hub.json line after a later save or remove", async () => {
+    // Read 1: demo-api and demo-web; then demo-web is gone and demo-docs came in.
+    const later = aHubConfigView({
+      repos: [
+        aRepoConfigView(),
+        aRepoConfigView({ index: 1, dir: "demo-docs", github: "acme/demo-docs" }),
+      ],
+    });
+    let reads = 0;
+    let writes = 0;
+    openConfig({
+      [CONFIG]: () => {
+        reads += 1;
+        return reads === 1 ? twoRepos() : later;
+      },
+      [REPOS]: () => {
+        writes += 1;
+        return writes === 1
+          ? refusal({ pointer: "$", message: "hub.json changed since this page read it" })
+          : aHubConfigView();
+      },
+    });
+    const section = await repoSection();
+    const line = "demo-web is no longer in hub.json. Nothing was saved.";
+    await userEvent.click(within(section).getByRole("button", { name: "Change repo demo-web" }));
+    await userEvent.type(within(section).getByRole("textbox", { name: "Full check" }), " x{Enter}");
+    expect(await within(section).findByText(line)).toBeVisible();
+
+    // A remove that goes through.
+    await userEvent.click(within(section).getByText("demo-docs"));
+    await userEvent.click(within(section).getByRole("button", { name: "Remove repo demo-docs" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Remove repo demo-docs?" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Remove repo" }));
+    expect(await screen.findByText("Removed repo demo-docs")).toBeVisible();
+    expect(within(section).queryByText(line)).toBeNull();
+  });
+
+  it("repos: the no-longer-in-hub.json line can be dismissed", async () => {
+    let reads = 0;
+    openConfig({
+      [CONFIG]: () => {
+        reads += 1;
+        return reads === 1 ? twoRepos() : aHubConfigView();
+      },
+      [REPOS]: refusal({ pointer: "$", message: "hub.json changed since this page read it" }),
+    });
+    const section = await repoSection();
+    await userEvent.click(within(section).getByRole("button", { name: "Change repo demo-web" }));
+    await userEvent.type(within(section).getByRole("textbox", { name: "Full check" }), " x{Enter}");
+    const line = "demo-web is no longer in hub.json. Nothing was saved.";
+    const banner = (await within(section).findByText(line)).closest(".ah-banner");
+    if (!(banner instanceof HTMLElement)) throw new Error("no banner");
+
+    await userEvent.click(within(banner).getByRole("button", { name: "Dismiss" }));
+
+    expect(within(section).queryByText(line)).toBeNull();
   });
 });

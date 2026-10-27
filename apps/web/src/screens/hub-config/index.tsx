@@ -368,10 +368,21 @@ function RepoCard({
       className="ah-config-repo"
       open={open || form !== null}
       onToggle={(event) => {
+        // A card with its form open stays open: re-assert it if the browser closed it anyway.
+        if (form !== null && !event.currentTarget.open) {
+          event.currentTarget.open = true;
+          return;
+        }
         onToggle(event.currentTarget.open);
       }}
     >
-      <summary id={summaryId(repo.dir)}>
+      <summary
+        id={summaryId(repo.dir)}
+        onClick={(event) => {
+          // Enter and Space on a summary click it too: none of them folds an open form away.
+          if (form !== null) event.preventDefault();
+        }}
+      >
         <Icon name="chevron-right" className="ah-config-chevron" />
         <Icon name="book" />
         <span className="ah-config-repo-name" id={nameId(repo.dir)}>
@@ -752,7 +763,14 @@ function ConfigBody({
             }
           >
             {gone !== null && (
-              <Banner tone="warning">{gone} is no longer in hub.json. Nothing was saved.</Banner>
+              <Banner
+                tone="warning"
+                onDismiss={() => {
+                  setGone(null);
+                }}
+              >
+                {gone} is no longer in hub.json. Nothing was saved.
+              </Banner>
             )}
             {view.repos.map((repo, index) => {
               const open = openRepo === null ? index === 0 : openRepo === repo.dir;
@@ -778,6 +796,7 @@ function ConfigBody({
                         }}
                         onSaved={(dir) => {
                           setRepoForm(null);
+                          setGone(null);
                           setFocusId(changeId(dir));
                           onRepoSaved(`Updated repo ${dir}`, nextLines("change", dir));
                         }}
@@ -810,6 +829,7 @@ function ConfigBody({
                   }}
                   onSaved={(dir) => {
                     setRepoForm(null);
+                    setGone(null);
                     setOpenRepo(dir);
                     setFocusId(summaryId(dir));
                     onRepoSaved(`Added repo ${dir}`, nextLines("add", dir));
@@ -1070,6 +1090,7 @@ function ConfigBody({
             }}
             onRemoved={(dir) => {
               setRemoving(null);
+              setGone(null);
               if (openRepo === dir) setOpenRepo(null);
               setFocusId(ADD_REPO_ID);
               onRepoSaved(`Removed repo ${dir}`, nextLines("remove", dir));

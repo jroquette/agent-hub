@@ -115,7 +115,7 @@ setup after.", and the footer reason · Cancel · **Add repo**.
 | --- | --- |
 | `Section` (`parts.tsx`) | Gets an `actions` slot for Add repo after the Ask button. This extends an existing part, not a new component |
 | `RepoCard` (screen) | Gets the action row and the form in place of the rows |
-| Section form frame (the Environment page's `SectionForm`: Cancel, the save verb, the refusal above the actions, Esc cancels, nothing closes while pending) | The repo form's frame. Its code may move to `hub-config/parts.tsx` to be shared, which is the implementer's call |
+| Section form frame (`SectionForm`, `hub-config/parts.tsx`: Cancel, the save verb, the refusal above the actions, Esc cancels, nothing closes while pending) | The repo form's frame, shared with the Environment page's section forms. It gets a `reason` slot (why Save is off) and a `refusal` slot (each form shows its own block) |
 | **`RepoForm`** (`new`, screen-local) | The repo fields of add and change, and the rules below. Considered: `SetupFlow`, which asks one question per step, is too heavy for three required fields that the CLI takes in one line; `SidePanel` (service panel) moves the form away from the card it changes and covers the page at 1280; `LocalSettingsDialog` holds "only me" values (`hub.local.json`), and putting team writes in it would blur who set what |
 | `Button`, `Tooltip` | Add repo, Change, Remove, Cancel, Save; reasons for buttons that are off |
 | `Banner` `tone="error"` `boxed` | The refusal block under the form: `circle-alert`, the title and one line per problem |
@@ -157,7 +157,7 @@ Glossary words: **repo**, **hub**. The folder is called "folder" (never "dir" on
 | Repo gone after reload | "{dir} is no longer in hub.json. Nothing was saved." (inline `Banner` warning at the top of the section) |
 | No server | "Could not reach the server. Nothing was saved." |
 | Remove title | Remove repo {dir}? |
-| Remove consequences | "Agents stop working in {dir} after ./hub sync." · with team services: "Its {N} services go with it: {names}." · "../{dir} and its worktrees stay on disk." · "hub.json changes; run ./hub sync and open a hub PR." |
+| Remove consequences | "Agents stop working in {dir} after ./hub sync." · with one team service: "Its service goes with it: {name}." · with more: "Its {N} services go with it: {names}." · "../{dir} and its worktrees stay on disk." · "hub.json changes; run ./hub sync and open a hub PR." |
 | Remove buttons | Cancel · Remove repo (pending "Removing…") |
 | Remove refused | The refusal block in the dialog, one line per reference (e.g. "repo demo-web is still named at guard.ask_before_edit[0]", "repo demo-web is still named in hub.local.json at repos[0].dir"), then **Ask Claude to drop these** (default, `message-square`) |
 | Remove off (one repo) | Tooltip "The only repo: hub.json needs at least one." |
@@ -186,17 +186,20 @@ only the `HubConfigView`.
 
 - **Add repo** opens the "New repo" card at the end of the list, scrolls it into view and focuses Folder. **Change**
   opens the form in the card and focuses GitHub repo.
-- `Enter` in a field submits when Save is on. `Esc` cancels the form unless a save is pending or a dialog or panel
-  is above it. Cancel and `Esc` do not ask, matching the Environment page's section forms; the form is one screen
+- `Enter` in a field submits when Save is on. `Esc` pressed inside the form cancels it unless a save is pending or a
+  dialog or panel is above it; `Esc` elsewhere (the Discuss panel) leaves it open. While the form is open its card
+  stays open: its summary does not fold it. Cancel and `Esc` do not ask, matching the Environment page's section forms; the form is one screen
   of fields.
 - Tab order: the section head (Ask, Add repo) → cards. Inside a form: fields top to bottom → Cancel → Save. The
   refusal block is not in the tab order, except "Ask Claude to drop these" in the remove dialog.
 - **Focus after:** Cancel an add → Add repo. Cancel a change → that card's Change. Added → the new card's summary,
   opened (`?repo={dir}`, replace). Updated → the card's Change. Removed → Add repo, and `?repo=` is dropped if it
-  named the removed repo. A refusal leaves focus where it was (on Save); the alert announces it.
+  named the removed repo. A refusal leaves focus where it was (on Save, which stays focusable while pending through
+  `aria-disabled`; if focus was lost meanwhile, it goes to Save); the alert announces it.
 - **Changed on disk:** the config reloads and the form stays open. Fields the person did not touch take the new
   values, and touched fields keep what they typed, so Save never undoes a change someone else made to another key.
-  If the repo being changed is gone, the form closes and shows the "no longer in hub.json" line.
+  If the repo being changed is gone, the form closes and shows the "no longer in hub.json" line, which can be
+  dismissed and goes away with the next save or remove.
 - **Remove:** Remove opens the dialog. Confirm sends the write. A refusal keeps the dialog open with the lines, and
   Remove repo stays on, so the person can fix the files and try again. "Ask Claude to drop these" closes the dialog,
   attaches the lines as a reference (source `hub.json`) and opens the Discuss panel. It is off, with the reason, when

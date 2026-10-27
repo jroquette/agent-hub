@@ -1861,6 +1861,34 @@ export function stubApi(routes: ApiRoutes): Request[] {
   return requests;
 }
 
+/**
+ * Holds every POST the stubbed fetch receives until `release()`, then answers it from the routes
+ * as before: a test can look at a form while its save is pending. Call after `stubApi` (or
+ * `renderWithApi`). `posts()` counts the POSTs sent so far, held or not.
+ */
+export function holdPosts(): { release: () => void; posts: () => number } {
+  const fetchMock = vi.mocked(globalThis.fetch);
+  const answer = fetchMock.getMockImplementation();
+  if (answer === undefined) throw new Error("holdPosts: call stubApi first");
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let count = 0;
+  fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+    const method = input instanceof Request ? input.method : (init?.method ?? "GET");
+    if (method.toUpperCase() !== "POST") return answer(input, init);
+    count += 1;
+    return gate.then(() => answer(input, init));
+  });
+  return {
+    release: () => {
+      release();
+    },
+    posts: () => count,
+  };
+}
+
 /* ---------- Fake EventSource ---------- */
 
 type Listener = (event: MessageEvent<string>) => void;

@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { Banner, Button, ConfirmDialog, Tooltip } from "../../components";
 import { useDiscuss } from "../../shell/discuss";
-import { AskBlocked } from "./parts";
+import { AskBlocked, SectionForm } from "./parts";
 import {
   EMPTY_REPO,
   REPO_FIELDS,
@@ -84,11 +84,6 @@ function RefusalBlock({ refusal, idPrefix }: { refusal: RepoRefusal; idPrefix: s
   );
 }
 
-/** Whether a dialog or side panel sits above the form: Esc is theirs. */
-function layerAbove(): boolean {
-  return document.querySelector("[data-ah-dialog], .ah-side-panel") !== null;
-}
-
 export interface RepoFormProps {
   view: HubConfigView;
   /** The repo changed, as the config shows it now; null: a new repo. */
@@ -110,7 +105,6 @@ export function RepoForm({ view, repo, labelledBy, onCancel, onSaved }: RepoForm
   const [pending, setPending] = useState(false);
   const [refusal, setRefusal] = useState<RepoRefusal | null>(null);
   const first = useRef<HTMLInputElement>(null);
-  const formRef = useRef<HTMLFormElement>(null);
 
   // The config reloaded (hub.json changed on disk): untouched fields take the file's values, so
   // Save never undoes a change someone else made to another key. Adjusted while rendering, as
@@ -126,27 +120,11 @@ export function RepoForm({ view, repo, labelledBy, onCancel, onSaved }: RepoForm
 
   useEffect(() => {
     first.current?.focus();
-    const form = formRef.current;
+    const form = first.current?.closest("form");
     if (repo === null && form && "scrollIntoView" in form)
       form.scrollIntoView({ block: "nearest" });
     // On open only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const latest = useRef({ onCancel, pending });
-  useEffect(() => {
-    latest.current = { onCancel, pending };
-  });
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented || latest.current.pending) return;
-      if (layerAbove()) return;
-      latest.current.onCancel();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-    };
   }, []);
 
   const duplicate = repo === null ? duplicateOf(values.dir, view.repos) : null;
@@ -176,14 +154,17 @@ export function RepoForm({ view, repo, labelledBy, onCancel, onSaved }: RepoForm
     );
 
   return (
-    <form
-      ref={formRef}
-      className="ah-stack ah-env-section-form ah-repo-form"
-      aria-labelledby={labelledBy}
-      onSubmit={(event) => {
-        event.preventDefault();
-        submit();
-      }}
+    <SectionForm
+      className="ah-repo-form"
+      labelledBy={labelledBy}
+      saveLabel={repo === null ? "Add repo" : "Save repo"}
+      pendingLabel={repo === null ? "Adding…" : "Saving…"}
+      pending={pending}
+      canSave={reason === null}
+      reason={reason}
+      refusal={refusal && <RefusalBlock refusal={refusal} idPrefix={id} />}
+      onCancel={onCancel}
+      onSave={submit}
     >
       <div className="ah-stack ah-small ah-muted" style={{ gap: 2 }}>
         {repo === null ? (
@@ -249,19 +230,7 @@ export function RepoForm({ view, repo, labelledBy, onCancel, onSaved }: RepoForm
           Branch, commit title and PR title patterns: ask Claude to change them.
         </p>
       )}
-      {refusal && <RefusalBlock refusal={refusal} idPrefix={id} />}
-      <div className="ah-env-section-actions ah-repo-form-actions">
-        <span className="ah-small ah-muted ah-repo-form-reason" aria-live="polite">
-          {reason}
-        </span>
-        <Button variant="ghost" disabled={pending} onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button type="submit" variant="primary" disabled={reason !== null || pending}>
-          {repo === null ? (pending ? "Adding…" : "Add repo") : pending ? "Saving…" : "Save repo"}
-        </Button>
-      </div>
-    </form>
+    </SectionForm>
   );
 }
 
@@ -296,7 +265,8 @@ export function RepoRemoval({ view, dir, onCancel, onRemoved }: RepoRemovalProps
 
   const consequences: ReactNode[] = [
     `Agents stop working in ${dir} after ./hub sync.`,
-    ...(services.length > 0
+    ...(services.length === 1 ? [`Its service goes with it: ${services.join(", ")}.`] : []),
+    ...(services.length > 1
       ? [`Its ${String(services.length)} services go with it: ${services.join(", ")}.`]
       : []),
     `../${dir} and its worktrees stay on disk.`,
