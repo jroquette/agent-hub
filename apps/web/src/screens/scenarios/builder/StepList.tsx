@@ -16,6 +16,7 @@ import type { ScenarioAction, ScenarioPlanRow } from "../queries";
 import { pace } from "../story";
 import { TokenText, ValueToken, cardTitle, firstSentence, tokenOf } from "./CardParts";
 import { kindLook } from "./FlowCanvas";
+import { looksLikeJson, parseLoose, stringifyLoose } from "./looseJson";
 import { conditionWords, shown, text, type BuilderNode, type Json } from "./model";
 import { itemId, listsOf, type Item, type Slot } from "./program";
 import type { BuilderProblem } from "./useScenarioDraft";
@@ -594,7 +595,12 @@ export function StepList(props: StepListProps) {
     group: boolean,
     spoken = "",
     stage = false,
-    extra: { news?: ReactNode; titleEditor?: ReactNode; tech?: ReactNode } = {},
+    extra: {
+      news?: ReactNode;
+      titleEditor?: ReactNode;
+      tech?: ReactNode;
+      open?: ReactNode;
+    } = {},
   ) => {
     const number = numbers.get(id) ?? "";
     const isSelected = selected === id;
@@ -756,6 +762,7 @@ export function StepList(props: StepListProps) {
           {detail && <span className="st-detail">{detail}</span>}
           {extra.tech && <span className="st-tech">{extra.tech}</span>}
           {extra.news}
+          {extra.open}
         </span>
         <span className="st-right">
           {suggested?.has(id) && <span className="st-chip">Suggested</span>}
@@ -871,93 +878,168 @@ export function StepList(props: StepListProps) {
             description: typed.trim(),
           }))
         : undefined;
-    // Line 2 with its values as chips: a click edits one in place (the row is selected).
+    // Selected, the row opens in place: what it does in full, the action it runs, each value it
+    // sends (a JSON body indented, its references drawn as tokens), the values that come from
+    // elsewhere, what it keeps. Plain values and the timing edit right there.
     const detail: ReactNode = lines.detail;
-    let tech: ReactNode = lines.tech;
     const values =
       node.type === "action" || node.type === "expect" || node.type === "include"
         ? ownValues(node, action)
         : [];
-    const timed = node.type === "expect" && text(node.every) !== "" && text(node.timeout) !== "";
-    if (editable && selected === id && (values.length > 0 || timed)) {
-      const given = record(node.with);
-      const parts: ReactNode[] = [];
-      const ref = text(node.action);
-      if (ref)
-        parts.push(
-          <span key="ref" className="st-mono">
-            {action?.name ?? ref}
-          </span>,
+    const isOpen = selected === id && (node.type === "action" || node.type === "expect");
+    const given = record(node.with);
+    const number = numbers.get(id) ?? id;
+    const valueView = (name: string, value: Json): ReactNode => {
+      const key = `with:${name}`;
+      if (editable && editingHere === key) {
+        return field(key, `${name} of ${number}`, compact(value), (typed) => ({
+          ...node,
+          with: { ...given, [name]: typedAs(value, typed) },
+        }));
+      }
+      const written = typeof value === "string" ? value : JSON.stringify(value);
+      if (typeof value === "object" || looksLikeJson(written)) {
+        const parsed = typeof value === "object" ? { ok: true, value } : parseLoose(written);
+        const pretty = parsed.ok ? stringifyLoose(parsed.value, true) : written;
+        return (
+          <pre className="st-json" aria-label={`${name}, as JSON`}>
+            <TokenText value={pretty} />
+          </pre>
         );
-      if (node.type === "expect") {
-        const every = text(node.every);
-        const timeout = text(node.timeout);
-        if (every && timeout) {
-          parts.push(
-            editingHere === "timing" ? (
-              <span key="timing" className="st-inline">
-                every{" "}
-                {field("timing", `How often ${numbers.get(id) ?? id} checks`, every, (typed) => ({
-                  ...node,
-                  every: typed.trim() || every,
-                }))}
+      }
+      if (editable && editableValue(value)) {
+        return (
+          <button
+            type="button"
+            className="st-chip-edit"
+            tabIndex={-1}
+            title={`Edit ${name}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              setEditing({ id, field: key });
+            }}
+          >
+            <Value value={value} />
+          </button>
+        );
+      }
+      return (
+        <span className="st-open-value">
+          <Value value={value} />
+        </span>
+      );
+    };
+    const elsewhere = (action?.inputs ?? []).filter((input) => !(input.name in given));
+    const fromRun = elsewhere.filter((input) => input.default === undefined);
+    const byDefault = elsewhere.filter((input) => input.default !== undefined);
+    const every = text(node.every);
+    const timeout = text(node.timeout);
+    const keeps = Object.entries(record(node.capture));
+    const open = isOpen ? (
+      // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- clicks inside keep the row as it is
+      <div
+        className="st-open"
+        onClick={(event) => {
+          event.stopPropagation();
+        }}
+      >
+        {action?.description && <p className="st-open-about">{action.description}</p>}
+        <div className="st-open-grid">
+          <span className="st-open-label">Runs</span>
+          <span className="st-open-line">
+            <span className="st-mono">{action?.name ?? text(node.action)}</span>
+            {action && <EffectBadge effect={action.effect} words />}
+            {action?.draft === true && <span className="ah-small ah-subtle">draft action</span>}
+          </span>
+          {node.type === "expect" && every && timeout && (
+            <>
+              <span className="st-open-label">Checks</span>
+              <span className="st-open-line">
+                {editable && editingHere === "timing" ? (
+                  <>
+                    every{" "}
+                    {field("timing", `How often ${number} checks`, every, (typed) => ({
+                      ...node,
+                      every: typed.trim() || every,
+                    }))}
+                  </>
+                ) : editable ? (
+                  <button
+                    type="button"
+                    className="st-chip-edit"
+                    tabIndex={-1}
+                    title="Edit how often it checks"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setEditing({ id, field: "timing" });
+                    }}
+                  >
+                    every {pace(every)}, up to {pace(timeout)}
+                  </button>
+                ) : (
+                  `every ${pace(every)}, up to ${pace(timeout)}`
+                )}
+                {text(node.until_when) && (
+                  <span className="ah-muted">until {conditionWords(text(node.until_when))}</span>
+                )}
               </span>
-            ) : (
-              <button
-                key="timing"
-                type="button"
-                className="st-chip-edit"
-                tabIndex={-1}
-                title="Edit how often it checks"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setEditing({ id, field: "timing" });
-                }}
-              >
-                every {pace(every)}, up to {pace(timeout)}
-              </button>
-            ),
-          );
-        }
-      }
-      for (const [name, value] of values) {
-        const key = `with:${name}`;
-        if (editingHere === key) {
-          parts.push(
-            <span key={key} className="st-inline">
-              <span className="st-key">{name}</span>{" "}
-              {field(key, `${name} of ${numbers.get(id) ?? id}`, compact(value), (typed) => ({
-                ...node,
-                with: { ...given, [name]: typedAs(value, typed) },
-              }))}
-            </span>,
-          );
-        } else if (editableValue(value)) {
-          parts.push(
-            <button
-              key={key}
-              type="button"
-              className="st-chip-edit"
-              tabIndex={-1}
-              title={`Edit ${name}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                setEditing({ id, field: key });
-              }}
-            >
-              <span className="st-key">{name}</span> <Value value={value} />
-            </button>,
-          );
-        } else {
-          parts.push(
-            <span key={key} title="Edit it in the panel">
-              <span className="st-key">{name}</span> <Value value={value} />
-            </span>,
-          );
-        }
-      }
-      tech = <span className="st-detail-edit">{interleave(parts)}</span>;
-    }
+            </>
+          )}
+          {values.map(([name, value]) => {
+            const spec = action?.inputs.find((input) => input.name === name);
+            return (
+              <div key={name} className="st-open-pair">
+                <span className="st-open-label">
+                  <span className="st-mono">{name}</span>
+                  {spec?.description && (
+                    <span className="st-open-hint">{firstSentence(spec.description)}</span>
+                  )}
+                </span>
+                <span className="st-open-line">{valueView(name, value)}</span>
+              </div>
+            );
+          })}
+          {(fromRun.length > 0 || byDefault.length > 0) && (
+            <>
+              <span className="st-open-label">From elsewhere</span>
+              <span className="st-open-line st-open-wrap ah-small ah-muted">
+                {fromRun.length > 0 && (
+                  <span>
+                    <span className="st-mono">{fromRun.map((input) => input.name).join(", ")}</span>{" "}
+                    {fromRun.length === 1 ? "comes" : "come"} from the scenario run or the
+                    environment
+                  </span>
+                )}
+                {byDefault.map((input) => (
+                  <span key={input.name}>
+                    <span className="st-mono">{input.name}</span> uses its default,{" "}
+                    <span className="st-mono">{compact(input.default as Json)}</span>
+                  </span>
+                ))}
+              </span>
+            </>
+          )}
+          {keeps.length > 0 && (
+            <>
+              <span className="st-open-label">Keeps</span>
+              <span className="st-open-line st-open-wrap">
+                {keeps.map(([name, from]) => (
+                  <span key={name}>
+                    <span className="st-mono">{name}</span>{" "}
+                    <span className="ah-subtle">
+                      from <TokenText value={compact(from)} />
+                    </span>
+                  </span>
+                ))}
+              </span>
+            </>
+          )}
+        </div>
+        <span className="ah-small ah-subtle">
+          Plain values edit here · the panel on the right edits everything, JSON included.
+        </span>
+      </div>
+    ) : null;
     return row(
       id,
       level,
@@ -976,7 +1058,7 @@ export function StepList(props: StepListProps) {
         status ? ` ${status.label}.` : "",
       ].join(""),
       false,
-      { news, titleEditor, tech },
+      { news, titleEditor, tech: isOpen ? null : lines.tech, open },
     );
   };
 

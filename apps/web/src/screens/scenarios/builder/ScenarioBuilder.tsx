@@ -10,6 +10,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router";
 
 import {
@@ -2453,7 +2454,8 @@ export function ScenarioBuilder({
           </Toast>
         </div>
       )}
-      {rowMenuView}
+      {/* On the body: a fixed menu inside the page would be placed against the wrong box. */}
+      {rowMenuView && createPortal(rowMenuView, globalThis.document.body)}
       {paletteDrag && (
         <div
           className="sb-pal-ghost"

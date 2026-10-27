@@ -2016,7 +2016,8 @@ describe("ScenarioBuilder (scenario builder)", () => {
       "external_ref",
     );
     await user.type(within(form).getByLabelText("external_ref"), "T-1");
-    expect(fetch).toHaveTextContent("external_ref T-1");
+    // The open step lists the value under its name.
+    expect(fetch).toHaveTextContent(/external_ref.*T-1/);
 
     await save(user);
     const nodes = (await savedNodes(requests)) as (SentNode & { action?: string; with?: object })[];
@@ -2527,5 +2528,36 @@ describe("ScenarioBuilder (scenario builder)", () => {
       screen.queryByRole("complementary", { name: "Scenario runs of order-lifecycle" }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("form", { name: "Run order-lifecycle" })).toBeInTheDocument();
+  });
+
+  it("scenario builder opens a selected step in place with its JSON body indented", async () => {
+    const user = userEvent.setup();
+    renderBuilder({
+      [DETAIL]: aScenarioDetail({
+        document: {
+          ...document,
+          nodes: [
+            {
+              id: "fetch-order",
+              type: "action",
+              action: "send-queue-message",
+              with: { body: '{"event_type":"FETCH_ORDERS","minutes":$INPUTS.external_ref}' },
+            },
+            ...document.nodes.slice(1),
+          ],
+        },
+        content_hash: "sha256:aaa",
+      }),
+    });
+    const tree = await screen.findByRole("tree", { name: "Steps of order-lifecycle" });
+    const fetch = within(tree).getByRole("treeitem", { name: FETCH });
+    expect(within(fetch).queryByLabelText("body, as JSON")).not.toBeInTheDocument();
+
+    await user.click(fetch);
+    const body = within(fetch).getByLabelText("body, as JSON");
+    expect(body.textContent).toContain('"event_type": "FETCH_ORDERS",\n');
+    // The bare reference reads as a token, not as quoted text.
+    expect(within(body).getByTitle("Scenario input external_ref")).toBeInTheDocument();
+    expect(within(fetch).getByText("Runs")).toBeInTheDocument();
   });
 });
