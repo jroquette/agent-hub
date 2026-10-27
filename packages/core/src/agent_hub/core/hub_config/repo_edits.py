@@ -35,7 +35,8 @@ type Edited = Document | tuple[EditRefusal, ...]
 
 
 def add_repo(document: Document, entry: Mapping[str, JsonValue]) -> Edited:
-    """``document`` with ``entry`` last in ``repos``, its keys in ``REPO_KEY_ORDER``.
+    """``document`` with ``entry`` last in ``repos``, its keys in ``REPO_KEY_ORDER`` (any other
+    key left out).
 
     Refused when a repo's dir equals the entry's ignoring case (one folder on macOS).
     """
@@ -45,15 +46,15 @@ def add_repo(document: Document, entry: Mapping[str, JsonValue]) -> Edited:
             return (
                 EditRefusal(
                     f"repo dir {shown_name(new_dir)} is already used by repos[{index}]"
-                    f" ({existing}), ignoring case",
+                    f" ({shown_name(existing)}), ignoring case",
                     json_path(("repos", index, "dir")),
                 ),
             )
-    ordered = {key: entry[key] for key in REPO_KEY_ORDER if key in entry}
+    ordered: Document = {key: entry[key] for key in REPO_KEY_ORDER if key in entry}
     edited = copy.deepcopy(document)
     repos = edited.get("repos")
     repos = repos if isinstance(repos, list) else []
-    repos.append(ordered | dict(entry))
+    repos.append(ordered)
     edited["repos"] = repos
     return edited
 
@@ -117,8 +118,9 @@ def repo_references(
     document: Document, local_document: Document | None, repo: str
 ) -> tuple[EditRefusal, ...]:
     """A refusal for each place that names the dir ``repo``, at its path: a guarded or denied
-    path whose first segment is the dir, an event's repo, ``contract-sync``'s source or target,
-    then each ``repos`` entry of the developer's ``hub.local.json``."""
+    path whose first segment is the dir (a denied one ignoring case), an event's repo,
+    ``contract-sync``'s source or target, then each ``repos`` entry of the developer's
+    ``hub.local.json``."""
     shown = shown_name(repo)
     hub_paths = (
         *_guard_paths(document, repo),
@@ -140,10 +142,15 @@ def repo_references(
 
 
 def _guard_paths(document: Document, repo: str) -> Iterator[str]:
+    """The guarded paths whose first segment is ``repo``: exactly for ``ask_before_edit`` (as
+    the model checks it), ignoring case for ``deny_paths`` (as the guard matches it)."""
     guard = _object(document, "guard")
-    for key in ("ask_before_edit", "deny_paths"):
+    for key, fold in (("ask_before_edit", False), ("deny_paths", True)):
         for index, path in enumerate(_list(guard, key)):
-            if isinstance(path, str) and path.split("/", 1)[0] == repo:
+            if not isinstance(path, str):
+                continue
+            first = path.split("/", 1)[0]
+            if first == repo or (fold and first.lower() == repo.lower()):
                 yield json_path(("guard", key, index))
 
 
@@ -178,7 +185,7 @@ def _index(document: Document, repo: str) -> int | EditRefusal:
     missing = f"no repo {shown_name(repo)} in hub.json"
     for existing in dirs:
         if existing is not None and existing.lower() == repo.lower():
-            return EditRefusal(f"{missing}; did you mean {existing}?")
+            return EditRefusal(f"{missing}; did you mean {shown_name(existing)}?")
     return EditRefusal(missing)
 
 

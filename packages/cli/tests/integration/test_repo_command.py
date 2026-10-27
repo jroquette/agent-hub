@@ -58,8 +58,8 @@ def test_lists_repos_when_hub_has_two(hub: Path) -> None:
 
     assert (result.exit_code, result.stderr) == (0, ""), result.output
     assert result.stdout.splitlines() == [
-        "demo-api\tacme/demo-api\tapp\tmake check-fast\tmake check\tmain",
-        "demo-web\tacme/demo-web\tapp\t-\tmake check\ttrunk",
+        "demo-api (acme/demo-api, app, branch main): check_fast=make check-fast, check=make check",
+        "demo-web (acme/demo-web, app, branch trunk): check_fast=-, check=make check",
     ]
 
 
@@ -331,7 +331,6 @@ def test_refuses_remove_when_last_repo(api_hub: Path) -> None:
 def refused_lines(case: RepoEditCase, *, by_model: bool) -> list[str]:
     """The CLI's lines for ``case``'s refusal: core's after ``hub.json: not changed: ``, the
     model's after ``hub.json: <path>: ``."""
-    assert isinstance(case.expected, tuple)
     if by_model:
         return [f"hub.json: {path}: {message}" for path, message in case.expected]
     return [f"hub.json: not changed: {message}" for _path, message in case.expected]

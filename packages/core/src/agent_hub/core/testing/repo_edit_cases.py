@@ -2,7 +2,7 @@
 
 Each case is one edit, as ``hub`` arguments (``argv``) and as the body of
 ``POST /projects/{project}/config/repos`` (``body``), made on the files ``setup`` builds.
-``expected`` is the edited ``hub.json``, or the refusal's lines, each a JSON path and a message.
+``expected`` is the refusal's lines, each a JSON path and a message.
 A ``REFUSAL_CASES`` message is ``repo_edits``' reason, which the CLI prints after
 ``hub.json: not changed: ``; a ``MODEL_CASES`` message is the model's own, which the CLI prints
 after ``hub.json: <path>: `` and the API after ``hub.json: ``. Either way ``hub.json`` and
@@ -41,7 +41,7 @@ class RepoEditCase:
     argv: tuple[str, ...]
     body: Mapping[str, JsonValue]
     setup: Callable[[], RepoFiles]
-    expected: Document | RefusalLines
+    expected: RefusalLines
 
 
 def a_repos_document() -> Document:
@@ -214,7 +214,7 @@ REFUSAL_CASES: Final[tuple[RepoEditCase, ...]] = (
     ),
 )
 
-# Refused by the model, not by ``repo_edits`` (plan E3): the line names the key at its path.
+# Refused by the model, not by ``repo_edits``: the line names the key at its path.
 MODEL_CASES: Final[tuple[RepoEditCase, ...]] = (
     _add(
         "add-github-without-name",

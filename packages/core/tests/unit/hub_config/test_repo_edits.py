@@ -67,6 +67,44 @@ def test_refuses_add_when_dir_equal_ignoring_case() -> None:
     )
 
 
+def test_hides_existing_dir_when_token_shaped() -> None:
+    token_dir = "ghp_" + "A1b2C3d4E5f6G7h8I9j0" * 2
+    document = a_hub_document()
+    document["repos"][0]["dir"] = token_dir
+
+    refused_add = add_repo(
+        document, {"dir": token_dir.upper(), "github": "acme/x", "check": "make check"}
+    )
+    refused_set = set_repo(document, token_dir.upper(), {"role": "app"})
+
+    assert refused_add == (
+        EditRefusal(
+            "repo dir <name> is already used by repos[0] (<name>), ignoring case", "repos[0].dir"
+        ),
+    )
+    assert refused_set == (EditRefusal("no repo <name> in hub.json; did you mean <name>?"),)
+    assert token_dir not in repr((refused_add, refused_set))
+
+
+def test_writes_only_model_keys_when_added() -> None:
+    edited = add_repo(
+        a_hub_document(),
+        {
+            "dir": "demo-web",
+            "github": "acme/demo-web",
+            "check": "make check",
+            "services": {"web": {"kind": "http"}},
+        },
+    )
+
+    assert isinstance(edited, dict)
+    assert edited["repos"][1] == {
+        "dir": "demo-web",
+        "github": "acme/demo-web",
+        "check": "make check",
+    }
+
+
 def test_leaves_document_untouched_when_add_refused() -> None:
     document = a_hub_document()
     before = copy.deepcopy(document)
@@ -202,12 +240,15 @@ def test_refuses_remove_when_last_repo() -> None:
 
 def test_removes_entry_with_services_when_unreferenced() -> None:
     document = _d()
+    before = copy.deepcopy(document)
 
     edited = remove_repo(document, "demo-web", local_document={"repos": []})
 
     assert isinstance(edited, dict)
     assert edited == {**document, "repos": [document["repos"][0]]}
     assert list(edited) == list(document)
+    # Pure: the document given is not changed.
+    assert document == before
 
 
 def test_refuses_remove_when_dir_unknown() -> None:
@@ -223,9 +264,23 @@ def test_ignores_reference_when_other_dir_shares_prefix() -> None:
     document = _d()
     document["guard"] = {
         "ask_before_edit": ["demo-web2/x"],
-        "deny_paths": ["demo-webx", "Demo-Web"],
+        "deny_paths": ["demo-webx", "demo-web2/x", "Demo-Web2"],
     }
     document["events"] = [{"workflow": "x", "on": "merge", "repo": "demo-web2"}]
     local = {"repos": [{"dir": "demo-web2", "services": {}}]}
 
     assert repo_references(document, local, "demo-web") == ()
+
+
+def test_names_denied_path_when_dir_case_differs() -> None:
+    # The guard matches deny_paths ignoring case; ask_before_edit keeps the model's exact match.
+    document = _d()
+    document["guard"] = {
+        "ask_before_edit": ["Demo-Web/x"],
+        "deny_paths": ["Demo-Web", "DEMO-WEB/secrets"],
+    }
+
+    assert repo_references(document, None, "demo-web") == (
+        EditRefusal("repo demo-web is still named at guard.deny_paths[0]", "guard.deny_paths[0]"),
+        EditRefusal("repo demo-web is still named at guard.deny_paths[1]", "guard.deny_paths[1]"),
+    )

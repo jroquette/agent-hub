@@ -1,8 +1,10 @@
 """``hub repo``: list a hub's repos, and add, change or remove one, without a prompt.
 
 The hub is ``AGENT_HUB_ROOT`` or the cwd. ``list`` reads ``hub.json`` only and prints one line
-per repo: its dir, github, role, check_fast (``-`` when absent), check and effective default
-branch, separated by tabs; or one JSON object with ``--json``.
+per repo, in the style of ``hub env list``:
+``<dir> (<github>, <role>, branch <default branch>): check_fast=<check_fast>, check=<check>``,
+the default branch the effective one and ``check_fast`` ``-`` when absent; or one JSON object
+with ``--json``.
 
 ``add``, ``set`` and ``remove`` change ``hub.json``'s ``repos``: core's ``repo_edits`` makes the
 change, the result is checked as a read checks it (``hub.json``, then the rules across it and
@@ -12,7 +14,7 @@ or a refused change (the files unchanged), 2 on a usage error (docs/design/proje
 """
 
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Annotated, Final, cast
 
 import typer
@@ -65,7 +67,16 @@ def list_command(*, as_json: AsJson = False) -> None:
         typer.echo(dump_json({"repos": list(repos)}).decode(), nl=False)
         return
     for repo in repos:
-        typer.echo("\t".join(ABSENT if value is None else str(value) for value in repo.values()))
+        typer.echo(_listed_line(repo))
+
+
+def _listed_line(repo: Mapping[str, JsonValue]) -> str:
+    """``<dir> (<github>, <role>, branch <branch>): check_fast=<cmd>, check=<cmd>``."""
+    shown = {key: ABSENT if value is None else str(value) for key, value in repo.items()}
+    return (
+        f"{shown['dir']} ({shown['github']}, {shown['role']}, branch {shown['default_branch']}):"
+        f" check_fast={shown['check_fast']}, check={shown['check']}"
+    )
 
 
 def _listed(config: HubConfig) -> tuple[dict[str, JsonValue], ...]:
