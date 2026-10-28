@@ -18,6 +18,11 @@ function isRecord(value: unknown): value is Record<string, Json> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** A value as a mapping: itself when it is one, else an empty one. */
+export function record(value: Json | undefined): Record<string, Json> {
+  return isRecord(value) ? value : {};
+}
+
 /** The builder's copy of a scenario file's mapping (a missing `nodes` reads as none). */
 export function toDocument(value: unknown): BuilderDocument {
   const record = isRecord(value) ? value : {};

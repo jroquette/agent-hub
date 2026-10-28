@@ -1,12 +1,10 @@
-import { useState } from "react";
-
-import { Button, DataTable, Dialog, Icon, Tabs } from "../../../components";
-import { FileText } from "../ActionPanel";
+import { DataTable, Icon } from "../../../components";
+import { ActionFiles } from "../ActionPanel";
 import { EffectBadge } from "../parts";
 import type { ScenarioAction } from "../queries";
 import { pace } from "../story";
 import { ValueToken, tokenOf } from "./CardParts";
-import { shown, type BuilderDocument, type BuilderNode, type Json } from "./model";
+import { record, shown, type BuilderDocument, type BuilderNode, type Json } from "./model";
 
 /* The Script tab of the step editor (scenario builder v6): what the step will run, with what.
  * The action's description and facts, where each of its inputs gets its value in the chosen
@@ -22,10 +20,6 @@ export interface ResolvedInput {
   from: InputSource;
   /** The value as written (a literal, or a reference shown as a token); null when missing. */
   value: string | null;
-}
-
-function record(value: Json | undefined): Record<string, Json> {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : {};
 }
 
 /** Where each input of the step's action gets its value, first match wins: the value the step
@@ -204,79 +198,5 @@ export function StepScript({
         </span>
       </section>
     </div>
-  );
-}
-
-/** An action's two files in tabs, Script first (what runs) and the action file (what it
- * declares), with Expand into a dialog; `captions` says what each one is for. */
-export function ActionFiles({
-  action,
-  captions = false,
-}: {
-  action: ScenarioAction;
-  captions?: boolean;
-}) {
-  const [file, setFile] = useState<"script" | "document">("script");
-  const [expanded, setExpanded] = useState(false);
-  const path = file === "script" ? (action.script ?? "") : (action.path ?? "");
-  const text = file === "script" ? action.script_text : action.document_text;
-  const caption = !captions ? undefined : file === "script" ? (
-    <>
-      <b>Runs.</b> The code this step executes: the hub calls it with the step&apos;s values as its
-      inputs.
-    </>
-  ) : (
-    <>
-      <b>Declares.</b> The action file is not run: it names the script, the inputs it takes, whether
-      it changes data and what it answers.
-    </>
-  );
-  const fileView = (
-    <FileText
-      path={path}
-      text={text}
-      truncated={file === "script" ? action.script_truncated : false}
-      caption={caption}
-    />
-  );
-  return (
-    <>
-      <span className="ah-row" style={{ gap: 8 }}>
-        <Tabs
-          label="Files of the action"
-          value={file}
-          onChange={(id) => {
-            setFile(id === "document" ? "document" : "script");
-          }}
-          tabs={[
-            { id: "script", label: "Script" },
-            { id: "document", label: "Action file" },
-          ]}
-        />
-        <span className="ah-grow" />
-        <Button
-          size="sm"
-          variant="ghost"
-          icon="expand"
-          onClick={() => {
-            setExpanded(true);
-          }}
-        >
-          Expand
-        </Button>
-      </span>
-      {fileView}
-      {expanded && (
-        <Dialog
-          title={`${path} · ${action.name}`}
-          onClose={() => {
-            setExpanded(false);
-          }}
-          size="lg"
-        >
-          <div className="sb-script-dialog">{fileView}</div>
-        </Dialog>
-      )}
-    </>
   );
 }

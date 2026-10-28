@@ -24,6 +24,7 @@ interface Row {
 
 const MENU_WIDTH = 420;
 
+// Debt: ServicePicker repeats this search list (keys, placing, groups); a shared SearchMenu waits.
 export function InsertMenu({
   anchor,
   where,

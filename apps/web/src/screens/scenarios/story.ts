@@ -1,16 +1,10 @@
 import type { IconName } from "../../components";
-import type {
-  ScenarioAction,
-  ScenarioDetail,
-  ScenarioMode,
-  ScenarioPlanRow,
-  ScenarioStep,
-} from "./queries";
+import type { ScenarioAction, ScenarioMode, ScenarioPlanRow, ScenarioStep } from "./queries";
 
-/* The words of a scenario's storyline (the scenario detail's step cards): what each step does,
- * the values it passes, what it keeps and every place it can stop. Pure: built from the scenario
- * file and its actions as the detail returns them, and from a plan row once there is one. Never a
- * guess: what it cannot put in words it shows as written. */
+/* The words of a scenario's steps: their pace, how often a wait checks, and every place a step
+ * can stop. Pure: built from the scenario file and its actions as the detail returns them, and
+ * from a plan row once there is one. Never a guess: what it cannot put in words it shows as
+ * written. */
 
 const UNIT: Readonly<Record<string, string>> = { s: "s", m: "min", h: "h", ms: "ms" };
 const SECONDS: Readonly<Record<string, number>> = { ms: 0.001, s: 1, m: 60, h: 3600 };
@@ -55,7 +49,7 @@ function term(text: string): string | null {
 
 /** `$self.output.status == 200` → "status is 200"; `and` / `or` of such terms are joined in
  * words. Anything else is null: the caller shows the expression as written. */
-export function conditionInWords(expression: string): string | null {
+function conditionInWords(expression: string): string | null {
   for (const joiner of [" and ", " or "]) {
     if (expression.includes(joiner)) {
       const parts = expression.split(joiner).map(term);
@@ -66,158 +60,11 @@ export function conditionInWords(expression: string): string | null {
   return term(expression);
 }
 
-/** The step kind as the cards name it. */
-export const KIND_LOOK: Readonly<Record<string, { label: string; icon: IconName }>> = {
-  expect: { label: "Expect", icon: "timer" },
-  action: { label: "Action", icon: "circle-play" },
-  approval: { label: "Approval by you", icon: "stamp" },
-  wait: { label: "Wait", icon: "hourglass" },
-  loop_group: { label: "Repeats", icon: "refresh-cw" },
-  include: { label: "Includes", icon: "layers" },
-};
-
-export function kindLook(type: string): { label: string; icon: IconName } {
-  return KIND_LOOK[type] ?? { label: type, icon: "circle-dashed" };
-}
-
-/** The action a step calls, among the detail's actions (by the ref the step writes). */
-export function actionOf(
-  step: ScenarioStep,
-  actions: readonly ScenarioAction[],
-): ScenarioAction | null {
-  if (step.action === null) return null;
-  return actions.find((action) => action.ref === step.action) ?? null;
-}
-
 /** The condition of an expect, in words when it can be, else as written (`mono`). */
-export function conditionOf(step: ScenarioStep): { text: string; mono: boolean } {
+function conditionOf(step: ScenarioStep): { text: string; mono: boolean } {
   const raw = step.until_when ?? "";
   const words = conditionInWords(raw);
   return words === null ? { text: raw, mono: true } : { text: words, mono: false };
-}
-
-/** What a step does, in one sentence. */
-export function whatItDoes(step: ScenarioStep, action: ScenarioAction | null): string {
-  if (step.type === "expect" && step.every && step.timeout) {
-    const checks = maxChecks(step.every, step.timeout);
-    const condition = conditionOf(step);
-    const until = condition.mono ? "its condition holds" : condition.text;
-    return `Waits until ${until}: checks every ${pace(step.every)}, for up to ${pace(step.timeout)}${
-      checks === null ? "" : ` (at most ${String(checks)} checks)`
-    }.`;
-  }
-  if (step.type === "expect") {
-    return `Runs ${step.action ?? "its action"} again and again until its condition holds.`;
-  }
-  if (step.type === "action") {
-    const what = action?.description ?? `Runs ${step.action ?? "its action"}`;
-    return `${what.replace(/\.$/, "")}, once.`;
-  }
-  if (step.type === "approval") {
-    return "Stops here until you approve it. Reject cancels the scenario run.";
-  }
-  if (step.type === "wait") return step.description ?? "Waits.";
-  return step.description ?? kindLook(step.type).label;
-}
-
-export interface ValueLine {
-  name: string;
-  /** What the step passes, in words: "input service", "kept by fetch as order_id", a literal. */
-  value: string;
-  /** The value is a literal (shown in mono). */
-  literal: boolean;
-  /** A tooltip: where a run-time value comes from. */
-  title?: string;
-  /** "action's default" when the step passes nothing and the action has a default. */
-  note: string | null;
-  required: boolean;
-}
-
-function words(value: unknown): { value: string; literal: boolean; title?: string } {
-  if (typeof value === "string") {
-    const runtime = /^<\$CTX\.([a-z0-9_]+) from ([^>]+)>$/i.exec(value);
-    if (runtime) {
-      return {
-        value,
-        literal: true,
-        title: `Known at run time: captured by step ${runtime[2] ?? ""}`,
-      };
-    }
-    const input = /^\$INPUTS\.([A-Za-z0-9_]+)$/.exec(value);
-    if (input) return { value: `input ${input[1] ?? ""}`, literal: false };
-    const kept = /^\$CTX\.([A-Za-z0-9_]+)$/.exec(value);
-    if (kept) return { value: `kept earlier as ${kept[1] ?? ""}`, literal: false };
-    return { value, literal: true };
-  }
-  return { value: JSON.stringify(value), literal: true };
-}
-
-/** One line per action input, in the action's order, then any value the action does not
- * declare; an input the step leaves out shows the action's default. */
-export function valueLines(
-  step: ScenarioStep,
-  action: ScenarioAction | null,
-  args?: Readonly<Record<string, string>> | null,
-): ValueLine[] {
-  // A plan's args are the step's values resolved in it (inputs filled, run-time ones marked).
-  const given: Readonly<Record<string, unknown>> = args ?? step.with ?? {};
-  const lines: ValueLine[] = [];
-  const declared = new Set<string>();
-  for (const input of action?.inputs ?? []) {
-    declared.add(input.name);
-    if (input.name in given) {
-      lines.push({
-        name: input.name,
-        ...words(given[input.name]),
-        note: null,
-        required: input.required,
-      });
-    } else if (input.default !== null && input.default !== undefined) {
-      lines.push({
-        name: input.name,
-        ...words(input.default),
-        literal: true,
-        note: "action's default",
-        required: false,
-      });
-    }
-  }
-  for (const [name, value] of Object.entries(given)) {
-    if (!declared.has(name)) lines.push({ name, ...words(value), note: null, required: false });
-  }
-  return lines;
-}
-
-/** "status (integer), body (string)": the top level of the action's output format. */
-export function givesLine(action: ScenarioAction | null): string | null {
-  const properties: unknown = action?.output_format?.properties;
-  if (typeof properties !== "object" || properties === null) return null;
-  const parts = Object.entries(properties as Record<string, unknown>).map(([name, schema]) => {
-    const type =
-      typeof schema === "object" && schema !== null
-        ? (schema as { type?: unknown }).type
-        : undefined;
-    return typeof type === "string" ? `${name} (${type})` : name;
-  });
-  return parts.length === 0 ? null : parts.join(", ");
-}
-
-/** Each `capture` and the later steps that read it. */
-export function keptLines(
-  step: ScenarioStep,
-  steps: readonly ScenarioStep[],
-): { name: string; from: string; usedBy: string[] }[] {
-  return Object.entries(step.capture ?? {}).map(([name, ref]) => ({
-    name,
-    from: ref.replace(/^\$self\./, ""),
-    usedBy: steps
-      .filter((other) =>
-        Object.values(other.with ?? {}).some(
-          (value) => typeof value === "string" && value.includes(`$CTX.${name}`),
-        ),
-      )
-      .map((other) => other.id),
-  }));
 }
 
 export interface StopLine {
@@ -344,26 +191,4 @@ export function stopLines(
     ...(mode === "interactive" ? { title: MODE_TITLE } : {}),
   });
   return lines;
-}
-
-/** "2 steps · reads only · 1 input". */
-export function shapeLine(scenario: ScenarioDetail): string {
-  const steps = scenario.steps.length;
-  const parts = [`${String(steps)} ${steps === 1 ? "step" : "steps"}`];
-  const effectOf = (step: ScenarioStep) => actionOf(step, scenario.actions)?.effect ?? null;
-  const writes = scenario.steps.filter((step) => effectOf(step) === "write").length;
-  const destroys = scenario.steps.filter((step) => effectOf(step) === "destroy").length;
-  if (writes === 0 && destroys === 0 && scenario.steps.some((step) => effectOf(step) === "read")) {
-    parts.push("reads only");
-  }
-  if (writes > 0) parts.push(`writes in ${String(writes)} ${writes === 1 ? "step" : "steps"}`);
-  if (destroys > 0) {
-    parts.push(`destroys in ${String(destroys)} ${destroys === 1 ? "step" : "steps"}`);
-  }
-  const approvals = scenario.steps.filter((step) => step.type === "approval").length;
-  if (approvals > 0)
-    parts.push(`${String(approvals)} ${approvals === 1 ? "approval" : "approvals"}`);
-  const inputs = scenario.inputs.length;
-  if (inputs > 0) parts.push(`${String(inputs)} ${inputs === 1 ? "input" : "inputs"}`);
-  return parts.join(" · ");
 }

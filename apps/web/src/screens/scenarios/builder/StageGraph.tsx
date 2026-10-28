@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import { Icon } from "../../../components";
 import type { ScenarioAction } from "../queries";
+import { KindTile } from "./CardParts";
 import { FlowBlock, kindLook } from "./FlowCanvas";
 import { conditionWords, text, type BuilderNode } from "./model";
 import { itemId, type Item } from "./program";
@@ -95,18 +96,11 @@ export function StageGraph(props: StageGraphProps) {
       );
     }
     if (item.kind === "if") {
-      const look = kindLook("branch");
       return (
         <div className="sg-frame" role="group" aria-label={`If ${numbers.get(key) ?? key}`}>
           <span className="sg-frame-head">
             <span className="sg-num">{numbers.get(key)}</span>
-            <span
-              className="st-tile"
-              style={{ ["--tile" as string]: look.tint, ["--tile-soft" as string]: look.soft }}
-              aria-hidden
-            >
-              <Icon name={look.icon} size="sm" />
-            </span>
+            <KindTile look={kindLook("branch")} />
             If {conditionWords(item.condition) || "…"}
           </span>
           <div className="sg-paths">
@@ -123,7 +117,6 @@ export function StageGraph(props: StageGraphProps) {
       );
     }
     if (item.kind === "parallel") {
-      const look = kindLook("parallel");
       return (
         <div
           className="sg-frame"
@@ -132,13 +125,7 @@ export function StageGraph(props: StageGraphProps) {
         >
           <span className="sg-frame-head">
             <span className="sg-num">{numbers.get(key)}</span>
-            <span
-              className="st-tile"
-              style={{ ["--tile" as string]: look.tint, ["--tile-soft" as string]: look.soft }}
-              aria-hidden
-            >
-              <Icon name={look.icon} size="sm" />
-            </span>
+            <KindTile look={kindLook("parallel")} />
             At the same time · {count(item.lanes.length, "path")}, then continues
           </span>
           <div className="sg-paths">
@@ -169,16 +156,7 @@ export function StageGraph(props: StageGraphProps) {
           >
             <header className="sg-band-head">
               <span className="sg-num">{numbers.get(stage.key)}</span>
-              <span
-                className="st-tile"
-                style={{
-                  ["--tile" as string]: kindLook("stage").tint,
-                  ["--tile-soft" as string]: kindLook("stage").soft,
-                }}
-                aria-hidden
-              >
-                <Icon name="milestone" size="sm" />
-              </span>
+              <KindTile look={kindLook("stage")} />
               <b>{stage.name || "A stage with no name"}</b>
               <span className="sg-band-count">{count(blocksIn(stage.steps), "block")}</span>
             </header>

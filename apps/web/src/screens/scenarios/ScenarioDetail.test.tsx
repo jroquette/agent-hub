@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { seriousViolations } from "../../testing/axe";
 import {
   aDraftRow,
+  anApproval,
   aPage,
   aProblem,
   aDebugScenarioRun,
@@ -272,6 +273,8 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
     );
     // The commit command is written once on the page, in Before you start.
     expect(screen.getAllByText(codeText(COMMIT))).toHaveLength(1);
+    // AC-596.5: and the page's text holds it once (no copy in a row, a title or the verdict).
+    expect(document.body.textContent.split(COMMIT)).toHaveLength(2);
     expect(within(before).getByText(codeText(COMMIT))).toBeInTheDocument();
     expect(startButton()).toBeDisabled();
   });
@@ -738,6 +741,562 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
     });
     expect(brief).not.toHaveTextContent("schema v1");
     expect(brief).not.toHaveTextContent("`nodes`");
+  });
+
+  describe("run bar", () => {
+    it("scenarios detail lists the declared environments with their access and locks them while planning", async () => {
+      // AC-596.2.2: each environment as name · [production · ]access, its access in words.
+      renderDetail({ [PLAN]: "pending" });
+      const select = await screen.findByLabelText("Environment");
+      expect(
+        within(select)
+          .getAllByRole("option")
+          .map((option) => option.textContent),
+      ).toEqual(["personal · access write", "qa · access read", "live · production · access read"]);
+      expect(select).toHaveAttribute("title", "Agents may change data here.");
+      await userEvent.setup().selectOptions(select, "qa");
+      expect(select).toHaveAttribute("title", "Agents only read here.");
+
+      await planIn("qa");
+      await waitFor(() => {
+        expect(screen.getByLabelText("Environment")).toBeDisabled();
+      });
+      expect(verdictLine()).toHaveTextContent(
+        "Planning in qa… each step's script runs in plan mode.",
+      );
+    });
+
+    it("scenarios detail asks to choose an environment when only production is declared", async () => {
+      // AC-596.2.2 / AC-596.2.3: never production unless picked; the select says to choose.
+      renderDetail({
+        [DETAIL]: graphDetail({
+          environments: [{ name: "live", access: "read", production: true }],
+        }),
+      });
+      const select = await screen.findByLabelText("Environment");
+      expect(select).toHaveValue("");
+      expect(
+        within(select).getByRole("option", { name: "Choose an environment" }),
+      ).toBeInTheDocument();
+      expect(verdictLine()).toHaveTextContent("Choose an environment to plan in.");
+      expect(within(runBar()).getByRole("button", { name: "Plan in …" })).toBeDisabled();
+    });
+
+    it("scenarios detail remembers the environment a plan was made in", async () => {
+      // AC-596.2.3: the next visit opens on it.
+      renderDetail({ [PLAN]: aScenarioPlan({ environment: "qa", access: "read" }) });
+      await planIn("qa");
+      await within(runBar()).findByText(/^Can start in qa/);
+
+      const recent: unknown = JSON.parse(
+        window.localStorage.getItem("ah.scenarios.env.demo") ?? "[]",
+      );
+      expect(recent).toEqual(["qa"]);
+    });
+
+    it("scenarios detail words the scenario run mode in its control's title", async () => {
+      // AC-596.2.4: the mode's stop, and that blocks that ask still pause.
+      const user = userEvent.setup();
+      renderDetail();
+      const mode = await screen.findByRole("group", { name: "Scenario run mode" });
+      const control = mode.closest("[title]");
+      expect(control).toHaveAttribute(
+        "title",
+        "If a block does not reach its expected state, the scenario run pauses and a read-only agent investigates with you. Blocks that ask still pause for your approval.",
+      );
+      expect(within(mode).getByRole("button", { name: "Interactive" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+      await user.click(within(mode).getByRole("button", { name: "Regression" }));
+      expect(control).toHaveAttribute(
+        "title",
+        "No agent and no token cost. The first block that does not reach its expected state fails the scenario run. Blocks that ask still pause for your approval.",
+      );
+    });
+
+    it("scenarios detail counts the inputs to fill and plans with Enter in them", async () => {
+      // AC-596.2.5: Inputs · N to fill / N set toggles the values; Enter plans once.
+      const user = userEvent.setup();
+      const { requests } = renderDetail({ [PLAN]: aScenarioPlan() });
+      await screen.findByText("No problems");
+      const inputs = within(runBar()).getByRole("button", { name: "Inputs · 1 to fill" });
+      expect(inputs).toHaveAttribute("aria-expanded", "false");
+      await user.click(inputs);
+      expect(inputs).toHaveAttribute("aria-expanded", "true");
+      const form = screen.getByRole("form", { name: "Values to plan with" });
+      expect(form).toHaveTextContent("Values to plan and start with");
+      await user.type(within(form).getByRole("textbox", { name: "external_ref" }), "T-1");
+      expect(within(runBar()).getByRole("button", { name: "Inputs · 1 set" })).toBeInTheDocument();
+
+      await user.keyboard("{Enter}");
+      await within(runBar()).findByText(/^Can start in personal/);
+      expect(requests.filter((request) => request.url.endsWith("/plan"))).toHaveLength(1);
+      expect(within(runBar()).getByRole("button", { name: "Plan again" })).toBeInTheDocument();
+    });
+
+    it("scenarios detail sends each input typed by its declaration, and keeps a bad one at its field", async () => {
+      // AC-596.2.5: an integer input is sent as a number (a start checks the type as declared).
+      const user = userEvent.setup();
+      const { requests } = renderDetail({
+        [DETAIL]: graphDetail({
+          document: {
+            ...GRAPH,
+            inputs: { ...GRAPH.inputs, minutes: { type: "integer", required: true } },
+          },
+        }),
+        [PLAN]: aScenarioPlan(),
+      });
+      await screen.findByText("No problems");
+      await user.click(within(runBar()).getByRole("button", { name: "Inputs · 2 to fill" }));
+      const form = screen.getByRole("form", { name: "Values to plan with" });
+      await user.type(within(form).getByRole("textbox", { name: "external_ref" }), "T-1");
+      const minutes = within(form).getByRole("spinbutton", { name: "minutes" });
+      await user.type(minutes, "1.5");
+      await user.click(within(form).getByRole("button", { name: "Plan in personal" }));
+
+      expect(minutes).toHaveAccessibleDescription("minutes must be a whole number.");
+      expect(requests.some((request) => request.url.endsWith("/plan"))).toBe(false);
+
+      await user.clear(minutes);
+      await user.type(minutes, "3");
+      await user.click(within(form).getByRole("button", { name: "Plan in personal" }));
+      await within(runBar()).findByText(/^Can start in personal/);
+      const sent = requests.find((request) => request.url.endsWith("/plan"));
+      expect(await sent?.clone().json()).toEqual({
+        environment: "personal",
+        inputs: { external_ref: "T-1", minutes: 3 },
+      });
+    });
+
+    it("scenarios detail says a plan is still planning after 10 s", async () => {
+      // AC-596.2.6 (restored from v0.26.0): the Planning state names when a plan stops.
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      renderDetail({ [PLAN]: "pending" });
+      await planIn("personal");
+      await within(runBar()).findByText(/^Planning in personal…/);
+      expect(verdictLine()).not.toHaveTextContent("Still planning");
+
+      act(() => {
+        vi.advanceTimersByTime(10_000);
+      });
+      expect(verdictLine()).toHaveTextContent(
+        "Planning in personal… each step's script runs in plan mode. Still planning. A plan stops after 5 min.",
+      );
+    });
+
+    it("scenarios detail counts a plan's problems in the verdict and lists them in This plan", async () => {
+      // AC-596.2.7 / AC-596.2.19: the problem count on the verdict and Start; each problem.
+      renderDetail({ [PLAN]: aScenarioPlan({ problems: ["external_ref is not a ref"] }) });
+      await planIn("personal");
+
+      expect(
+        await within(runBar()).findByText("Cannot start: the plan has 1 problem."),
+      ).toBeInTheDocument();
+      expect(startButton()).toHaveAttribute("title", "Cannot start: the plan has 1 problem.");
+      const plan = within(runPanel()).getByRole("region", { name: "This plan" });
+      expect(within(plan).getByText("external_ref is not a ref")).toBeInTheDocument();
+    });
+
+    it("scenarios detail names the terminal command when hub web cannot launch a start", async () => {
+      // AC-596.2.8: a 502 start says how to see why from a terminal.
+      renderDetail({
+        [PLAN]: aScenarioPlan(),
+        [START]: aProblem({ status: 502, title: "Bad gateway" }),
+      });
+      const user = await planIn("personal");
+      await within(runBar()).findByText(/^Can start in personal/);
+      await user.click(startButton());
+      const dialog = screen.getByRole("alertdialog", { name: "Start a scenario run in personal?" });
+      await user.click(within(dialog).getByRole("button", { name: "Start scenario run" }));
+
+      expect(
+        await within(dialog).findByText(
+          codeText("./hub scenario run order-lifecycle --env personal"),
+        ),
+      ).toBeInTheDocument();
+      expect(dialog).toHaveTextContent("hub web could not launch hub scenario run.");
+    });
+
+    it("scenarios detail marks a plan stale once the environment changes", async () => {
+      // AC-596.2.9 / AC-596.2.19: the verdict says why, Start stays off, This plan says so.
+      renderDetail({ [PLAN]: aScenarioPlan() });
+      const user = await planIn("personal");
+      await within(runBar()).findByText(/^Can start in personal/);
+
+      await user.selectOptions(screen.getByLabelText("Environment"), "qa");
+      expect(verdictLine()).toHaveTextContent(
+        "This plan is for personal. Plan again to start in qa.",
+      );
+      expect(startButton()).toBeDisabled();
+      expect(within(runBar()).getByRole("button", { name: "Plan in qa" })).toBeInTheDocument();
+      expect(within(runPanel()).getByRole("region", { name: "This plan" })).toHaveTextContent(
+        "Planned before your changes: plan again to start.",
+      );
+    });
+
+    it("scenarios detail marks a plan stale when an input changes", async () => {
+      // AC-596.2.34: a start never sends the values the plan was not made with.
+      renderDetail({ [PLAN]: aScenarioPlan() });
+      const user = await planIn("personal");
+      await within(runBar()).findByText(/^Can start in personal/);
+
+      await user.click(within(runBar()).getByRole("button", { name: "Inputs · 1 set" }));
+      const form = screen.getByRole("form", { name: "Values to plan with" });
+      await user.type(within(form).getByRole("textbox", { name: "external_ref" }), "2");
+
+      expect(verdictLine()).toHaveTextContent(
+        "This plan is for external_ref T-1. Plan again to start with the new values.",
+      );
+      expect(startButton()).toBeDisabled();
+    });
+
+    it("scenarios detail words a stale plan made with no values", async () => {
+      // AC-596.2.34: a plan with no inputs never reads "This plan is for ."
+      const user = userEvent.setup();
+      renderDetail({
+        [DETAIL]: graphDetail({ document: { ...GRAPH, inputs: { note: { type: "string" } } } }),
+        [PLAN]: aScenarioPlan(),
+      });
+      await screen.findByText("No problems");
+      await user.click(within(runBar()).getByRole("button", { name: "Plan in personal" }));
+      const form = screen.getByRole("form", { name: "Values to plan with" });
+      await user.click(within(form).getByRole("button", { name: "Plan in personal" }));
+      await within(runBar()).findByText(/^Can start in personal/);
+
+      await user.click(within(runBar()).getByRole("button", { name: "Inputs · 1 to fill" }));
+      await user.type(
+        within(screen.getByRole("form", { name: "Values to plan with" })).getByRole("textbox", {
+          name: "note",
+        }),
+        "x",
+      );
+      expect(verdictLine()).toHaveTextContent(
+        "This plan was made with no values. Plan again to start with the new values.",
+      );
+      expect(verdictLine()).not.toHaveTextContent("This plan is for .");
+    });
+
+    it("scenarios detail clears a plan, its verdict and its row lines", async () => {
+      // AC-596.2.10.
+      const user = userEvent.setup();
+      renderDetail({ [PLAN]: aScenarioPlan() });
+      await planIn("personal");
+      await within(runBar()).findByText(/^Can start in personal/);
+      expect(row(/^Step 1,/)).toHaveTextContent("Plan:");
+
+      await user.click(within(runBar()).getByRole("button", { name: "Clear plan" }));
+      expect(within(runPanel()).queryByRole("region", { name: "This plan" })).toBeNull();
+      expect(verdictLine()).toHaveTextContent(
+        "Plan the scenario to see what each step will do in personal. Nothing is changed by a plan.",
+      );
+      expect(row(/^Step 1,/)).not.toHaveTextContent("Plan:");
+      expect(startButton()).toHaveAttribute("title", "Plan the scenario first.");
+    });
+
+    it("scenarios detail on a tablet plans but says starting needs a desktop screen", async () => {
+      // AC-596.2.8 (restored from v0.26.0, spec 23 Responsive): a tablet gets the plan only.
+      vi.stubGlobal("matchMedia", (query: string) => ({
+        matches: query === "(min-width: 768px) and (max-width: 1279px)",
+        media: query,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }));
+      renderDetail({ [PLAN]: aScenarioPlan() });
+      await planIn("personal");
+
+      expect(await within(runBar()).findByText(/^Can start in personal/)).toBeInTheDocument();
+      expect(
+        within(runBar()).getByText("Starting a scenario run needs a desktop screen."),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Start scenario run" })).toBeNull();
+    });
+
+    it("scenarios detail names an undeclared environment and the command that declares it", async () => {
+      // AC-596.2.2 (restored from v0.26.0): an old ?env= naming an environment the hub lacks.
+      renderDetail({}, `${PATH}?env=staging`);
+
+      const select = await screen.findByLabelText("Environment");
+      expect(select).toHaveValue("staging");
+      expect(verdictLine()).toHaveTextContent("Environment staging is not declared in this hub.");
+      expect(within(runPanel()).getByRole("alert")).toHaveTextContent(
+        "Environment staging is not declared in this hub. Declare it in hub.json, or in hub.local.json for yourself:",
+      );
+      expect(
+        within(runPanel()).getByText(codeText("./hub env add staging --access read")),
+      ).toBeInTheDocument();
+      expect(startButton()).toHaveAttribute(
+        "title",
+        "Environment staging is not declared in this hub.",
+      );
+    });
+
+    it("scenarios detail names an environment a plan finds undeclared", async () => {
+      // AC-596.2.7 (restored from v0.26.0): a plan with no access is for no declared environment.
+      renderDetail({
+        [PLAN]: aScenarioPlan({ environment: "qa", access: null, denied: true, rows: [] }),
+      });
+      await planIn("qa");
+
+      expect(
+        await within(runPanel()).findByText(codeText("./hub env add qa --access read")),
+      ).toBeInTheDocument();
+      expect(verdictLine()).toHaveTextContent("Environment qa is not declared in this hub.");
+      expect(startButton()).toBeDisabled();
+    });
+
+    it("scenarios detail shows a plan's input problems at their fields", async () => {
+      // AC-596.2.5 (restored from v0.26.0): a 422 names its inputs by pointer.
+      renderDetail({
+        [PLAN]: aProblem({
+          status: 422,
+          title: "Invalid request body",
+          errors: [{ pointer: "/inputs/external_ref", message: "external_ref must be a ref." }],
+        }),
+      });
+      await planIn("personal");
+
+      const form = await screen.findByRole("form", { name: "Values to plan with" });
+      await waitFor(() => {
+        expect(
+          within(form).getByRole("textbox", { name: "external_ref" }),
+        ).toHaveAccessibleDescription("external_ref must be a ref.");
+      });
+      // Every message sits at a field: no problem banner repeats it.
+      expect(within(runPanel()).queryByText("Could not plan the scenario")).toBeNull();
+    });
+
+    it("scenarios detail shows a plan 422's messages that name no field of the form", async () => {
+      // AC-596.2.5 (restored from v0.26.0): none of the messages is lost.
+      renderDetail({
+        [PLAN]: aProblem({
+          status: 422,
+          title: "Invalid request body",
+          errors: [
+            { pointer: "/inputs/external_ref", message: "external_ref must be a ref." },
+            { pointer: "/environment", message: "environment must name an environment." },
+            {
+              pointer: "/inputs/added_later",
+              message: "added_later is not an input of the scenario.",
+            },
+          ],
+        }),
+      });
+      await planIn("personal");
+
+      expect(
+        await within(runPanel()).findByText("environment must name an environment."),
+      ).toBeInTheDocument();
+      // An input the form does not show (one added later) keeps its message too.
+      expect(
+        within(runPanel()).getByText("added_later is not an input of the scenario."),
+      ).toBeInTheDocument();
+      const form = screen.getByRole("form", { name: "Values to plan with" });
+      expect(
+        within(form).getByRole("textbox", { name: "external_ref" }),
+      ).toHaveAccessibleDescription("external_ref must be a ref.");
+    });
+  });
+
+  describe("run panel", () => {
+    it("scenarios detail folds the draft actions and commits only those it adds, at once", async () => {
+      // AC-596.2.39 / AC-596.2.40: one commit command, folded under the actions it adds.
+      const commit = (name: string) =>
+        `git add -- actions/orders/${name}.yaml && git commit -m 'Accept action orders/${name}'`;
+      const draft = (name: string, command: string | null) =>
+        aScenarioAction({ ref: `orders/${name}`, name, draft: true, accept_command: command });
+      renderDetail({
+        [DETAIL]: graphDetail({
+          actions: [
+            draft("send-queue-message", commit("send-queue-message")),
+            draft("get-order-by-ref", commit("get-order-by-ref")),
+            draft("render-invoice-pdf", null),
+          ],
+        }),
+      });
+
+      const before = await screen.findByRole("region", { name: "Before you start" });
+      expect(before).toHaveTextContent("3 draft actions to commit");
+      expect(before).toHaveTextContent("these actions are committed in the hub checkout");
+      // Its copy button sits outside the fold.
+      const [copy] = within(before).getAllByRole("button", { name: "Copy the commit command" });
+      expect(copy?.closest("details")).toBeNull();
+      const folded = before.querySelector("details");
+      expect(folded).not.toHaveAttribute("open");
+      expect(within(before).getByText("Which actions (3) and the command")).toBeInTheDocument();
+      expect(within(before).getAllByRole("listitem")).toHaveLength(3);
+      // The message names only the actions whose files it adds.
+      expect(
+        within(before).getByText(
+          codeText(
+            "git add -- actions/orders/send-queue-message.yaml actions/orders/get-order-by-ref.yaml && git commit -m 'Accept actions orders/send-queue-message, orders/get-order-by-ref'",
+          ),
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("scenarios detail reaches Before you start from the verdict while a step is open", async () => {
+      // AC-596.2.7: the verdict's link lands even when the editor holds the right column.
+      renderDetail({ [PLAN]: denied });
+      const user = await planIn("personal");
+      const link = await within(runBar()).findByRole("link", {
+        name: /^Cannot start: 1 draft action needs acceptance/,
+      });
+      await user.click(row(/^Step 1,/));
+      expect(
+        screen.queryByRole("complementary", { name: "Scenario runs of order-lifecycle" }),
+      ).toBeNull();
+
+      await user.click(link);
+      expect(within(runPanel()).getByRole("region", { name: "Before you start" })).toHaveFocus();
+    });
+
+    it("scenarios detail lists the newest five scenario runs, then all of them", async () => {
+      // AC-596.2.20.
+      const user = userEvent.setup();
+      const runs = Array.from({ length: 6 }, (_, i) =>
+        aScenarioRunRef({ run_id: `run-${String(i)}`, status: "done", ended_at: at(60) }),
+      );
+      renderDetail({ [DETAIL]: graphDetail({ runs }) });
+
+      const list = await screen.findByRole("region", { name: "Scenario runs" });
+      expect(within(list).getAllByRole("link", { name: /^Open scenario run/ })).toHaveLength(5);
+      await user.click(within(list).getByRole("button", { name: "Show all 6" }));
+      expect(within(list).getAllByRole("link", { name: /^Open scenario run/ })).toHaveLength(6);
+      await user.click(within(list).getByRole("button", { name: "Show fewer" }));
+      expect(within(list).getAllByRole("link", { name: /^Open scenario run/ })).toHaveLength(5);
+    });
+  });
+
+  describe("scenario run on the blocks", () => {
+    it("scenarios detail says where a scenario run waits for you, on the strip and its block", async () => {
+      // AC-596.2.13.
+      const gate = anApproval({
+        id: `${SCENARIO_RUN}:fetch-order--2__ask:1`,
+        gate_id: `${SCENARIO_RUN}:fetch-order--2__ask:1`,
+        session_id: `run:${SCENARIO_RUN}`,
+        kind: "human_gate",
+        project: "demo",
+        gate_kind: "policy",
+        path: null,
+        rule: null,
+      });
+      renderDetail({
+        [DETAIL]: treeDetail({ runs: [aScenarioRunRef({ status: "running" })] }),
+        "/api/v1/approvals": aPage([gate]),
+        "/api/v1/workflow-runs": aPage([aScenarioWorkflowRun()]),
+        [WORKFLOW_RUN]: aScenarioWorkflowRun(),
+        [SCENARIO_RUN_RECORD]: aDebugScenarioRun({
+          debug: null,
+          breakpoints: [],
+          timeline: [
+            { event: "start", node: null, attempt: null, status: null, at: at(0), block: null },
+            line("step_start", "1.1", 5),
+            line("step_end", "1.1", 10, "ok"),
+          ],
+          polls: [],
+          captures: [],
+          blocks: RUN_BLOCKS,
+        }),
+      });
+
+      const strip = await screen.findByRole("region", { name: `Scenario run ${SCENARIO_RUN}` });
+      await waitFor(() => {
+        expect(within(strip).getByRole("status")).toHaveTextContent(
+          /waits for you at block 1\.2: an approval/,
+        );
+      });
+      expect(row(/^Step 1\.2,/)).toHaveTextContent("Waiting for you: approval");
+      expect(row(/^Step 1\.2,/)).toHaveAttribute("aria-current", "step");
+    });
+
+    it("scenarios detail writes a breakpoint toggled on a live scenario run to the run", async () => {
+      // AC-596.2.15: the run's whole set, in block order.
+      const user = userEvent.setup();
+      const { requests } = renderDetail({
+        [DETAIL]: treeDetail({ runs: [aScenarioRunRef({ status: "running" })] }),
+        [WORKFLOW_RUN]: aScenarioWorkflowRun(),
+        [SCENARIO_RUN_RECORD]: aDebugScenarioRun({
+          debug: null,
+          breakpoints: ["1.2"],
+          timeline: [
+            { event: "start", node: null, attempt: null, status: null, at: at(0), block: null },
+            line("step_start", "1.1", 5),
+          ],
+          blocks: RUN_BLOCKS,
+        }),
+        [`PUT ${SCENARIO_RUN_RECORD}/breakpoints`]: { blocks: ["1.1", "1.2"] },
+      });
+
+      const first = await screen.findByRole("button", { name: "Breakpoint before block 1.1 (b)" });
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: "Breakpoint before block 1.2 (b)" }),
+        ).toHaveAttribute("aria-pressed", "true");
+      });
+      await user.click(first);
+
+      const put = await waitFor(() => {
+        const found = requests.find((request) => request.method === "PUT");
+        expect(found).toBeDefined();
+        return found;
+      });
+      expect(new URL(put?.url ?? "").pathname).toBe(`${SCENARIO_RUN_RECORD}/breakpoints`);
+      expect(await put?.clone().json()).toEqual({ blocks: ["1.1", "1.2"] });
+      await waitFor(() => {
+        expect(first).toHaveAttribute("aria-pressed", "true");
+      });
+    });
+
+    it("scenarios detail lays no state on the blocks for a scenario run of an older revision", async () => {
+      // AC-596.2.17: its states are on its own page.
+      const user = userEvent.setup();
+      renderDetail({
+        [DETAIL]: graphDetail({
+          revision: 2,
+          runs: [aScenarioRunRef({ status: "done", ended_at: at(60) })],
+        }),
+        [WORKFLOW_RUN]: aScenarioWorkflowRun({
+          status: "done",
+          revision: 1,
+          steps: [
+            {
+              attempt: 1,
+              ended_at: at(30),
+              key: "fetch-order",
+              max_attempts: 1,
+              reason: null,
+              session_ids: [],
+              started_at: at(5),
+              status: "ok",
+            },
+          ],
+        }),
+        [SCENARIO_RUN_RECORD]: aScenarioRunDetail(),
+      });
+
+      const runs = await screen.findByRole("region", { name: "Scenario runs" });
+      await user.click(within(runs).getByRole("button", { name: "Show" }));
+      const strip = await screen.findByRole("region", { name: `Scenario run ${SCENARIO_RUN}` });
+      expect(within(strip).getByRole("status")).toHaveTextContent(
+        "it ran an older revision of the file, so its states are on its page",
+      );
+      expect(row(/^Step 1,/)).not.toHaveTextContent("Last run:");
+    });
+
+    it("scenarios detail toggles a block's breakpoint with b on its row", async () => {
+      // AC-596.2.24.
+      const user = userEvent.setup();
+      renderDetail({ [DETAIL]: treeDetail() });
+      const toggle = await screen.findByRole("button", { name: "Breakpoint before block 1.2 (b)" });
+      expect(toggle).toHaveAttribute("aria-pressed", "false");
+
+      row(/^Step 1\.2,/).focus();
+      await user.keyboard("b");
+      expect(toggle).toHaveAttribute("aria-pressed", "true");
+      await user.keyboard("b");
+      expect(toggle).toHaveAttribute("aria-pressed", "false");
+    });
   });
 
   describe("states", () => {

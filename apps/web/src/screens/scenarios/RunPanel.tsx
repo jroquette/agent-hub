@@ -14,6 +14,7 @@ import {
 } from "../../components";
 import type { ApiProblem } from "../../lib/api";
 import { readStored, writeStored } from "../../lib/storage";
+import { REPORT_WAIT_MS } from "../runs-list/StartRun";
 import { isRunControlOff } from "./Investigation";
 import { DraftLine, ScenarioRunBadge, shortId } from "./parts";
 import {
@@ -25,6 +26,7 @@ import {
   type ScenarioMode,
   type ScenarioPlan,
 } from "./queries";
+import { plural } from "./timeline";
 
 /* The run side of the scenario page (spec 23 Screen 2, build and run on one screen): the
  * environment a plan and a start go to, the plan's verdict, the start itself (confirmed), the
@@ -33,7 +35,6 @@ import {
 
 const RECENT = 5;
 const POLL_MS = 2000;
-const REPORT_WAIT_MS = 30_000;
 
 function recentKey(project: string): string {
   return `ah.scenarios.env.${project}`;
@@ -84,10 +85,6 @@ function names(list: readonly string[]): string {
   return `${list.slice(0, -1).join(", ")} and ${list[list.length - 1] ?? ""}`;
 }
 
-function counted(n: number, noun: string): string {
-  return `${String(n)} ${n === 1 ? noun : `${noun}s`}`;
-}
-
 /** "4 blocks: 2 read, 2 write · 1 asks you". */
 export function planCounts(plan: ScenarioPlan, noun = "step"): string {
   const effects = new Map<string, number>();
@@ -97,7 +94,7 @@ export function planCounts(plan: ScenarioPlan, noun = "step"): string {
     .map((effect) => `${String(effects.get(effect))} ${effect}`);
   const asks = plan.rows.filter((row) => row.decision === "ask").length;
   return [
-    `${counted(plan.rows.length, noun)}${parts.length > 0 ? `: ${parts.join(", ")}` : ""}`,
+    `${plural(plan.rows.length, noun)}${parts.length > 0 ? `: ${parts.join(", ")}` : ""}`,
     ...(asks > 0 ? [`${String(asks)} asks you`] : []),
   ].join(" · ");
 }
@@ -117,7 +114,7 @@ export function verdict(plan: ScenarioPlan, stale: string | null, noun = "step")
   if (unique.length > 0) {
     return {
       ok: false,
-      text: `Cannot start: ${counted(unique.length, "draft action")} ${
+      text: `Cannot start: ${plural(unique.length, "draft action")} ${
         unique.length === 1 ? "needs" : "need"
       } acceptance. See Before you start.`,
       drafts: true,
@@ -128,7 +125,7 @@ export function verdict(plan: ScenarioPlan, stale: string | null, noun = "step")
     const n = plan.problems.length;
     return {
       ok: false,
-      text: `Cannot start: the plan has ${counted(n, "problem")}.`,
+      text: `Cannot start: the plan has ${plural(n, "problem")}.`,
       drafts: false,
     };
   }
@@ -214,6 +211,41 @@ export function PlanProblem({
   );
 }
 
+/** A plan 422's messages: each naming an input the form shows (`/inputs/<name>`) goes to its
+ * field, the first one per field; the others (another pointer, an input the form does not
+ * show) are listed apart, so none is lost. */
+export function planMessages(
+  error: ApiProblem | null,
+  fields: readonly string[],
+): { atFields: Map<string, string>; others: string[] } {
+  const atFields = new Map<string, string>();
+  const others: string[] = [];
+  if (error?.status !== 422) return { atFields, others };
+  for (const item of error.errors) {
+    const name = /^\/inputs\/([^/]+)$/.exec(item.pointer)?.[1];
+    if (name !== undefined && fields.includes(name)) {
+      if (!atFields.has(name)) atFields.set(name, item.message);
+    } else {
+      others.push(item.message);
+    }
+  }
+  return { atFields, others };
+}
+
+/** An environment the page names (`?env=`, or a plan's) that this hub does not declare, and
+ * the command that declares it. */
+export function UndeclaredEnvironment({ environment }: { environment: string }) {
+  return (
+    <div role="alert" className="ah-stack" style={{ gap: 6 }}>
+      <span>
+        Environment {environment} is not declared in this hub. Declare it in hub.json, or in
+        hub.local.json for yourself:
+      </span>
+      <CodeBlock code={`./hub env add ${environment} --access read`} />
+    </div>
+  );
+}
+
 export function confirmBody(
   plan: ScenarioPlan,
   mode: ScenarioMode,
@@ -227,7 +259,7 @@ export function confirmBody(
     .map((e) => `${String(effects.get(e))} ${e}`);
   const asks = plan.rows.filter((row) => row.decision === "ask").map((row) => row.step);
   const parts = [
-    `It runs ${counted(plan.rows.length, noun)} in ${plan.environment}: ${names(counts)}.`,
+    `It runs ${plural(plan.rows.length, noun)} in ${plan.environment}: ${names(counts)}.`,
   ];
   if (asks.length > 0)
     parts.push(`${names(asks)} ${asks.length === 1 ? "asks" : "ask"} you before it runs.`);
@@ -429,12 +461,12 @@ export function oneCommit(commands: readonly string[], refs: readonly string[]):
 export function BeforeYouStart({ scenario }: { scenario: ScenarioDetail }) {
   const drafts = scenario.actions.filter((action) => action.draft);
   if (drafts.length === 0) return null;
-  const commands = drafts.flatMap((action) =>
-    action.accept_command ? [action.accept_command] : [],
-  );
+  // The commit names only the actions it adds: those the server gave a command for.
+  const committed = drafts.filter((action) => action.accept_command);
+  const commands = committed.map((action) => action.accept_command ?? "");
   const all = oneCommit(
     commands,
-    drafts.map((action) => action.ref),
+    committed.map((action) => action.ref),
   );
   return (
     <section
@@ -447,7 +479,7 @@ export function BeforeYouStart({ scenario }: { scenario: ScenarioDetail }) {
       <span className="ah-row" style={{ gap: 8 }}>
         <Icon name="pencil" size="sm" />
         <h2 className="ah-h3" style={{ margin: 0 }}>
-          {counted(drafts.length, "draft action")} to commit
+          {plural(drafts.length, "draft action")} to commit
         </h2>
       </span>
       <span className="ah-small ah-muted">

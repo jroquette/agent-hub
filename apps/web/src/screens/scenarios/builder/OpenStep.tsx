@@ -1,13 +1,24 @@
 import type { ReactNode } from "react";
 
 import { CopyButton, Icon } from "../../../components";
+import { ActionFiles } from "../ActionPanel";
+import { DraftLine } from "../parts";
 import type { ScenarioAction } from "../queries";
 import { pace } from "../story";
-import { ValueToken, tokenOf } from "./CardParts";
+import { TokenText, ValueToken, tokenOf } from "./CardParts";
 import { looksLikeJson, parseLoose, stringifyLoose } from "./looseJson";
-import { kindWordsOf, useServiceField, type ServiceOption } from "./ServicePicker";
-import { ActionFiles } from "./StepScript";
-import { conditionWords, shown, text, type BuilderNode, type Json } from "./model";
+import { useServiceField, type ServiceOption } from "./ServicePicker";
+import { resolveInputs } from "./StepScript";
+import {
+  conditionWords,
+  record,
+  shown,
+  text,
+  upstreamOf,
+  type BuilderDocument,
+  type BuilderNode,
+  type Json,
+} from "./model";
 
 /* A selected step, open in place: part of the row, not a card inside it. It reads in the order
  * an API operation does (what it runs, the values it sends, its body, where values come from,
@@ -20,8 +31,11 @@ export interface StepSources {
   environment: { name: string; values: Readonly<Record<string, string>> } | null;
   /** The scenario's run inputs. */
   inputs: readonly string[];
-  /** The values earlier steps keep, with the step that keeps each (its id and number). */
-  kept: readonly { name: string; number: string; step?: string }[];
+  /** The document the steps run as: what waits for what, and the scenario inputs declared. */
+  document: BuilderDocument;
+  /** The values the steps keep, with the step that keeps each: its row (`step`, to select it),
+   * the id it runs under (`node`) and its number. A step reads only those kept before it. */
+  kept: readonly { name: string; number: string; step?: string; node: string }[];
   /** The services declared in the environment, for a `service` input's picker. */
   services?: readonly ServiceOption[];
 }
@@ -44,12 +58,6 @@ export interface OpenStepProps {
   onGoToStep?: ((step: string) => void) | null;
 }
 
-const REFERENCE = /\$(?:INPUTS|CTX)\.[A-Za-z0-9_]+|\$[a-z0-9_-]+\.output(?:\.[A-Za-z0-9_.]+)?/gi;
-
-function record(value: Json | undefined): Record<string, Json> {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : {};
-}
-
 function written(value: Json): string {
   return typeof value === "string" ? value : JSON.stringify(value);
 }
@@ -64,24 +72,13 @@ function pretty(value: Json): string {
   return parsed.ok ? stringifyLoose(parsed.value, true) : written(value);
 }
 
-/** A text with its references drawn as tokens. */
-function WithTokens({ value }: { value: string }) {
-  const parts: ReactNode[] = [];
-  let last = 0;
-  for (const match of value.matchAll(REFERENCE)) {
-    const at = match.index;
-    if (at > last) parts.push(value.slice(last, at));
-    parts.push(<ValueToken key={at} value={match[0]} />);
-    last = at + match[0].length;
-  }
-  if (last < value.length) parts.push(value.slice(last));
-  return <>{parts}</>;
-}
-
 const JSON_TOKEN =
   /("(?:[^"\\]|\\.)*")(\s*:)?|\$(?:INPUTS|CTX)\.[A-Za-z0-9_]+|-?\d+(?:\.\d+)?|true|false|null|[{}[\],]/g;
 
-/** Indented JSON in the app's code colours; a reference (quoted or bare) is a token. */
+/** Indented JSON in the app's code colours; a reference (quoted or bare) is a token. It colours
+ * the text `pretty` writes (the builder's loose-JSON reader and writer), so the body reads as the
+ * file writes it. Not the shared JsonViewer: that walks a parsed value, writes a string unescaped
+ * and an empty `{}` over two lines, and has no way to draw a reference as a token. */
 function JsonText({ source }: { source: string }) {
   const parts: ReactNode[] = [];
   let last = 0;
@@ -105,7 +102,7 @@ function JsonText({ source }: { source: string }) {
           <ValueToken key={at} value={inner} />
         ) : (
           <span key={at} className="ah-json-s">
-            <WithTokens value={quoted} />
+            <TokenText value={quoted} />
           </span>
         ),
       );
@@ -149,6 +146,12 @@ export function OpenStep({
   const keeps = Object.entries(record(node.capture));
   const specOf = (name: string) => action?.inputs.find((input) => input.name === name);
 
+  // The values kept before this step: by the steps it waits for, directly or not.
+  const before = new Set(
+    sources ? upstreamOf(sources.document, node.id).map((step) => step.id) : [],
+  );
+  const keptBefore = (sources?.kept ?? []).filter((item) => before.has(item.node));
+
   // The references the step's values use, each once.
   const uses = new Map<string, string>();
   for (const [, value] of values) {
@@ -177,15 +180,16 @@ export function OpenStep({
       <span>{label}</span>
     );
 
-  // Needs a value: a required input this step does not set and nothing else gives (not a
-  // scenario input, not the environment's, no default). The side panel says the same.
-  const needsValue = (name: string): boolean => {
-    const spec = specOf(name);
-    if (spec?.required !== true || name in given) return false;
-    if (sources?.inputs.includes(name)) return false;
-    if (env !== null && name in env.values) return false;
-    return spec.default === undefined || spec.default === null;
-  };
+  // Needs a value: a required input this step does not set and nothing else gives, as the Script
+  // tab resolves it (resolveInputs): not a declared scenario input (whose value the environment
+  // or the run gives), no default. An environment value counts only for a declared scenario
+  // input, as in the Script tab. A value the step writes is its own row, even one that reads an
+  // input the scenario does not declare (Values from earlier says so).
+  const resolved = action
+    ? resolveInputs(node, action, sources?.document ?? { nodes: [] }, env?.values ?? null)
+    : [];
+  const needsValue = (name: string): boolean =>
+    !(name in given) && resolved.some((input) => input.name === name && input.from === "missing");
   const serviceInputs = (action?.inputs ?? []).filter((input) => input.type === "service");
   const isService = (name: string) => serviceInputs.some((input) => input.name === name);
   // A service input the step does not set yet is listed too, so where it goes is chosen here.
@@ -193,7 +197,9 @@ export function OpenStep({
   const missing = (action?.inputs ?? []).filter(
     (input) => input.type !== "service" && needsValue(input.name),
   );
-  const needCount = missing.length + unsetServices.filter((input) => input.required).length;
+  // Counted only as listed: an unset service has its row only where it can be picked here.
+  const needCount =
+    missing.length + (onSet ? unsetServices.filter((input) => input.required).length : 0);
   const Needs = () => (
     <span className="st-g-missing">
       <Icon name="circle-alert" size="sm" />
@@ -227,7 +233,7 @@ export function OpenStep({
       return (
         <span className="st-open-value-ref">
           <span className="st-open-mono">
-            <WithTokens value={said} />
+            <TokenText value={said} />
           </span>
           {onEditInPanel && (
             <button
@@ -273,20 +279,14 @@ export function OpenStep({
           }
           note={
             draft ? (
-              <span className="st-open-draft">
-                <span className="ah-badge ah-badge-quiet">
-                  <Icon name="pencil" size="sm" />
-                  Draft: needs acceptance
-                </span>
+              <DraftLine
+                compact
+                className="st-open-draft"
+                commands={action.accept_command ? [action.accept_command] : []}
+                action={action.name}
+              >
                 It plans now; a scenario run starts once it is committed in the hub checkout.
-                {action.accept_command && (
-                  <CopyButton
-                    text={action.accept_command}
-                    label={`Copy the commit command for ${action.name}`}
-                    compact
-                  />
-                )}
-              </span>
+              </DraftLine>
             ) : undefined
           }
         />
@@ -365,7 +365,8 @@ export function OpenStep({
           ))}
           {params.map(([name, value]) => {
             const spec = specOf(name);
-            if (onSet && isService(name) && typeof value === "string")
+            // A reference ($INPUTS.x) stays a token with its edit; a service name is picked.
+            if (onSet && isService(name) && typeof value === "string" && !value.includes("$"))
               return serviceRow(name, value, spec?.required ?? false);
             return (
               <Row
@@ -420,7 +421,7 @@ export function OpenStep({
           {[...uses.entries()].map(([ref, name]) => {
             const scenario = ref.startsWith("$INPUTS.");
             const envValue = scenario && env !== null ? env.values[name] : undefined;
-            const kept = sources?.kept.find((item) => item.name === name);
+            const kept = keptBefore.find((item) => item.name === name);
             const asked = sources?.inputs.includes(name) ?? false;
             return (
               <Row
@@ -467,7 +468,7 @@ export function OpenStep({
               label={<ValueToken value={`$CTX.${name}`} />}
               value={
                 <span className="st-open-quiet">
-                  from <WithTokens value={written(from)} />
+                  from <TokenText value={written(from)} />
                 </span>
               }
             />
@@ -507,24 +508,17 @@ function Row({
   value,
   note,
   noteText,
-  source,
-  quiet = false,
 }: {
   label: ReactNode;
   value: ReactNode;
   note?: ReactNode;
   /** The note in words, as its tooltip, when the note is more than text. */
   noteText?: string | undefined;
-  source?: ReactNode;
-  quiet?: boolean;
 }) {
   return (
-    <li className="st-g-row" data-quiet={quiet ? "true" : undefined}>
+    <li className="st-g-row">
       <span className="st-g-label">{label}</span>
-      <span className="st-g-value">
-        {value}
-        {source}
-      </span>
+      <span className="st-g-value">{value}</span>
       {note && (
         <span className="st-g-note" title={typeof note === "string" ? note : noteText}>
           {note}
@@ -554,22 +548,13 @@ function ServiceRow({
   environment: string | null;
   onPick: (value: string) => void;
 }) {
-  const { kindSelect, field, picked, kindWords } = useServiceField({
+  const { kindSelect, field, about } = useServiceField({
     label: name,
     value,
     options,
     environment,
     onPick,
   });
-  const where = environment ? ` in ${environment}` : "";
-  const about =
-    picked !== null
-      ? [kindWordsOf(picked.kind), picked.description, picked.address ?? `no address${where}`]
-          .filter(Boolean)
-          .join(" · ")
-      : value === ""
-        ? `Choose ${kindWords ? `a ${kindWords.toLowerCase()}` : "a service"}${where}`
-        : null;
   const empty = value === "" && required;
   const noteText = [name, empty ? "Needs a value" : required ? "Required" : null, about]
     .filter(Boolean)

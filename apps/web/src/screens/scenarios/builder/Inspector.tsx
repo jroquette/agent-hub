@@ -27,6 +27,7 @@ import {
   dependsOn,
   formatCondition,
   parseCondition,
+  record,
   refInWords,
   shown,
   text,
@@ -46,10 +47,6 @@ import type { BuilderProblem, LibraryAction } from "./useScenarioDraft";
  * settings (description, inputs). */
 
 type Record_ = Record<string, Json>;
-
-function record(value: Json | undefined): Record_ {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : {};
-}
 
 /** A field of the form: the label above, the control, its help and its error. */
 function Field({
@@ -1002,7 +999,11 @@ export function BlockInspector({
                   const current = given[input.name];
                   const found = resolved.find((item) => item.name === input.name);
                   const back = overridden.includes(input.name) && found?.from !== "missing";
-                  if (input.type === "service") {
+                  // A reference ($INPUTS.x) stays a value with its token; a service is picked.
+                  if (
+                    input.type === "service" &&
+                    !(typeof current === "string" && current.includes("$"))
+                  ) {
                     return (
                       <div key={input.name} className="ah-stack" style={{ gap: 4 }}>
                         <span className="ah-small">
@@ -1018,9 +1019,6 @@ export function BlockInspector({
                             set("with", { ...given, [input.name]: picked });
                           }}
                         />
-                        {input.description && (
-                          <span className="ah-small ah-muted">{input.description}</span>
-                        )}
                       </div>
                     );
                   }

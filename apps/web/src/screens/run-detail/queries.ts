@@ -3,8 +3,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { apiKey, useApi } from "../../lib/api";
 import { useEventStream } from "../../lib/sse";
 
-export function useRun(runId: string) {
-  return useApi("/api/v1/workflow-runs/{run_id}", { path: { run_id: runId } });
+/** One workflow run; `enabled: false` reads nothing (no run to read yet). */
+export function useRun(runId: string, { enabled = true }: { enabled?: boolean } = {}) {
+  return useApi("/api/v1/workflow-runs/{run_id}", { path: { run_id: runId } }, { enabled });
 }
 
 /**

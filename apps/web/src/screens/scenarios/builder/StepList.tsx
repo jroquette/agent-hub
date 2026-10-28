@@ -13,10 +13,10 @@ import {
 import { Button, Icon, IconButton } from "../../../components";
 import { EffectBadge, PolicyBadge } from "../parts";
 import type { ScenarioAction, ScenarioPlanRow } from "../queries";
-import { TokenText } from "./CardParts";
+import { KindTile, TokenText } from "./CardParts";
 import { kindLook } from "./FlowCanvas";
 import { OpenStep, type StepSources } from "./OpenStep";
-import { conditionWords, text, type BuilderNode, type Json } from "./model";
+import { conditionWords, record, text, type BuilderNode } from "./model";
 import { compact, nodeLines, ownValues, typedAs } from "./rowLines";
 import { itemId, listsOf, type Item, type Slot } from "./program";
 import type { BuilderProblem } from "./useScenarioDraft";
@@ -91,10 +91,6 @@ export interface StepListProps {
   sources?: StepSources | null | undefined;
   /** Edits one value of a step in the side panel (its body, a value taken from elsewhere). */
   onEditField?: ((id: string, name: string) => void) | undefined;
-}
-
-function record(value: Json | undefined): Record<string, Json> {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : {};
 }
 
 const KIND_NAME: Readonly<Record<string, string>> = {
@@ -602,13 +598,7 @@ export function StepList(props: StepListProps) {
           </span>
         )}
         <span className="st-num">{number}</span>
-        <span
-          className="st-tile"
-          style={{ ["--tile" as string]: look.tint, ["--tile-soft" as string]: look.soft }}
-          aria-hidden
-        >
-          <Icon name={look.icon} size="sm" />
-        </span>
+        <KindTile look={look} />
         <span className="st-lines">
           {extra.titleEditor ?? <span className="st-title">{title}</span>}
           {detail && <span className="st-detail">{detail}</span>}
@@ -1001,16 +991,7 @@ export function StepList(props: StepListProps) {
             >
               <span aria-hidden />
               <span className="st-num" />
-              <span
-                className="st-tile"
-                style={{
-                  ["--tile" as string]: "var(--kind-control)",
-                  ["--tile-soft" as string]: "var(--kind-control-soft)",
-                }}
-                aria-hidden
-              >
-                <Icon name="flag" size="sm" />
-              </span>
+              <KindTile look={{ ...kindLook("stage"), icon: "flag" }} />
               <span className="st-lines">
                 <span className="st-title">
                   {start.environment

@@ -1,9 +1,8 @@
 import { useMemo } from "react";
 
-import { Banner, CodeBlock, StatusBadge } from "../../components";
+import { Banner, Button, CodeBlock, StatusBadge } from "../../components";
 import { isRunControlOff } from "./Investigation";
 import { DEBUG_LOCKED } from "./parts";
-import { BreakpointToggle } from "./StepCard";
 import { useSetBreakpoints, type RunBlock, type ScenarioRunDetail } from "./queries";
 
 /* The blocks a scenario run written as blocks pinned when it started (ADR 0049, spec 23): each
@@ -26,6 +25,44 @@ const KIND_WORDS: Readonly<Record<string, string>> = {
 // The blocks that run a node of their own: their lines in the run give their state.
 const OWN_NODES = new Set(["do", "wait_until", "you", "wait", "include", "repeat"]);
 const GATE_SUFFIXES = ["__ask", "__investigation"];
+
+/** A breakpoint before block `address` (a scenario written as blocks, ADR 0049): a toggle whose
+ * name stays the same, its state in `aria-pressed`; Tab reaches it, Space or Enter presses it.
+ * While `busy` (a change on its way) a press does nothing, and the toggle keeps focus
+ * (`aria-disabled`, not `disabled`). */
+function BreakpointToggle({
+  address,
+  on,
+  busy,
+  onToggle,
+}: {
+  address: string;
+  on: boolean;
+  busy?: boolean | undefined;
+  onToggle: () => void;
+}) {
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      icon={on ? "circle-dot" : "circle"}
+      className={on ? "sc-break sc-break-on" : "sc-break"}
+      aria-pressed={on}
+      aria-label={`Breakpoint before block ${address}`}
+      title={
+        on
+          ? `The scenario run pauses before block ${address}. Press to remove the breakpoint.`
+          : `Press to pause the scenario run before block ${address}.`
+      }
+      aria-disabled={busy === true || undefined}
+      onClick={() => {
+        if (!busy) onToggle();
+      }}
+    >
+      Breakpoint
+    </Button>
+  );
+}
 
 /** A block in words: its kind, then its label (`Do: queue-send`). */
 export function blockWords(block: RunBlock | undefined): string {

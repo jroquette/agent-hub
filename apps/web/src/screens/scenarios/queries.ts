@@ -108,11 +108,15 @@ export function gateStep(gate: Approval): string {
   return suffix !== null && node.endsWith(suffix) ? node.slice(0, -suffix.length) : node;
 }
 
-export function useScenarioRun(runId: string, live: boolean) {
+export function useScenarioRun(
+  runId: string,
+  live: boolean,
+  { enabled = true }: { enabled?: boolean } = {},
+) {
   return useApi(
     "/api/v1/scenario-runs/{run_id}",
     { path: { run_id: runId } },
-    { refetchInterval: live ? 15_000 : false },
+    { enabled, refetchInterval: live ? 15_000 : false },
   );
 }
 

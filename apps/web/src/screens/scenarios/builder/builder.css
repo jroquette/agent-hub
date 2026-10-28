@@ -137,19 +137,24 @@
   pointer-events: none;
   overflow: visible;
 }
+/* Start and End: on the graph of a graph scenario (.sb-) and of one written as blocks (.sg-). */
 .sb-start,
-.sb-end {
+.sb-end,
+.sg-start {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   color: var(--text-muted);
   font-size: 12px;
 }
-.sb-start {
+.sb-start,
+.sg-start {
   padding: 4px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-full);
   background: var(--surface);
+}
+.sb-start {
   margin-bottom: var(--space-2);
 }
 .sb-end {
@@ -283,8 +288,6 @@
   .sg-card {
     transition: none;
   }
-}
-@media (prefers-reduced-motion: reduce) {
   .sb-palette-kind {
     animation: none;
     transition: none;
@@ -312,18 +315,6 @@
   cursor: pointer;
   color: var(--text-muted);
 }
-.sb-when {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  align-self: flex-start;
-  margin-top: -2px;
-  padding: 1px 8px;
-  border-radius: var(--radius-full);
-  font-size: 11px;
-  color: var(--ev-decision);
-  background: color-mix(in srgb, var(--ev-decision) 12%, var(--surface));
-}
 .sb-errors {
   display: inline-flex;
   align-items: center;
@@ -331,26 +322,30 @@
   color: var(--failed);
   font-size: 12px;
 }
-.sb-status {
-  margin-top: 2px;
-}
 
-/* Repeat frame */
-.sb-frame {
+/* A frame around the blocks it holds: a Repeat on the graph of a graph scenario (.sb-), a
+ * Repeat, If or At the same time on the graph of one written as blocks (.sg-). */
+.sb-frame,
+.sg-frame {
   display: flex;
   flex-direction: column;
-  align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-4) var(--space-3);
   border: 1px dashed var(--border-strong);
+}
+.sb-frame-body,
+.sg-frame-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.sb-frame {
+  align-items: center;
+  padding: var(--space-2) var(--space-4) var(--space-3);
   border-radius: var(--radius-xl);
   background: color-mix(in srgb, var(--kind) 5%, transparent);
 }
 .sb-frame-body {
-  display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: var(--space-2);
 }
 
 /* "+" and its menu */
@@ -1207,16 +1202,9 @@ textarea.sb-json-text {
   padding: var(--space-5) var(--space-6) var(--space-8);
 }
 .sg-start {
-  display: inline-flex;
-  align-items: center;
   align-self: flex-start;
   gap: var(--space-1);
   padding: 2px var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  background: var(--surface);
-  font-size: 12px;
-  color: var(--text-muted);
 }
 .sg-band {
   display: flex;
@@ -1261,11 +1249,7 @@ textarea.sb-json-text {
   box-shadow: inset 3px 0 0 var(--live);
 }
 .sg-frame {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
   padding: var(--space-2) var(--space-3) var(--space-3);
-  border: 1px dashed var(--border-strong);
   border-radius: var(--radius-lg);
 }
 .sg-frame-head {
@@ -1274,11 +1258,6 @@ textarea.sb-json-text {
   gap: var(--space-2);
   font-size: 13px;
   font-weight: 600;
-}
-.sg-frame-body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
 }
 .sg-paths {
   display: flex;

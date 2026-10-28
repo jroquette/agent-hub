@@ -1,7 +1,7 @@
 import { useMemo, type ReactNode } from "react";
 
 import { AppLink, Button, Icon, StatusBadge, Time } from "../../components";
-import { useApi } from "../../lib/api";
+import { useRun } from "../run-detail/queries";
 import { RunCommands } from "../run-detail/RunCommands";
 import { debugReasonWords, shortId, type WaitingRow } from "./parts";
 import { blockStateOf, lastLines, runBlock, type BlockState } from "./RunBlocks";
@@ -9,6 +9,7 @@ import {
   gateRun,
   gateStep,
   scenarioRunHref,
+  useScenarioRun,
   useScenarioRunStream,
   type ScenarioDetail,
   type ScenarioRunDetail,
@@ -71,22 +72,14 @@ export function useShownRun({
   const picked = scenario.runs.find((run) => run.run_id === chosen);
   const ref = picked ?? (latest?.status === "running" ? latest : undefined);
   const runId = ref?.run_id ?? "";
-  const run = useApi(
-    "/api/v1/workflow-runs/{run_id}",
-    { path: { run_id: runId } },
-    { enabled: runId !== "" },
-  );
+  const run = useRun(runId, { enabled: runId !== "" });
   const live =
     ref !== undefined &&
     (run.data?.status ?? ref.status) === "running" &&
     run.data?.status !== "done" &&
     run.data?.status !== "failed";
   useScenarioRunStream(runId, live && runId !== "");
-  const recordQuery = useApi(
-    "/api/v1/scenario-runs/{run_id}",
-    { path: { run_id: runId } },
-    { enabled: runId !== "", refetchInterval: live ? 15_000 : false },
-  );
+  const recordQuery = useScenarioRun(runId, live, { enabled: runId !== "" });
   const record = runId === "" ? null : (recordQuery.data ?? null);
   const lines = useMemo(() => lastLines(record?.timeline ?? []), [record?.timeline]);
   const environment = scenario.environments.find((env) => env.name === ref?.environment);

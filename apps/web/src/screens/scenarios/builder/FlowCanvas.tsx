@@ -4,7 +4,7 @@ import { Icon, type IconName } from "../../../components";
 import { useNodeBoxes, type NodeBox } from "../../../lib/nodeBoxes";
 import { EffectBadge } from "../parts";
 import type { ScenarioAction, ScenarioStep } from "../queries";
-import { TokenText } from "./CardParts";
+import { KindTile, TokenText } from "./CardParts";
 import {
   conditionWords,
   dependsOn,
@@ -178,13 +178,7 @@ export function FlowBlock({
       )}
       <span className="sg-head">
         {number && <span className="sg-num">{number}</span>}
-        <span
-          className="st-tile"
-          style={{ ["--tile" as string]: look.tint, ["--tile-soft" as string]: look.soft }}
-          aria-hidden
-        >
-          <Icon name={look.icon} size="sm" />
-        </span>
+        <KindTile look={look} />
         <span className="sg-title">
           <TokenText value={lines.title} />
         </span>

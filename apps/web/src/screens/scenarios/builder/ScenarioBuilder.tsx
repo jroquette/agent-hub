@@ -4,13 +4,14 @@ import "./steps.css";
 
 import {
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router";
 
 import {
@@ -26,6 +27,8 @@ import {
   Toast,
 } from "../../../components";
 import { readStored, writeStored } from "../../../lib/storage";
+import { TABLET, useMediaQuery } from "../../../lib/useMediaQuery";
+import { inputSpecs, parsed } from "../../runs-list/StartRun";
 import { endpointText, environmentsPage } from "../../hub-config/environments";
 import { useApi } from "../../../lib/api";
 import type { ServiceOption } from "./ServicePicker";
@@ -41,6 +44,7 @@ import {
   useSetBreakpoints,
   type ScenarioAction,
   type ScenarioDetail,
+  type PlanRequest,
   type ScenarioMode,
 } from "../queries";
 import {
@@ -50,9 +54,12 @@ import {
   PlanSummary,
   RunsList,
   StartScenarioRun,
+  UndeclaredEnvironment,
   accessWords,
   defaultEnvironment,
+  planMessages,
   remember,
+  useAfter,
   verdict,
 } from "../RunPanel";
 import { BlocksTab, type BlockLook } from "./BlocksTab";
@@ -159,6 +166,8 @@ interface TreeWrite {
 }
 
 const FILE_POLL_MS = 4000;
+/** After this long a plan says it is still planning, and when it stops. */
+const SLOW_PLAN_MS = 10_000;
 const HELP_KEY = "ah.builder.help.v6";
 
 /** The Actions tab: the hub's actions, what each does, its effect and how many steps use it. */
@@ -366,8 +375,13 @@ export function ScenarioBuilder({
     ? (environmentInfo.values ?? {})
     : null;
   const [stepTab, setStepTab] = useState<"settings" | "script">("settings");
-  const [planValues, setPlanValues] = useState<Record<string, string>>({});
-  const [planAfterSave, setPlanAfterSave] = useState<Record<string, string> | null>(null);
+  // The values typed for the run inputs, as typed (a checkbox's for a boolean); a plan and a
+  // start send them typed by their declaration (`inputs`, below).
+  const [planValues, setPlanValues] = useState<Record<string, string | boolean>>({});
+  const [badValues, setBadValues] = useState<Record<string, boolean>>({});
+  const [valueErrors, setValueErrors] = useState<Record<string, string>>({});
+  const planFormId = useId();
+  const [planAfterSave, setPlanAfterSave] = useState<PlanRequest["inputs"] | null>(null);
   const [leftTab, setLeftTab] = useState<"blocks" | "variables" | "actions">("blocks");
   // A block dragged from the Blocks tab: how it looks, where the pointer is, where it would land.
   const [paletteDrag, setPaletteDrag] = useState<{
@@ -1205,6 +1219,10 @@ export function ScenarioBuilder({
     }
     if (underReview) return;
     if (event.key === "Delete" || event.key === "Backspace") {
+      // Only the row (or the list) deletes it: a chip, a link, a tab or the body of the open
+      // step takes the key as its own, and the step stays.
+      const row = target.closest('[role="treeitem"]');
+      if (row !== null && row !== target) return;
       event.preventDefault();
       const stage = findItem(main, selected)?.kind === "stage";
       removeItem(selected);
@@ -1267,8 +1285,41 @@ export function ScenarioBuilder({
       return item.default === undefined && !(environmentValues && name in environmentValues);
     })
     .map(([name]) => name);
-  const missingToPlan = asksAtStart.filter((name) => (planValues[name] ?? "") === "");
-  const planNow = (values: Record<string, string>) => {
+  // Each run input typed by its declaration (a number, a boolean), as the CLI takes it.
+  const specs = inputSpecs(document);
+  const specOf = (name: string) =>
+    specs.find((spec) => spec.name === name) ?? {
+      name,
+      type: "string" as const,
+      required: false,
+      default: undefined,
+      description: null,
+    };
+  const isBoolean = (name: string) => specOf(name).type === "boolean";
+  const missingToPlan = asksAtStart.filter(
+    (name) => !isBoolean(name) && (planValues[name] ?? "") === "",
+  );
+  /** The values a plan sends, typed, and a problem per value that does not fit its type. */
+  const typedValues = () => {
+    const inputs: PlanRequest["inputs"] = {};
+    const problems: Record<string, string> = {};
+    const names = [...Object.keys(planValues), ...asksAtStart];
+    for (const name of new Set(names)) {
+      const raw = planValues[name] ?? (isBoolean(name) ? false : "");
+      const value = parsed(specOf(name), raw, badValues[name] ?? false);
+      if (value instanceof Error) problems[name] = value.message;
+      else if (value !== undefined) inputs[name] = value;
+    }
+    return { inputs, problems };
+  };
+  const planNow = () => {
+    const { inputs: values, problems } = typedValues();
+    setValueErrors(problems);
+    if (Object.keys(problems).length > 0) {
+      // A value that does not fit stays at its field: nothing is planned.
+      setMenu("preview");
+      return;
+    }
     setMenu(null);
     if (draft.dirty) {
       setPlanAfterSave(values);
@@ -1304,14 +1355,43 @@ export function ScenarioBuilder({
           ? `This plan is for ${planFor.environment}. Plan again to start in ${environment || "another environment"}.`
           : previewFor !== null && previewFor !== nodesNow
             ? `The ${noun}s changed since this plan. Plan again to start.`
-            : JSON.stringify(planFor.inputs) !== JSON.stringify(planValues)
-              ? `This plan is for ${Object.entries(planFor.inputs)
-                  .map(([name, value]) => `${name} ${String(value)}`)
-                  .join(", ")}. Plan again to start with the new values.`
+            : JSON.stringify(planFor.inputs) !== JSON.stringify(typedValues().inputs)
+              ? Object.keys(planFor.inputs).length === 0
+                ? "This plan was made with no values. Plan again to start with the new values."
+                : `This plan is for ${Object.entries(planFor.inputs)
+                    .map(([name, value]) => `${name} ${String(value)}`)
+                    .join(", ")}. Plan again to start with the new values.`
               : null;
   // Plans and starts cannot run from the agent-hub container (no credentials, no env files).
   const runControlOff = planner.isError && isRunControlOff(planner.error);
-  const judged = preview === null ? null : verdict(preview, staleWords, noun);
+  // An environment this hub does not declare (an old `?env=`, or a plan's with no access):
+  // the run panel names the command that declares it, and nothing starts there.
+  const undeclared =
+    preview !== null && staleWords === null && preview.access === null
+      ? preview.environment
+      : environment !== "" && environmentInfo === null
+        ? environment
+        : null;
+  const judged =
+    undeclared !== null
+      ? {
+          ok: false,
+          text: `Environment ${undeclared} is not declared in this hub.`,
+          drafts: false,
+        }
+      : preview === null
+        ? null
+        : verdict(preview, staleWords, noun);
+  const slowPlan = useAfter(SLOW_PLAN_MS, planner.isPending);
+  // A tablet plans, but a start needs a desktop screen (spec 23, Responsive).
+  const tablet = useMediaQuery(TABLET);
+  // A plan's 422 names its inputs by pointer: each message at its field, the others listed.
+  const messages = planMessages(planner.error, asksAtStart);
+  const [erred, setErred] = useState<unknown>(null);
+  if (planner.error !== erred) {
+    setErred(planner.error);
+    if (messages.atFields.size > 0) setMenu("preview");
+  }
   const onProduction = environmentInfo?.production === true;
   const shownRun = useShownRun({
     scenario: fresh,
@@ -1374,7 +1454,8 @@ export function ScenarioBuilder({
       { replace: true },
     );
   };
-  // Follow: the block the scenario run is at stays in view, until the list is scrolled by hand.
+  // Follow: while it is on (its checkbox), the block the scenario run is at is scrolled into view
+  // each time the run moves to another one.
   const [follow, setFollow] = useState(true);
   const current = shownRun.current;
   useEffect(() => {
@@ -1394,7 +1475,16 @@ export function ScenarioBuilder({
         {shownRun.record?.debug && (
           <DebugBar run={shownRun.record} production={shownRun.production} />
         )}
-        {planner.isError && (
+        {undeclared !== null && <UndeclaredEnvironment environment={undeclared} />}
+        {messages.others.length > 0 && (
+          <ul role="alert" className="ah-small" style={{ margin: 0, color: "var(--failed)" }}>
+            {messages.others.map((message) => (
+              <li key={message}>{message}</li>
+            ))}
+          </ul>
+        )}
+        {/* Every message of a 422 at a field of the form: the fields say it all. */}
+        {planner.isError && !(messages.atFields.size > 0 && messages.others.length === 0) && (
           <PlanProblem error={planner.error} name={scenario.name} environment={environment} />
         )}
         {preview && (
@@ -1806,7 +1896,7 @@ export function ScenarioBuilder({
           if (menu !== "preview" && missingToPlan.length > 0) setMenu("preview");
           else {
             remember(scenario.project, environment);
-            planNow(planValues);
+            planNow();
           }
         }}
       >
@@ -1826,6 +1916,10 @@ export function ScenarioBuilder({
               {scenario.environments.length === 0 && <option value="">No environment</option>}
               {environment === "" && scenario.environments.length > 0 && (
                 <option value="">Choose an environment</option>
+              )}
+              {environment !== "" && environmentInfo === null && (
+                // An environment the hub does not declare (an old ?env=): named, not hidden.
+                <option value={environment}>{environment} · not declared</option>
               )}
               {scenario.environments.map((item) => (
                 <option key={item.name} value={item.name}>
@@ -1903,18 +1997,52 @@ export function ScenarioBuilder({
                 <span className="ah-small ah-muted">
                   Nothing gives these a value in {environment}. Nothing is changed by a plan.
                 </span>
-                {asksAtStart.map((name) => (
-                  <label key={name} className="ah-stack ah-small" style={{ gap: 4 }}>
-                    {name}
-                    <input
-                      className="ah-input"
-                      value={planValues[name] ?? ""}
-                      onChange={(event) => {
-                        setPlanValues({ ...planValues, [name]: event.target.value });
-                      }}
-                    />
-                  </label>
-                ))}
+                {asksAtStart.map((name) => {
+                  const type = specOf(name).type;
+                  const problem = valueErrors[name] ?? messages.atFields.get(name) ?? null;
+                  const problemId = `${planFormId}-${name}`;
+                  const onValue = (value: string | boolean, bad: boolean) => {
+                    setPlanValues({ ...planValues, [name]: value });
+                    setBadValues({ ...badValues, [name]: bad });
+                  };
+                  return (
+                    <span key={name} className="ah-stack ah-small" style={{ gap: 4 }}>
+                      {type === "boolean" ? (
+                        <label className="ah-row" style={{ gap: 6 }}>
+                          <input
+                            type="checkbox"
+                            checked={planValues[name] === true}
+                            aria-describedby={problem ? problemId : undefined}
+                            onChange={(event) => {
+                              onValue(event.target.checked, false);
+                            }}
+                          />
+                          {name}
+                        </label>
+                      ) : (
+                        <label className="ah-stack" style={{ gap: 4 }}>
+                          {name}
+                          <input
+                            className="ah-input"
+                            type={type === "string" ? "text" : "number"}
+                            step={type === "integer" ? 1 : type === "number" ? "any" : undefined}
+                            value={String(planValues[name] ?? "")}
+                            aria-invalid={problem ? true : undefined}
+                            aria-describedby={problem ? problemId : undefined}
+                            onChange={(event) => {
+                              onValue(event.target.value, event.target.validity.badInput);
+                            }}
+                          />
+                        </label>
+                      )}
+                      {problem && (
+                        <span id={problemId} style={{ color: "var(--failed)" }}>
+                          {problem}
+                        </span>
+                      )}
+                    </span>
+                  );
+                })}
                 <span className="ah-row" style={{ gap: 6, justifyContent: "flex-end" }}>
                   <Button
                     size="sm"
@@ -1944,7 +2072,9 @@ export function ScenarioBuilder({
             </Button>
           )}
           <span className="ah-grow" />
-          {startable ? (
+          {tablet ? (
+            <span className="ah-small">Starting a scenario run needs a desktop screen.</span>
+          ) : startable ? (
             <StartScenarioRun
               scenario={fresh}
               plan={startable.plan}
@@ -1972,11 +2102,34 @@ export function ScenarioBuilder({
           {planner.isPending ? (
             <>
               Planning in {environment}… each {noun}&apos;s script runs in plan mode.
+              {slowPlan && " Still planning. A plan stops after 5 min."}
             </>
           ) : judged !== null ? (
             <>
               <Icon name={judged.ok ? "circle-check" : "octagon-x"} size="sm" />
-              {judged.drafts ? <a href="#before-you-start">{judged.text}</a> : judged.text}
+              {judged.drafts ? (
+                <a
+                  href="#before-you-start"
+                  onClick={(event) => {
+                    // Before you start is in the run panel: an open block (or the settings)
+                    // gives its column back first, so the link always lands.
+                    event.preventDefault();
+                    flushSync(() => {
+                      setSelected(null);
+                      setSettings(false);
+                    });
+                    const target = globalThis.document.getElementById("before-you-start");
+                    if (typeof target?.scrollIntoView === "function") {
+                      target.scrollIntoView({ block: "nearest" });
+                    }
+                    target?.focus();
+                  }}
+                >
+                  {judged.text}
+                </a>
+              ) : (
+                judged.text
+              )}
               {judged.ok && inProgress && " · a scenario run of it is in progress"}
             </>
           ) : planner.isError ? (
@@ -2243,10 +2396,12 @@ export function ScenarioBuilder({
                   ? { name: environmentInfo.name, values: environmentValues ?? {} }
                   : null,
                 inputs: declaredInputs.map(([name]) => name),
+                document,
                 kept: keptValues.map((item) => ({
                   name: item.name,
                   number: item.number,
                   step: keyOf(item.step),
+                  node: item.step,
                 })),
                 services: serviceOptions,
               }}
@@ -2273,13 +2428,24 @@ export function ScenarioBuilder({
                         const panel = globalThis.document.querySelector<HTMLElement>(
                           '[aria-label^="Inspector: "]',
                         );
+                        // By the exact name the label gives (region, not region_code).
                         const label = [
                           ...(panel?.querySelectorAll<HTMLLabelElement>("label") ?? []),
-                        ].find((each) => each.textContent.trim().startsWith(name));
+                        ].find(
+                          (each) =>
+                            (
+                              each.querySelector(".ah-mono")?.textContent ?? each.textContent
+                            ).trim() === name,
+                        );
                         const control = label?.htmlFor
                           ? globalThis.document.getElementById(label.htmlFor)
                           : null;
-                        const target = control ?? panel;
+                        // A body shown as fields names its rows by the label: the first one.
+                        const FOCUSABLE = "input, textarea, select, button, [tabindex]";
+                        const target =
+                          (control && !control.matches(FOCUSABLE)
+                            ? control.querySelector<HTMLElement>(FOCUSABLE)
+                            : control) ?? panel;
                         target?.focus();
                         // jsdom has no scrollIntoView: scrolled only where the browser can.
                         if (target && typeof target.scrollIntoView === "function")

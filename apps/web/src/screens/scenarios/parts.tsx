@@ -213,18 +213,42 @@ export function WhereText({
 }
 
 /** "Draft: needs acceptance." and the exact commit line of each drafted action (AM-5): nothing
- * commits from hub web. */
+ * commits from hub web. `compact` is one line inside a list (an open step): the badge, what it
+ * means (`children`) and a Copy button for each command, with no command block. */
 export function DraftLine({
   commands,
   action,
   then,
+  compact = false,
+  className,
   children,
 }: {
   commands: readonly string[];
   action: string;
-  then: "plan again" | "check again";
   children?: ReactNode;
-}) {
+} & (
+  | { compact?: false; then: "plan again" | "check again"; className?: undefined }
+  | { compact: true; then?: undefined; className?: string }
+)) {
+  if (compact) {
+    return (
+      <span className={className}>
+        <span className="ah-badge ah-badge-quiet">
+          <Icon name="pencil" size="sm" />
+          Draft: needs acceptance
+        </span>
+        {children}
+        {commands.map((command) => (
+          <CopyButton
+            key={command}
+            text={command}
+            label={`Copy the commit command for ${action}`}
+            compact
+          />
+        ))}
+      </span>
+    );
+  }
   return (
     <div className="ah-stack" style={{ gap: 6 }}>
       <span className="ah-small">

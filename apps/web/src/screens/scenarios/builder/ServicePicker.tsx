@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 
 import { Icon } from "../../../components";
+import { serviceKindRank, serviceKindWords } from "../../hub-config/environments";
 
 /* Where a step's value goes, picked from what the hub declares (spec 23, the open step): the
  * services of the environment in the run bar, grouped by kind, found by typing. A service input
@@ -19,41 +20,17 @@ export interface ServiceOption {
   address: string | null;
 }
 
-const KIND_WORDS: Readonly<Record<string, string>> = {
-  api: "APIs and backends",
-  frontend: "Frontends",
-  database: "Databases",
-  sqs: "Queues (SQS)",
-  queue: "Queues",
-  bucket: "Buckets",
-  lambda: "Functions",
-  dynamodb: "Tables (DynamoDB)",
-  cognito: "User pools",
-};
-
 const MENU_WIDTH = 440;
 
-/** One of each kind, as the kind filter names it. */
-const KIND_ONE: Readonly<Record<string, string>> = {
-  api: "API or backend",
-  frontend: "Frontend",
-  database: "Database",
-  sqs: "Queue (SQS)",
-  queue: "Queue",
-  bucket: "Bucket",
-  lambda: "Function",
-  dynamodb: "Table (DynamoDB)",
-  cognito: "User pool",
-};
-
-/** A kind in words ("Queue (SQS)"), or null for none. */
+/** A kind in words ("Queue (SQS)"), as the Environments pages name it, or null for none. */
 export function kindWordsOf(kind: string | null | undefined): string | null {
-  if (!kind) return null;
-  return KIND_ONE[kind] ?? kind;
+  return kind ? serviceKindWords(kind).label : null;
 }
 
 /** The value a picked service is written as: its name, or `<repo>/<name>` only when another
- * repo has a service of that name (the run refuses an ambiguous name). */
+ * repo has a service of that name (the run refuses an ambiguous name). A service of no repo has
+ * no longer form (core action_call._service reads an empty repo as any): its name is written,
+ * and the field then says it is in more than one repo. */
 export function serviceValue(option: ServiceOption, all: readonly ServiceOption[] = []): string {
   const shared = all.some((other) => other.name === option.name && other.repo !== option.repo);
   return shared && option.repo ? `${option.repo}/${option.name}` : option.name;
@@ -63,8 +40,18 @@ function key(option: ServiceOption): string {
   return `${option.repo ?? ""}/${option.name}`;
 }
 
-function matches(option: ServiceOption, value: string): boolean {
-  return value === option.name || value === `${option.repo ?? ""}/${option.name}`;
+/** The services a value names, as the run finds them (core action_call._service): `<repo>/<name>`
+ * names that repo's, a bare name the service of that name in any repo. */
+export function servicesNamed(
+  value: string,
+  options: readonly ServiceOption[],
+): readonly ServiceOption[] {
+  const cut = value.lastIndexOf("/");
+  const repo = value.slice(0, Math.max(0, cut));
+  const name = value.slice(cut + 1);
+  return options.filter(
+    (option) => option.name === name && (repo === "" || repo === (option.repo ?? "")),
+  );
 }
 
 interface ServiceFieldProps {
@@ -80,13 +67,32 @@ interface ServiceFieldProps {
  * the kind where the input's name goes, the service where its value goes. */
 export function useServiceField({ label, value, options, environment, onPick }: ServiceFieldProps) {
   const [anchor, setAnchor] = useState<DOMRect | null>(null);
-  const picked = options.find((option) => matches(option, value)) ?? null;
+  const named = value === "" ? [] : servicesNamed(value, options);
+  const picked = named.length === 1 ? (named[0] ?? null) : null;
+  // A bare name two repos declare: the run refuses it, so it is not shown as either one.
+  const ambiguous = named.length > 1;
   const [chosenKind, setChosenKind] = useState<string | null>(null);
   const kind = chosenKind ?? picked?.kind ?? "";
   const kinds = [...new Set(options.map((option) => option.kind ?? "").filter(Boolean))].sort(
-    (a, b) => (KIND_ONE[a] ?? a).localeCompare(KIND_ONE[b] ?? b),
+    (a, b) => serviceKindWords(a).label.localeCompare(serviceKindWords(b).label),
   );
   const listed = kind === "" ? options : options.filter((option) => option.kind === kind);
+  /** The kind in words ("Queue (SQS)"), the one chosen or the picked service's; null for any. */
+  const kindWords = kindWordsOf(kind);
+  const where = environment ? ` in ${environment}` : "";
+  /** What the input's note says of the pick: its kind, description and address; what is in the
+   * way of one; or, nothing picked yet, what to choose. The open step and the side panel both
+   * say it. */
+  const about =
+    picked !== null
+      ? [kindWordsOf(picked.kind), picked.description, picked.address ?? `no address${where}`]
+          .filter(Boolean)
+          .join(" · ")
+      : ambiguous
+        ? `In ${named.map((option) => option.repo ?? "no repo").join(" and ")}: pick the one it means`
+        : value === ""
+          ? `Choose ${kind === "" ? "a service" : serviceKindWords(kind).one}${where}`
+          : null;
   const kindSelect = (
     <select
       className="ah-input st-service-kind"
@@ -102,7 +108,7 @@ export function useServiceField({ label, value, options, environment, onPick }: 
       <option value="">Any kind</option>
       {kinds.map((each) => (
         <option key={each} value={each}>
-          {KIND_ONE[each] ?? each}
+          {serviceKindWords(each).label}
         </option>
       ))}
     </select>
@@ -111,7 +117,7 @@ export function useServiceField({ label, value, options, environment, onPick }: 
     <>
       <button
         type="button"
-        className="st-service"
+        className="ah-input st-service"
         aria-haspopup="dialog"
         aria-expanded={anchor !== null}
         aria-label={`${label}: ${picked?.name ?? (value || "choose a service")}`}
@@ -125,7 +131,9 @@ export function useServiceField({ label, value, options, environment, onPick }: 
         {value !== "" && picked === null && (
           <span className="st-service-missing">
             <Icon name="circle-alert" size="sm" />
-            not declared{environment ? ` in ${environment}` : ""}
+            {ambiguous
+              ? "in more than one repo"
+              : `not declared${environment ? ` in ${environment}` : ""}`}
           </span>
         )}
         <Icon name="chevrons-up-down" size="sm" />
@@ -138,7 +146,7 @@ export function useServiceField({ label, value, options, environment, onPick }: 
             value={value}
             options={listed}
             all={options}
-            kindWords={kind === "" ? null : (KIND_ONE[kind] ?? kind)}
+            kindWords={kindWords}
             environment={environment}
             onPick={(next) => {
               setAnchor(null);
@@ -154,22 +162,25 @@ export function useServiceField({ label, value, options, environment, onPick }: 
         )}
     </>
   );
-  /** The kind in words ("Queue (SQS)"), the one chosen or the picked service's; null for any. */
-  const kindWords = kind === "" ? null : (KIND_ONE[kind] ?? kind);
-  return { kindSelect, field, picked, kindWords };
+  return { kindSelect, field, picked, about };
 }
 
-/** Both controls side by side (the side panel, under the input's name). */
+/** Both controls side by side, the note on the pick under them (the side panel, under the
+ * input's name). */
 export function ServiceField(props: ServiceFieldProps) {
-  const { kindSelect, field } = useServiceField(props);
+  const { kindSelect, field, about } = useServiceField(props);
   return (
-    <span className="st-service-pair">
-      {kindSelect}
-      {field}
-    </span>
+    <>
+      <span className="st-service-pair">
+        {kindSelect}
+        {field}
+      </span>
+      {about && <span className="ah-small ah-muted">{about}</span>}
+    </>
   );
 }
 
+// Debt: its search list (keys, placing, groups) repeats InsertMenu's; a shared SearchMenu waits.
 export function ServicePicker({
   anchor,
   title,
@@ -201,13 +212,15 @@ export function ServicePicker({
     field.current?.focus();
   }, []);
   const needle = query.trim().toLowerCase();
-  // Grouped by kind, in the order the kinds are named above, then by name.
-  const order = Object.keys(KIND_WORDS);
-  const sorted = [...options].sort((a, b) => {
-    const ka = order.indexOf(a.kind ?? "");
-    const kb = order.indexOf(b.kind ?? "");
-    return (ka === -1 ? 99 : ka) - (kb === -1 ? 99 : kb) || a.name.localeCompare(b.name);
-  });
+  // Grouped by kind, in the order Add service offers the kinds (a service of no kind with the
+  // others), then by name.
+  const kindOf = (option: ServiceOption) => option.kind ?? "other";
+  const sorted = [...options].sort(
+    (a, b) =>
+      serviceKindRank(kindOf(a)) - serviceKindRank(kindOf(b)) ||
+      kindOf(a).localeCompare(kindOf(b)) ||
+      a.name.localeCompare(b.name),
+  );
   const shown = needle
     ? sorted.filter((option) =>
         [option.name, option.kind, option.address, option.description, option.repo]
@@ -240,8 +253,8 @@ export function ServicePicker({
   const left = Math.max(8, Math.min(window.innerWidth - MENU_WIDTH - 8, anchor.right - MENU_WIDTH));
   const below = anchor.bottom + 6;
   const top = below + 420 > window.innerHeight ? Math.max(8, anchor.top - 426) : below;
-  const groupOf = (option: ServiceOption) =>
-    KIND_WORDS[option.kind ?? ""] ?? option.kind ?? "Other services";
+  const groupOf = (option: ServiceOption) => serviceKindWords(kindOf(option)).plural;
+  const picked = servicesNamed(value, all);
   return (
     <>
       <div className="bk-menu-scrim" onPointerDown={onClose} aria-hidden />
@@ -276,7 +289,7 @@ export function ServicePicker({
             const group = groupOf(option);
             const previous = shown[index - 1];
             const head = previous === undefined || groupOf(previous) !== group ? group : null;
-            const current = matches(option, value);
+            const current = picked.length === 1 && picked[0] === option;
             return (
               <div key={key(option)}>
                 {head && <div className="bk-menu-group">{head}</div>}
@@ -293,7 +306,10 @@ export function ServicePicker({
                     pick(index);
                   }}
                 >
-                  <Icon name={current ? "check" : "server"} size="sm" />
+                  <Icon
+                    name={current ? "check" : serviceKindWords(kindOf(option)).icon}
+                    size="sm"
+                  />
                   <span className="bk-menu-label">{option.name}</span>
                   <span className="bk-menu-hint">{option.repo ?? ""}</span>
                   <span className="bk-menu-about">

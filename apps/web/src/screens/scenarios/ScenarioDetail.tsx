@@ -12,8 +12,6 @@ import { scenarioBrief } from "./brief";
 import { Page, useWaitingRows, WaitingCard } from "./parts";
 import { useScenario, type ScenarioDetail, type ScenarioMode } from "./queries";
 
-export { pace } from "./story";
-
 /* Scenario detail (spec 23 screen 2, build and run on one screen): the scenario's blocks, edited
  * where they are read, under a run bar (environment, mode, inputs, plan, start) and beside a run
  * panel (the plan, the draft actions to commit, the scenario runs). A scenario run shown on the
