@@ -190,6 +190,13 @@ export function OpenStep({
   }
 
   const given = record(node.with);
+  // Values from earlier that need a look (nothing gives them): the fold says how many.
+  const toCheck = [...uses.entries()].filter(([ref, name]) => {
+    if (ref.startsWith("$INPUTS.")) {
+      return !(sources?.inputs.includes(name) ?? false) && !(env !== null && name in env.values);
+    }
+    return !keptBefore.some((item) => item.name === name);
+  }).length;
   const editChip = (field: string, label: string, title: string) =>
     onEdit ? (
       <button
@@ -293,6 +300,16 @@ export function OpenStep({
     >
       <div className="st-open-top">
         {action?.description && <p className="st-open-about">{action.description}</p>}
+        {draft && (
+          <span className="st-open-draft-badge">
+            <span className="ah-badge ah-badge-quiet">
+              <Icon name="git-commit-horizontal" size="sm" /> Draft action
+            </span>
+            <a className="st-g-link" href="#before-you-start">
+              commit it in Before you start
+            </a>
+          </span>
+        )}
         {onOpenPanel && (
           <button
             type="button"
@@ -504,6 +521,17 @@ export function OpenStep({
         <summary>
           <Icon name="chevron-right" size="sm" />
           More details
+          {toCheck > 0 ? (
+            <span className="st-g-missing">
+              <Icon name="circle-alert" size="sm" />
+              {toCheck} to check
+            </span>
+          ) : (
+            <span className="st-open-quiet">
+              {check ? "what it reads, the code, if it never holds" : "the action, the code"}
+              {uses.size > 0 ? ", values from earlier" : ""}
+            </span>
+          )}
         </summary>
         <div className="st-more-body">
           <Group title={check ? "How it checks" : "What it does"}>
@@ -521,16 +549,6 @@ export function OpenStep({
                 </>
               }
               label={check ? "Reads" : "Action"}
-              note={
-                draft ? (
-                  <span
-                    className="ah-badge ah-badge-quiet"
-                    title="Commit it before a scenario run can start: the command is in Before you start."
-                  >
-                    <Icon name="pencil" size="sm" /> Draft action
-                  </span>
-                ) : undefined
-              }
             />
             {check && readsWith.length > 0 && (
               <Row

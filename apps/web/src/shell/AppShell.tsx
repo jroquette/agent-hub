@@ -201,9 +201,11 @@ function ShellLayout({ children }: { children?: ReactNode }) {
           scope={scope}
           onScope={setScope}
           health={health}
-          sidebarCollapsed={preferences.sidebarCollapsed}
+          sidebarCollapsed={preferences.sidebarCollapsed || compact}
           onToggleSidebar={() => {
-            preferences.setSidebarCollapsed(!preferences.sidebarCollapsed);
+            // A page that asked for the width: expand it for this visit, the stored choice kept.
+            if (compact) setCompact(false);
+            else preferences.setSidebarCollapsed(!preferences.sidebarCollapsed);
           }}
           onPalette={() => {
             actions.openPalette();

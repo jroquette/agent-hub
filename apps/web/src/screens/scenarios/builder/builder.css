@@ -36,11 +36,6 @@
   min-height: 520px;
   overflow: hidden;
 }
-@media (max-width: 1599px) {
-  .sb-body {
-    grid-template-columns: 216px minmax(0, 1fr) 360px;
-  }
-}
 
 /* Palette */
 .sb-palette {

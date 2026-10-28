@@ -691,6 +691,8 @@ export function ScenarioBuilder({
     selectedItem?.kind === "block" &&
     (selectedItem.node.type === "action" || selectedItem.node.type === "expect");
   const inPanel = panelFor !== null && panelFor === selected;
+  // Another step selected: the panel asked for the last one is not reopened for it later.
+  if (panelFor !== null && panelFor !== selected) setPanelFor(null);
   const serialized: BuilderDocument = tree
     ? document
     : { ...document, nodes: [...nodesOf(main), ...kept] };
@@ -1208,6 +1210,28 @@ export function ScenarioBuilder({
   // an Undo toast), Alt+↑/↓ moves it in its list, ⌘D duplicates it, ⌘Z/⇧⌘Z undo and redo, ⌘S
   // saves, Esc clears the selection. Under review, a selected row is the proposal's: the block
   // keys leave the draft as it is.
+  // jsdom has no matchMedia: tests see the wide layout.
+  const railed = !useMediaQuery("(min-width: 1920px)", true);
+  const [leftOpen, setLeftOpen] = useState(false);
+  const leftOver = useRef<HTMLElement>(null);
+  // Focus follows the column over the list: into its tab when it opens, back to its rail button
+  // when it closes (never left on the page's body).
+  const [railBack, setRailBack] = useState<{ tab: string } | null>(null);
+  const closeLeft = () => {
+    setLeftOpen(false);
+    setRailBack({ tab: leftTab });
+  };
+  useEffect(() => {
+    if (!leftOpen) return;
+    leftOver.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus();
+  }, [leftOpen, leftTab]);
+  useEffect(() => {
+    if (railBack === null) return;
+    globalThis.document
+      .querySelector<HTMLElement>(`[data-rail="${CSS.escape(railBack.tab)}"]`)
+      ?.focus();
+  }, [railBack]);
+
   const onKeys = (event: KeyboardEvent) => {
     const target = event.target as HTMLElement;
     if (!bodyRef.current?.contains(target) && target !== window.document.body) return;
@@ -1223,6 +1247,10 @@ export function ScenarioBuilder({
       event.preventDefault();
       if (event.shiftKey) draft.redo();
       else draft.undo();
+      return;
+    }
+    if (event.key === "Escape" && leftOpen) {
+      closeLeft();
       return;
     }
     if (!selected) return;
@@ -1408,9 +1436,6 @@ export function ScenarioBuilder({
   const slowPlan = useAfter(SLOW_PLAN_MS, planner.isPending);
   // A tablet plans, but a start needs a desktop screen (spec 23, Responsive).
   const tablet = useMediaQuery(TABLET);
-  // jsdom has no matchMedia: tests see the wide layout.
-  const railed = !useMediaQuery("(min-width: 1920px)", true);
-  const [leftOpen, setLeftOpen] = useState(false);
   // A plan's 422 names its inputs by pointer: each message at its field, the others listed.
   const messages = planMessages(planner.error, asksAtStart);
   const [erred, setErred] = useState<unknown>(null);
@@ -1820,7 +1845,7 @@ export function ScenarioBuilder({
   const railTabs = [
     { id: "blocks", label: "Blocks", icon: "puzzle" },
     { id: "variables", label: "Variables", icon: "flag" },
-    { id: "actions", label: `Actions (${String(items.length)})`, icon: "circle-play" },
+    { id: "actions", label: `Actions, ${String(items.length)}`, icon: "play" },
   ] as const;
   const leftColumn = !railed ? (
     <aside className="sb-left" aria-label="Blocks, variables and actions">
@@ -1828,15 +1853,17 @@ export function ScenarioBuilder({
     </aside>
   ) : (
     <>
-      <nav className="sb-rail" aria-label="Blocks, variables and actions">
+      <div className="sb-rail" role="toolbar" aria-label="Left column" aria-orientation="vertical">
         {railTabs.map((tab) => (
           <IconButton
             key={tab.id}
             icon={tab.icon}
             label={tab.label}
-            aria-pressed={leftOpen && leftTab === tab.id}
+            data-rail={tab.id}
+            aria-expanded={leftOpen && leftTab === tab.id}
+            aria-controls="sb-left-over"
             onClick={() => {
-              if (leftOpen && leftTab === tab.id) setLeftOpen(false);
+              if (leftOpen && leftTab === tab.id) closeLeft();
               else {
                 setLeftTab(tab.id);
                 setLeftOpen(true);
@@ -1844,24 +1871,26 @@ export function ScenarioBuilder({
             }}
           />
         ))}
-      </nav>
+      </div>
       {leftOpen && (
         <>
           <div
             className="sb-rail-scrim"
             aria-hidden
             onPointerDown={() => {
-              setLeftOpen(false);
+              closeLeft();
             }}
           />
           {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Esc closes it */}
           <aside
+            id="sb-left-over"
+            ref={leftOver}
             className="sb-left sb-left-over"
             aria-label="Blocks, variables and actions"
             onKeyDown={(event) => {
               if (event.key === "Escape") {
                 event.stopPropagation();
-                setLeftOpen(false);
+                closeLeft();
               }
             }}
           >
@@ -1871,7 +1900,7 @@ export function ScenarioBuilder({
               label="Close Blocks, variables and actions"
               className="sb-left-close"
               onClick={() => {
-                setLeftOpen(false);
+                closeLeft();
               }}
             />
             {leftContent}

@@ -450,6 +450,10 @@ describe("AppShell", () => {
       { routes },
     );
     expect(document.querySelector(".ah-shell")).toHaveAttribute("data-collapsed", "true");
+    // The top bar's toggle says what is shown, and expands it for this visit.
+    fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
+    expect(document.querySelector(".ah-shell")).not.toHaveAttribute("data-collapsed");
+    expect(screen.getByRole("button", { name: "Collapse sidebar" })).toBeInTheDocument();
     // The page no longer asks: the sidebar is as the person left it.
     fireEvent.click(screen.getByRole("button", { name: "Leave" }));
     expect(document.querySelector(".ah-shell")).not.toHaveAttribute("data-collapsed");

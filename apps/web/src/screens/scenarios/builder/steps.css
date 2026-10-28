@@ -603,19 +603,6 @@
     grid-template-columns: 280px minmax(0, 1fr) var(--panel);
   }
 }
-@media (max-width: 1439px) {
-  /* Below 1440 the left column gives way while a step is open, so list and editor both fit. */
-  .sb-body,
-  .sb-body:not([data-panel]) {
-    grid-template-columns: 264px minmax(0, 1fr);
-  }
-  .sb-body[data-panel] {
-    grid-template-columns: minmax(0, 1fr) 400px;
-  }
-  .sb-body[data-panel] > .sb-left {
-    display: none;
-  }
-}
 .sb-script table td {
   max-width: 180px;
   overflow: hidden;
@@ -1432,12 +1419,12 @@
 /* Below 1920 px the left column is a rail of its three tabs; one opens the column over the list. */
 .sb-body[data-left="rail"],
 .sb-body[data-left="rail"][data-panel] {
-  grid-template-columns: 56px minmax(0, 1fr) 400px;
+  grid-template-columns: var(--sidebar-collapsed) minmax(0, 1fr) 400px;
 }
 @media (min-width: 1600px) {
   .sb-body[data-left="rail"],
   .sb-body[data-left="rail"][data-panel] {
-    grid-template-columns: 56px minmax(0, 1fr) 440px;
+    grid-template-columns: var(--sidebar-collapsed) minmax(0, 1fr) var(--panel);
   }
 }
 .sb-rail {
@@ -1453,7 +1440,10 @@
   color: var(--accent);
 }
 .sb-rail-scrim {
+  /* Over the list only (its grid column): a click on the run panel still lands there. */
   position: absolute;
+  grid-column: 2;
+  grid-row: 1;
   inset: 0;
   z-index: 19;
 }
@@ -1461,7 +1451,7 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 56px;
+  left: var(--sidebar-collapsed);
   z-index: 20;
   display: flex;
   flex-direction: column;
@@ -1512,4 +1502,12 @@
   .st-more > summary > svg {
     transition: none;
   }
+}
+
+.st-open-draft-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  flex: none;
 }

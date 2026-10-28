@@ -3467,12 +3467,11 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(values).toHaveTextContent("1 needs a value");
     expect(values).toHaveTextContent("region_codeNeeds a value");
     expect(within(values).getByRole("button", { name: "Set it in the panel" })).toBeInTheDocument();
-    // The draft is a badge on the step; its commit command is said once, in Before you start.
+    // The draft is said on the step's first line, in words, with the way to its commit.
     expect(within(open).getByText("Draft action")).toBeInTheDocument();
-    expect(within(open).getByText("Draft action").closest(".ah-badge")).toHaveAttribute(
-      "title",
-      expect.stringContaining("Before you start"),
-    );
+    expect(
+      within(open).getByRole("link", { name: "commit it in Before you start" }),
+    ).toHaveAttribute("href", "#before-you-start");
   });
 
   it("scenario builder's View control offers no Run view", async () => {
@@ -4596,32 +4595,33 @@ describe("ScenarioBuilder (scenario builder)", () => {
     try {
       const user = userEvent.setup();
       renderBuilder();
-      const rail = await screen.findByRole("navigation", { name: "Blocks, variables and actions" });
+      const rail = await screen.findByRole("toolbar", { name: "Left column" });
       // Only the rail: the column itself is not there until a tab is pressed.
       expect(
         screen.queryByRole("complementary", { name: "Blocks, variables and actions" }),
       ).not.toBeInTheDocument();
-      await user.click(within(rail).getByRole("button", { name: "Variables" }));
+      const variables = within(rail).getByRole("button", { name: "Variables" });
+      await user.click(variables);
       const column = screen.getByRole("complementary", { name: "Blocks, variables and actions" });
-      expect(within(rail).getByRole("button", { name: "Variables" })).toHaveAttribute(
-        "aria-pressed",
-        "true",
-      );
-      expect(within(column).getByRole("tab", { name: "Variables" })).toHaveAttribute(
-        "aria-selected",
-        "true",
-      );
-      // Esc closes it, and so does its close button.
-      await user.click(within(column).getByRole("tab", { name: "Variables" }));
+      expect(variables).toHaveAttribute("aria-expanded", "true");
+      expect(variables).toHaveAttribute("aria-controls", column.id);
+      // Focus moves into the column, on its tab.
+      expect(within(column).getByRole("tab", { name: "Variables" })).toHaveFocus();
+      expect(await seriousViolations(globalThis.document.body)).toEqual([]);
+      // Esc closes it and focus goes back to its rail button.
       await user.keyboard("{Escape}");
       expect(
         screen.queryByRole("complementary", { name: "Blocks, variables and actions" }),
       ).not.toBeInTheDocument();
-      await user.click(within(rail).getByRole("button", { name: "Blocks" }));
+      expect(variables).toHaveFocus();
+      // So does its close button.
+      const blocks = within(rail).getByRole("button", { name: "Blocks" });
+      await user.click(blocks);
       await user.click(screen.getByRole("button", { name: "Close Blocks, variables and actions" }));
       expect(
         screen.queryByRole("complementary", { name: "Blocks, variables and actions" }),
       ).not.toBeInTheDocument();
+      expect(blocks).toHaveFocus();
     } finally {
       vi.unstubAllGlobals();
     }
