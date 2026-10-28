@@ -59,6 +59,10 @@ export interface OpenStepProps {
   onGoToStep?: ((step: string) => void) | null;
   /** The run bar's mode: what a check that never holds does in it. */
   mode?: "interactive" | "regression";
+  /** The step's number, to name its controls. */
+  number?: string;
+  /** Opens the step's full editor in the side panel (the open step folds meanwhile). */
+  onOpenPanel?: (() => void) | null;
 }
 
 function written(value: Json): string {
@@ -141,6 +145,8 @@ export function OpenStep({
   onEditInPanel = null,
   onGoToStep = null,
   mode = "interactive",
+  number = "",
+  onOpenPanel = null,
 }: OpenStepProps) {
   const params = values.filter(([, value]) => !isBody(value));
   const bodies = values.filter(([, value]) => isBody(value));
@@ -286,7 +292,22 @@ export function OpenStep({
         event.stopPropagation();
       }}
     >
-      {action?.description && <p className="st-open-about">{action.description}</p>}
+      <div className="st-open-top">
+        {action?.description && <p className="st-open-about">{action.description}</p>}
+        {onOpenPanel && (
+          <button
+            type="button"
+            className="st-g-link st-open-panel"
+            aria-label={`Edit all of step ${number} in the panel`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenPanel();
+            }}
+          >
+            <Icon name="pencil" size="sm" /> Edit all in the panel
+          </button>
+        )}
+      </div>
 
       {check && (
         <Group title="Done when">

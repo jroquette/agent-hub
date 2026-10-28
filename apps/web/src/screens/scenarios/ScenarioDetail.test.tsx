@@ -1261,6 +1261,8 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
         name: /^Cannot start: 1 draft action needs acceptance/,
       });
       await user.click(row(/^Step 1,/));
+      // The step's full editor holds the right column once asked for.
+      await user.click(screen.getByRole("button", { name: /^Edit all of step .* in the panel$/ }));
       expect(
         screen.queryByRole("complementary", { name: "Scenario runs of order-lifecycle" }),
       ).toBeNull();

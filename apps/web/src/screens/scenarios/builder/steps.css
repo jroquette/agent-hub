@@ -1414,3 +1414,17 @@
   gap: var(--space-2);
   white-space: normal;
 }
+
+/* The open step's first line: what its action does, and the way to its full editor. */
+.st-open-top {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+.st-open-top > .st-open-about {
+  flex: 1;
+}
+.st-open-panel {
+  flex: none;
+  margin-left: auto;
+}

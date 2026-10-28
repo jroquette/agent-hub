@@ -329,6 +329,10 @@ export function ScenarioBuilder({
   });
   const { setOpen } = useDiscuss();
   const [selected, setSelected] = useState<string | null>(null);
+  // One editor at a time: a step that opens in place (Run an action, Wait until) shows its full
+  // editor in the side panel only when asked for ("Edit all in the panel", or a link to one of
+  // its fields); then the open step folds, so the same fields never show twice.
+  const [panelFor, setPanelFor] = useState<string | null>(null);
   const [view, setView] = useState<View>("blocks");
   const [inserting, setInserting] = useState<{
     target: InsertTarget;
@@ -679,6 +683,14 @@ export function ScenarioBuilder({
   };
 
   const selectedItem = selected ? findItem(allItems, selected) : null;
+  // The selected step opens in place in Blocks (a Run an action or a Wait until): its side panel
+  // shows only when asked for.
+  const opensInPlace =
+    view === "blocks" &&
+    !underReview &&
+    selectedItem?.kind === "block" &&
+    (selectedItem.node.type === "action" || selectedItem.node.type === "expect");
+  const inPanel = panelFor !== null && panelFor === selected;
   const serialized: BuilderDocument = tree
     ? document
     : { ...document, nodes: [...nodesOf(main), ...kept] };
@@ -898,7 +910,8 @@ export function ScenarioBuilder({
           }}
           footer={stepButtons(key)}
           onClose={() => {
-            setSelected(null);
+            if (opensInPlace) setPanelFor(null);
+            else setSelected(null);
           }}
         />
       );
@@ -1214,7 +1227,8 @@ export function ScenarioBuilder({
     }
     if (!selected) return;
     if (event.key === "Escape") {
-      setSelected(null);
+      if (panelFor === selected) setPanelFor(null);
+      else setSelected(null);
       return;
     }
     if (underReview) return;
@@ -2425,6 +2439,17 @@ export function ScenarioBuilder({
                   : null
               }
               mode={mode}
+              inPanel={inPanel ? selected : null}
+              onOpenPanel={
+                reviewProgram
+                  ? undefined
+                  : (id) => {
+                      setSettings(false);
+                      setSelected(id);
+                      setPanelFor(id);
+                      setStepTab("settings");
+                    }
+              }
               onEditNode={reviewProgram ? undefined : editNode}
               onEditField={
                 reviewProgram
@@ -2433,6 +2458,7 @@ export function ScenarioBuilder({
                       // The panel's Settings, at that value's field.
                       setSettings(false);
                       setSelected(id);
+                      setPanelFor(id);
                       setStepTab("settings");
                       requestAnimationFrame(() => {
                         const panel = globalThis.document.querySelector<HTMLElement>(
@@ -2582,7 +2608,7 @@ export function ScenarioBuilder({
             </div>
           )}
         </div>
-        {reviewPanel ?? inspector ?? runPanel}
+        {reviewPanel ?? (opensInPlace && !inPanel ? null : inspector) ?? runPanel}
       </div>
       {migrating && (
         <MigrateDialog
