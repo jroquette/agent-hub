@@ -1476,3 +1476,40 @@
   right: var(--space-2);
   z-index: 1;
 }
+
+/* More details: the rest of an open step, folded under its essentials. */
+.st-more > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-sm);
+  margin-left: var(--space-3);
+  list-style: none;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.st-more > summary::-webkit-details-marker {
+  display: none;
+}
+.st-more > summary > svg {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.st-more[open] > summary > svg {
+  transform: rotate(90deg);
+}
+.st-more > summary:hover {
+  color: var(--text);
+}
+.st-more-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
+}
+@media (prefers-reduced-motion: reduce) {
+  .st-more > summary > svg {
+    transition: none;
+  }
+}

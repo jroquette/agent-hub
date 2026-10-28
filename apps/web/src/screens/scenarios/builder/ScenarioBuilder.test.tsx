@@ -3136,7 +3136,9 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.clear(field);
     await user.type(field, "30s{Enter}");
 
-    expect(within(tree).getByRole("treeitem", { name: CHECK })).toHaveTextContent("Every30 s");
+    expect(within(tree).getByRole("treeitem", { name: CHECK })).toHaveTextContent(
+      "Checksevery30 s",
+    );
   });
 
   it("scenario builder duplicates and deletes a step from its quick actions", async () => {
@@ -3207,7 +3209,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
       within(within(fetch).getByRole("group", { name: "Step 1 settings" }))
         .getAllByRole("region")
         .map((region) => region.getAttribute("aria-label")),
-    ).toEqual(["What it does", "Values for this step", "Values from earlier"]);
+    ).toEqual(["Values for this step", "What it does", "Values from earlier"]);
     expect(
       within(fetch).getByText("Scenario input · asked when the scenario run starts"),
     ).toBeInTheDocument();
@@ -3223,8 +3225,9 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const script = within(fetch).getByLabelText(
       "Text of actions/orders/scripts/send_queue_message.py",
     );
-    // Folded until asked for.
+    // Folded until asked for: under More details, then Show the code it runs.
     expect(script).not.toBeVisible();
+    await user.click(within(fetch).getByText("More details"));
     await user.click(within(fetch).getByText("Show the code it runs"));
     expect(script).toBeVisible();
     expect(script).toHaveTextContent("print('{}')");
@@ -3464,11 +3467,12 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(values).toHaveTextContent("1 needs a value");
     expect(values).toHaveTextContent("region_codeNeeds a value");
     expect(within(values).getByRole("button", { name: "Set it in the panel" })).toBeInTheDocument();
-    // The draft says what it means and gives its commit command.
-    expect(within(open).getByText("Draft: needs acceptance")).toBeInTheDocument();
-    expect(
-      within(open).getByRole("button", { name: "Copy the commit command for send-queue-message" }),
-    ).toBeInTheDocument();
+    // The draft is a badge on the step; its commit command is said once, in Before you start.
+    expect(within(open).getByText("Draft action")).toBeInTheDocument();
+    expect(within(open).getByText("Draft action").closest(".ah-badge")).toHaveAttribute(
+      "title",
+      expect.stringContaining("Before you start"),
+    );
   });
 
   it("scenario builder's View control offers no Run view", async () => {
@@ -3622,7 +3626,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
       within(open)
         .getAllByRole("region")
         .map((region) => region.getAttribute("aria-label")),
-    ).toEqual(["What it does", "Values for this step"]);
+    ).toEqual(["Values for this step", "What it does"]);
     // What it does: the action, with its runtime in words.
     const does = within(open).getByRole("region", { name: "What it does" });
     expect(does).toHaveTextContent("Actionsend-queue-messagePython");
@@ -3735,9 +3739,9 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const check = await screen.findByRole("treeitem", { name: CHECK });
     await user.click(check);
     const open = within(check).getByRole("group", { name: "Step 2 settings" });
-    // A check reads by its poll: Done when (each condition a row), then How it checks.
-    const does = within(open).getByRole("region", { name: "How it checks" });
-    expect(does).toHaveTextContent("Every10 sGives up after5 min");
+    // A check reads by its poll: Done when (each condition a row), then How often.
+    const does = within(open).getByRole("region", { name: "How often" });
+    expect(does).toHaveTextContent("Checksevery10 s· up to5 min");
     expect(within(open).getByRole("region", { name: "Done when" })).toHaveTextContent(
       "statusisON_HOLD",
     );
@@ -3745,13 +3749,11 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(within(keeps).getByTitle("Kept value order_status")).toHaveTextContent("order_status");
     expect(keeps).toHaveTextContent("from");
     expect(within(keeps).getByTitle("Output status of this step")).toBeInTheDocument();
-    // Keeps comes last.
+    // Keeps comes before More details, which folds the rest.
     expect(
-      within(open)
-        .getAllByRole("region")
-        .map((region) => region.getAttribute("aria-label"))
-        .at(-1),
-    ).toBe("Keeps for later steps");
+      keeps.compareDocumentPosition(within(open).getByText("More details")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("scenario builder's open step says where each value from earlier comes from, only from the steps before it", async () => {
@@ -3819,10 +3821,10 @@ describe("ScenarioBuilder (scenario builder)", () => {
         .getAllByRole("region")
         .map((region) => region.getAttribute("aria-label")),
     ).toEqual([
-      "What it does",
       "Values for this step",
-      "Values from earlier",
       "Keeps for later steps",
+      "What it does",
+      "Values from earlier",
     ]);
     const later = within(notify).getByRole("region", { name: "Values from earlier" });
     expect(
@@ -3993,6 +3995,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     renderBuilder();
     const fetch = await screen.findByRole("treeitem", { name: FETCH });
     await user.click(fetch);
+    await user.click(within(fetch).getByText("More details"));
     await user.click(within(fetch).getByText("Show the code it runs"));
     const script = within(fetch).getByText("Runs.").closest(".sc-file");
     if (!(script instanceof HTMLElement)) throw new Error("no script file");
@@ -4486,8 +4489,9 @@ describe("ScenarioBuilder (scenario builder)", () => {
     });
     const fetch = await screen.findByRole("treeitem", { name: FETCH });
     await user.click(fetch);
+    await user.click(within(fetch).getByText("More details"));
     await user.click(within(fetch).getByText("Show the code it runs"));
-    expect(within(fetch).getByText("Draft: needs acceptance")).toBeVisible();
+    expect(within(fetch).getByText("Draft action")).toBeVisible();
     expect(await seriousViolations(globalThis.document.body)).toEqual([]);
   });
 
@@ -4518,16 +4522,20 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(done).toHaveTextContent("statusisON_HOLD");
     // (a token's hidden words, "Output of this step", sit before its name)
     expect(done).toHaveTextContent(/and(Output of this step)?coverisPENDING/);
-    // How it checks: what it reads with, and both timings edit in place.
-    const how = within(open).getByRole("region", { name: "How it checks" });
-    expect(within(how).getByTitle("Scenario input external_ref")).toBeInTheDocument();
-    expect(how).toHaveTextContent("At most 30 checks");
+    // How it checks (folded) says what it reads with; How often edits both timings in place.
+    expect(
+      within(within(open).getByRole("region", { name: "How it checks" })).getByTitle(
+        "Scenario input external_ref",
+      ),
+    ).toBeInTheDocument();
+    const how = within(open).getByRole("region", { name: "How often" });
+    expect(how).toHaveTextContent("at most 30 checks");
     await user.click(within(how).getByRole("button", { name: "Edit when it gives up: 5 min" }));
     const field = screen.getByRole("textbox", { name: "When 2 gives up" });
     await user.clear(field);
     await user.type(field, "20m{Enter}");
-    expect(within(open).getByRole("region", { name: "How it checks" })).toHaveTextContent(
-      "Gives up after20 min",
+    expect(within(open).getByRole("region", { name: "How often" })).toHaveTextContent(
+      "up to20 min",
     );
     // What happens when it never holds, by the run bar's mode.
     expect(within(open).getByRole("region", { name: "If it never holds" })).toHaveTextContent(

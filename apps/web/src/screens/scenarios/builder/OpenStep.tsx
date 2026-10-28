@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 
 import { CopyButton, Icon } from "../../../components";
 import { ActionFiles } from "../ActionPanel";
-import { DraftLine } from "../parts";
 import type { ScenarioAction } from "../queries";
 import { maxChecks, pace } from "../story";
 import { TokenText, ValueToken, tokenOf } from "./CardParts";
@@ -364,98 +363,26 @@ export function OpenStep({
         </Group>
       )}
 
-      <Group title={check ? "How it checks" : "What it does"}>
-        <Row
-          value={
-            <>
-              <span className="st-open-mono st-open-strong">
-                {action?.name ?? text(node.action)}
-              </span>
-              {action?.runtime && (
-                <span className="st-open-quiet">{RUNTIME[action.runtime] ?? action.runtime}</span>
-              )}
-            </>
-          }
-          label={check ? "Reads" : "Action"}
-          note={
-            draft ? (
-              <DraftLine
-                compact
-                className="st-open-draft"
-                commands={action.accept_command ? [action.accept_command] : []}
-                action={action.name}
-              >
-                You can plan with it now; a scenario run needs it committed first.
-              </DraftLine>
-            ) : undefined
-          }
-        />
-        {check && every && timeout && (
-          <>
-            <Row
-              label="Every"
-              value={
-                editor("timing") ?? editChip("timing", pace(every), "Edit how often it checks")
-              }
-            />
-            <Row
-              label="Gives up after"
-              value={
-                editor("timeout") ?? editChip("timeout", pace(timeout), "Edit when it gives up")
-              }
-              note={
-                checks === null
-                  ? undefined
-                  : `At most ${String(checks)} checks (worked out: ${pace(timeout)} ÷ ${pace(every)})`
-              }
-            />
-          </>
-        )}
-        {check && readsWith.length > 0 && (
+      {check && every && timeout && (
+        <Group title="How often">
           <Row
-            label="Reads with"
+            label="Checks"
             value={
               <span className="st-open-value-ref">
-                {readsWith.map((ref) => (
-                  <ValueToken key={ref} value={ref} />
-                ))}
+                <span className="st-open-quiet">every</span>
+                {editor("timing") ?? editChip("timing", pace(every), "Edit how often it checks")}
+                <span className="st-open-quiet">· up to</span>
+                {editor("timeout") ?? editChip("timeout", pace(timeout), "Edit when it gives up")}
+                {checks !== null && (
+                  <span
+                    className="st-open-quiet"
+                    title={`Worked out: ${pace(timeout)} ÷ ${pace(every)}`}
+                  >
+                    · at most {checks} checks
+                  </span>
+                )}
               </span>
             }
-            note="Values from the scenario run, the same in every check."
-          />
-        )}
-        {action && (action.script_text != null || action.document_text != null) && (
-          <li className="st-g-row st-g-more">
-            {/* Folded: what will run is one click away, never in the way. */}
-            <details className="st-code">
-              <summary>
-                <Icon name="chevron-right" size="sm" />
-                Show the code it runs
-                <span className="st-open-quiet">{action.script ?? ""}</span>
-              </summary>
-              <div className="st-code-files">
-                <ActionFiles action={action} captions />
-              </div>
-            </details>
-          </li>
-        )}
-      </Group>
-
-      {check && timeout && (
-        <Group title="If it never holds">
-          <Row
-            label={
-              <span className="st-open-value-ref">
-                <Icon name={mode === "interactive" ? "text-search" : "circle-x"} size="sm" />
-                {mode === "interactive" ? "Interactive" : "Regression"}
-              </span>
-            }
-            value={
-              mode === "interactive"
-                ? `After ${pace(timeout)} the scenario run pauses and a read-only agent investigates with you.`
-                : `After ${pace(timeout)} the scenario run fails here.`
-            }
-            note="Set by the scenario run's mode in the bar above."
           />
         </Group>
       )}
@@ -553,50 +480,6 @@ export function OpenStep({
         </Group>
       )}
 
-      {uses.size > 0 && (
-        <Group title="Values from earlier">
-          {[...uses.entries()].map(([ref, name]) => {
-            const scenario = ref.startsWith("$INPUTS.");
-            const envValue = scenario && env !== null ? env.values[name] : undefined;
-            const kept = keptBefore.find((item) => item.name === name);
-            const asked = sources?.inputs.includes(name) ?? false;
-            return (
-              <Row
-                key={ref}
-                label={<ValueToken value={ref} />}
-                value={
-                  <span className="st-open-value-ref">
-                    <span className="st-open-quiet">
-                      {scenario
-                        ? envValue !== undefined
-                          ? `Scenario input · ${envValue} from ${env?.name ?? ""}`
-                          : asked
-                            ? "Scenario input · asked when the scenario run starts"
-                            : "Not asked by the scenario"
-                        : kept
-                          ? `Kept by ${kept.number}`
-                          : "Not given by any earlier step"}
-                    </span>
-                    {!scenario && kept?.step && onGoToStep && (
-                      <button
-                        type="button"
-                        className="st-g-link"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onGoToStep(kept.step ?? "");
-                        }}
-                      >
-                        Go to {kept.number}
-                      </button>
-                    )}
-                  </span>
-                }
-              />
-            );
-          })}
-        </Group>
-      )}
-
       {keeps.length > 0 && (
         <Group title="Keeps for later steps">
           {keeps.map(([name, from]) => (
@@ -614,6 +497,133 @@ export function OpenStep({
           ))}
         </Group>
       )}
+
+      {/* The rest of the step, folded: what it reads or runs, the code, what if it never holds,
+          where its values come from. */}
+      <details className="st-more">
+        <summary>
+          <Icon name="chevron-right" size="sm" />
+          More details
+        </summary>
+        <div className="st-more-body">
+          <Group title={check ? "How it checks" : "What it does"}>
+            <Row
+              value={
+                <>
+                  <span className="st-open-mono st-open-strong">
+                    {action?.name ?? text(node.action)}
+                  </span>
+                  {action?.runtime && (
+                    <span className="st-open-quiet">
+                      {RUNTIME[action.runtime] ?? action.runtime}
+                    </span>
+                  )}
+                </>
+              }
+              label={check ? "Reads" : "Action"}
+              note={
+                draft ? (
+                  <span
+                    className="ah-badge ah-badge-quiet"
+                    title="Commit it before a scenario run can start: the command is in Before you start."
+                  >
+                    <Icon name="pencil" size="sm" /> Draft action
+                  </span>
+                ) : undefined
+              }
+            />
+            {check && readsWith.length > 0 && (
+              <Row
+                label="Reads with"
+                value={
+                  <span className="st-open-value-ref">
+                    {readsWith.map((ref) => (
+                      <ValueToken key={ref} value={ref} />
+                    ))}
+                  </span>
+                }
+                note="Values from the scenario run, the same in every check."
+              />
+            )}
+            {action && (action.script_text != null || action.document_text != null) && (
+              <li className="st-g-row st-g-more">
+                {/* Folded: what will run is one click away, never in the way. */}
+                <details className="st-code">
+                  <summary>
+                    <Icon name="chevron-right" size="sm" />
+                    Show the code it runs
+                    <span className="st-open-quiet">{action.script ?? ""}</span>
+                  </summary>
+                  <div className="st-code-files">
+                    <ActionFiles action={action} captions />
+                  </div>
+                </details>
+              </li>
+            )}
+          </Group>
+          {check && timeout && (
+            <Group title="If it never holds">
+              <Row
+                label={
+                  <span className="st-open-value-ref">
+                    <Icon name={mode === "interactive" ? "text-search" : "circle-x"} size="sm" />
+                    {mode === "interactive" ? "Interactive" : "Regression"}
+                  </span>
+                }
+                value={
+                  mode === "interactive"
+                    ? `After ${pace(timeout)} the scenario run pauses and a read-only agent investigates with you.`
+                    : `After ${pace(timeout)} the scenario run fails here.`
+                }
+                note="Set by the scenario run's mode in the bar above."
+              />
+            </Group>
+          )}
+          {uses.size > 0 && (
+            <Group title="Values from earlier">
+              {[...uses.entries()].map(([ref, name]) => {
+                const scenario = ref.startsWith("$INPUTS.");
+                const envValue = scenario && env !== null ? env.values[name] : undefined;
+                const kept = keptBefore.find((item) => item.name === name);
+                const asked = sources?.inputs.includes(name) ?? false;
+                return (
+                  <Row
+                    key={ref}
+                    label={<ValueToken value={ref} />}
+                    value={
+                      <span className="st-open-value-ref">
+                        <span className="st-open-quiet">
+                          {scenario
+                            ? envValue !== undefined
+                              ? `Scenario input · ${envValue} from ${env?.name ?? ""}`
+                              : asked
+                                ? "Scenario input · asked when the scenario run starts"
+                                : "Not asked by the scenario"
+                            : kept
+                              ? `Kept by ${kept.number}`
+                              : "Not given by any earlier step"}
+                        </span>
+                        {!scenario && kept?.step && onGoToStep && (
+                          <button
+                            type="button"
+                            className="st-g-link"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onGoToStep(kept.step ?? "");
+                            }}
+                          >
+                            Go to {kept.number}
+                          </button>
+                        )}
+                      </span>
+                    }
+                  />
+                );
+              })}
+            </Group>
+          )}
+        </div>
+      </details>
     </div>
   );
 }
