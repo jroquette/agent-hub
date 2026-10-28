@@ -12,7 +12,7 @@ token is synthetic.
 for the knowledge routes (AGH-393); ``offline`` fails every non-loopback ``socket.connect``.
 
 ``counted_sql`` counts the SQL statements and the new database connections of every SQLAlchemy
-engine in the process while its block runs (AGH-600), so a test can pin a route's queries.
+engine in the process while its block runs, so a test can pin a route's queries.
 """
 
 import asyncio

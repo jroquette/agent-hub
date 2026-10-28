@@ -1,10 +1,14 @@
-"""SQL statements and new connections per request on the key routes (AGH-600), on the composed
-app over a SQLite file and a registered synthetic hub.
+"""SQL statements and new connections per request on the key routes, on the composed app over a
+SQLite file and a registered synthetic hub.
 
 Each route is read once to warm it, then measured with ``count_sql`` at 20 and again at 200
 sessions (the 180 more appended in between, the route warmed again). The counts must be the
-same at both sizes, so an N+1 fails here, and equal the pinned literal, so one extra query
-fails too. The routes that still ask one query per session are strict xfails until their fix.
+same at both sizes, so an N+1 fails here (AC-2), and equal the pinned literal, so one extra
+query fails too. The routes that still ask one query per session are strict xfails until their
+fix. Each read also checks one value of the response at each size, so a route that stops seeing
+the sessions fails rather than passing with fewer queries. A bad status or value fails through
+``pytest.fail``, outside the xfails' ``raises=AssertionError``: only the count check can be the
+expected failure.
 A statement is anything sent through a cursor, ``BEGIN`` included; the store's engines have no
 pool (``NullPool``), so every checkout opens a new connection.
 """
@@ -45,6 +49,20 @@ class Counts(NamedTuple):
     connections: int
 
 
+class Seen(NamedTuple):
+    """The value a route's response shows at ``FEW`` and at ``MANY`` sessions."""
+
+    few: int
+    many: int
+
+
+type Reading = Callable[[Any], int]
+
+
+def _skill_uses(body: Any) -> int:
+    return next(item["usage"]["count"] for item in body["items"] if item["name"] == "create-plan")
+
+
 def _sessions(composed: Any, numbers: range) -> None:
     """Sessions on the hub's branch prefix and team: the even ones about ``FEATURE_ISSUE``, the
     odd ones about an issue of their own; every third one still live; each uses a skill."""
@@ -81,24 +99,41 @@ def world(composed: Any, make_hub: Callable[..., Path]) -> Any:
     return composed
 
 
+def _ok(response: Any) -> Any:
+    if response.status_code != 200:
+        pytest.fail(f"{response.status_code}: {response.text}")
+    return response.json()
+
+
 def _measured(
-    composed: Any, path: str, count_sql: Callable[[], AbstractContextManager[Any]]
+    composed: Any,
+    path: str,
+    count_sql: Callable[[], AbstractContextManager[Any]],
+    *,
+    reading: Reading,
+    expected: int,
 ) -> Counts:
-    warm = composed.client.get(path)
-    assert warm.status_code == 200, warm.text
+    _ok(composed.client.get(path))
     with count_sql() as counts:
         response = composed.client.get(path)
-    assert response.status_code == 200, response.text
+    seen = reading(_ok(response))
+    if seen != expected:
+        pytest.fail(f"{path} shows {seen}, expected {expected}")
     return Counts(counts.statements, counts.connections)
 
 
 def _at_both_sizes(
-    world: Any, path: str, count_sql: Callable[[], AbstractContextManager[Any]]
+    world: Any,
+    path: str,
+    count_sql: Callable[[], AbstractContextManager[Any]],
+    *,
+    reading: Reading,
+    seen: Seen,
 ) -> tuple[Counts, Counts]:
     _sessions(world, range(FEW))
-    few = _measured(world, path, count_sql)
+    few = _measured(world, path, count_sql, reading=reading, expected=seen.few)
     _sessions(world, range(FEW, MANY))
-    many = _measured(world, path, count_sql)
+    many = _measured(world, path, count_sql, reading=reading, expected=seen.many)
     return few, many
 
 
@@ -110,39 +145,84 @@ ISSUE_N_PLUS_ONE = pytest.mark.xfail(
 LISTED_N_PLUS_ONE = pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="N+1: link_of per listed session (_decorated), as AGH-610",
+    reason="N+1: link_of per listed session (_decorated), fixed by AGH-610",
 )
 
 # A pinned route asserts its literal counts; an N+1 route (pinned None) asserts only that they
 # stay the same, so its strict xfail passes, and fails CI, once the fix lands: then pin it.
+# Every third session is live; half are about ``FEATURE_ISSUE``; the sessions page holds 50.
 ROUTES = [
-    pytest.param("/api/v1/projects", Counts(2, 1), id="projects"),
-    pytest.param("/api/v1/features?project=demo", Counts(0, 0), id="features"),
     pytest.param(
-        f"/api/v1/features/demo/{FEATURE}", None, id="feature-detail", marks=ISSUE_N_PLUS_ONE
+        "/api/v1/projects",
+        Counts(2, 1),
+        lambda body: body["items"][0]["live_sessions"],
+        Seen(7, 67),
+        id="projects",
     ),
-    pytest.param("/api/v1/sessions", None, id="sessions", marks=LISTED_N_PLUS_ONE),
+    pytest.param(
+        "/api/v1/features?project=demo",
+        Counts(0, 0),
+        lambda body: len(body["items"]),
+        Seen(1, 1),
+        id="features",
+    ),
+    pytest.param(
+        f"/api/v1/features/demo/{FEATURE}",
+        None,
+        lambda body: body["cost"]["sessions"],
+        Seen(10, 100),
+        id="feature-detail",
+        marks=ISSUE_N_PLUS_ONE,
+    ),
+    pytest.param(
+        "/api/v1/sessions",
+        None,
+        lambda body: len(body["items"]),
+        Seen(20, 50),
+        id="sessions",
+        marks=LISTED_N_PLUS_ONE,
+    ),
     pytest.param(
         f"/api/v1/sessions?issue={FEATURE_ISSUE}",
         None,
+        lambda body: len(body["items"]),
+        Seen(10, 50),
         id="sessions-of-issue",
         marks=ISSUE_N_PLUS_ONE,
     ),
-    pytest.param("/api/v1/live-sessions", None, id="live-sessions", marks=LISTED_N_PLUS_ONE),
-    pytest.param("/api/v1/projects/demo/skills", Counts(2, 1), id="skills"),
-    pytest.param("/api/v1/doctor/findings?project=demo", Counts(0, 0), id="doctor-findings"),
+    pytest.param(
+        "/api/v1/live-sessions",
+        None,
+        lambda body: len(body["items"]),
+        Seen(7, 67),
+        id="live-sessions",
+        marks=LISTED_N_PLUS_ONE,
+    ),
+    pytest.param(
+        "/api/v1/projects/demo/skills", Counts(2, 1), _skill_uses, Seen(20, 200), id="skills"
+    ),
+    pytest.param(
+        "/api/v1/doctor/findings?project=demo",
+        Counts(0, 0),
+        lambda body: len(body["items"]),
+        Seen(2, 2),
+        id="doctor-findings",
+    ),
 ]
 
 
-@pytest.mark.parametrize(("path", "pinned"), ROUTES)
-def test_keeps_sql_counts_when_sessions_grow_tenfold(
+@pytest.mark.parametrize(("path", "pinned", "reading", "seen"), ROUTES)
+def test_keeps_sql_counts_when_sessions_grow_tenfold(  # noqa: PLR0913 -- one per param
     world: Any,
     count_sql: Callable[[], AbstractContextManager[Any]],
     *,
     path: str,
     pinned: Counts | None,
+    reading: Reading,
+    seen: Seen,
 ) -> None:
-    few, many = _at_both_sizes(world, path, count_sql)
+    """AC-2: a route's statements and connections do not grow with the sessions."""
+    few, many = _at_both_sizes(world, path, count_sql, reading=reading, seen=seen)
 
     assert few == many, (few, many)
     if pinned is not None:
@@ -152,6 +232,7 @@ def test_keeps_sql_counts_when_sessions_grow_tenfold(
 def test_counts_statements_and_connection_when_block_runs_two_statements(
     tmp_path: Path, count_sql: Callable[[], AbstractContextManager[Any]]
 ) -> None:
+    """AC-1: ``count_sql`` counts the block's statements and connections, nothing after it."""
     engine = create_engine(f"sqlite:///{tmp_path / 'counted.db'}", poolclass=NullPool)
 
     with count_sql() as counts, engine.connect() as connection:
