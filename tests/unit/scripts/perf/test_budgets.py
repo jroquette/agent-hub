@@ -1,9 +1,12 @@
 """The perf budgets file (``scripts/perf/budgets.py``, ``scripts/perf/budgets.json``): entries keyed
 by ``(kind, path)``, unknown fields ignored, edits seen on the next load, a malformed file named
-in the error, and the seeded budget values."""
+in the error, the seeded budget values, and no value looser than ADR 0053's ceiling table."""
 
+import itertools
 import json
 import re
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -202,3 +205,140 @@ def test_names_only_probed_paths_when_the_shipped_budgets_are_read() -> None:
     assert len(probed) == 24
 
     assert sorted(set(keys) - probed) == []
+
+
+# The ADR 0053 ceiling table (B3): the file may be tighter than the ADR, never looser.
+ADR = SHIPPED.parents[2] / "docs" / "adr" / "0053-interactive-path-latency-budgets.md"
+CEILING_HEADING = "### Budget ceilings"
+# ADR column -> budgets.json field.
+LIMIT_COLUMNS = {"p95 (ms)": "p95_ms", "API calls": "api_calls", "peak RSS (MB)": "rss_mb"}
+NO_LIMIT = "—"
+EVERY = "every"
+
+
+@dataclass(frozen=True)
+class Ceiling:
+    """One ADR table row: a probe kind, ``every`` or one canonical path, and its limits."""
+
+    kind: str
+    paths: str
+    limits: Mapping[str, float]
+
+
+def _cells(line: str) -> list[str]:
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _ceilings(text: str) -> list[Ceiling]:
+    section = text.split(CEILING_HEADING, 1)[1].splitlines()
+    start = itertools.dropwhile(lambda line: not line.startswith("|"), section)
+    table = list(itertools.takewhile(lambda line: line.startswith("|"), start))
+    header = _cells(table[0])
+    ceilings = []
+    for line in table[2:]:
+        row = dict(zip(header, _cells(line), strict=True))
+        if row["kind"] == NO_LIMIT:
+            continue
+        limits = {
+            field: float(row[column])
+            for column, field in LIMIT_COLUMNS.items()
+            if row[column] != NO_LIMIT
+        }
+        ceilings.append(Ceiling(row["kind"], row["paths"].strip("`"), limits))
+    return ceilings
+
+
+def _probed() -> set[tuple[str, str]]:
+    from scripts.perf.pages import PAGE, PAGE_PATHS
+    from scripts.perf.process_probes import CLI, CLI_PATHS, HOOK, HOOK_PATHS
+    from scripts.perf.web_probes import RESTART, RESTART_PATHS, ROUTE, ROUTE_PATHS
+
+    groups = {CLI: CLI_PATHS, HOOK: HOOK_PATHS, ROUTE: ROUTE_PATHS, PAGE: PAGE_PATHS}
+    groups[RESTART] = RESTART_PATHS
+    return {(kind, path) for kind, paths in groups.items() for path in paths}
+
+
+def _ceiling_of(ceilings: list[Ceiling], kind: str, path: str) -> list[Ceiling]:
+    named = [c for c in ceilings if c.kind == kind and c.paths == path]
+    return named or [c for c in ceilings if c.kind == kind and c.paths == EVERY]
+
+
+def _drift(ceilings: list[Ceiling], budgets: Mapping[tuple[str, str], Budget]) -> list[str]:
+    """Each probed path whose budget is missing or looser than its ADR ceiling."""
+    problems = []
+    for kind, path in sorted(_probed()):
+        (ceiling,) = _ceiling_of(ceilings, kind, path)
+        if not ceiling.limits:
+            continue
+        budget = budgets.get((kind, path))
+        if budget is None:
+            problems.append(f"{kind} {path!r}: no entry")
+            continue
+        for field, top in ceiling.limits.items():
+            value = getattr(budget, field)
+            if value is None or value > top:
+                problems.append(f"{kind} {path!r}: {field} {value} over the ADR's {top:g}")
+    return problems
+
+
+def _shipped_rows() -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = json.loads(SHIPPED.read_text("utf-8"))["rows"]
+    return rows
+
+
+def _changed(tmp_path: Path, path: str, **fields: object) -> Path:
+    rows = [{**row, **fields} if row["path"] == path else row for row in _shipped_rows()]
+    return _write(tmp_path / "budgets.json", rows)
+
+
+def test_keeps_every_budget_under_the_adr_ceiling_when_shipped() -> None:
+    ceilings = _ceilings(ADR.read_text("utf-8"))
+    assert len(ceilings) == 9
+
+    assert _drift(ceilings, load_budgets(SHIPPED)) == []
+
+
+def test_names_only_probed_paths_when_the_adr_table_is_read() -> None:
+    ceilings = _ceilings(ADR.read_text("utf-8"))
+    probed = _probed()
+    assert len(probed) == 24
+
+    assert [c for c in ceilings if c.paths != EVERY and (c.kind, c.paths) not in probed] == []
+    assert sorted({c.kind for c in ceilings}) == sorted({kind for kind, _path in probed})
+    assert [key for key in sorted(probed) if len(_ceiling_of(ceilings, *key)) != 1] == []
+
+
+def test_reports_the_looser_value_when_the_file_loosens_a_ceiling(tmp_path: Path) -> None:
+    ceilings = _ceilings(ADR.read_text("utf-8"))
+    loose = _changed(tmp_path, "guard (PreToolUse Bash)", p95_ms=81)
+
+    assert _drift(ceilings, load_budgets(loose)) == [
+        "hook 'guard (PreToolUse Bash)': p95_ms 81 over the ADR's 80"
+    ]
+
+
+def test_reports_the_dropped_limit_when_the_file_omits_one(tmp_path: Path) -> None:
+    ceilings = _ceilings(ADR.read_text("utf-8"))
+    loose = _changed(tmp_path, "/features", api_calls=None)
+
+    assert _drift(ceilings, load_budgets(loose)) == [
+        "page '/features': api_calls None over the ADR's 5"
+    ]
+
+
+def test_reports_the_missing_entry_when_a_budgeted_path_has_none(tmp_path: Path) -> None:
+    ceilings = _ceilings(ADR.read_text("utf-8"))
+    rows = [row for row in _shipped_rows() if row["path"] != "hub brief --no-network"]
+    missing = _write(tmp_path / "budgets.json", rows)
+
+    assert _drift(ceilings, load_budgets(missing)) == ["cli 'hub brief --no-network': no entry"]
+
+
+def test_accepts_a_tighter_value_when_the_file_tightens_a_ceiling(tmp_path: Path) -> None:
+    ceilings = _ceilings(ADR.read_text("utf-8"))
+    tight = _changed(tmp_path, "/api/v1/sessions", p95_ms=90)
+    assert load_budgets(tight).get(("route", "/api/v1/sessions")) == Budget(
+        p95_ms=90, api_calls=None, rss_mb=None, source=PROPOSED
+    )
+
+    assert _drift(ceilings, load_budgets(tight)) == []
