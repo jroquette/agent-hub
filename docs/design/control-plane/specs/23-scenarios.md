@@ -1,7 +1,7 @@
 # Scenarios, scenario detail and scenario run
 
 **Phase:** P2 with local writes (plan, start, the investigation session, the answer and the finding actions, and a
-scenario run's breakpoints, Step and Continue and a scenario's Migrate are strict writes,
+scenario run's breakpoints, Step and Continue, a scenario's Migrate and its Delete are strict writes,
 [ADR 0040](../../../adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md)) ·
 **Routes:** `/scenarios`, `/scenarios/:project/:name` (a scenario's name is unique per project only),
 `/scenarios/:project/:name/runs/:runId` · **Answers:** "What will this scenario do in this environment, may it start,
@@ -22,7 +22,9 @@ WorkflowRun of a scenario; the UI always says "scenario run", and "run" alone me
 - `/runs/:runId` of a scenario run redirects (`replace`) to its scenario run page. `/runs` lists workflow runs only
   (`kind=workflow`).
 - View state in the URL: `?q=` (list filter, `replace`), `?env=` (detail: pre-fills the environment; the plan never runs
-  on load), `?option=` and `?event=` (run page selection, `replace`).
+  on load), `?run=` (detail: the scenario run shown on the blocks, `replace`; AGH-596), `?option=` and `?event=` (run
+  page selection, `replace`). An old `?mode=run` or `?view=document` link opens the one screen, and the page drops
+  both by a `replace`, keeping `?env=` (AC-596.2.1).
 
 ---
 
@@ -31,33 +33,81 @@ WorkflowRun of a scenario; the UI always says "scenario run", and "run" alone me
 **Answers:** "Which scenarios does my hub hold, and did their last scenario run pass, fail or wait for me?"
 
 ```
-Scenarios                                                              [As of 14:02]
+Scenarios                                                  [As of 14:02]  [+ New scenario]
 Flows your hub drives in a declared environment, step by step. Plan one to see what it will
 do before anything runs.
-6 scenarios in 2 packs · 1 scenario run waits for you
+6 scenarios · 2 packs · 1 waits for you
 +-- Waiting for you ---------------------------------------------------------------------+
 | (hand) order-lifecycle · scenario run 3f2a91c0 waits for you since 10:42  [Open …]     |
 +----------------------------------------------------------------------------------------+
 [/ Filter scenarios by name or description]
-Scenario                               Pack       Steps   Last scenario run
-order-lifecycle                        orders         9   (hand) Waiting for you · 10:42
-  One order from fetch to an active cover                 3f2a91c0
-stock-sync                             payments       3   Never run
+     Scenario                                          Steps   Last scenario run
+(h)  order-lifecycle  [orders]                             9   (hand) Waiting for you 10:42  [⋯]
+     One order from fetch to an active cover                   3f2a91c0
+(x)  refund-check  [orders]                                4   (x) Failed 09:12              [⋯]
+     Checks a refund reaches the shop                          71d0be2a
+     stock-sync  [payments]                                3   Never run                     [⋯]
+     No description.
 Files that do not load (1)
 scenarios/orders/returns.yaml:14   nodes[2].type   shell nodes are not allowed in a scenario
 ```
 
 - **Data:** `GET /api/v1/scenarios?project=`; waiting from open human gates on `run:<id>` (as Run detail's
   `OpenGates`).
-- **Table:** compact `DataTable`; Last scenario run is a `StatusBadge` (Waiting for you, Running, Done, Failed,
-  Cancelled) + time + the short id as a link. Column priority: Scenario, Last scenario run, Steps, Pack, Project
-  (only with several projects). Not built yet (AGH-458): the `IdChip` (copy the full id) and the badge's "since" time
-  ("Waiting for you since 10:42").
-- **Keys:** `/` focuses the filter. Not built yet (AGH-458): the rows' `j`/`k` and `Enter`/`o`.
+- **Rows** (AGH-596): the Features list's rows, in a card under column heads, not a `DataTable`. Each row has a lead
+  icon (the waiting hand, a running dot or the failed mark), the name as a link with its pack as a tag (and its
+  project, with several projects), its description (or "No description."), its steps and its last scenario run: a
+  `StatusBadge` (Waiting for you, Running, Done, Failed, Cancelled), its time and the short id as a link, or "Never
+  run". Not built yet (AGH-458): the `IdChip` (copy the full id) and the badge's "since" time ("Waiting for you since
+  10:42").
+- **Keys:** `/` focuses the filter, and `Escape` in it clears it, then leaves it. A row is one tab stop: `Enter` (or
+  `o`) opens its scenario, and `j`/`k` move between rows (`useRowKeys`).
+
+#### The list as the Features list, and Delete (AGH-596)
+
+The owner validated these in the playground (snapshot `3df1fa457`, on v0.26.0); where the section above says otherwise,
+this wins.
+
+- **AC-596.1.7 Rows.** Given the Scenarios list, then it shows the scenarios as Features-list rows in a list named
+  Scenarios, each with its name as a link, its pack as a tag, its description (or "No description."), its steps and
+  its last scenario run (badge, time, short id link).
+- **AC-596.1.8 Project tag.** Given scenarios in several projects, then each row also shows its project as a tag; with
+  one project, no project tag shows.
+- **AC-596.1.9 Order.** Given rows whose last scenario run waits for you, is running or failed, then they come first in
+  that order (waiting, running, failed, then the rest), each group by name; waiting and failed rows carry their tone.
+- **AC-596.1.10 Summary.** Given the list, then the header says "N scenarios · M packs", and "K wait for you" when K is
+  more than 0, as the Features list's summary does.
+- **AC-596.1.11 Page box and filter.** Given the list, then the page is a box centred and capped at 1440 px, with the
+  Features toolbar's search (`/` focuses it; `Escape` clears it, then leaves it).
+- **AC-596.1.12 Open.** Given a row, when it is clicked, or focused and Enter is pressed, then its scenario opens; the
+  name link and the run's short id open their own pages, not the row's.
+- **AC-596.1.13 Narrow.** Below 1280 px the Steps column hides; below 1100 px the last run's time hides and the row's
+  head wraps.
+- **AC-596.1.14 Row menu.** Given a row, when its "Actions for <name>" menu (`⋯`) opens, then it offers Open scenario
+  and Delete scenario…; `Escape` or a click outside closes it, and `Escape` puts focus back on its button.
+- **AC-596.1.15 Delete.** Given Delete scenario… chosen, then a confirm "Delete scenario <name>?" says "This removes
+  <path> from the <project> hub folder.", "Its recorded scenario runs stay.", "The actions it calls in
+  actions/<pack>/ stay." and "hub web cannot undo this. Until you commit the removal, restore it in the hub with
+  `git restore <path>`." Delete scenario (it reads "Deleting…" while it is on its way) sends `DELETE
+  /api/v1/scenarios/{project}/{name}`; the dialog closes, a toast says "Deleted scenario <name>." with Copy restore
+  command and leaves after 6 s, and focus moves to the next row, else the previous one, else the filter.
+- **AC-596.1.16 Refused.** Given the server refuses the delete (a 409), then the dialog stays open with "Could not
+  delete the scenario. <detail> Nothing was deleted."; a 401 says "Deleting is locked in this browser. Open the link
+  hub web printed when it started (it ends with ?token=…) once in this browser."
+- **AC-596.1.17 Already gone.** Given the scenario is already gone (404), when the delete is confirmed, then it counts
+  as done: the dialog closes and the toast says "<name> was already gone from the hub folder.", with no restore
+  command.
+- **AC-596.1.18 Not during a run.** Given a scenario whose last scenario run is running or waits for you, when its
+  menu opens, then Delete scenario… is off and says "A scenario run of it is in progress. Let it end or cancel it
+  first."
+- **AC-596.1.19 From the scenario page.** Given a scenario's page, when its Scenario actions menu (in the breadcrumb
+  row) deletes it, then the page replaces itself with `/scenarios`, which shows the deleted toast once (not again on
+  Back or a reload) and focuses the Scenarios heading; the menu's Delete is off while the newest scenario run is
+  running.
 
 | State | Copy |
 |---|---|
-| Empty | "No scenarios yet." / "Scenarios are YAML files in the hub's scenarios/<pack>/ folder, and the actions they call are in actions/<pack>/. Add one, then check that it loads from a terminal:" `./hub scenario list` |
+| Empty | "No scenarios yet." / "Scenarios are YAML files in the hub's scenarios/<pack>/ folder, and the actions they call are in actions/<pack>/. Describe one and Claude writes it, or add one by hand and check that it loads from a terminal:" `./hub scenario list` [New scenario] |
 | Only problems | "No scenario loads." / "Fix the files below; this page reads them again on every visit." |
 | No match | "No scenarios match "refnd"." [Clear filter] |
 | Error | `ProblemError` "Could not load scenarios" + detail + Retry |
@@ -84,63 +134,77 @@ scenarios/orders/returns.yaml:14   nodes[2].type   shell nodes are not allowed i
 
 ## Screen 2: Scenario detail (`/scenarios/:project/:name`)
 
-**Answers:** "What will this scenario do in this environment, step by step, and may it start?" The primary action is
-"Plan in <environment>", then "Start scenario run".
+**Answers:** "What will this scenario do in this environment, step by step, and may it start?" The page builds and
+runs the scenario on one screen (AGH-596): the builder's blocks, a run bar over them, a run strip for the scenario run
+shown on them, and a run panel beside them. The primary action is "Plan in <environment>", then "Start scenario run".
 
 ```
-Portfolio › demo › Scenarios › order-lifecycle
-order-lifecycle   pack orders · revision 1                                   [Discuss]
-+-- Plan ------------------------------------------------------------------------------+
-| Environment [personal]  external_ref [T-1]                         [Plan in personal] |
-| Plans run each action's script in plan mode, with no credential. Nothing acts on the |
-| system.                                                                               |
-| personal · access write        Planned 14:03 · 4 steps: 2 read, 2 write · 1 asks you  |
-| Step           Action              Effect  Service → endpoint          Policy          |
-|   Values                                   What it will do                             |
-| fetch-order    send-queue-message  write   queue → queue.example.com…  (v) Allow       |
-| render-pdf     render-invoice-pdf  write   files → demo-invoices       (o) Denied      |
-|   <$CTX.order_id from order-on-hold>       Runs with values known at run time         |
-|   Draft: needs acceptance. Commit it in the hub checkout, then plan again:            |
-|   git add -- actions/orders/render-invoice-pdf.yaml … && git commit -m '…'   [Copy]   |
-| (o) Cannot start: render-pdf is denied in personal.                                   |
-| Mode (•) Interactive ( ) Regression                      [Start scenario run] (off)   |
-+---------------------------------------------------------------------------------------+
-Step by step (numbered, step-kind icons)        Scenario runs (12): id · status · started
+Portfolio › demo › Scenarios › order-lifecycle                            [⋯ Scenario actions]
+order-lifecycle   pack orders · revision 1     [Blocks|Graph|YAML]   No problems   [Save]
+Environment [personal · access write ↕]  Scenario run mode [Interactive|Regression]  |
+  [Inputs · 1 set] [Plan again] [Clear plan]                        [Start scenario run]
+(v) Can start in personal · 4 blocks: 2 read, 2 write · 1 asks you
+(o) Scenario run 3f2a91c0 is running in personal · Interactive · at block 1.2 · started 14:05
+                                      [Open scenario run →] [Cancel scenario run] [x] Follow
++-- Variables | Actions --+-- Blocks ----------------------------------+-- Run panel ----------+
+| ...                     | (milestone) Stage 1 · Fetch order          | This plan             |
+|                         |  1.1 (play) Send the order       (v) Done  | personal · access     |
+|                         |      Sends one message to the queue        |   write               |
+|                         |      queue-send · queue orders · +1 value  | 4 blocks: 2 read, ... |
+|                         |      Kept order_id = 42                    | Before you start      |
+|                         |      Plan: Sends 1 message · (v) Allow     | 1 draft action to ... |
+|                         |  1.2 (timer) Wait until order is ON_HOLD   | Scenario runs (12)    |
+|                         |      checks every 15 s, up to 10 min       | (o) 3f2a91c0 personal |
+|                         |      Running · check 3     (o) Breakpoint  |              [Shown]  |
++-------------------------+--------------------------------------------+-----------------------+
 ```
 
-The step list and the Scenario runs card stack below 1600 px, so the Started column stays in view. Not built yet
-(AGH-458): the Scenario runs table's keys (`j`/`k`, `Enter`/`o`).
-
-- **Plan:** `POST …/plan` on the person's click only. Rows: step, action, effect (icon + label), service → endpoint
-  (`PathText`), values (run-time ones as `<$CTX.<name> from <node>>`), the script's plan-mode summary, the policy
-  (Allow, Asks you (neutral until a gate waits), Denied + the reason in words). A draft row shows "Draft: needs
-  acceptance" and the exact `accept_command`; nothing commits from hub web.
-- **Start:** enabled only on a current plan with no deny and no problem; a confirm dialog names the environment, the
-  writes and the asks ("Start a scenario run in personal?", buttons "Start scenario run" / "Back to plan"). After 202,
-  the page waits for the scenario run's first event, then opens it.
-- **Mode:** Interactive (the default) "If a step does not reach its expected state, the scenario run pauses
-  and a read-only agent investigates with you." · Regression "No agent and no token cost. The first step that does not
-  reach its expected state fails the scenario run." · both: "Steps that ask still pause for your approval."
-- **Environment field:** a select of the project's declared environments (`ScenarioDetail.environments`:
-  "personal · access write"); when they cannot be read, a text field with this browser's recent environments.
+- **Data:** `GET /api/v1/scenarios/{project}/{name}`; the shown scenario run's record (`GET
+  /scenario-runs/{id}`, streamed while it runs); open gates from `GET /approvals`.
+- **Plan:** `POST …/plan` on the person's click only (Plan, or Enter in the run bar). A row of the plan lands on its
+  block as a "Plan: …" line with its policy (Allow, Asks you (neutral until a gate waits), Denied + the reason in
+  words). A draft action is listed once, in Before you start, with one commit command; nothing commits from hub web.
+- **Start:** enabled only on a current plan with no deny and no problem, and no scenario run of it in progress; a
+  confirm dialog names the environment, the counts, the asks, the breakpoints and the mode ("Start a scenario run in
+  personal?", buttons "Start scenario run" / "Back to plan", Back to plan focused). After 202, the page stays: the new
+  scenario run shows on the blocks (`?run=`) and Follow turns on.
+- **Mode:** Interactive (the default) "If a block does not reach its expected state, the scenario run pauses and a
+  read-only agent investigates with you." · Regression "No agent and no token cost. The first block that does not
+  reach its expected state fails the scenario run." · both: "Blocks that ask still pause for your approval." (a graph
+  scenario says "step").
+- **Environment:** a select of the project's declared environments ("personal · access write", "live · production ·
+  access read"), its title the access in words ("Agents only read here."). Without `?env=` it opens on the last
+  environment used in this browser that is still declared and not production, else the first one that is not
+  production: never production unless picked.
 - **Content hash:** a tooltip on the step ("Pinned when the scenario run starts: sha256:…").
 
 | State | Copy |
 |---|---|
-| No plan | "Plan the scenario to see what each step will do in an environment." |
+| No environment | "Choose an environment to plan in." |
+| Unsaved | "Save your changes, then plan: a plan reads the saved file." (Plan reads "Save and plan") |
+| No plan | "Plan the scenario to see what each step will do in personal. Nothing is changed by a plan." (Start off: "Plan the scenario first.") |
 | Planning | "Planning in personal… each step's script runs in plan mode." · after 10 s "Still planning. A plan stops after 5 min." |
-| Can start | "Can start in personal." (+ "1 step asks you before it runs.") |
+| Can start | "Can start in personal · 4 steps: 2 read, 2 write · 1 asks you" |
+| Draft actions | "Cannot start: 1 draft action needs acceptance. See Before you start." (a link to Before you start) |
+| Plan problems | "Cannot start: the plan has 1 problem." (Start off: "Fix the problems first.") |
 | Denied | "Cannot start: fetch-order and resolve-cover are denied in qa." |
-| Stale plan | "This plan is for personal with external_ref T-1. Plan again to start with the new values." |
-| Production | "live is a production environment: writes and destroys are denied there." |
-| Undeclared | "Environment qa is not declared in this hub. Declare it in hub.json, or in hub.local.json for yourself:" `./hub env add qa --access read` |
+| Denied, no step named | "Cannot start in qa: the plan does not allow a start there." |
+| Stale plan | "This plan is for personal. Plan again to start in qa." · "The steps changed since this plan. Plan again to start." · "Save your changes, then plan again: a plan reads the saved file." · "This plan is for external_ref T-1. Plan again to start with the new values." (Plan reads "Plan again") |
+| In progress | Start off: "A scenario run of it is in progress." |
+| Production | "live is a production environment: writes and destroys are denied there, and breakpoints are off." |
+| Undeclared | verdict "Environment qa is not declared in this hub." · run panel "Environment qa is not declared in this hub. Declare it in hub.json, or in hub.local.json for yourself:" `./hub env add qa --access read` |
+| Invalid inputs (422) | Values to plan and start with opens, each message under its input's field; a message for no field shown is listed in the run panel |
 | `hub.local.json` invalid | "hub.local.json cannot be read or conflicts with hub.json, so the environments are unknown. Run ./hub doctor to see the problem, fix the file, then plan again." |
-| Plan timeout (502) | "The plan did not finish in 5 min, so it was stopped. A plan-mode script may hang: run it from a terminal to see which." |
+| Plan timeout (502) | "The plan did not finish in 5 min, so it was stopped. A plan-mode script may hang: run it from a terminal to see which." `./hub scenario plan order-lifecycle --env personal` |
 | Locked (401) | "Planning is locked in this browser. Open the link hub web printed when it started (it ends with ?token=…) once in this browser." |
-| Container (404 `run-control-off`) | "Plans and scenario runs cannot start from the agent-hub container: it has no credentials and no env files. Run hub web on your machine, or plan from a terminal:" |
+| Container (404 `run-control-off`) | "Plans and scenario runs cannot start from the agent-hub container: it has no credentials and no env files. Run hub web on your machine, or plan from a terminal:" `./hub scenario plan order-lifecycle --env personal`; Plan turns off |
 | Start refused (409) | "Could not start the scenario run" / the server's detail (steps named) / "Nothing was started." |
+| Start failed (502) | "Could not start the scenario run" / "hub web could not launch hub scenario run. Run it from a terminal to see why:" `./hub scenario run order-lifecycle --env personal` |
+| Tablet (768–1279) | "Starting a scenario run needs a desktop screen." in Start's place |
 | Not found | "Scenario order-lifecycle not found" / "Project demo has no scenario order-lifecycle that loads. It may have been renamed, or its file may not load." |
-| No scenario runs | "No scenario runs yet." / "Start one from the plan above." |
+| No scenario runs | "No scenario runs yet. Plan, then start one from the bar above." |
+
+A scenario written as blocks says "block" where these say "step".
 
 ### Departures (AGH-521, storyline and live run)
 
@@ -155,12 +219,121 @@ wins.
   plan: each step in words with its action, the values it passes, what it keeps for later and where it stops; an
   `expect` step words its wait (every, until, timeout) and its stop changes with the mode (Interactive pauses,
   Regression fails). The plan's facts (effect, endpoint, policy, a draft's commit line) land in the step's own card.
+  Superseded by AGH-596's one screen (below).
 - **AC-521.11.3 Run panel beside the steps.** Given a wide screen, then the plan, mode and start controls sit in a run
   panel beside the storyline; an action's name opens a panel with its description, effect, inputs and script, and
-  the scenario's file opens as text.
+  the scenario's file opens as text. Superseded by AGH-596's one screen (below).
 - **AC-521.11.4 Live run.** Given a scenario run of this scenario that is running, then the page follows it: a banner
   says it is running in its environment, links to the scenario run and offers Cancel (the run page's own command),
-  and each step's card shows its status in that run as it moves (Done, "Running · check 3", Not started).
+  and each step's card shows its status in that run as it moves (Done, "Running · check 3", Not started). Superseded
+  by AGH-596's run strip (below).
+
+### Departures (AGH-596, build and run on one screen)
+
+The owner validated these in the playground (snapshot `3df1fa457`, on v0.26.0). They supersede AC-521.11.2 to
+AC-521.11.4 (the storyline, the run panel beside it, the live banner); AC-521.11.1 stays. Where another section says
+otherwise, this wins.
+
+- **AC-596.2.1 One screen.** Given an old link to the page's Run mode or Document view (`?mode=run`, `?view=document`),
+  when it opens, then the page is the builder only (its View offers no Run), and the two params are dropped by a
+  `replace` while `?env=` is kept.
+- **Run bar.** The bar under the toolbar holds the environment, the Scenario run mode, a separator, then Inputs, Plan
+  and Clear plan, and Start at its end; the verdict line sits under it.
+  - **AC-596.2.2 Environment.** It lists the declared environments as "name · [production · ]access X", offers
+    "Choose an environment" while none is chosen, says the access in words in its title, and is off while planning.
+  - **AC-596.2.3 Never production by default.** Given no `?env=`, the page opens on the last environment used in this
+    browser that is still declared and not production, else the first one that is not production.
+  - **AC-596.2.4 Mode.** The Scenario run mode (Interactive, the default, or Regression) is sent with the start, and
+    the confirm words the mode's stop.
+  - **AC-596.2.5 Inputs.** Given a required input nothing gives a value, when Plan is pressed (or Enter in the bar),
+    then "Values to plan and start with" opens. An Inputs button ("Inputs · N to fill", "Inputs · N set") toggles it.
+  - **AC-596.2.6 No plan on load.** Given the page opens, then no plan is requested; the verdict says "Plan the
+    scenario to see what each step will do in <env>. Nothing is changed by a plan." and Start is off ("Plan the
+    scenario first.").
+  - **AC-596.2.7 Verdict.** Given a plan, then the verdict says "Can start in <env> · N steps: … · N asks you", or
+    names the denied steps, a denial with no step, the draft actions (a link to Before you start) or the plan's
+    problem count; Start's title repeats the reason.
+  - **AC-596.2.8 Start.** Given a startable plan, when Start is pressed, then the confirm names the environment, the
+    counts, the asks, the breakpoints and the mode, with Back to plan focused. Once accepted the page stays, `?run=`
+    names the new scenario run, its row in Scenario runs is Shown and its strip shows (AC-596.2.33: at once, with
+    Follow on). A refusal shows the server's reason and "Nothing was started."; a scenario run that is late to
+    report never offers a second start.
+  - **AC-596.2.9 Stale plan.** Given unsaved changes, another environment or changed blocks since the plan, then the
+    verdict says why ("Save your changes, then plan again…", "This plan is for X. Plan again to start in Y.", "The
+    steps changed since this plan…"), Start stays off, and Plan reads "Save and plan" or "Plan again".
+    **AC-596.2.34:** so does a change of an input's value ("This plan is for external_ref T-1. Plan again to start
+    with the new values."), so a start never sends the old values.
+  - **AC-596.2.10 Clear plan.** Clear plan removes the plan, its verdict and its lines on the blocks.
+  - **AC-596.2.11 Production.** Given a production environment picked, then a banner says "<env> is a production
+    environment: writes and destroys are denied there, and breakpoints are off.", and no breakpoint is offered or
+    sent.
+  - **AC-596.2.41 Room.** The bar's controls are grouped, and the environment select leaves room for its chevron.
+- **Kept on the one screen.** The snapshot dropped these; the delivery keeps them, as the states table above says:
+  on a tablet (768–1279 px) Start's place says "Starting a scenario run needs a desktop screen."; an environment the
+  hub does not declare (an old `?env=`) shows in the select as "qa · not declared", the verdict says so and the run
+  panel gives `./hub env add qa --access read`; a plan's 422 puts each message under its input's field in Values to
+  plan and start with (which opens), and lists the others in the run panel; after 10 s of planning the verdict adds
+  "Still planning. A plan stops after 5 min."
+- **Run strip.** One line under the verdict for the scenario run shown on the blocks: the newest one while it runs,
+  or the one `?run=` names.
+  - **AC-596.2.12 Running.** It says "Scenario run <id> is running in <env> · <mode> · at block X · started <time>",
+    links to the scenario run (Open scenario run), offers Cancel scenario run and a Follow checkbox (on: the current
+    block scrolls into view as the run moves), and a new start is off.
+  - **AC-596.2.13 Waiting.** Given the run waits on a gate of this scenario, then it says "waits for you at block X:
+    an approval" (or "an investigation"), and that block reads "Waiting for you: approval" (or "investigation").
+  - **AC-596.2.14 Debug pause.** Given a debug pause, then it says "is paused before block X <reason> in <env>", the
+    run panel shows the debug bar, the held block reads "Paused before it" and the run's own breakpoints show pressed.
+  - **AC-596.2.16 A past run.** Given a finished run shown, then the strip says "· Done in <env> at <time>", the
+    blocks read "Last run: …", and Hide its states clears `?run=` and the strip.
+  - **AC-596.2.17 Not on these blocks.** Given a shown run of an older revision, or blocks changed since the file was
+    read, then no state is laid on the blocks and the strip says "· it ran an older revision of the file, so its
+    states are on its page" or "· you changed the blocks since, so its states are hidden".
+- **Run panel.** The right column while no block is open in the editor.
+  - **AC-596.2.18 Its place.** It holds, in order, the debug bar, the plan's problem, This plan, Before you start and
+    Scenario runs; opening a block puts the editor in its place, and the run bar stays.
+  - **AC-596.2.19 This plan.** It shows "<env> · [production · ]access X", the counts, "Planned before your changes:
+    plan again to start." when stale, the production banner and each problem.
+  - **AC-596.2.39 Before you start.** Given draft actions, it says "N draft action(s) to commit" and "You can plan now.
+    A scenario run starts once these actions are committed in the hub checkout: one commit does it.", offers Copy the
+    commit command, then "then plan again", and folds the actions and the command under "Which actions (N) and the
+    command". No block carries a Draft action chip.
+  - **AC-596.2.40 / AC-596.2.42 One commit.** The commit joins the draft actions' `git add` paths, each once, with
+    one message "Accept actions a, b"; a command of any other shape is kept and joined with `&&`; a single draft
+    action's command is the server's, word for word.
+  - **AC-596.2.20 Scenario runs.** It lists the newest five with status, id link, environment, time and Show (Shown
+    when pressed); "Show all N" and "Show fewer" when there are more; with none, "No scenario runs yet. Plan, then
+    start one from the bar above."
+  - **AC-596.2.35 Container.** Given the container's 404 `run-control-off` answer to a plan, then the panel says
+    "Plans and scenario runs cannot start from the agent-hub container…" with the terminal command, and Plan turns
+    off.
+- **On the blocks.**
+  - **AC-596.2.21 / AC-596.2.22 States.** Given a shown run, then each row shows its state (Done, "Running · check
+    N", Not started), the current row is `aria-current="step"`, and a block written as blocks shows "Kept name =
+    value" for what it captured.
+  - **AC-596.2.23 Plan lines.** Given a plan, each row has a "Plan: …" line under its values ("Planned before your
+    changes · …" when stale) and its policy as a `PolicyBadge` (an ask neutral).
+  - **AC-596.2.24 Breakpoints before a start.** Off production, a block's Breakpoint button (or `b` on its row)
+    toggles it; the confirm says "It pauses before block 1.2, its breakpoint." and the start sends the breakpoints
+    in file order.
+  - **AC-596.2.15 Breakpoints of a live run.** Given a live run shown off production, a toggle writes the run's whole
+    set (`PUT …/breakpoints`), and is `aria-disabled` while that is on its way.
+  - **AC-596.2.25 Quick actions.** On hover or focus a row shows Rename (`F2`), Duplicate (`⌘D`), Delete and More
+    (`Shift F10`, the row menu); Delete says "Deleted step X." ("Deleted stage X and its steps." for a stage).
+  - **AC-596.2.26 Rename in place.** `F2` on a row edits its sentence in place; Enter writes it (Unsaved) and focus
+    returns to the row; `Escape` leaves it as it was.
+  - **AC-596.2.28 / AC-596.2.31 Timing.** A selected Wait until row's timing chip edits "How often it checks" in
+    place, even when the row sets no value, and the row reads the new pace.
+  - **AC-596.2.37 What it does.** A row's second line says what it does in words: its action's first sentence (when
+    not the title), "until …", "checks every X, up to Y", what it keeps.
+  - **AC-596.2.38 Technical line.** The action name and its short values move to a quieter line under it; a JSON
+    body or a value over 40 characters is only counted ("+N values") until the row is selected.
+  - **AC-596.2.36 The tree.** On a graph scenario too, the `+` in each gap is hidden from the tree (`aria-hidden`),
+    which holds only its items.
+- **AC-596.2.29 Check.** The toolbar's check reads "No problems" (" · N draft actions to commit"), and its popover
+  says "Nothing to fix in the file. N draft actions need a commit … Before you start." or "The scenario file has no
+  problem."
+- **AC-596.2.30 Page box.** On a wide screen the blocks sit against the left column (at most 960 px, no auto margin),
+  in a page box capped at 1920 px; Save is primary only with changes.
 
 ### Scenario builder (AGH-521)
 
@@ -175,17 +348,22 @@ blocks (`version: 2`, the `hub init` example among them) as its stages (Version 
   the scenario starts and what it asks for; a `+` in each gap inserts a step there; a step moves by its handle, Alt
   arrows or its row menu (rewiring what waits for what), Delete removes it with an Undo toast; rows say their effect
   and status to screen readers. What the list cannot show stays as loose steps; Graph and YAML are views beside it.
+  Since AGH-596 a selected action or check step opens in place (§ The open step, below): its second line and its
+  technical line give way to the open part.
 - **AC-521.13.2 Left column.** Given the builder, then its left column has a Blocks tab (the default), a Variables tab
   listing every value by where it comes from (set in the scenario, the chosen environment's values, kept values) and
   an Actions tab with the hub's actions, which previews an action, adds it, and makes or edits actions. Below 1440 px
   the column gives way while a step is open; below 1600 px Describe and Chat show their icon only.
 - **AC-521.13.3 Environment in view.** Given the environment bar under the toolbar, then the chosen environment is kept
   in `?env=`, its values fill the Variables tab and the Start row asks for nothing it gives, and plans run there; a
-  plan made before the last change says so.
+  plan made before the last change says so. Since AGH-596 the environment bar is the run bar (§ Departures (AGH-596)),
+  and the environment it opens on is never a production one unless picked.
 - **AC-521.13.4 Step editor.** Given a step opened, then its editor has Settings and Script tabs. Settings shows only
   the values the step sets; inputs that come from the environment, the run or a default fold into one box with "Set
   one for this step". Script says what the action does, where each input gets its value in the chosen environment,
-  what it gives back and the script's source. A new action can be written from the editor and used at once.
+  what it gives back and the script's source. A new action can be written from the editor and used at once. Since
+  AGH-596 the Script tab shows the files in Script and Action file tabs with Expand (the shared `ActionFiles`, also
+  in the open step), each file coloured by its language with a badge naming it.
 - **AC-521.13.5 A scenario's values.** Given the Start editor, then each value reads as name, value and what it is: a
   value left empty is asked each time the scenario runs, a value set is its default (typed as the input declares); the
   Variables tab and the editor call these "Set in the scenario". In the step editor, an action input the step leaves
@@ -212,6 +390,108 @@ blocks (`version: 2`, the `hub init` example among them) as its stages (Version 
   writes nothing. Unsaved work is kept in this browser across a reload; while the page is open, a change made outside
   asks whether to load the file's version or keep yours (Keep mine replaces it on save); after a reload, work kept for
   an older version of the file is not restored.
+
+#### The open step (AGH-596)
+
+The owner validated these in the playground (snapshot `3df1fa457`, on v0.26.0). A selected action or check step opens
+in place, under its title, as one group named "Step N settings" (`ServicePicker.tsx` and `OpenStep.tsx` cite this
+section).
+
+```
+ 1.1  (play) Send the order                                      Changes data
+      What it does
+        Action      send-queue-message · Python   Sends one message to the queue.
+        > Show the code it runs     [Script | Action file]  [Expand]
+      Values for this step                                      1 needs a value
+        [Queue (SQS) ↕]  [orders-queue]
+          target · Required · Queue (SQS) · Orders to pay · orders-queue-personal
+        message_group  [Edit message_group: demo]
+        body  JSON                                              [Edit body] [Copy body]
+          { "event_type": "order.created", "ref": <$INPUTS.external_ref> }
+        priority    (!) Needs a value                         [Set it in the panel]
+      Values from earlier
+        external_ref   Scenario input · asked when the scenario run starts
+        order_id       Kept by 1.2                                      [Go to 1.2]
+      Keeps for later steps
+        message_id     <$CTX.message_id> from message_id
+```
+
+- **AC-596.3.20 By task.** Given an open step, then it reads in this order: What it does (Action with its runtime,
+  Checks and Until for a check, the folded code), Values for this step, Values from earlier, and Keeps for later
+  steps. It is part of its row: no card and no status colours, a hairline under the title, and the effect said only
+  by the row's badge, not again inside.
+- **AC-596.3.2 JSON body.** Given a value that is a JSON body with a bare reference (`$INPUTS.external_ref`), then
+  the open step shows it as indented JSON, coloured, in the app's code well, the reference as the builder's token, not
+  as quoted text; a closed row shows no body. **AC-596.3.26:** the well runs left to right at the row's full width.
+- **AC-596.3.21 Body actions.** A body is listed in Values for this step under its name, with "Edit <name>" (it opens
+  the side panel at that field) and "Copy <name>", above its code well.
+- **AC-596.3.3 Value notes.** A value the step sets shows under the input's name, with "Required · <the input's
+  description>" as its note.
+- **AC-596.3.25 / AC-596.3.8 Editable values.** Each plain value is a chip on one line, cut with an ellipsis, and a
+  Tab stop named by what it edits ("Edit <name>: <value>", "Edit how often it checks: every …"); it edits in place
+  and is written back as the value's own type.
+- **AC-596.3.11 Only what the step sets.** Inputs the step does not set and something else gives (the run, the
+  environment, a default, such as a region or an account) are not listed.
+- **AC-596.3.22 Values from earlier.** Each reference a value uses is listed with where it comes from: a scenario
+  input (asked at start, or "Scenario input · <value> from <env>", or "Not asked by the scenario"), "Kept by N" with
+  "Go to N", which selects that step, or "Not given by any earlier step".
+- **AC-596.3.23 Needs a value.** A required input that nothing gives (not set by the step, not a scenario input, not
+  in the environment, no default) is listed as "Needs a value", with an icon and words, counted on the group's title
+  ("1 needs a value", "2 need a value"), with "Set it in the panel", which opens the side panel's Settings at that
+  field.
+- **AC-596.3.24 Draft.** Given a draft action, then What it does says "Draft: needs acceptance" with what that means
+  and a button that copies its commit command.
+- **AC-596.3.12 / AC-596.3.15 The code it runs.** The action's script and file fold under "Show the code it runs", at
+  the end of What it does; one click shows them in the same Script and Action file tabs, with Expand (a dialog titled
+  "<path> · <action>"), as the side panel's Script tab.
+- **AC-596.3.14 What each file is.** In the open step, the script says "Runs." (the code this step executes, with the
+  step's values as its inputs) and the action file "Declares." (it is not run: it names the script, its inputs, its
+  effect and its answer). The side panel shows no such line.
+- **AC-596.3.13 Colours.** An action's file, in the open step and in the action panel, is coloured by its extension's
+  language and a badge names it (Python, Bash, YAML, JSON…).
+- **AC-596.3.16 / AC-596.3.28 Layout.** Each row puts its label in a fixed column and its value right after it, both
+  left-aligned, with its note across the row; tokens keep their own width; the groups sit on `surface`; the open
+  part has the same 12 px inset on both sides.
+- **AC-596.3.5 Row menu.** The row menu (More, the handle or a right-click) renders on `document.body`, next to the
+  button that opened it, so an open step never clips it.
+- **AC-596.3.29 Accessibility.** With a service input open and its list shown, axe finds no serious or critical
+  violation.
+
+#### Service inputs (AGH-596)
+
+An action input of type `service` names a declared service ([scenarios.md](../../scenarios.md) § Actions). In the
+builder it is picked, never typed, the same way in the open step and in the side panel's step editor.
+
+- **AC-596.4.1 / AC-596.4.10 A field, never a text box.** Given an editable scenario, then a service input is a
+  field (a button "target: <service>" or "target: choose a service"), in the open step and in the side panel; a pick
+  in either sets the step's value.
+- **AC-596.4.2 The list.** Given the field pressed, then a dialog "Choose <input>" lists the declared services
+  grouped by kind under headings (Queues (SQS), Databases, APIs and backends…), the kinds in a fixed order, then by
+  name.
+- **AC-596.4.3 Addresses.** Each row shows its address in the run bar's environment (its URL, else its resource), or
+  "no address in <env>"; the header says "services in <env>".
+- **AC-596.4.4 Search.** Typing in "Find a service by name, kind or address" keeps the services whose name, kind,
+  address, description or repo hold the text; with none left it says "Nothing matches."
+- **AC-596.4.5 None declared.** With no service declared it says "No service is declared in <env>. Add one in
+  Environments."
+- **AC-596.4.6 Pick.** Up and Down, then Enter (or a click), picks a service: the list closes, the step's `with`
+  value is set and the draft is Unsaved; `Escape` or a press outside closes it with no change.
+- **AC-596.4.7 Not set yet.** A service input the step does not set yet still has its row, with an empty field, so
+  where it goes is chosen in the step.
+- **AC-596.4.11 / AC-596.4.12 Kind.** A kind select ("Kind of service for <input>": Any kind and each declared kind)
+  sits before the field; chosen, it filters the list and its header names the kind; left alone, it shows the picked
+  service's own kind.
+- **AC-596.4.13 / AC-596.4.15 Written value.** A pick is written by its name alone, and as `<repo>/<name>` only when
+  another repo declares a service of that name; the field shows the name alone either way ("target: orders-queue").
+- **AC-596.4.14 Row.** In the open step a service row reads kind then service: the kind select stands in the label
+  column, and the input's name moves to the note under the row. **AC-596.3.17:** the select and the field are both
+  24 px controls, and the field shows the service's name, its address in the tooltip.
+- **AC-596.4.16 / AC-596.4.17 / AC-596.3.27 Note.** The note says what is picked ("<input> · Required · <kind in
+  words> · <the service's description> · <address in env>", or "no address in <env>"), or what to choose when
+  nothing is ("Choose a service in <env>", "Choose a <kind> in <env>"); a required one with nothing picked says
+  "Needs a value" and counts on the group. It never repeats the action's own words about the input.
+- **AC-596.4.9 / AC-596.3.18 Not declared.** A value that names no declared service shows with "not declared in
+  <env>" and an icon.
 
 #### Version 2 in the builder (AGH-517)
 
@@ -266,10 +546,36 @@ other one. The builder never writes YAML: it holds the file's JSON, the server w
   check to name. `$self.output` is a block's own output, never a reference to a block named `self` (an id the check
   refuses): a rename of that block leaves it as written, and no reference is rewritten to it
   (`$LOOP_PREV.self.output` does read the block, and follows it).
-- **Graph view.** A picture of how the blocks run (the builder's own reading of the blocks as nodes, a stage's first
-  block after the last one before it, each selected with its block; an If nested in another shows its own condition,
-  not the joined one core's translation runs), with nothing to add or move there: "The graph shows how the blocks
-  run: edit them in Blocks."
+- **Graph view** (redrawn by AGH-596, `StageGraph`). A picture of how the blocks run, drawn from the blocks, not from
+  the nodes they run as, with nothing to add or move there: "The graph shows how the blocks run: edit them in
+  Blocks." (AC-596.5.12).
+  - **AC-596.5.7 / AC-596.5.8 Stages.** Between a Start and an End marker, each stage is a band (a region named
+    "Stage <n>: <name>") with its number, name and block count; its blocks run left to right with an arrow between
+    two, and wrap at the band's edge, so the graph uses the screen's width.
+  - **AC-596.5.9 Groups.** An If is a frame with its condition and two paths, "If yes" and "Otherwise"; At the same
+    time is a frame with a lane per path ("Path 1", "Path 2"…); a Repeat is a frame around a round's blocks ("Each
+    round, at most N"). An If nested in another shows its own condition.
+  - **AC-596.5.10 Current block.** Given a scenario run shown and at a block, its card is marked as current, as in
+    Blocks.
+  - **AC-596.5.11 Select.** A click selects a card (`aria-pressed`); "Open it in Blocks" opens Blocks with that block
+    selected; with nothing selected the button reads "Back to Blocks".
+  - **AC-596.5.13 Accessibility.** Bands are regions, frames groups and cards buttons; axe finds no serious or
+    critical violation.
+- **Graph cards** (AGH-596). A card reads as its Blocks row, from one shared place (`rowLines`), in a graph scenario's
+  (`version: 1`) Graph view too:
+  - **AC-596.5.1** its number (1.1), kind tile and title (named "Block 1.1, <kind>: <title>");
+  - **AC-596.5.2** the same sentence of what it does and the same quiet technical line as the row;
+  - **AC-596.5.3** a long or structured value only counted ("+1 value"), the line cut with an ellipsis, the full
+    text in the card's tooltip;
+  - **AC-596.5.4** its effect in words (Reads only, Changes data, Deletes data), "Draft" for a draft action and "N
+    problems" for a block with errors;
+  - **AC-596.5.5** its state in the shown scenario run;
+  - **AC-596.5.6** on a neutral card: no coloured top edge, no lift on hover, no entry animation; kind shows only by
+    its tile, and a selected card has an accent border.
+- **Code in colour** (AGH-596, [ADR 0051](../../../adr/0051-syntax-highlighting-across-the-app.md)). The YAML view and
+  Migrate's preview of the file as blocks are coloured as YAML (AC-596.5.16, AC-596.5.17); an action's files, in the
+  action panel and the open step, by their language (AC-596.5.18); every command (`CodeBlock` with the `$` prompt) as
+  shell (AC-596.5.19).
 - **Claude.** Describe with Claude teaches the tree's keys (stages, `do`, `wait_until`, `you`, `wait`, `include`,
   `repeat`, `if`, `together`; no `nodes`, `depends_on`, `trigger_rule` or `when`), and the format brief after them is
   the tree's (no graph header, node types or `until_when`; the page's Discuss brief too); it names a place by its
@@ -431,12 +737,13 @@ Timeline
   value taller than its box (240 px) scrolls inside it.
 - **AC-507.18 Pinned tree.** Given a builder edit while a run is paused, then the run page's blocks, toggles and bar
   are still the pinned tree's: an address the file no longer holds keeps its row and its toggle.
-- **On the scenario page** (Run mode), each step card of a `version: 2` scenario carries a Breakpoint toggle in its
-  header, beside its status: the innermost block the card's node starts (`ScenarioDetail.blocks[].entry_nodes`; a
-  stage, an If or a Together has no card of its own). The start passes the toggled blocks the file holds now, in its
-  order (`breakpoints`), and its confirm says "It pauses before block 1.2, its breakpoint."; a production environment
-  offers no toggle and passes none. The live run's banner names a debug pause ("is paused before block 2.1 at its
-  breakpoint, in personal") and its card "Paused before it".
+- **On the scenario page** (since AGH-596 the one screen; there is no Run mode), each block row of a `version: 2`
+  scenario carries a Breakpoint button ("Breakpoint before block 1.2 (b)"; `b` on the focused row toggles it). Before
+  a start, the start passes the toggled blocks the file holds now, in its order (`breakpoints`), and its confirm says
+  "It pauses before block 1.2, its breakpoint."; a production environment offers no toggle and passes none. While a
+  live scenario run off production is shown, the rows show the run's own set, pressed, and a toggle writes the run's
+  whole set to it (`PUT …/breakpoints`). The run strip names a debug pause ("is paused before block 2.1 at its
+  breakpoint, in personal") and the held block reads "Paused before it".
 
 | State | Copy |
 |---|---|
@@ -451,22 +758,30 @@ Timeline
 
 ## Responsive
 
-Built: at 1280 and wider nothing hides (the plan tables' cells wrap, so Step and Policy stay in view), the chat and
-the options sit side by side, and the step list and the scenario runs stack when they do not fit side by side. On a
-tablet (768–1279) the detail plans but its start bar says "Starting a scenario run needs a desktop screen."
+Built: at 1280 and wider nothing hides on the detail, and the chat and the options sit side by side. The Scenarios
+list hides its Steps column below 1280 px, and its last run's time below 1100 px (AC-596.1.13). The detail's columns
+narrow below 1600 px, and below 1440 px the left column gives way while a step is open (AC-521.13.2). On a tablet
+(768–1279) the detail plans but Start's place in the run bar says "Starting a scenario run needs a desktop screen."
 
 Not built yet (AGH-458), the target:
 
 | Width | Scenarios | Detail | Scenario run |
 |---|---|---|---|
 | ≥ 1600 | as drawn | as drawn | chat 1fr, options 560 |
-| 1280–1599 | all columns | the start bar is sticky in the plan card; the Scenario runs table's Duration column and "Show all 12" | chat ≥ 480, options 440; facts fold under the timeline |
-| 768–1279 | Pack hides | columns by priority | options first; the chat opens in a `SidePanel` |
+| 1280–1599 | all columns (built) | as built, above | chat ≥ 480, options 440; facts fold under the timeline |
+| 1100–1279 | Steps hides (built) | columns by priority; Start off (built: the desktop line) | options first; the chat opens in a `SidePanel` |
+| 768–1099 | Steps and the last run's time hide, the row's head wraps (built) | same | same |
 | < 768 | "This view needs a wider screen." | same | same |
 
 ## Accessibility
 
-Each table has a caption that names its subject. Every status and decision is icon + label. A Breakpoint toggle is a
+Each table has a caption that names its subject. Every status and decision is icon + label. The Scenarios list is a
+list named Scenarios whose rows are one tab stop each, with a spoken label (name, description, project, pack, steps
+and last scenario run). On the scenario page the open step is a named group ("Step N settings") inside its tree item;
+its editable values are Tab stops named by what they edit ("Edit <name>: <value>"), a body's scrolling code is
+focusable and named ("<name>, as JSON"), and "Needs a value" is said with an icon and words. A service input's list is
+a dialog with a search box and a list of options under group headings. On the Graph of a scenario written as blocks,
+stages are regions, If, At the same time and Repeat are groups, and cards are buttons. A Breakpoint toggle is a
 button whose name stays the same and whose state is `aria-pressed`, in the accent color when pressed (a set
 breakpoint is not a status). The debug bar and the blocks are named regions; the values are a named complementary
 landmark, like the facts. Each finished block's values are a `details` disclosure (closed by default), and each of

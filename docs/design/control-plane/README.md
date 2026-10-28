@@ -108,6 +108,19 @@ rail, [specs/20-chat.md](specs/20-chat.md)) records the owner's answers to its d
 - **Tokens.** `surface-turn` (an alias: light `gray-100`, dark `gray-200`; the owner's turn card, never a hover or a
   selection), `radius-2xl` (16 px) and `chat-column` (768 px) join `tokens.json`.
 
+AGH-596 (the scenario page built and run on one screen, [specs/23-scenarios.md](specs/23-scenarios.md)) records two
+changes the owner validated for the whole app:
+
+- **Selects as pop-up buttons.** Every select drawn as an input (`select.ah-input`) is a macOS pop-up button: the
+  native arrow gives way to a small up-and-down chevron drawn from `text-muted`, with room on both sides so the text
+  never runs under it, and it follows the theme. Hover (`surface-hover`, a stronger border), the keyboard focus ring
+  and disabled (0.6 opacity, the default cursor) are the same everywhere it is used; under reduced motion it has no
+  transition. A screen draws no chevron of its own over it.
+- **Code in colour everywhere.** Code and files the app shows are coloured by their language through one component,
+  `HighlightedCode` (the language of a file from its extension), on the `syntax-*` tokens: a `CodeBlock` with the `$`
+  prompt reads as shell, and one with no prompt stays plain
+  ([ADR 0051](../../adr/0051-syntax-highlighting-across-the-app.md), which widens ADR 0034).
+
 ## Design system
 
 The control plane of agent-hub is an observability and governance console for teams of AI coding agents. It answers five questions: how are my projects doing (Portfolio), what are the agents doing right now (Live sessions), why did the agent do that (Session timeline), what does it know and what did it learn (Knowledge), and how should work flow and where does it get stuck (Workflows). A busy engineering lead should understand any screen in five seconds and be able to trust it.

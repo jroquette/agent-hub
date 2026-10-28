@@ -19,6 +19,12 @@ as blocks (`version: 2`: one stage, a Wait until `/health` answers 200, then one
 `read-root`), so a fresh hub has no `scenarios.graph_format` warning. They are the project's files: `hub sync` never
 adds them, `hub.lock` does not list them, and the init report does not count them.
 
+hub web's Delete (AGH-596, `DELETE /scenarios/{project}/{name}`, [API.md](../API.md) § Scenarios) removes a
+scenario's file and Claude's proposal for it under `.agent-runs/proposals/scenarios/<pack>/`. It checks both paths
+for a link first and removes neither when one holds a link (409 `link_in_path`). It refuses while the scenario's newest
+scenario run is in progress, a paused one included (409 `scenario_run_in_progress`). It runs no git command, so `git
+restore` brings the file back until the removal is committed, and the scenario's recorded runs stay.
+
 ### Kind and node keys
 
 - `kind`: `workflow` (default: documents load as before) or `scenario`. A scenario holds only `action`, `expect`,
@@ -261,7 +267,10 @@ A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([A
 An action declares `version`, `name` (its file stem), `description`, `effect` (`read`, `write`, `destroy`), `runtime`
 (`sh`, or `python` run by `uv run`), `script`, `timeout` (≤ 1 h, default 5 m), `inputs` and `output_format` (a JSON
 Schema). An input is `string`, `integer`, `number`, `boolean` or `service`; a `service` value names a service in
-`repos[].services`, resolved to its endpoint in the bound environment (none: `plan` fails naming both). The script reads
+`repos[].services`, resolved to its endpoint in the bound environment (none: `plan` fails naming both). It is the
+service's name, or `<repo>/<name>` when more than one repo declares that name. hub web's builder offers the declared
+services to pick from (searchable, grouped by kind, each with its address in the run bar's environment) and writes
+the name alone unless another repo shares it (AGH-596). The script reads
 one JSON object on stdin, `{"mode": "plan" | "run", "inputs": {…}, "endpoint": {"<input>": {"url": …, "resource": …}}}`,
 and prints one JSON value: in `run` mode the output matching `output_format` (else the step fails `output_contract`); in
 `plan` mode `{"summary": "<one line>"}`, changing nothing, with no credential. An action is **committed** when its

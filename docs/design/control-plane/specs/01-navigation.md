@@ -42,8 +42,10 @@ Every screen carries its phase. A screen tagged P3 or P4 is not shown in the sid
 /scenarios                          Scenarios                                        P2
     ?q=   (filter, replace)
 ├ /scenarios/new                    New scenario (request → Claude in Discuss)       P2 (AGH-521)
-└ /scenarios/:project/:name         Scenario detail                                  P2 (plan, start)
-    ?env=   (pre-fills the environment; the plan never runs on load)
+└ /scenarios/:project/:name         Scenario detail: builds and runs on one screen   P2 (plan, start, delete)
+    ?env=   (pre-fills the environment; the plan never runs on load; replace)
+    ?run=   (the scenario run shown on the blocks; replace; AGH-596)
+    an old ?mode=run or ?view=document link lands on the one screen (both dropped by replace, ?env= kept)
   └ /scenarios/:project/:name/runs/:runId   Scenario run                             P2 (answer, findings)
     ?option=&event=   (replace)
 
@@ -492,6 +494,25 @@ the chat's own keys are in [agent-sessions.md](../../agent-sessions.md#chat-beha
 | `f` | Show the ticket flow full window (`?flow=full`) or leave it; in it, `Esc` closes the ticket panel first, then exits (AGH-521) |
 | `←` `→` `↑` `↓` | On the flow canvas (one tab stop), move along the edges between ticket cards (AGH-521) |
 
+### Scenarios and the scenario builder (AGH-596)
+
+| Keys | Action |
+|---|---|
+| `/` | Focus the Scenarios filter; `Esc` clears it, then leaves it |
+| `j` / `k`, `Enter` / `o` | Move between the Scenarios rows; open the focused scenario |
+| `j` / `k`, `↓` / `↑`, `Home` / `End` | On the builder's rows (one tab stop), move between rows |
+| `Enter` / `o` | Select the focused row, which opens an action or check step in place |
+| `F2` | Rename the focused row in place; `Enter` writes it, `Esc` leaves it as it was |
+| `b` | Toggle the breakpoint before the focused block (a scenario written as blocks, off production) |
+| `Shift F10` | Open the focused row's menu (move, duplicate, delete), as the context-menu key does |
+| `a` | Add a step after the focused row |
+| `⌘D` | Duplicate the selected step |
+| `Alt ↑` / `Alt ↓` | Move the selected step |
+| `Delete` / `Backspace` | Delete the selected step, from its row (an Undo toast follows); a chip or the code of an open step keeps the key |
+| `⌘Z` / `Shift ⌘Z` | Undo / redo an edit |
+
+The keys are off while focus is in a text field. See [23-scenarios.md](23-scenarios.md).
+
 ### Learnings triage (P3)
 
 `a` accept, `r` reject (opens reason field), `s` snooze, `j`/`k` move. These are scoped to the triage list and override nothing global.
@@ -503,7 +524,7 @@ the chat's own keys are in [agent-sessions.md](../../agent-sessions.md#chat-beha
 - `[` and `]` collide with nothing in Chrome/Firefox/Safari; on keyboards where they need AltGr (German, Portuguese layouts), `Alt ←` / `Alt →` are aliases that only work inside the tab list's focus scope (they are browser Back/Forward elsewhere and are not captured).
 - `g g` vs `g <letter>`: the second key decides. `g` followed by nothing for 1 s cancels silently.
 - `t` (time zone) and `f` (follow) are single keys; both are disabled in inputs and can be turned off with single-key shortcuts.
-- `e` is "next error", not "edit": nothing in P2–P4 edits content in place.
+- `e` is "next error", not "edit". The only key that edits in place is `F2`, on the scenario builder's rows (AGH-596).
 - `⌘K` overrides the Safari/Chrome "focus address bar search" only on macOS Firefox (`⌘K` focuses web search); accepted because ⌘K is the de facto standard for command palettes. `Ctrl K` on Windows/Linux Chrome focuses the omnibox search; the app captures it only when the page has focus.
 - Number keys `1`–`6` on Session detail do not conflict with list views (they mean nothing there).
 

@@ -11,6 +11,44 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- hub web deletes a scenario from its row's menu on the Scenarios list or from the scenario page's Scenario actions
+  menu. A confirm names the file and the `git restore` command; the scenario's file and Claude's proposal for it leave
+  the hub folder (never through a link), its recorded scenario runs stay, and the toast offers the restore command.
+  Delete is off while a scenario run of it is in progress. The API gains `DELETE /api/v1/scenarios/{project}/{name}`
+  (204; 409 `scenario_run_in_progress`, `link_in_path` or `hub_read_only`), a strict item write (AGH-596).
+- In the scenario builder, a selected step opens in place on its row: what it does (its action, runtime, timing and
+  the code it runs, folded), the values it sets (a JSON body indented, with Edit and Copy), the values it takes from
+  earlier and where each comes from, what it keeps for later steps, and each required value that nothing gives
+  ("Needs a value", with Set it in the panel). A draft action says so, with its commit command (AGH-596).
+- A step's service input is picked, never typed, in the open step and in the side panel: a searchable list of the
+  services the hub declares, grouped by kind, each with its address in the run bar's environment, and a kind select
+  that filters it. The pick is written as the service's name, or `<repo>/<name>` only when two repos share the name
+  (AGH-596).
+
+### Changed
+
+- The Scenarios list is laid out as the Features list: one row per scenario with its pack (and its project, with
+  several) as tags, its description, its steps and its last scenario run, waiting, running and failed rows first, in a
+  page box capped at 1440 px (AGH-596).
+- The scenario page builds and runs a scenario on one screen, which replaces 0.26.0's storyline and Run mode. A run bar
+  over the blocks holds the environment (never a production one unless you pick it), the mode, the inputs, Plan and the
+  verdict, and Start. A run strip shows the scenario run on the blocks, with Cancel or Hide its states and Follow. A
+  run panel beside them holds the debug pause, This plan, the draft actions to commit in one commit, and the scenario
+  runs, each with Show (`?run=`). Each block shows its state in the shown run, what it kept, its plan line and its
+  breakpoint (`b`), and renames in place with `F2`. Old `?mode=run` and `?view=document` links land on the one screen
+  (AGH-596).
+- The Graph view of a scenario written as blocks is drawn by its stages: a band per stage between Start and End, its
+  blocks left to right, If, At the same time and Repeat as frames. Each graph card reads as its Blocks row, for a
+  graph scenario too (AGH-596).
+- Every code and file hub web shows is coloured by its language through one `HighlightedCode` component
+  ([ADR 0051](docs/adr/0051-syntax-highlighting-across-the-app.md), proposed): the builder's YAML and the Migrate
+  preview, an action's files, every command, a hook's command, a skill's Raw view and bundled files, and a Studio
+  draft's files. No new dependency (AGH-596).
+- Every select in hub web is drawn as a macOS pop-up button: a small up-and-down chevron from the tokens, with the
+  same hover, focus and disabled look everywhere (AGH-596).
+
 ## [0.26.0] - 2026-10-27
 
 ### Added
