@@ -197,6 +197,9 @@ def test_adds_node_and_browsers_to_the_child_env_when_the_page_env_is_built(tmp_
     assert env["AGENT_HUB_CHROMIUM"] == CHROMIUM
     assert env["AGENT_HUB_WEB_URL"] == WEB_URL
     assert env["PERF_TOKEN"] == URL_NONCE
+    # A fresh HOME and no CI would let npm ask the registry for its latest version.
+    assert env["npm_config_update_notifier"] == "false"
+    assert env["npm_config_offline"] == "true"
     for name in (
         "HOME",
         "XDG_DATA_HOME",

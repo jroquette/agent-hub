@@ -10,10 +10,11 @@ const pages: string[] = process.env.PERF_PAGES
   : [];
 const runs = Number(process.env.PERF_RUNS ?? "1");
 const out = process.env.PERF_PAGES_OUT ?? "";
-// Ready = no /api/v1/ request in flight for this long after `load` (plan Q6).
+// Ready = no /api/v1/ request in flight for this long after `load`.
 const QUIET_MS = 500;
 const POLL_MS = 25;
-const READY_LIMIT_MS = 20_000;
+// Generous, so a slow page is reported as over its budget instead of failing the suite.
+const READY_LIMIT_MS = 60_000;
 
 const apiPath = (request: Request): string | null => {
   const { pathname } = new URL(request.url());
@@ -55,6 +56,8 @@ async function measure(page: Page, path: string): Promise<{ readyMs: number; api
 }
 
 test.describe("make perf pages", () => {
+  // Playwright's 30 s default would end a test before READY_LIMIT_MS does.
+  test.setTimeout(READY_LIMIT_MS + 30_000);
   // Every page is opened as the owner opens hub web: once through the token URL (the cookie).
   test.beforeEach(async ({ page }) => {
     await page.goto(`/?token=${process.env.PERF_TOKEN ?? ""}`);

@@ -11,8 +11,9 @@ from pathlib import Path
 import pytest
 
 from scripts.perf.budgets import Budget
+from scripts.perf.process_probes import SuiteError
 from scripts.perf.report import Row
-from scripts.perf.run_suite import Settings, run
+from scripts.perf.run_suite import Settings, main, run
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 MAKEFILE = REPO_ROOT / "Makefile"
@@ -131,6 +132,49 @@ def test_returns_the_report_exit_when_rows_are_over(tmp_path: Path, case: ExitCa
     code = run(settings, [_phase([passing]), _phase([]), _phase([sessions])])
 
     assert code == case.expected
+
+
+def test_writes_the_rows_measured_so_far_when_a_phase_fails(tmp_path: Path) -> None:
+    out = tmp_path / "perf.json"
+    environ = {
+        "PERF_OUT": str(out),
+        "PERF_BUDGETS": str(_budgets_file(tmp_path)),
+        "PERF_CACHE": str(tmp_path / "cache"),
+    }
+    passing = _row("cli", "hub --version", p95_ms=50.0, budget_ms=VERSION_BUDGET_MS)
+
+    def failing(*_args: object, **_kwargs: object) -> list[Row]:
+        raise SuiteError("/api/v1/sessions: ReadTimeout: timed out")
+
+    with pytest.raises(SuiteError, match="ReadTimeout"):
+        run(Settings.from_env(environ), [_phase([passing]), failing])
+
+    rows = json.loads(out.read_text("utf-8"))
+    assert [(row["kind"], row["path"]) for row in rows] == [("cli", "hub --version")]
+
+
+@pytest.mark.parametrize(
+    "knob",
+    [
+        pytest.param({"PERF_RUNS": "abc"}, id="bad-runs"),
+        pytest.param({"PERF_RESTART_RUNS": "1.5"}, id="bad-restart-runs"),
+    ],
+)
+def test_reports_a_suite_failure_when_an_unexpected_error_is_raised(
+    tmp_path: Path, knob: Mapping[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    environ = {
+        "PERF_OUT": str(tmp_path / "perf.json"),
+        "PERF_BUDGETS": str(_budgets_file(tmp_path)),
+        "PERF_CACHE": str(tmp_path / "cache"),
+        **knob,
+    }
+
+    code = main(environ)
+
+    assert code == 2
+    assert "make perf: ValueError" in capsys.readouterr().err
+    assert not (tmp_path / "perf.json").exists()
 
 
 def _rules(text: str) -> dict[str, tuple[list[str], list[str], list[str]]]:

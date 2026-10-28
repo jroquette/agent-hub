@@ -3,9 +3,9 @@
 A ``Probe`` is one row's command: ``argv`` and the ``stdin`` text it reads. The CLI probes run the
 worktree's ``hub`` and the temp hub's ``./hub``; the hook probes run each rendered hook of the temp
 hub on ``python3``, as Claude Code does, with an input from ``a_hook_input`` whose ``cwd`` is the
-temp hub and whose transcript is the synthetic one (spec AC-5). ``measure`` runs a probe ``runs``
-times through an injected runner and returns each run's wall time in milliseconds; a run that exits
-non-zero raises ``SuiteError`` naming the probe's path.
+temp hub and whose transcript is the synthetic one, so no real transcript is read. ``measure``
+runs a probe ``runs`` times through an injected runner and returns each run's wall time in
+milliseconds; a run that exits non-zero raises ``SuiteError`` naming the probe's path.
 """
 
 import json

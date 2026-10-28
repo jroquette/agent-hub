@@ -8,6 +8,17 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+
+from agent_hub.core.events.event import Event, EventType
+from agent_hub.core.sessions.session_label import (
+    LabelRules,
+    label_signals,
+    session_label,
+    with_issue,
+)
+from agent_hub.core.testing.builders import an_event
+from agent_hub.core.testing.session_scenarios import a_session_events, as_stored
+from scripts.perf import fixture
 from scripts.perf.fixture import (
     BRANCH_PREFIX,
     DEFAULT_EVENTS,
@@ -19,16 +30,6 @@ from scripts.perf.fixture import (
     plan_sessions,
     session_events,
 )
-
-from agent_hub.core.events.event import Event, EventType
-from agent_hub.core.sessions.session_label import (
-    LabelRules,
-    label_signals,
-    session_label,
-    with_issue,
-)
-from agent_hub.core.testing.builders import an_event
-from agent_hub.core.testing.session_scenarios import a_session_events, as_stored
 
 # The ticket's numbers (spec AC-2): 400,000 events over 2,500 sessions (plus or minus 5%), about
 # 90 days.
@@ -247,3 +248,16 @@ def test_leaves_no_cached_file_when_the_build_fails(tmp_path: Path) -> None:
     assert len(builder.partials) == 1
     assert not builder.partials[0].exists()
     assert sorted(cache.iterdir()) == []
+
+
+def test_reads_the_event_count_from_perf_events_when_no_flag_is_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    builder = RecordingBuilder()
+    monkeypatch.setattr(fixture, "build", builder)
+    out = tmp_path / "fixture.db"
+
+    code = fixture.main(["--out", str(out)], {"PERF_EVENTS": "1500"})
+
+    assert code == 0
+    assert builder.calls == [(out, 1_500, SEED)]

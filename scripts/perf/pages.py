@@ -3,10 +3,12 @@
 ``chromium_executable`` finds the browser as the web smoke does (``AGENT_HUB_CHROMIUM`` first,
 else a headless shell under ``PLAYWRIGHT_BROWSERS_PATH`` or Playwright's cache); nothing is ever
 downloaded. ``page_env`` adds node's folder, the browsers and the server's URL and token to the
-suite's child environment. ``page_rows`` runs the spec once through ``npm exec --no`` (never
-installs from the registry) and reads back the JSON lines it appended to ``PERF_PAGES_OUT``. When
-Chromium, npm or the web dependencies are missing, every page row is skipped with the reason
-(plan Q7), and nothing is started.
+suite's child environment, and turns off npm's update check and registry access: with a fresh
+``HOME`` and no ``CI``, npm would otherwise ask the registry for its latest version on every run.
+``page_rows`` runs the spec once through ``npm exec --no`` (never installs from the registry) and
+reads back the JSON lines it appended to ``PERF_PAGES_OUT``. When Chromium, npm or the web
+dependencies are missing, every page row is skipped with the reason, and nothing is started: the
+other rows still run.
 """
 
 import json
@@ -85,6 +87,8 @@ def page_env(
         "AGENT_HUB_CHROMIUM": chromium,
         "AGENT_HUB_WEB_URL": url,
         "PERF_TOKEN": token,
+        "npm_config_update_notifier": "false",
+        "npm_config_offline": "true",
     }
 
 

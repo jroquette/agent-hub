@@ -2,8 +2,8 @@
 
 The file is ``{"rows": [{"kind", "path", "p95_ms"?, "api_calls"?, "rss_mb"?, "source"}]}``. Every
 load reads the file again, so an edit shows on the next run. Unknown fields, in an entry or at the
-top level, are ignored (AGH-602 adds ``enforced`` and ``margin``). A path with no entry has no
-budget. A file that is not valid JSON, or an entry without a string ``kind``, ``path`` and
+top level, are ignored, so new fields can be added without breaking a run. A path with no entry
+has no budget. A file that is not valid JSON, or an entry without a string ``kind``, ``path`` and
 ``source`` or with a non-numeric limit, raises ``BudgetFileError`` naming the file.
 """
 

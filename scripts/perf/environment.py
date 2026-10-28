@@ -3,8 +3,9 @@
 Every child the suite starts runs with ``child_env``: built from scratch, never from
 ``os.environ``, so no proxy, tracker token or Claude Code variable reaches it, ``HOME`` and the
 XDG folders sit under the temp root, and ``PATH`` is the root's ``bin/`` only. That bin
-(``make_tool_bin``) holds links to ``git`` and ``python3`` and a ``uvx`` stand-in that runs the
-worktree's ``hub``, so ``./hub`` and ``session_start`` do real work offline. ``create_hub`` makes
+(``make_tool_bin``) holds links to ``git``, ``python3`` and ``sh`` (``npm exec`` runs its command
+through ``sh``) and a ``uvx`` stand-in that runs the worktree's ``hub``, so ``./hub`` and
+``session_start`` do real work offline. ``create_hub`` makes
 a ``hub init`` hub under the root with the fixture's feature folder, a synthetic transcript, and
 one commit by a made-up author.
 """
@@ -122,11 +123,11 @@ def _uvx_text(hub_bin: Path) -> str:
     )
 
 
-def make_tool_bin(root: Path, *, hub_bin: Path, git: Path, python3: Path) -> Path:
-    """``root/bin`` with links to ``git`` and ``python3`` and the ``uvx`` stand-in."""
+def make_tool_bin(root: Path, *, hub_bin: Path, git: Path, python3: Path, sh: Path) -> Path:
+    """``root/bin`` with links to ``git``, ``python3`` and ``sh`` and the ``uvx`` stand-in."""
     bin_dir = root / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
-    for name, target in (("git", git), ("python3", python3)):
+    for name, target in (("git", git), ("python3", python3), ("sh", sh)):
         (bin_dir / name).symlink_to(target)
     uvx = bin_dir / "uvx"
     uvx.write_text(_uvx_text(hub_bin), "utf-8")

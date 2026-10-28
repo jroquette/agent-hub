@@ -15,12 +15,14 @@ mode) and ``get``/``post`` like ``httpx.get``/``httpx.post``; a suite failure ra
 import io
 import re
 import signal
+import threading
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import httpx
 import pytest
 
+from scripts.perf import web_probes
 from scripts.perf.fixture import FEATURE_SLUG
 from scripts.perf.web_probes import (
     RESTART_PATHS,
@@ -224,10 +226,12 @@ def test_gives_two_rows_per_start_when_restarts_are_measured() -> None:
     spawn = Spawner()
     get = FakeGet(clock, _healthy)
     peaks: list[int] = []
+    # Read after GET / then after /api/v1/sessions, for each of the three starts.
+    readings = iter([100.0, 150.0, 110.0, 160.0, 105.0, 155.0])
 
     def peak_rss(pid: int) -> float | None:
         peaks.append(pid)
-        return 123.5
+        return next(readings)
 
     rows = restart_rows(
         ARGV,
@@ -245,7 +249,13 @@ def test_gives_two_rows_per_start_when_restarts_are_measured() -> None:
     assert len(rows) == 2
     assert {row.kind for row in rows} == {"restart"}
     assert [len(row.samples_ms) for row in rows] == [3, 3]
-    assert [row.rss_mb for row in rows] == [123.5, 123.5]
+    by_path = {row.path: row for row in rows}
+    # Each fake request moves the clock 5 ms: GET / answers at 5 ms, the sessions page at 10 ms.
+    assert by_path[RESTARTS[0]].samples_ms == pytest.approx([5.0, 5.0, 5.0])
+    assert by_path[RESTARTS[1]].samples_ms == pytest.approx([10.0, 10.0, 10.0])
+    assert by_path[RESTARTS[0]].rss_mb == 110.0
+    assert by_path[RESTARTS[1]].rss_mb == 160.0
+    assert peaks == [4000, 4000, 4001, 4001, 4002, 4002]
     assert set(peaks) <= {process.pid for process in spawn.processes}
     assert [signal.SIGINT in process.signals for process in spawn.processes] == [True] * 3
 
@@ -260,8 +270,8 @@ STATUS_WITHOUT_HWM = "Name:\thub\nVmPeak:\t  300000 kB\nVmRSS:\t  150000 kB\nThr
 @pytest.mark.parametrize(
     ("status_text", "expected"),
     [
-        # 176128 kB is 172 MiB (176.1 MB): either unit passes, any other line of the file does not.
-        (STATUS_WITH_HWM, pytest.approx(172.0, rel=0.03)),
+        # 176128 kB is exactly 172 MiB.
+        (STATUS_WITH_HWM, 176128 / 1024),
         (STATUS_WITHOUT_HWM, None),
     ],
 )
@@ -272,6 +282,109 @@ def test_reads_peak_rss_from_vmhwm_when_proc_status_is_given(
     status = tmp_path / str(pid) / "status"
     status.parent.mkdir()
     status.write_text(status_text, "utf-8")
-    assert status.read_text("utf-8") == status_text
 
     assert peak_rss_mb(pid, proc=tmp_path) == expected
+
+
+class SilentProcess(FakeProcess):
+    """A ``hub web`` that prints nothing: its ``readline`` blocks until the test ends."""
+
+    def __init__(self, pid: int, released: threading.Event) -> None:
+        super().__init__(pid)
+        self.released = released
+
+        class Blocking(io.StringIO):
+            def readline(self, size: int | None = -1) -> str:
+                released.wait()
+                return ""
+
+        self.stdout = Blocking()
+
+
+def test_fails_the_suite_when_hub_web_prints_no_url_line() -> None:
+    clock = FakeClock()
+    process = FakeProcess(4000)
+    process.stdout = io.StringIO("Traceback (most recent call last):\n")
+    get = FakeGet(clock, _healthy)
+
+    with pytest.raises(SuiteError, match="no URL line"):
+        start_web(
+            ARGV, ENV, spawn=lambda *_a, **_k: process, get=get, clock=clock, sleep=clock.sleep
+        )
+
+    assert get.urls == []
+    assert signal.SIGINT in process.signals
+
+
+def test_fails_the_suite_when_hub_web_prints_nothing_in_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(web_probes, "START_SECONDS", 0.05)
+    clock = FakeClock()
+    released = threading.Event()
+    process = SilentProcess(4000, released)
+    try:
+        with pytest.raises(SuiteError, match="no URL line within"):
+            start_web(
+                ARGV,
+                ENV,
+                spawn=lambda *_a, **_k: process,
+                get=FakeGet(clock, _healthy),
+                clock=clock,
+                sleep=clock.sleep,
+            )
+    finally:
+        released.set()
+
+    assert signal.SIGINT in process.signals
+
+
+def _refused(url: str, _call: int) -> httpx.Response:
+    raise httpx.ConnectError("connection refused", request=httpx.Request("GET", url))
+
+
+def test_fails_the_suite_when_hub_web_never_answers_before_the_deadline() -> None:
+    clock = FakeClock()
+    spawn = Spawner()
+    get = FakeGet(clock, _refused)
+
+    with pytest.raises(SuiteError, match=re.escape("hub web start → /: no 200 within")):
+        start_web(ARGV, ENV, spawn=spawn, get=get, clock=clock, sleep=clock.sleep)
+
+    assert clock.now >= 500.0 + web_probes.START_SECONDS
+    assert signal.SIGINT in spawn.processes[0].signals
+
+
+def test_fails_the_suite_when_hub_web_exits_before_answering() -> None:
+    clock = FakeClock()
+    process = FakeProcess(4000)
+    process.returncode = 1
+    get = FakeGet(clock, _refused)
+
+    with pytest.raises(SuiteError, match="exited before answering"):
+        start_web(
+            ARGV, ENV, spawn=lambda *_a, **_k: process, get=get, clock=clock, sleep=clock.sleep
+        )
+
+    assert get.urls == [f"{BASE_URL}/"]
+    assert clock.slept == []
+
+
+def _timed_out(url: str, _call: int) -> httpx.Response:
+    raise httpx.ReadTimeout("timed out", request=httpx.Request("GET", url))
+
+
+def test_fails_the_suite_when_a_route_request_times_out() -> None:
+    clock = FakeClock()
+    get = FakeGet(clock, _timed_out)
+
+    with pytest.raises(SuiteError, match=re.escape("/api/v1/features: ReadTimeout")):
+        measure_route(BASE_URL, _route("/api/v1/features"), runs=3, get=get, clock=clock)
+
+
+def test_fails_the_suite_when_registering_the_hub_cannot_connect(tmp_path: Path) -> None:
+    def post(url: object, **_: object) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=httpx.Request("POST", str(url)))
+
+    with pytest.raises(SuiteError, match=re.escape("POST /api/v1/hubs: ConnectError")):
+        register_hub(BASE_URL, tmp_path, post=post)

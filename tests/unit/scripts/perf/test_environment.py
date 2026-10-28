@@ -212,18 +212,20 @@ def test_links_git_and_python_and_writes_a_uvx_stand_in_when_the_tool_bin_is_mad
     real = tmp_path / "real-tools"
     real.mkdir()
     git, python3, hub_bin = real / "git", real / "python3", real / "venv-bin" / "hub"
+    sh = real / "sh"
     hub_bin.parent.mkdir()
-    for tool in (git, python3, hub_bin):
+    for tool in (git, python3, sh, hub_bin):
         tool.write_text("#!/bin/sh\nexit 0\n", "utf-8")
         tool.chmod(0o755)
     root = _root(tmp_path)
 
-    bin_dir = make_tool_bin(root, hub_bin=hub_bin, git=git, python3=python3)
+    bin_dir = make_tool_bin(root, hub_bin=hub_bin, git=git, python3=python3, sh=sh)
 
     assert bin_dir.is_relative_to(root)
-    assert sorted(p.name for p in bin_dir.iterdir()) == ["git", "python3", "uvx"]
+    assert sorted(p.name for p in bin_dir.iterdir()) == ["git", "python3", "sh", "uvx"]
     assert (bin_dir / "git").resolve() == git.resolve()
     assert (bin_dir / "python3").resolve() == python3.resolve()
+    assert (bin_dir / "sh").resolve() == sh.resolve()
     uvx = bin_dir / "uvx"
     assert os.access(uvx, os.X_OK)
     text = uvx.read_text("utf-8")

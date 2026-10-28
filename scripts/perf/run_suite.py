@@ -6,8 +6,10 @@ the budgets, runs the phases one after the other over one ``Suite`` (the temp ro
 earlier phases made), judges every row against its budget, prints the table, writes ``perf.json``
 and returns the report's exit code. The real phases are ``prepare`` (fixture, copy, tool bin,
 temp hub), ``process_rows`` (CLI and hooks), ``web_rows`` (start ``hub web``, register the hub,
-routes, pages, stop) and ``restart_rows``. ``main`` maps a failure of the suite itself
-(``SuiteError``, a bad budgets file) to exit 2 with one line.
+routes, pages, stop) and ``restart_rows``. When a phase fails, the rows measured before it are
+still printed and written, then the failure goes on. ``main`` maps any failure of the suite itself
+(``SuiteError``, a bad budgets file, a bad knob, any other error) to exit 2 with one line, so exit
+1 always means a row over its budget.
 """
 
 import os
@@ -156,10 +158,22 @@ def run(settings: Settings, phases: Sequence[Phase]) -> int:
     """Run ``phases`` in order, then print, write and judge the rows; the report's exit code."""
     budgets = load_budgets(settings.budgets)
     rows: list[Row] = []
-    with PerfRoot() as root:
-        suite = Suite(settings=settings, root=root.path)
-        for phase in phases:
-            rows.extend(phase(suite))
+    try:
+        with PerfRoot() as root:
+            suite = Suite(settings=settings, root=root.path)
+            for phase in phases:
+                rows.extend(phase(suite))
+    except BaseException:
+        if rows:
+            _report(settings, rows, budgets)
+        raise
+    return _report(settings, rows, budgets)
+
+
+def _report(
+    settings: Settings, rows: Sequence[Row], budgets: Mapping[tuple[str, str], Budget]
+) -> int:
+    """Judge ``rows``, print the table, write ``perf.json``; the report's exit code."""
     judged = _judged(rows, budgets)
     sys.stdout.write(table_text(judged))
     settings.out.parent.mkdir(parents=True, exist_ok=True)
@@ -224,10 +238,12 @@ def prepare(suite: Suite) -> list[Row]:
     shutil.copyfile(cached, suite.db)
     suite.hub_bin = Path(sys.executable).parent / "hub"
     tool_bin = make_tool_bin(
-        suite.root, hub_bin=suite.hub_bin, git=_tool("git"), python3=_tool("python3")
+        suite.root,
+        hub_bin=suite.hub_bin,
+        git=_tool("git"),
+        python3=_tool("python3"),
+        sh=_tool("sh"),
     )
-    # npm exec runs its command through sh, which the page rows' PATH must hold.
-    (tool_bin / "sh").symlink_to(_tool("sh"))
     suite.env = child_env(suite.root, db=suite.db, tool_bin=tool_bin, sensor_url=closed_url())
     suite.hub_dir = create_hub(suite.root, runner=_setup_runner, env=suite.env)
     return []
@@ -336,6 +352,9 @@ def main(environ: Mapping[str, str]) -> int:
         return run(Settings.from_env(environ), PHASES)
     except (SuiteError, BudgetFileError) as error:
         print(f"make perf: {error}", file=sys.stderr)
+        return 2
+    except Exception as error:  # noqa: BLE001 -- exit 1 is kept for a row over its budget
+        print(f"make perf: {type(error).__name__}: {error}", file=sys.stderr)
         return 2
 
 
