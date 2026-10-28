@@ -3600,12 +3600,19 @@ export interface components {
      *     ``evaluated_at`` is the frontmatter's text (an ISO date or time). ``provenance`` says who ran
      *     it (e.g. ``agent``, ``agent-evaluator``, ``owner``), None when the note does not say.
      *     ``problem`` says why the file could not be read or parsed; its other fields are then empty.
+     *     ``commits`` holds, for a delivery that changes several repos, each ``<repo>@<commit>``
+     *     evaluated (``commit`` is then None).
      */
     EvalRecord: {
       /** Acs */
       acs: string[] | "all";
       /** Commit */
       commit: string | null;
+      /**
+       * Commits
+       * @default []
+       */
+      commits: string[];
       /** Delivery */
       delivery: string;
       /** Evaluated At */
@@ -7814,6 +7821,17 @@ export interface components {
       warnings: string[];
     };
     /**
+     * TicketPr
+     * @description One pull request of a ticket: the hub repo it is in (None outside the hub's repos) and its
+     *     GitHub URL.
+     */
+    TicketPr: {
+      /** Repo */
+      repo: string | null;
+      /** Url */
+      url: string;
+    };
+    /**
      * TicketRecords
      * @description ``GET /features/{project}/{slug}/tickets/{ticket}`` (two-level-flows A7, A20): what the
      *     ticket panel shows that no tickets row carries: ``preflight``, its record (None without one),
@@ -7852,7 +7870,11 @@ export interface components {
      *     its blockers not done yet. ``reviewed`` is None when unknown (no snapshot and no record).
      *     ``parent`` is the ref of the epic it belongs to (the plan's ``parent`` or Linear's parent
      *     issue), ``children`` the refs of the rows whose parent it is: a row with children is an epic.
-     *     ``pr_url`` is the ticket's pull request on GitHub, from its review record, None when unknown.
+     *     ``repo`` is the plan's repo of a ticket that names one, ``repos`` every repo the ticket owns in
+     *     contract order (its pull requests merge in that order; empty when the plan names none).
+     *     ``pr_url`` is the ticket's pull request on GitHub, from its review record, None when unknown;
+     *     ``prs`` every pull request it names, in merge order (one per repo for a ticket that owns
+     *     several; ``pr_url`` is the first).
      *     ``flow`` is the ticket's own steps, served by the tickets route (None for an epic).
      */
     TicketRow: {
@@ -7884,11 +7906,21 @@ export interface components {
       pr_url?: string | null;
       /** Priority */
       priority: number | null;
+      /**
+       * Prs
+       * @default []
+       */
+      prs: components["schemas"]["TicketPr"][];
       readiness: components["schemas"]["Readiness"];
       /** Ref */
       ref: string;
       /** Repo */
       repo: string | null;
+      /**
+       * Repos
+       * @default []
+       */
+      repos: string[];
       /** Reviewed */
       reviewed: boolean | null;
       state: components["schemas"]["IssueState"] | null;

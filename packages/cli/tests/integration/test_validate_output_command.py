@@ -371,6 +371,53 @@ def test_names_folder_when_review_path_relative_in_other_folder(
     assert result.stderr == "spec-r1.json: ticket: the ticket is DEM-7 but the folder is DEM-8\n"
 
 
+SEVERAL = json.dumps(
+    {
+        "tickets": [
+            {"key": "T2", "id": "DEM-7", "repos": [{"repo": "backend"}, {"repo": "frontend"}]}
+        ],
+        "acs": [],
+    }
+).encode()
+
+
+def a_repo_round(root: Path, repo: str, *, record: bytes | None = SEVERAL) -> Path:
+    """``spec-r1.json`` of DEM-7 in its repo folder ``reviews/DEM-7/<repo>/`` (AGH-589)."""
+    feature = root / "feature"
+    folder = feature / "reviews" / "DEM-7" / repo
+    folder.mkdir(parents=True)
+    if record is not None:
+        (feature / "features.json").write_bytes(record)
+    path = folder / "spec-r1.json"
+    path.write_text(json.dumps(a_review_document()))
+    return path
+
+
+@pytest.mark.parametrize("record", [SEVERAL, None], ids=["planned", "no record"])
+def test_prints_valid_when_round_in_a_repo_folder_of_its_ticket(
+    tmp_path: Path, record: bytes | None
+) -> None:
+    path = a_repo_round(tmp_path, "frontend", record=record)
+
+    result = run_unchanged(tmp_path, "review", path)
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == f"{path}: valid\n"
+
+
+def test_names_the_repos_when_round_in_a_folder_that_is_not_a_repo_of_its_ticket(
+    tmp_path: Path,
+) -> None:
+    path = a_repo_round(tmp_path, "web")
+
+    result = run_unchanged(tmp_path, "review", path)
+
+    assert result.exit_code == 1
+    assert result.stderr == (
+        f"{path}: ticket: the folder web is not a repo of DEM-7 (backend, frontend)\n"
+    )
+
+
 def a_preflight_file(root: Path, document: object) -> Path:
     folder = root / "feature" / "tickets" / "DEM-7"
     folder.mkdir(parents=True, exist_ok=True)
@@ -404,6 +451,31 @@ def test_prints_valid_when_preflight_record_valid(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert result.stdout == f"{path}: valid\n"
     assert result.stderr == ""
+
+
+# AGH-591: a ticket that owns several repos records main's commit in each (schema 2).
+@pytest.mark.parametrize(
+    ("commits", "stderr"),
+    [
+        (
+            [{"repo": "demo-api", "commit": "feb9c4c"}, {"repo": "demo-web", "commit": "abc1234"}],
+            "",
+        ),
+        (None, ""),
+        ([], "runs[0].commits: Tuple should have at least 1 item after validation, not 0"),
+    ],
+    ids=["per repo", "one repo", "empty"],
+)
+def test_checks_commits_per_repo_when_preflight_record_names_them(
+    tmp_path: Path, commits: object, stderr: str
+) -> None:
+    document = a_preflight_document(commits=commits) | {"schema": "agent-hub/preflight/2"}
+    path = a_preflight_file(tmp_path, document)
+
+    result = run_unchanged(tmp_path, "preflight", path)
+
+    assert result.exit_code == (1 if stderr else 0)
+    assert result.stderr == (f"{path}: {stderr}\n" if stderr else "")
 
 
 # two-level-flows AC-2.3: a malformed one exits non-zero, naming the JSON path.

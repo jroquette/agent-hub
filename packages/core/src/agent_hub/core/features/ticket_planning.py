@@ -26,13 +26,15 @@ from dataclasses import dataclass, field
 from typing import Final
 from urllib.parse import urlsplit
 
-from agent_hub.core.features.feature_record import PlannedTicket, RecordAc
+from agent_hub.core.features.feature_record import PlannedTicket, RecordAc, ticket_repos
+from agent_hub.core.features.feature_reviews import ReviewPullRequest
 from agent_hub.core.features.ticket_view import (
     EdgeSource,
     ExternalBlocker,
     Readiness,
     TicketEdge,
     TicketPlan,
+    TicketPr,
     TicketRow,
 )
 from agent_hub.core.redaction.redact import clip, redact_text
@@ -101,7 +103,7 @@ def ticket_board(
     *,
     linear: Sequence[str] = (),
     approved: Collection[str] = (),
-    pull_requests: Mapping[str, str] | None = None,
+    pull_requests: Mapping[str, Sequence[ReviewPullRequest]] | None = None,
 ) -> TicketBoard:
     """The rows and planning of a feature's tickets.
 
@@ -111,7 +113,7 @@ def ticket_board(
     not read. ``approved`` names the tickets (key or id, any case) with an approved review
     record; a row is reviewed when Linear has it ``completed`` or it is approved, unknown
     (None) without a snapshot and a record. ``pull_requests`` maps a ticket (key or id, upper
-    case) to its pull request URL.
+    case) to its pull requests, in merge order.
     """
     warnings: list[str] = []
     summaries = {} if snapshot is None else {item.id: item for item in snapshot.summaries}
@@ -166,7 +168,7 @@ def ticket_board(
             waiting_on=waiting_on[node.ref],
             reviewed=_reviewed(node, approved_names, read=snapshot is not None),
             children=children.get(node.ref, ()),
-            pr_url=_pull_request(node, pull_requests or {}),
+            prs=_pull_requests(node, pull_requests or {}),
         )
         for node in nodes
     )
@@ -474,12 +476,14 @@ def _reviewed(node: _Node, approved: set[str], *, read: bool) -> bool | None:
     return False if read else None
 
 
-def _pull_request(node: _Node, pull_requests: Mapping[str, str]) -> str | None:
-    """The PR of the ticket's id, else of its plan key."""
+def _pull_requests(
+    node: _Node, pull_requests: Mapping[str, Sequence[ReviewPullRequest]]
+) -> tuple[TicketPr, ...]:
+    """The PRs of the ticket's id, else of its plan key, in merge order."""
     for name in (node.id, node.key):
         if name is not None and name.upper() in pull_requests:
-            return pull_requests[name.upper()]
-    return None
+            return tuple(TicketPr(repo=pr.repo, url=pr.url) for pr in pull_requests[name.upper()])
+    return ()
 
 
 def _text(text: str | None, limit: int) -> str | None:
@@ -502,7 +506,7 @@ def _row(
     waiting_on: tuple[str, ...],
     reviewed: bool | None,
     children: tuple[str, ...],
-    pr_url: str | None = None,
+    prs: tuple[TicketPr, ...] = (),
 ) -> TicketRow:
     summary = node.summary
     planned = node.planned
@@ -530,7 +534,9 @@ def _row(
         reviewed=reviewed,
         parent=node.parent,
         children=children,
-        pr_url=pr_url,
+        pr_url=prs[0].url if prs else None,
+        prs=prs,
+        repos=() if planned is None else tuple(owned.repo for owned in ticket_repos(planned)),
     )
 
 

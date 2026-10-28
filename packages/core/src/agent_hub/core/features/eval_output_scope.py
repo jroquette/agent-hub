@@ -9,7 +9,8 @@ no other, and no withdrawn AC. A record over ``MAX_RECORD_BYTES``, or one that d
 one problem naming it, and the scope is then checked as without a record.
 
 Order (P7): the record, then ``acs`` (withdrawn or unknown ids), then ``results`` (missing,
-outside the scope, repeated, withdrawn). An id reported at ``acs`` is not reported again for its
+outside the scope, repeated, withdrawn), then, for schema 2, ``commits`` against the repos the
+eval's tickets own (AGH-590). An id reported at ``acs`` is not reported again for its
 result. The scope is checked only when ``acs``, ``tickets`` and every result's ``ac`` pass their
 model's own rule (S2).
 """
@@ -25,11 +26,14 @@ from agent_hub.core.features.feature_record import (
     RECORD_FILE,
     FeatureRecordFile,
     record_from_bytes,
+    ticket_repos,
 )
 from agent_hub.core.features.output_models import (
+    EVAL_V2_SCHEMA_ID,
     MAX_RESULTS,
     AcId,
     EvalOutput,
+    EvalOutputV2,
     OutputProblem,
 )
 from agent_hub.core.features.output_shape import echo, field_adapter, well_formed
@@ -38,6 +42,7 @@ from agent_hub.core.hub_config.problems import ROOT_PATH
 
 _ACS: Final = field_adapter(EvalOutput, "acs")
 _TICKETS: Final = field_adapter(EvalOutput, "tickets")
+_COMMITS: Final = field_adapter(EvalOutputV2, "commits")
 _AC_ID: Final[TypeAdapter[str]] = TypeAdapter(AcId)
 _OVER_BOUND: Final = f"{RECORD_FILE} is over {MAX_RECORD_BYTES} bytes"
 
@@ -62,7 +67,7 @@ def eval_scope_problems(
 ) -> Iterator[OutputProblem]:
     """Every record and scope problem of an eval document, with ``record`` as ``features.json``
     (None when absent), in P7's order."""
-    parsed = _record(record)
+    parsed = parsed_record(record)
     if isinstance(parsed, OutputProblem):
         yield parsed
         parsed = None
@@ -78,9 +83,32 @@ def eval_scope_problems(
         acs_problems, scope = _record_scope(parsed, named=named, tickets=tuple(_listed(tickets)))
         yield from acs_problems
     yield from _coverage_problems(Counter(ids), scope)
+    if parsed is not None and document.get("schema") == EVAL_V2_SCHEMA_ID:
+        yield from _repos_problems(document.get("commits"), parsed, tickets=tuple(_listed(tickets)))
 
 
-def _record(content: bytes | None) -> FeatureRecordFile | OutputProblem | None:
+def _repos_problems(
+    commits: object, record: FeatureRecordFile, *, tickets: tuple[str, ...]
+) -> Iterator[OutputProblem]:
+    """Schema 2: ``commits`` name exactly the repos the eval's tickets own, when they own any."""
+    if not well_formed(_COMMITS, commits) or not isinstance(commits, list):
+        return
+    wanted = {ticket.upper() for ticket in tickets}
+    owned = tuple(
+        dict.fromkeys(
+            repo.repo
+            for planned in record.tickets
+            if wanted & {ref.upper() for ref in (planned.key, planned.id) if ref is not None}
+            for repo in ticket_repos(planned)
+        )
+    )
+    named = tuple(dict.fromkeys(str(item["repo"]) for item in commits))
+    if owned and set(named) != set(owned):
+        message = f"the commits name {', '.join(named)} but the tickets own {', '.join(owned)}"
+        yield OutputProblem("commits", message)
+
+
+def parsed_record(content: bytes | None) -> FeatureRecordFile | OutputProblem | None:
     """The record ``content`` holds; one problem naming it when over its bound or unparseable."""
     if content is None:
         return None

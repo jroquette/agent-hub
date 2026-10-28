@@ -120,6 +120,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/hooks/stop_gate.py",
     # AGH-139 D5, S8: the agent output JSON schemas.
     "plugin/hub-workflow/schemas/eval.v1.json",
+    "plugin/hub-workflow/schemas/eval.v2.json",
     "plugin/hub-workflow/schemas/review.v1.json",
     "plugin/hub-workflow/skills/adr/SKILL.md",
     "plugin/hub-workflow/skills/context-audit/SKILL.md",
@@ -314,6 +315,7 @@ DESIGN_PATHS = (
     "workflows/sdlc/fixtures/implement-plan-moved.yaml",
     "workflows/sdlc/fixtures/implement-pr-failure.yaml",
     "workflows/sdlc/fixtures/implement-rounds-exhausted.yaml",
+    "workflows/sdlc/fixtures/implement-several-repos.yaml",
     "workflows/sdlc/fixtures/implement-superseded-in-last-pass.yaml",
     "workflows/sdlc/fixtures/implement-superseded-then-discoveries.yaml",
     "workflows/sdlc/fixtures/preflight-already-read.yaml",
@@ -4501,9 +4503,9 @@ def test_parses_every_json_when_rendered(config_name: str, request: pytest.Fixtu
 
     json_files = [file for file in render_hub(config).files if file.path.endswith(".json")]
 
-    # The two settings files, both manifests, `hooks.json`, the schema, the two agent output
-    # schemas (AGH-139) and `.mcp.json` (AGH-392).
-    assert len(json_files) == 9
+    # The two settings files, both manifests, `hooks.json`, the schema, the three agent output
+    # schemas (AGH-139, eval v2 AGH-590) and `.mcp.json` (AGH-392).
+    assert len(json_files) == 10
     for file in json_files:
         strict_json(file.content)
 
@@ -5402,13 +5404,13 @@ def test_ignores_local_file_when_gitignore_rendered(demo_config: HubConfig) -> N
 AGENTS_FOLDER = "plugin/hub-workflow/agents"
 AGENT_FILES_SHA256 = {
     f"{AGENTS_FOLDER}/architect.md": (
-        "65f87843553ecc602d854a6c7f2f9389b188ced0ceff5cc5ef03c9d43f2b616f"
+        "c05495f6c642331142aa43dc9df5cacac3dabf7ea14c16758846ed23c2096554"
     ),
     f"{AGENTS_FOLDER}/evaluator.md": (
-        "efc8f4c7e5f7865f1b8c7f8a57ba0d59155492015e0f86529fd0780eb92865f5"
+        "adc603678389880e6a358d1a90bf827676058be16da5f2387fc3f8e3e3e365da"
     ),
     f"{AGENTS_FOLDER}/planner.md": (
-        "9c80e0c912359f9b59b78482f444f475be8756b648c83d91b32f3a352eb45c12"
+        "e4b36eaa358fa185fcbe09e7f3dad87ab35b0ca9efae4b907001dc33f2881715"
     ),
     f"{AGENTS_FOLDER}/quality-reviewer.md": (
         "3847f076fcc122041375afccbc8fa87caf9345d3368939e314682f61c0fe33bb"

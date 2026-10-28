@@ -116,12 +116,18 @@ class Hub:
             workspace.init_hub_repo(None)
         self.handler_after = self.dated("2026-02-01T00:00:00Z", self.handler, b"v2\n")
         self.unnamed = self.dated("2026-02-01T00:00:00Z", self.unnamed_file, b"x\n")
+        self.card = self.dated("2026-02-01T00:00:00Z", self.web_card, b"card\n")
         workspace.git(workspace.ws / "demo-api", "fetch", "-q", "origin")
+        workspace.git(workspace.ws / "demo-web", "fetch", "-q", "origin")
         self.before = self.state()
 
     @staticmethod
     def handler(workspace: Workspace, content: bytes) -> str:
         return str(workspace.advance("demo-api", {"src/api/handler.py": (content, 0o644)}))
+
+    @staticmethod
+    def web_card(workspace: Workspace, content: bytes) -> str:
+        return str(workspace.advance("demo-web", {"src/web/card.tsx": (content, 0o644)}))
 
     @staticmethod
     def unnamed_file(workspace: Workspace, content: bytes) -> str:
@@ -267,6 +273,8 @@ class TestTicketBrief:
             "repo": "demo-api",
             # Main as last fetched, read once: the preflight reads it and its run records it.
             "commit": hub.unnamed,
+            # Every repo the ticket owns, in contract order (one here).
+            "repos": [{"repo": "demo-api", "commit": hub.unnamed, "slices": []}],
         }
         text = (hub.root / output["path"]).read_text()
         fields = json.loads(text.split("```json\n", 1)[1].split("\n```", 1)[0])
@@ -377,7 +385,78 @@ class TestTicketBrief:
         assert written == ["brief.md"]
 
 
+# A ticket whose work spans both repos, each with its slice of the plan (AGH-587).
+SEVERAL = {
+    "key": "T4",
+    "id": "DEM-10",
+    "repos": [
+        {"repo": "demo-api", "slices": ["BE-1"]},
+        {"repo": "demo-web", "slices": ["FE-1"]},
+    ],
+    "blocked_by": [],
+}
+SLICES = """
+### Slice BE-1 (demo-api)
+
+Read time in `src/api/handler.py`.
+
+### Slice FE-1 (demo-web)
+
+The card in `src/web/card.tsx`.
+"""
+
+
 class TestTicketRepo:
+    @pytest.fixture
+    def several(self, hub: Hub) -> Hub:
+        record = json.loads((hub.feature / "features.json").read_text())
+        record["tickets"].append(SEVERAL)
+        (hub.feature / "features.json").write_text(json.dumps(record))
+        plan = hub.feature / "plan.md"
+        plan.write_text(
+            plan.read_text().replace("## Joined tickets", SLICES + "\n## Joined tickets")
+        )
+        return hub
+
+    def test_reads_main_and_the_slices_of_every_repo_when_the_ticket_owns_several(
+        self, several: Hub
+    ) -> None:
+        output = several.ok("ticket-brief", "--feature", "demo-flow", "--ticket", "DEM-10")
+
+        assert output == {
+            "path": f"{FEATURE}/tickets/DEM-10/brief.md",
+            "version": 1,
+            "hub": str(several.root),
+            # No single repo or commit: a reader of one would cover only part of the ticket.
+            "repo": "",
+            "commit": "",
+            "repos": [
+                {"repo": "demo-api", "commit": several.unnamed, "slices": ["BE-1"]},
+                {"repo": "demo-web", "commit": several.card, "slices": ["FE-1"]},
+            ],
+        }
+        text = (several.root / output["path"]).read_text()
+        fields = json.loads(text.split("```json\n", 1)[1].split("\n```", 1)[0])
+        assert fields["repos"] == [
+            {"repo": "demo-api", "commit": several.unnamed},
+            {"repo": "demo-web", "commit": several.card},
+        ]
+        assert "> ### Slice BE-1 (demo-api)" in text and "> ### Slice FE-1 (demo-web)" in text
+        commits = text.split("### Main commits since the plan\n\n", 1)[1].split("### ADRs", 1)[0]
+        api, web = commits.split("#### demo-web\n\n")
+        assert api.startswith("#### demo-api\n\n")
+        assert f"`{several.handler_after[:12]}`" in api and several.card[:12] not in api
+        assert f"`{several.card[:12]}`" in web and several.handler_after[:12] not in web
+
+    def test_refuses_the_brief_when_one_of_its_repos_is_not_in_hub_json(self, several: Hub) -> None:
+        record = json.loads((several.feature / "features.json").read_text())
+        record["tickets"][-1]["repos"][1]["repo"] = "demo-nope"
+        (several.feature / "features.json").write_text(json.dumps(record))
+
+        line = several.refused("ticket-brief", "--feature", "demo-flow", "--ticket", "DEM-10")
+
+        assert line == "hub step ticket-brief: the ticket's repo demo-nope is not in hub.json"
+
     def test_refuses_the_brief_when_the_tickets_repo_is_not_in_hub_json(self, hub: Hub) -> None:
         record = json.loads((hub.feature / "features.json").read_text())
         record["tickets"][1]["repo"] = "demo-nope"
@@ -386,6 +465,62 @@ class TestTicketRepo:
         line = hub.refused("ticket-brief", *TICKET)
 
         assert line == "hub step ticket-brief: the ticket's repo demo-nope is not in hub.json"
+
+
+class TestPreflightPerRepo:
+    """AGH-591: one preflight over every repo of a ticket that owns several."""
+
+    @pytest.fixture
+    def several(self, hub: Hub) -> Hub:
+        record = json.loads((hub.feature / "features.json").read_text())
+        record["tickets"].append(
+            {
+                "key": "T4",
+                "id": "DEM-10",
+                "repos": [{"repo": "demo-api"}, {"repo": "demo-web"}],
+                "blocked_by": [],
+            }
+        )
+        (hub.feature / "features.json").write_text(json.dumps(record))
+        return hub
+
+    def test_records_main_in_each_repo_when_the_ticket_owns_several(self, several: Hub) -> None:
+        named = ("--feature", "demo-flow", "--ticket", "DEM-10")
+        commits = ("--commit", "demo-web=7b2c3d4e", "--commit", "demo-api=4e1a9c2d")
+
+        output = several.ok("preflight", *named, *FOUND[:4], *commits)
+
+        document = json.loads((several.root / output["path"]).read_bytes())
+        [run] = document["runs"]
+        assert document["schema"] == "agent-hub/preflight/2"
+        # In the ticket's contract order, the first repo's also as the run's commit.
+        assert run["commits"] == [
+            {"repo": "demo-api", "commit": "4e1a9c2d"},
+            {"repo": "demo-web", "commit": "7b2c3d4e"},
+        ]
+        assert run["commit"] == "4e1a9c2d"
+
+    @pytest.mark.parametrize(
+        "commits",
+        [
+            ("--commit", "4e1a9c2d"),
+            ("--commit", "demo-api=4e1a9c2d"),
+            ("--commit", "demo-api=4e1a9c2d", "--commit", "demo-api=7b2c3d4e"),
+            ("--commit", "demo-api=4e1a9c2d", "--commit", "demo-nope=7b2c3d4e"),
+        ],
+        ids=["bare", "one repo", "twice", "other repo"],
+    )
+    def test_refuses_the_run_when_a_repo_has_no_commit_of_its_own(
+        self, several: Hub, commits: tuple[str, ...]
+    ) -> None:
+        named = ("--feature", "demo-flow", "--ticket", "DEM-10")
+
+        line = several.refused("preflight", *named, *FOUND[:4], *commits)
+
+        assert line == (
+            "hub step preflight: --commit: give one REPO=SHA for each repo of DEM-10"
+            " (demo-api, demo-web)"
+        )
 
 
 class TestPreflight:
@@ -1046,6 +1181,18 @@ class TestOutcome:
             ("## Final interfaces", "`other.run()` returns a list."),
         ):
             assert f"{heading}\n\n{body}\n" in text
+
+    def test_records_every_pull_request_in_order_when_given_more_than_once(self, hub: Hub) -> None:
+        # AGH-592: a ticket that owns several repos merged one pull request per repo.
+        texts = ("--pr", "demo-api#12", "--pr", "demo-web#7", *OUTCOME_TEXTS[2:])
+
+        output = hub.ok("outcome", "--feature", "demo-flow", "--ticket", "T3", *texts)
+
+        content = (hub.root / output["path"]).read_bytes()
+        assert "\nprs: [demo-api#12, demo-web#7]\n" in content.decode()
+        read = outcome_record(content, folder="T3")
+        assert isinstance(read, TicketOutcome)
+        assert (read.pr, read.prs) == ("demo-api#12", ("demo-api#12", "demo-web#7"))
 
     def test_writes_nothing_when_the_outcome_is_already_recorded(self, hub: Hub) -> None:
         first = hub.ok("outcome", "--feature", "demo-flow", "--ticket", "T3", *OUTCOME_TEXTS)

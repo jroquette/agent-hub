@@ -52,6 +52,8 @@ export function stackedOn(row: TicketRow, rows: readonly TicketRow[]): InReview 
   if (blocker?.id == null || blocker.pr_url == null || blocker.readiness !== "in_progress") {
     return null;
   }
+  // A blocker with a pull request per repo has no one branch to build on: start after it merges.
+  if (blocker.prs.length > 1) return null;
   return blocker as InReview;
 }
 
@@ -505,9 +507,38 @@ function pullNumber(url: string): string | null {
  */
 export function TicketPrLink({ row }: { row: TicketRow }) {
   if (!row.pr_url) return null;
-  const number = pullNumber(row.pr_url);
+  return <PrLink url={row.pr_url} ticket={row.id ?? row.ref} />;
+}
+
+/**
+ * Every pull request of the ticket, in merge order: one per repo for a ticket that owns several
+ * (`PR #101 → PR #55`, each naming its repo and place in the merge order), else `TicketPrLink`.
+ */
+export function TicketPrLinks({ row }: { row: TicketRow }) {
+  const prs = row.prs;
+  if (prs.length < 2) return <TicketPrLink row={row} />;
+  const ticket = row.id ?? row.ref;
+  return (
+    <span className="ah-ticket-prs">
+      {prs.map((pr, index) => (
+        <span key={pr.url}>
+          {index > 0 && <span aria-hidden="true"> → </span>}
+          <PrLink
+            url={pr.url}
+            ticket={ticket}
+            place={`${pr.repo ? `in ${pr.repo}, ` : ""}merge ${String(index + 1)} of ${String(prs.length)}`}
+          />
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** One pull request link; `place` adds where it sits (its repo and merge order) to its name. */
+function PrLink({ url, ticket, place }: { url: string; ticket: string; place?: string }) {
+  const number = pullNumber(url);
   const text = number ? `PR #${number}` : "PR";
-  const href = githubPullHref(row.pr_url);
+  const href = githubPullHref(url);
   if (href === null) {
     return (
       <span
@@ -519,15 +550,15 @@ export function TicketPrLink({ row }: { row: TicketRow }) {
       </span>
     );
   }
-  const ticket = row.id ?? row.ref;
+  const where = place ? ` ${place}` : "";
   return (
     <a
       className="ah-issue ah-ticket-pr"
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      aria-label={`${text} of ${ticket} (opens GitHub in a new tab)`}
-      title={`${text} · opens in GitHub`}
+      aria-label={`${text} of ${ticket}${where} (opens GitHub in a new tab)`}
+      title={`${text}${place ? ` (${place})` : ""} · opens in GitHub`}
     >
       <Icon name="git-pull-request" size="sm" />
       {text}

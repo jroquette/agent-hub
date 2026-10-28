@@ -49,6 +49,7 @@ type Workspace = Any
 PACK = BUILTIN_WORKFLOWS / "sdlc"
 REVIEW_SCHEMA = Path(__file__).parents[3] / "core/src/agent_hub/core/features/review.v1.json"
 EVAL_SCHEMA = REVIEW_SCHEMA.with_name("eval.v1.json")
+EVAL_V2_SCHEMA = REVIEW_SCHEMA.with_name("eval.v2.json")
 IMPLEMENT_FIXTURES = (
     "implement-declined-still-plan",
     "implement-discovery-once",
@@ -68,6 +69,7 @@ IMPLEMENT_FIXTURES = (
     "implement-plan-moved-still-plan",
     "implement-pr-failure",
     "implement-rounds-exhausted",
+    "implement-several-repos",
     "implement-superseded-in-last-pass",
     "implement-superseded-then-discoveries",
 )
@@ -207,13 +209,13 @@ def test_reaches_the_built_in_fixtures_when_implement_tested_from_a_hub_with_a_s
     assert (demo_workspace.hub / "workflows/sdlc/deliver.yaml").is_file()
     assert checks.stdout == "preflight-check: valid (10 nodes in 9 layers)\n", checks.output
     assert passes.stdout == "ticket-pass: valid (14 nodes in 13 layers)\n", passes.output
-    assert validated.stdout == "implement: valid (51 nodes in 48 layers)\n", validated.output
+    assert validated.stdout == "implement: valid (52 nodes in 48 layers)\n", validated.output
     assert preflight.stdout == "preflight: valid (12 nodes in 11 layers)\n", preflight.output
     assert tested.exit_code == 0, tested.output
     for fixture in (*IMPLEMENT_FIXTURES, *PREFLIGHT_FIXTURES):
         assert f"<builtin>/sdlc/fixtures/{fixture}.yaml: ok" in tested.stdout
     assert "warning" not in tested.stdout
-    assert tested.stdout.endswith("24 fixtures: 24 passed, 0 failed\n")
+    assert tested.stdout.endswith("25 fixtures: 25 passed, 0 failed\n")
 
 
 def test_captures_a_decline_note_when_the_owner_answers_the_plan_change_gate() -> None:
@@ -223,14 +225,19 @@ def test_captures_a_decline_note_when_the_owner_answers_the_plan_change_gate() -
     assert gate.capture_response is True
 
 
-def test_declares_the_eval_schema_when_the_ticket_eval_runs() -> None:
-    schema = json.loads(EVAL_SCHEMA.read_text(encoding="utf-8"))
+def test_declares_the_eval_schemas_when_the_ticket_eval_runs() -> None:
+    # Schema 1 for a ticket that owns one repo, schema 2 for one that owns several (AGH-590).
+    schemas = [
+        json.loads(path.read_text(encoding="utf-8")) for path in (EVAL_SCHEMA, EVAL_V2_SCHEMA)
+    ]
     node = nodes_of("implement")["eval"]
 
     # The document's mappings are read-only: dict() them for JSON.
     declared = json.loads(json.dumps(node.output_format, default=dict))
 
-    assert resolved(declared, declared["$defs"]) == resolved(schema, schema["$defs"])
+    assert [resolved(arm, declared["$defs"]) for arm in declared["oneOf"]] == [
+        resolved(schema, schema["$defs"]) for schema in schemas
+    ]
 
 
 def test_checks_afresh_and_read_only_when_ticket_pass_runs_a_preflight() -> None:

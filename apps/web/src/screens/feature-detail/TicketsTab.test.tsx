@@ -492,6 +492,32 @@ describe("TicketsTab", () => {
     expect(within(rowOf(withPr.ref)).getAllByRole("cell").at(-1)).toContainElement(link);
   });
 
+  it("links every pull request of a ticket that owns several repos, in merge order (tickets)", () => {
+    const data = aFeatureTickets();
+    const api = "https://github.com/acme/demo-api/pull/101";
+    const web = "https://github.com/acme/demo-web/pull/55";
+    const several = {
+      ...nth(data.tickets, 0),
+      repo: null,
+      repos: ["demo-api", "demo-web"],
+      pr_url: api,
+      prs: [
+        { repo: "demo-api", url: api },
+        { repo: "demo-web", url: web },
+      ],
+    };
+    show(aFeatureTickets({ tickets: [several, nth(data.tickets, 1), nth(data.tickets, 2)] }));
+
+    const cell = within(rowOf(several.ref)).getAllByRole("cell").at(-1);
+    if (!cell) throw new Error("no PR cell");
+    const links = within(cell).getAllByRole("link");
+    expect(links.map((link) => link.getAttribute("aria-label"))).toEqual([
+      `PR #101 of ${several.ref} in demo-api, merge 1 of 2 (opens GitHub in a new tab)`,
+      `PR #55 of ${several.ref} in demo-web, merge 2 of 2 (opens GitHub in a new tab)`,
+    ]);
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([api, web]);
+  });
+
   it("shows the title's words without its conventional prefix, and no Scope column (tickets)", () => {
     const data = aFeatureTickets();
     show({

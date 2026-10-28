@@ -16,12 +16,14 @@ Paths: `brain/` and `scripts/` live in the hub (the directory with `hub.json`). 
     ],
     "tickets": [
      {"key": "T1", "id": null, "title": "...", "repo": "<repo dir from hub.json>", "blocked_by": [], "order": 0},
-     {"key": "T2", "id": null, "title": "...", "repo": "<repo dir from hub.json>", "blocked_by": ["T1"], "order": 1}
+     {"key": "T2", "id": null, "title": "...", "repo": "<repo dir from hub.json>", "blocked_by": ["T1"], "order": 1},
+     {"key": "T3", "id": null, "title": "...", "repos": [{"repo": "<repo dir>", "slices": ["BE-1"]}, {"repo": "<repo dir>", "slices": ["FE-1"]}], "blocked_by": ["T2"], "order": 2}
    ]}
    ```
    `linear` stays `[]`: the issues do not exist yet, and the main session fills it with their ids once it creates them.
    `tickets` is the ticket plan, one entry per issue of step 3: a draft `key` (`T1`, `T2`, …, unique), `id: null` (the
-   main session fills it when it creates the issue), a short `title`, the `repo`, `blocked_by` (the keys of the
+   main session fills it when it creates the issue), a short `title`, the `repo` (or, for one ticket whose work spans several repos, `repos` instead of `repo`: each repo
+   with `slices`, the plan ids of its slices, in contract order, which is also the order its PRs merge in), `blocked_by` (the keys of the
    tickets that must be done first, from the plan's contract order and dependencies; never the ticket itself, no
    cycle), `order` (the plan order, from 0) and, when the issues have a parent (an epic that only tracks them),
    `parent`: the parent's key on each child (the parent itself is a ticket with no `parent` and no AC). Each AC names in `ticket` the key of the ticket that delivers it.

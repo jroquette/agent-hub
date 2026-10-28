@@ -21,7 +21,7 @@ Paths: `brain/` and `scripts/` live in the hub (the directory with `hub.json`); 
   a boundary): state each such input's bounds (size, depth, count) and the run's budget up front, and name which rule or
   step reports a failed read of each input, with a test for it. Other features plan no bounds, budgets or scale tests.
 - An erratum that changes behaviour names the test that pins it.
-- PR slices ≤ ~300 changed lines, one concern each. Follow the repo's conventions for configuration (its `AGENTS.md` and ADRs).
+- PR slices ≤ ~300 changed lines, one concern each, one repo each. Give each slice an id in its heading with its repo (`### Slice BE-1 (backend)`): `hub step ticket-brief` finds a ticket's plan sections by those ids. Follow the repo's conventions for configuration (its `AGENTS.md` and ADRs).
 - A decision that changes architecture gets an ADR draft next to the plan (`adr-draft-<topic>.md`), never directly in a repo's ADR folder.
 
 **Write** `brain/features/<slug>/plan.md`. **End:** return the path, the PR slices and the open questions.

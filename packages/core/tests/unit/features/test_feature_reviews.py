@@ -3,6 +3,7 @@
 import pytest
 
 from agent_hub.core.features.feature_reviews import (
+    ReviewPullRequest,
     ReviewRecord,
     approved_tickets,
     review_pull_requests,
@@ -37,6 +38,7 @@ def test_counts_approved_when_outcome_approved() -> None:
         pr="demo-api#12",
         reviewed_at="2026-10-12",
         problem=None,
+        prs=("demo-api#12",),
     )
     assert approved_tickets(records) == frozenset({"ACME-1520", "T3"})
 
@@ -102,9 +104,9 @@ def test_links_pull_request_when_review_names_hub_repo() -> None:
     urls = review_pull_requests(review_records(heads, slug=SLUG), repos)
 
     assert urls == {
-        "ACME-1": "https://github.com/acme/demo-api/pull/12",
-        "ACME-2": "https://github.com/acme/demo-web/pull/7",
-        "ACME-3": "https://github.com/acme/other/pull/3",
+        "ACME-1": (ReviewPullRequest("demo-api", "https://github.com/acme/demo-api/pull/12"),),
+        "ACME-2": (ReviewPullRequest("web", "https://github.com/acme/demo-web/pull/7"),),
+        "ACME-3": (ReviewPullRequest(None, "https://github.com/acme/other/pull/3"),),
     }
 
 
@@ -119,7 +121,9 @@ def test_takes_later_record_when_ticket_reviewed_twice() -> None:
 
     urls = review_pull_requests(review_records(heads, slug=SLUG), {"demo-api": "acme/demo-api"})
 
-    assert urls == {"ACME-1": "https://github.com/acme/demo-api/pull/13"}
+    assert urls == {
+        "ACME-1": (ReviewPullRequest("demo-api", "https://github.com/acme/demo-api/pull/13"),)
+    }
 
 
 def test_links_no_pull_request_when_review_malformed() -> None:
@@ -134,3 +138,44 @@ def test_links_no_pull_request_when_review_malformed() -> None:
 
     assert records[0].problem is not None
     assert review_pull_requests(records, {"demo-api": "acme/demo-api"}) == {}
+
+
+# AGH-592: a ticket that owns several repos lists one pull request per repo, in merge order.
+def test_links_every_pull_request_in_order_when_review_lists_prs() -> None:
+    heads = (
+        a_review(
+            "ACME-1.md",
+            "---\ntype: review\nticket: ACME-1\noutcome: approved\n"
+            "prs: [demo-api#101, https://github.com/acme/demo-web/pull/55]\n---\n",
+        ),
+        _pr_review("ACME-2", "demo-api#12"),
+    )
+    repos = {"demo-api": "acme/demo-api", "web": "acme/demo-web"}
+
+    records = review_records(heads, slug=SLUG)
+    urls = review_pull_requests(records, repos)
+
+    assert records[0].prs == ("demo-api#101", "https://github.com/acme/demo-web/pull/55")
+    assert records[0].pr == "demo-api#101"
+    assert records[1].prs == ("demo-api#12",)
+    assert urls == {
+        "ACME-1": (
+            ReviewPullRequest(repo="demo-api", url="https://github.com/acme/demo-api/pull/101"),
+            ReviewPullRequest(repo="web", url="https://github.com/acme/demo-web/pull/55"),
+        ),
+        "ACME-2": (
+            ReviewPullRequest(repo="demo-api", url="https://github.com/acme/demo-api/pull/12"),
+        ),
+    }
+
+
+def test_reports_problem_when_review_gives_pr_and_prs() -> None:
+    head = a_review(
+        "ACME-1.md",
+        "---\ntype: review\nticket: ACME-1\noutcome: approved\npr: demo-api#1\n"
+        "prs: [demo-api#1]\n---\n",
+    )
+
+    (record,) = review_records((head,), slug=SLUG)
+
+    assert record.problem == "give pr or prs, not both"

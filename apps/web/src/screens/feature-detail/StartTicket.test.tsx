@@ -91,6 +91,33 @@ describe("StartTicket", () => {
     expect(canStartTicket({ ...stacked, waiting_on: ["T2", "T9"] }, rows)).toBe(false);
   });
 
+  it("names every repo of a ticket that owns several, in merge order", () => {
+    const several = { ...ready, repo: null, repos: ["demo-api", "demo-web"] };
+
+    const prompt = ticketPrompt("agent-hub", "claims", { ...several, id: "AGH-2" }, [
+      done,
+      several,
+    ]);
+
+    expect(prompt).toContain(
+      "Repos, in the order their pull requests merge: demo-api, then demo-web.",
+    );
+    expect(prompt).not.toContain("Repo: ");
+  });
+
+  it("offers no stacked start on a blocker with a pull request per repo", () => {
+    const blocker = {
+      ...inReview,
+      prs: [
+        { repo: "demo-api", url: PR },
+        { repo: "demo-web", url: "https://github.com/acme/web/pull/3" },
+      ],
+    };
+
+    expect(stackedOn(stacked, [done, blocker, stacked])).toBeNull();
+    expect(canStartTicket(stacked, [done, blocker, stacked])).toBe(false);
+  });
+
   it("tells /implement to build on the blocker's branch and stack its pull request", () => {
     const prompt = ticketPrompt("agent-hub", "claims", { ...stacked, id: "AGH-3" }, [
       done,

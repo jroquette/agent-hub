@@ -3,9 +3,13 @@
 Each check runs only when the fields it reads pass their model's own rule (S2), so a shape
 problem never hides it and a malformed field never makes it raise. Order (P7): the file name,
 ``reviewer``, ``round``, ``ticket``, ``verdict``, then repeated finding ids.
+
+A round sits in its ticket's folder, ``reviews/<ticket>/``, or, for a ticket that owns several
+repos, in one repo's folder under it, ``reviews/<ticket>/<repo>/`` (AGH-589): the folder then names
+the repo, which must be one of the ticket's repos when ``features.json`` is given.
 """
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from typing import Final, NamedTuple
 
 from agent_hub.core.features.output_models import OutputProblem, ReviewFinding, ReviewOutput
@@ -34,19 +38,27 @@ class _FileName(NamedTuple):
 
 
 def review_cross_problems(
-    document: dict[str, object], *, file_name: str, folder_name: str
+    document: dict[str, object],
+    *,
+    file_name: str,
+    folder_name: str,
+    parent_name: str | None = None,
+    owned: Mapping[str, tuple[str, ...]] | str | None = None,
 ) -> Iterator[OutputProblem]:
     """Every cross-check problem of a review saved as ``<folder_name>/<file_name>``, in order.
 
     A file name not of the form ``<reviewer>-r<N>.json`` is one problem at the root, and the
-    ``reviewer`` and ``round`` checks, which need it, are skipped (E11).
+    ``reviewer`` and ``round`` checks, which need it, are skipped (E11). ``parent_name`` is the
+    folder above ``folder_name``: when it, not ``folder_name``, is the ticket, ``folder_name`` is
+    a repo of the ticket's, checked against ``owned`` (each ticket's key and id, upper case, to
+    its repos), or ``owned`` is why ``features.json`` could not be read; None checks no repo.
     """
     named = _named(file_name)
     if named is None:
         yield OutputProblem(ROOT_PATH, f"the file name {echo(file_name)} is not {_FILE_FORM}")
     else:
         yield from _name_problems(document, named)
-    yield from _ticket_problems(document, folder_name)
+    yield from _ticket_problems(document, folder_name, parent_name=parent_name, owned=owned)
     yield from _verdict_problems(document)
     yield from _id_problems(document)
 
@@ -80,14 +92,32 @@ def _name_problems(document: dict[str, object], named: _FileName) -> Iterator[Ou
         yield OutputProblem("round", message)
 
 
-def _ticket_problems(document: dict[str, object], folder_name: str) -> Iterator[OutputProblem]:
+def _ticket_problems(
+    document: dict[str, object],
+    folder_name: str,
+    *,
+    parent_name: str | None,
+    owned: Mapping[str, tuple[str, ...]] | str | None,
+) -> Iterator[OutputProblem]:
     ticket = document.get("ticket")
     if not isinstance(ticket, str) or not well_formed(_TICKET, ticket):
         return
-    # ``str.upper`` maps some non-ASCII letters to ASCII (ſ to S, ı to I): compare ASCII only.
-    if not folder_name.isascii() or ticket.upper() != folder_name.upper():
+    if _same(ticket, folder_name):
+        return
+    if parent_name is None or not _same(ticket, parent_name):
         message = f"the ticket is {echo(ticket)} but the folder is {echo(folder_name)}"
         yield OutputProblem("ticket", message)
+    elif isinstance(owned, str):
+        yield OutputProblem(ROOT_PATH, owned)
+    elif owned is not None and folder_name not in (repos := owned.get(ticket.upper(), ())):
+        listed = ", ".join(repos) or "none planned"
+        message = f"the folder {echo(folder_name)} is not a repo of {echo(ticket)} ({listed})"
+        yield OutputProblem("ticket", message)
+
+
+def _same(ticket: str, folder_name: str) -> bool:
+    # ``str.upper`` maps some non-ASCII letters to ASCII (ſ to S, ı to I): compare ASCII only.
+    return folder_name.isascii() and ticket.upper() == folder_name.upper()
 
 
 def _verdict_problems(document: dict[str, object]) -> Iterator[OutputProblem]:

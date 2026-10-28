@@ -8,7 +8,7 @@
 # ticket-pass (preflight, the plan change gate on plan drift, the worktree once a preflight
 # passed, the ticket plan and the review rounds) up to three times, unrolled (A2): pass-2 runs
 # when pass-1 ended with a discovery, pass-3 likewise, and a discovery in pass-3 ends the run
-# blocked (D-3; a superseded approval is re-checked inside its pass and spends no loop). The ticket's repo is the plan's (ticket-brief prints it). After a pass that passed review, the evaluator scoped to the ticket
+# blocked (D-3; a superseded approval is re-checked inside its pass and spends no loop). The ticket's repo is the plan's (ticket-brief prints it); a ticket that owns several repos ends the run at once, naming /implement. After a pass that passed review, the evaluator scoped to the ticket
 # (evals/<delivery>.json, agent-hub/eval/1); then the commits, the PR only on SHIP or
 # SHIP-WITH-OWNER-STEPS, and the delivery: hub step report's, plus this run's hub files for the
 # owner's hub PR (delivery.py, D-1). The run never commits in the hub and has no tracker side.
@@ -42,6 +42,13 @@ nodes:
         repo: {type: string}
         commit: {type: string}
       required: [path, hub, repo, commit]
+
+  - id: several
+    type: halt
+    description: A ticket that owns several repos is conducted by /implement, not by this run.
+    depends_on: [context]
+    when: "$context.output.repo == ''"
+    reason: "$INPUTS.issue owns several repos: run /implement $INPUTS.issue, which conducts such a ticket (a worktree, review rounds and a pull request per repo)."
 
   - id: pending
     type: shell
@@ -196,6 +203,28 @@ nodes:
         GateText: {maxLength: 64, minLength: 1, pattern: '^[^\x00-\x1f\x7f-\x9f]*$', type: string}
         OneLine1000: {maxLength: 1000, minLength: 1, pattern: '^[^\x00-\x1f\x7f-\x9f]*$', type: string}
         PathText: {maxLength: 512, minLength: 1, pattern: '^[^\x00-\x1f\x7f-\x9f]*$', type: string}
+        RepoAcResult:
+          additionalProperties: false
+          properties:
+            repo: {$ref: '#/$defs/GateText'}
+            ac: {$ref: '#/$defs/AcId'}
+            command: {$ref: '#/$defs/CommandText'}
+            exit_code:
+              anyOf:
+              - {$ref: '#/$defs/ExitCode'}
+              - {type: 'null'}
+            status: {$ref: '#/$defs/RunStatus'}
+            summary: {$ref: '#/$defs/OneLine1000'}
+          required: [repo, ac, command, exit_code, status, summary]
+          type: object
+        RepoCommit:
+          additionalProperties: false
+          properties:
+            repo: {$ref: '#/$defs/GateText'}
+            base: {$ref: '#/$defs/Commit'}
+            commit: {$ref: '#/$defs/Commit'}
+          required: [repo, base, commit]
+          type: object
         RedOnParent:
           additionalProperties: false
           properties:
@@ -213,35 +242,76 @@ nodes:
         Verdict:
           enum: [SHIP, SHIP-WITH-OWNER-STEPS, NO-SHIP]
           type: string
-      additionalProperties: false
+      # Schema 1 for a ticket that owns one repo, 2 (a base and commit per repo) for several;
+      # the keys both share are declared here too, for the steps that read them.
+      type: object
       properties:
-        schema: {const: agent-hub/eval/1, type: string}
         delivery: {$ref: '#/$defs/Delivery'}
         verdict: {$ref: '#/$defs/Verdict'}
-        commit: {$ref: '#/$defs/Commit'}
-        tickets:
-          items: {$ref: '#/$defs/TicketKey'}
-          maxItems: 100
-          type: array
-        acs: {$ref: '#/$defs/EvalAcs'}
-        results:
-          items: {$ref: '#/$defs/AcResult'}
-          maxItems: 300
-          type: array
-        gates:
-          items: {$ref: '#/$defs/GateResult'}
-          maxItems: 50
-          type: array
-        red_on_parent:
-          items: {$ref: '#/$defs/RedOnParent'}
-          maxItems: 300
-          type: array
-        owner_steps:
-          items: {$ref: '#/$defs/OneLine1000'}
-          maxItems: 50
-          type: array
-      required: [schema, delivery, verdict, commit, tickets, acs, results, gates, red_on_parent, owner_steps]
-      type: object
+      required: [delivery, verdict]
+      oneOf:
+      - additionalProperties: false
+        properties:
+          schema: {const: agent-hub/eval/1, type: string}
+          delivery: {$ref: '#/$defs/Delivery'}
+          verdict: {$ref: '#/$defs/Verdict'}
+          commit: {$ref: '#/$defs/Commit'}
+          tickets:
+            items: {$ref: '#/$defs/TicketKey'}
+            maxItems: 100
+            type: array
+          acs: {$ref: '#/$defs/EvalAcs'}
+          results:
+            items: {$ref: '#/$defs/AcResult'}
+            maxItems: 300
+            type: array
+          gates:
+            items: {$ref: '#/$defs/GateResult'}
+            maxItems: 50
+            type: array
+          red_on_parent:
+            items: {$ref: '#/$defs/RedOnParent'}
+            maxItems: 300
+            type: array
+          owner_steps:
+            items: {$ref: '#/$defs/OneLine1000'}
+            maxItems: 50
+            type: array
+        required: [schema, delivery, verdict, commit, tickets, acs, results, gates, red_on_parent, owner_steps]
+        type: object
+      - additionalProperties: false
+        properties:
+          schema: {const: agent-hub/eval/2, type: string}
+          delivery: {$ref: '#/$defs/Delivery'}
+          verdict: {$ref: '#/$defs/Verdict'}
+          commits:
+            items: {$ref: '#/$defs/RepoCommit'}
+            maxItems: 4
+            minItems: 1
+            type: array
+          tickets:
+            items: {$ref: '#/$defs/TicketKey'}
+            maxItems: 100
+            type: array
+          acs: {$ref: '#/$defs/EvalAcs'}
+          results:
+            items: {$ref: '#/$defs/RepoAcResult'}
+            maxItems: 300
+            type: array
+          gates:
+            items: {$ref: '#/$defs/GateResult'}
+            maxItems: 50
+            type: array
+          red_on_parent:
+            items: {$ref: '#/$defs/RedOnParent'}
+            maxItems: 300
+            type: array
+          owner_steps:
+            items: {$ref: '#/$defs/OneLine1000'}
+            maxItems: 50
+            type: array
+        required: [schema, delivery, verdict, commits, tickets, acs, results, gates, red_on_parent, owner_steps]
+        type: object
 
   - id: commits
     type: shell

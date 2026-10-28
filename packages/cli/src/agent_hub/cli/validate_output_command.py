@@ -2,7 +2,8 @@
 E17; a ticket's ``preflight.json``, two-level-flows AC-2.3).
 
 A thin adapter: the generator's ``output_files`` reads the output (and, for ``eval``, the sibling
-``evals/<stem>.md`` head and ``../features.json``) without following a link, then core's
+``evals/<stem>.md`` head and ``../features.json``; for a review round in a repo's folder,
+``reviews/<ticket>/<repo>/``, the feature's ``features.json``) without following a link, then core's
 ``review_problems`` / ``eval_problems`` check it. Exit 0 with ``<file>: valid`` on stdout; exit 1
 with one stderr line per problem, ``<file>: <json path>: <message>``, at most
 ``MAX_PRINTED_PROBLEMS`` of them and then ``<file>: … and <N> more problems (<T> in total)``; a
@@ -29,6 +30,7 @@ from agent_hub.generator.output_files import (
     RECORD_NAME,
     read_eval_inputs,
     read_output,
+    read_review_inputs,
     sibling_name,
 )
 
@@ -65,11 +67,17 @@ def validate_output(
 
 
 def _review(file: Path, shown: str) -> tuple[OutputProblem, ...]:
-    content = read_output(file)
-    if isinstance(content, str):
-        fail(f"{shown}: {content}")
+    inputs = read_review_inputs(file)
+    if isinstance(inputs.content, str):
+        fail(f"{shown}: {inputs.content}")
     folder = file.parent.resolve().name
-    return review_problems(content, file_name=file.name, folder_name=folder)
+    return review_problems(
+        inputs.content,
+        file_name=file.name,
+        folder_name=folder,
+        parent_name=inputs.parent_name,
+        record=inputs.record,
+    )
 
 
 def _preflight(file: Path, shown: str) -> tuple[OutputProblem, ...]:

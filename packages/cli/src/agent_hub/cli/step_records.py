@@ -41,11 +41,12 @@ from agent_hub.core.features.feature_record import (
     RECORD_FILE,
     FeatureRecordFile,
     PlannedTicket,
+    TicketRepo,
     record_from_bytes,
+    ticket_repos,
 )
 from agent_hub.core.features.feature_reviews import names_pull_request
 from agent_hub.core.features.feature_status import MAX_PLAN_BYTES
-from agent_hub.core.features.output_models import PreflightRecord
 from agent_hub.core.features.plan_version import plan_version
 from agent_hub.core.features.ticket_records import (
     CHANGE_REQUESTS_FOLDER,
@@ -55,6 +56,7 @@ from agent_hub.core.features.ticket_records import (
     PREFLIGHT_FILE,
     TICKET_BRIEF,
     TICKETS_FOLDER,
+    AnyPreflightRecord,
     TicketOutcome,
     already_read,
     aware_time,
@@ -68,6 +70,7 @@ from agent_hub.core.features.ticket_writes import (
     Blocker,
     PlanMovedError,
     PreflightFacts,
+    RepoMain,
     TicketBrief,
     TicketOutcomeText,
     TicketRecordError,
@@ -111,14 +114,19 @@ def ticket_brief(
     folder = _feature(hub, feature)
     record = _record(folder)
     planned = _planned_or_refuse(record.tickets, ticket)
-    # Main as last fetched, read once: the preflight reads this commit and its run records it.
-    main = _main_commit(hub, config, planned)
+    owned = ticket_repos(planned) or (TicketRepo(repo=planned.repo or "none"),)
+    # Main as last fetched, read once per repo: the preflight reads these commits and its run
+    # records them.
+    mains = tuple(_main_commit(hub, config, repo.repo) for repo in owned)
     plan = _required(folder / PLAN, MAX_PLAN_BYTES)
-    names = (*plan_ids(planned.key), *_names(planned)[1:])
+    slices = (name for repo in owned for name in repo.slices)
+    names = (*plan_ids(planned.key), *_names(planned)[1:], *slices)
     section = plan_section(plan.decode("utf-8", "replace"), names)
-    commits, note = _commits(
-        hub, config, planned=planned, folder=folder, paths=named_paths(section)
+    paths = named_paths(section)
+    read = tuple(
+        _commits(hub, config, repo=repo.repo, folder=folder, paths=paths) for repo in owned
     )
+    several = len(owned) > 1
     target = _ticket_folder(folder, planned)
     brief = TicketBrief(
         ticket=target.name,
@@ -130,19 +138,31 @@ def ticket_brief(
             _blocker(folder, _planned(record.tickets, key), key) for key in planned.blocked_by
         ),
         adrs=cited_adrs(section),
-        commits=commits,
-        commits_note=note,
+        commits=() if several else read[0][0],
+        commits_note=None if several else read[0][1],
+        repos=tuple(
+            RepoMain(repo=repo.repo, commit=main, commits=commits, note=note)
+            for repo, main, (commits, note) in zip(owned, mains, read, strict=True)
+        )
+        if several
+        else (),
     )
     with _feature_lock(hub, feature):
         written, version = appended_brief(_read(target / TICKET_BRIEF, MAX_BRIEF_BYTES), brief)
         _replace(target, TICKET_BRIEF, written)
-    # The hub, the ticket's repo (the plan's, not a caller's) and main's commit the preflight reads.
+    # The hub, the ticket's repos (the plan's, not a caller's) and main's commits the preflight
+    # reads; ``repo`` and ``commit`` only for a ticket that owns one, so no reader of them covers
+    # part of a ticket that owns several.
     return {
         "path": _relative(hub, target / TICKET_BRIEF),
         "version": version,
         "hub": str(hub),
-        "repo": planned.repo,
-        "commit": main,
+        "repo": "" if several else owned[0].repo,
+        "commit": "" if several else mains[0],
+        "repos": [
+            {"repo": repo.repo, "commit": main, "slices": list(repo.slices)}
+            for repo, main in zip(owned, mains, strict=True)
+        ],
     }
 
 
@@ -154,13 +174,16 @@ def preflight(
     findings: bytes,
     facts: PreflightFacts,
     read: str = "",
+    commits: Sequence[str] = (),
 ) -> dict[str, JsonValue]:
     """Append the run built from the agent's ``findings`` to ``tickets/<ticket>/preflight.json``;
-    ``facts`` gives the time, the run's id, main's commit the preflight read (``ticket-brief``'s)
-    and the input, and this fills the plan's version."""
+    ``facts`` gives the time, the run's id and the input, ``commits`` main's commit the preflight
+    read (``ticket-brief``'s; ``REPO=SHA`` per repo for a ticket that owns several), and this
+    fills the plan's version."""
     folder = _feature(hub, feature)
     tickets = _record(folder).tickets
     planned = _planned_or_refuse(tickets, ticket)
+    facts = _with_main(facts, planned, commits)
     target = _ticket_folder(folder, planned)
     plan = _required(folder / PLAN, MAX_PLAN_BYTES)
     facts = replace(facts, plan_version=_version(plan))
@@ -188,6 +211,31 @@ def preflight(
     return {"path": _relative(hub, target / PREFLIGHT_FILE), "runs": count}
 
 
+def _with_main(
+    facts: PreflightFacts, planned: PlannedTicket, given: Sequence[str]
+) -> PreflightFacts:
+    """``facts`` with main's commit ``given``: one commit (``SHA``, or ``REPO=SHA`` of its repo)
+    for a ticket of one repo; ``REPO=SHA`` once for each repo of a ticket that owns several,
+    recorded in its contract order, the first repo's also as the run's commit (AGH-591)."""
+    owned = [repo.repo for repo in ticket_repos(planned)]
+    if len(owned) < 2:  # noqa: PLR2004 -- one repo, or none planned
+        if len(given) != 1:
+            raise TicketRecordError("--commit: give main's commit once")
+        repo, named, sha = given[0].partition("=")
+        if named and repo not in owned:
+            raise TicketRecordError(f"--commit: {one_line(repo)[:64]} is not the ticket's repo")
+        return replace(facts, commit=sha if named else given[0], commits=None)
+    pairs = [value.partition("=") for value in given]
+    by_repo = {repo: sha for repo, named, sha in pairs if named}
+    if len(pairs) != len(owned) or len(by_repo) != len(pairs) or set(by_repo) != set(owned):
+        shown = planned.id or planned.key
+        raise TicketRecordError(
+            f"--commit: give one REPO=SHA for each repo of {shown} ({', '.join(owned)})"
+        )
+    commits = tuple((repo, by_repo[repo]) for repo in owned)
+    return replace(facts, commit=commits[0][1], commits=commits)
+
+
 def _superseded(folder: Path, n: int, plan: bytes) -> str:
     """What the run says of approved request ``n`` when the plan moved past it, else ``""``."""
     requests = folder / CHANGE_REQUESTS_FOLDER
@@ -198,14 +246,12 @@ def _superseded(folder: Path, n: int, plan: bytes) -> str:
     return pending_decision(n, request=request, decision=decision, plan=plan).superseded
 
 
-def _main_commit(hub: Path, config: HubConfig, planned: PlannedTicket) -> str:
-    """``origin/<default branch>``'s commit in the ticket's repo checkout: main as last fetched,
+def _main_commit(hub: Path, config: HubConfig, repo: str) -> str:
+    """``origin/<default branch>``'s commit in a repo checkout of the ticket: main as last fetched,
     read without a checkout."""
-    entry = next((repo for repo in config.repos if repo.dir == planned.repo), None)
+    entry = next((entry for entry in config.repos if entry.dir == repo), None)
     if entry is None:
-        raise TicketRecordError(
-            f"the ticket's repo {one_line(planned.repo or 'none')} is not in hub.json"
-        )
+        raise TicketRecordError(f"the ticket's repo {one_line(repo)} is not in hub.json")
     base = f"origin/{config.default_branch_for(entry.dir)}"
     try:
         found = git_output(
@@ -233,6 +279,7 @@ def change_request(
     now: datetime,
     findings: bytes = b"",
     facts: PreflightFacts | None = None,
+    commits: Sequence[str] = (),
 ) -> dict[str, JsonValue]:
     """Create ``change-requests/<n>.md`` (``n`` the next free number) against the plan's
     current version. With the preflight's ``findings`` and the run's ``facts``, the run
@@ -244,7 +291,7 @@ def change_request(
     requests = _folder(folder, CHANGE_REQUESTS_FOLDER)
     first = next_request(os.listdir(requests))
     if facts is not None:
-        facts = replace(facts, plan_version=plan_from, request=first)
+        facts = replace(_with_main(facts, planned, commits), plan_version=plan_from, request=first)
         run = preflight_run(findings, facts)
         appended_preflight(None, run, folder=planned.id or planned.key)
     for n in range(first, first + MAX_REQUEST_TRIES):
@@ -358,7 +405,7 @@ def outcome(
     *,
     feature: str,
     ticket: str,
-    pr: str,
+    prs: Sequence[str],
     merged_at: str,
     built: str,
     changes: str,
@@ -375,9 +422,10 @@ def outcome(
         raise TicketRecordError(f"{OUTCOME} is a link; no link is followed")
     if existing is not None and (existing / OUTCOME).exists():
         return _kept(hub, existing, dependents)
-    if not names_pull_request(pr.strip()):
-        # The writer's own input, named as given (the record's reader would say the same).
-        raise TicketRecordError(f"--pr: names no pull request: {one_line(pr)[:64]}")
+    for pr in prs or ("",):
+        if not names_pull_request(pr.strip()):
+            # The writer's own input, named as given (the record's reader would say the same).
+            raise TicketRecordError(f"--pr: names no pull request: {one_line(pr)[:64]}")
     try:
         when = aware_time(merged_at, "merged_at")
     except RecordFieldError as error:
@@ -387,7 +435,7 @@ def outcome(
         TicketOutcomeText(
             ticket=(planned.id or planned.key) if existing is None else existing.name,
             merged_at=when,
-            pr=pr.strip(),
+            prs=tuple(dict.fromkeys(pr.strip() for pr in prs)),
             dependents=dependents,
             built=built,
             changes=changes,
@@ -477,7 +525,7 @@ def _existing_ticket_folder(feature: Path, names: Sequence[str]) -> Path | None:
 
 
 def _unnamed_request(
-    requests: Path, planned: PlannedTicket, record: PreflightRecord | None
+    requests: Path, planned: PlannedTicket, record: AnyPreflightRecord | None
 ) -> int | None:
     """The ticket's newest decided request that no preflight run names, opened since its last
     run: the run that opened it failed before its preflight run was recorded."""
@@ -502,7 +550,7 @@ def _unnamed_request(
     return max(found, default=None)
 
 
-def _preflight(target: Path) -> PreflightRecord | None:
+def _preflight(target: Path) -> AnyPreflightRecord | None:
     record = preflight_record(
         _read(target / PREFLIGHT_FILE, MAX_PREFLIGHT_BYTES), folder=target.name
     )
@@ -563,14 +611,15 @@ def _blocker(folder: Path, planned: PlannedTicket | None, key: str) -> Blocker:
 
 
 def _commits(
-    hub: Path, config: HubConfig, *, planned: PlannedTicket, folder: Path, paths: Sequence[str]
+    hub: Path, config: HubConfig, *, repo: str, folder: Path, paths: Sequence[str]
 ) -> tuple[tuple[str, ...], str | None]:
-    """Main's commits since the plan's last hub commit on ``paths``; else why none were read."""
+    """Main's commits in ``repo`` since the plan's last hub commit on ``paths``; else why none
+    were read."""
     if not paths:
         return (), "the plan section names no file"
-    entry = next((repo for repo in config.repos if repo.dir == planned.repo), None)
+    entry = next((entry for entry in config.repos if entry.dir == repo), None)
     if entry is None:
-        return (), f"the ticket's repo {one_line(planned.repo or 'none')} is not in hub.json"
+        return (), f"the ticket's repo {one_line(repo)} is not in hub.json"
     timeout = step_timeouts().git
     try:
         since = git_output(
