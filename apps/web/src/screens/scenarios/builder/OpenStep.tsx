@@ -589,11 +589,16 @@ export function OpenStep({
                 </span>
                 {editingBody === name && onSet ? (
                   <div className="st-open-json-edit">
+                    <label className="ah-sr" htmlFor={`open-${number}-${name}`}>
+                      Edit {name} as JSON
+                    </label>
                     <JsonField
                       id={`open-${number}-${name}`}
                       name={name}
                       value={written(value)}
                       sources={bodySources}
+                      startAs="json"
+                      focusOnOpen
                       onChange={(next) => {
                         onSet(name, next);
                       }}
@@ -601,12 +606,26 @@ export function OpenStep({
                   </div>
                 ) : (
                   <>
+                    {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- a scrollable code well that also opens its editor; Edit is the plain button */}
                     <pre
                       className="ah-json st-open-json"
-                      // A scrollable region is reached by keyboard.
+                      data-editable={onSet ? "true" : undefined}
+                      title={onSet ? `Click to edit ${name}` : undefined}
+                      // A scrollable region is reached by keyboard; Enter (or a click) edits it.
                       // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
                       tabIndex={0}
                       aria-label={`${name}, as JSON`}
+                      onClick={(event) => {
+                        if (!onSet) return;
+                        event.stopPropagation();
+                        setEditingBody(name);
+                      }}
+                      onKeyDown={(event) => {
+                        if (!onSet || event.key !== "Enter") return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setEditingBody(name);
+                      }}
                     >
                       <JsonText source={body} />
                     </pre>

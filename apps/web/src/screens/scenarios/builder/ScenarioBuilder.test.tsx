@@ -3877,7 +3877,10 @@ describe("ScenarioBuilder (scenario builder)", () => {
       "aria-expanded",
       "true",
     );
-    expect(within(values).getByDisplayValue("FETCH_ORDERS")).toBeInTheDocument();
+    // Opened as JSON, the whole body in one text box, focused.
+    const text = within(values).getByRole("textbox", { name: "Edit body as JSON" });
+    expect(text).toHaveFocus();
+    expect((text as HTMLTextAreaElement).value).toContain('"event_type": "FETCH_ORDERS"');
     await user.click(within(values).getByRole("button", { name: "Done" }));
     expect(within(values).getByLabelText("body, as JSON")).toBeInTheDocument();
   });
@@ -4648,10 +4651,12 @@ describe("ScenarioBuilder (scenario builder)", () => {
 
     // The body edits here: a field changed, Done shows it written.
     const values = within(fetch).getByRole("region", { name: "Values for this step" });
-    await user.click(within(values).getByRole("button", { name: "Edit body" }));
-    const field = within(values).getByDisplayValue("FETCH_ORDERS");
-    await user.clear(field);
-    await user.type(field, "POLL_QUOTE");
+    // A click on the code itself opens it as JSON, ready to type.
+    await user.click(within(values).getByLabelText("body, as JSON"));
+    const text = within(values).getByRole("textbox", { name: "Edit body as JSON" });
+    expect(text).toHaveFocus();
+    await user.clear(text);
+    await user.paste('{"event_type":"POLL_QUOTE"}');
     await user.click(within(values).getByRole("button", { name: "Done" }));
     expect(within(values).getByLabelText("body, as JSON")).toHaveTextContent('"POLL_QUOTE"');
   });
