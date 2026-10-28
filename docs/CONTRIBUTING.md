@@ -104,6 +104,8 @@ An issue can be labeled `agent-ready` (or picked up) when:
 - check green in CI;
 - every AC has a test;
 - docs/ADR/SPEC updated if scope changed;
+- on an interactive path ([ADR 0053](adr/0053-interactive-path-latency-budgets.md)): no doctor rule, full scan of
+  the event log or full test suite, and the `make perf` rows it touches stay within budget;
 - PR reviewed and merged by the owner;
 - issue Done.
 
