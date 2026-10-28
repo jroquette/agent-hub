@@ -182,7 +182,13 @@ export function OpenStep({
       key={name}
       name={name}
       value={value}
-      note={`${name}${required ? " · required" : ""}${about ? ` · ${about}` : ""}`}
+      note={
+        <>
+          <span className="st-open-mono">{name}</span>
+          {required ? " · Required" : ""}
+          {about ? ` · ${about}` : ""}
+        </>
+      }
       options={sources?.services ?? []}
       environment={env?.name ?? null}
       onPick={(picked) => {
@@ -319,9 +325,19 @@ export function OpenStep({
         const body = pretty(value);
         const about = specOf(name)?.description;
         return (
-          <section key={name} className="st-g-section" aria-label={`Body ${name}`}>
+          <section
+            key={name}
+            className="st-g-section"
+            aria-label={name === "body" ? "Body" : `Body ${name}`}
+          >
             <h4 className="st-g-title">
-              Body <span className="st-open-mono">{name}</span>
+              {name === "body" ? (
+                "Body"
+              ) : (
+                <>
+                  Body · <span className="st-open-mono">{name}</span>
+                </>
+              )}
             </h4>
             <div className="st-open-body">
               {/* A scrollable region is reached by keyboard. */}
@@ -377,24 +393,22 @@ function Row({
 }: {
   label: ReactNode;
   value: ReactNode;
-  note?: string | undefined;
+  note?: ReactNode;
   source?: ReactNode;
   quiet?: boolean;
 }) {
   return (
     <li className="st-g-row" data-quiet={quiet ? "true" : undefined}>
-      <span className="st-g-label">
-        {label}
-        {note && (
-          <span className="st-g-note" title={note}>
-            {note}
-          </span>
-        )}
-      </span>
+      <span className="st-g-label">{label}</span>
       <span className="st-g-value">
         {value}
         {source}
       </span>
+      {note && (
+        <span className="st-g-note" title={typeof note === "string" ? note : undefined}>
+          {note}
+        </span>
+      )}
     </li>
   );
 }
@@ -411,7 +425,7 @@ function ServiceRow({
 }: {
   name: string;
   value: string;
-  note: string;
+  note: ReactNode;
   options: readonly ServiceOption[];
   environment: string | null;
   onPick: (value: string) => void;

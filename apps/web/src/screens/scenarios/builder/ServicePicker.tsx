@@ -116,9 +116,9 @@ export function useServiceField({ label, value, options, environment, onPick }: 
         }}
       >
         <span className="st-service-name">{picked?.name ?? (value || "Choose a service")}</span>
-        {picked?.address && <span className="st-service-address">{picked.address}</span>}
         {value !== "" && picked === null && (
           <span className="st-service-missing">
+            <Icon name="circle-alert" size="sm" />
             not declared{environment ? ` in ${environment}` : ""}
           </span>
         )}
