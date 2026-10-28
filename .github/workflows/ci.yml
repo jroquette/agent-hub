@@ -152,10 +152,41 @@ jobs:
       - name: make test-e2e-serial
         run: make test-e2e-serial
 
+  # The perf suite on the 400k-event fixture (docs/TESTING.md, ADR 0053), not in `make check`. It
+  # calls the runner itself, not `make perf`, so a broken suite (exit 2) fails the job on its own.
+  # The gate then posts the table in the job summary and fails only for a budget marked `enforced`
+  # in scripts/perf/budgets.json that is over by more than the file's margin; any other over row
+  # only warns. perf.json is uploaded either way.
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PERF_EVENTS: "400000"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node: "true"
+          chromium: "true"
+      - name: Run the perf suite
+        run: uv run --locked --all-packages python -m scripts.perf.run_suite
+      - name: Judge perf.json against the budgets
+        if: always() && hashFiles('perf.json') != ''
+        run: uv run --locked --all-packages python -m scripts.perf.ci_gate --perf perf.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: perf
+          path: perf.json
+          if-no-files-found: warn
+          retention-days: 14
+
   # The required status: green only when every job above passed (a skipped or cancelled job fails it).
   check:
     if: always()
-    needs: [checks, web, tests, coverage, e2e, e2e-serial]
+    needs: [checks, web, tests, coverage, e2e, e2e-serial, perf]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -1,4 +1,5 @@
 {
+  "margin": 0.2,
   "rows": [
     {"kind": "cli", "path": "hub --version", "p95_ms": 150, "source": "AGH-601 proposed"},
     {"kind": "cli", "path": "hub brief --no-network", "p95_ms": 300, "source": "AGH-601 proposed"},

@@ -305,8 +305,18 @@ Known gaps:
 - `./hub --version` and `session_start` run through a local `uvx` stand-in that runs the worktree's `hub`: no release
   is fetched, so uvx's own resolve time is not counted (the path names say so).
 
-`make perf` is in no gate: `make check-fast`, `make check` and CI never run it, and it never runs in their parallel
+`make perf` is in no local gate: `make check-fast` and `make check` never run it, and it never runs in their parallel
 lanes. Run it by hand on a quiet machine, with output to a file: `make perf > perf.log 2>&1; echo $?`.
+
+CI's `perf` job runs the runner on the 400k-event fixture, then the gate
+(`$R python -m scripts.perf.ci_gate [--perf perf.json] [--budgets scripts/perf/budgets.json]`), and uploads
+`perf.json` as the `perf` artifact. The gate judges each row again against the budgets file, writes a Markdown table
+(with each budget's limit plus the margin and whether it is enforced) to stdout and to the job summary, and prints a
+`::warning::` line for each row over its budget. It exits 1, with an `::error::` line naming the path, only when an
+entry marked `"enforced": true` is over its p95, API calls or RSS times `1 + margin`; the top-level `"margin"` (a
+fraction, default 0.2) absorbs runner noise and never changes the stored budget, which stays under the ADR 0053
+ceiling. Skipped and no-budget rows never fail, and no entry is enforced until a milestone meets its budgets. A broken
+suite (runner exit 2) fails the job on its own; a bad `perf.json` or budgets file makes the gate exit 2.
 
 ## Coverage
 
@@ -371,8 +381,8 @@ Never run the gate targets with `-j`: they set it themselves, and the tests are 
 
 CI (`.github/workflows/ci.yml`) runs the same make targets as separate jobs at once: `checks`, `web`, `tests` (three
 shards set by `TESTS`: `packages/generator`, `packages/cli`, and the rest, each running its own serial tests after its
-parallel ones), `coverage` (combines the shards' data, then the floors), `e2e`, and `e2e-serial` (the visual file and
-the rest, each on its own runner). The required `check` job passes only when all of them did. PR titles are not checked
+parallel ones), `coverage` (combines the shards' data, then the floors), `e2e`, `e2e-serial` (the visual file and
+the rest, each on its own runner), and `perf` (the perf suite and its gate, see Performance). The required `check` job passes only when all of them did. PR titles are not checked
 in CI: run `make pr-title TITLE="<title>"` before opening the PR ([CONTRIBUTING.md](CONTRIBUTING.md)).
 
 Notes:

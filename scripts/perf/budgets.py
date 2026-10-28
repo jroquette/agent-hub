@@ -1,10 +1,14 @@
 """``make perf``'s budgets: read from ``budgets.json``, keyed by ``(kind, path)``.
 
-The file is ``{"rows": [{"kind", "path", "p95_ms"?, "api_calls"?, "rss_mb"?, "source"}]}``. Every
-load reads the file again, so an edit shows on the next run. Unknown fields, in an entry or at the
-top level, are ignored, so new fields can be added without breaking a run. A path with no entry
-has no budget. A file that is not valid JSON, or an entry without a string ``kind``, ``path`` and
-``source`` or with a non-numeric limit, raises ``BudgetFileError`` naming the file.
+The file is ``{"margin"?, "rows": [{"kind", "path", "p95_ms"?, "api_calls"?, "rss_mb"?, "source",
+"enforced"?}]}``. Every load reads the file again, so an edit shows on the next run. ``enforced``
+(default false) makes the CI gate (``ci_gate.py``) fail when the row is over; ``margin`` (a
+fraction, default 0.2) widens only the gate's comparison for runner noise, never the stored budget.
+Unknown fields, in an entry or at the top level, are ignored, so new fields can be added without
+breaking a run. A path with no entry has no budget. A file that is not valid JSON, or an entry
+without a string ``kind``, ``path`` and ``source``, with a non-numeric limit or a non-boolean
+``enforced``, or a ``margin`` that is not a number of 0 or more, raises ``BudgetFileError`` naming
+the file.
 """
 
 import json
@@ -25,23 +29,44 @@ class Budget:
     api_calls: int | None
     rss_mb: float | None
     source: str
+    enforced: bool = False
+
+
+DEFAULT_MARGIN = 0.2
 
 
 def load_budgets(path: Path) -> Mapping[tuple[str, str], Budget]:
     """Read ``path`` and return its budgets by ``(kind, path)``."""
-    try:
-        data: object = json.loads(path.read_text("utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise BudgetFileError(f"{path}: cannot read the budgets file: {error}") from error
-    if not isinstance(data, dict) or not isinstance(data.get("rows"), list):
-        raise BudgetFileError(f'{path}: expected an object with a "rows" list')
+    _, rows = _read(path)
     budgets: dict[tuple[str, str], Budget] = {}
-    for index, entry in enumerate(data["rows"]):
+    for index, entry in enumerate(rows):
         key, budget = _entry(path, index, entry)
         if key in budgets:
             raise BudgetFileError(f"{path}: rows[{index}] repeats {key[0]} {key[1]!r}")
         budgets[key] = budget
     return budgets
+
+
+def load_margin(path: Path) -> float:
+    """Read ``path``'s ``margin``: the fraction the CI gate adds to each budget, default 0.2."""
+    data, _ = _read(path)
+    if "margin" not in data:
+        return DEFAULT_MARGIN
+    margin = data["margin"]
+    if isinstance(margin, bool) or not isinstance(margin, int | float) or margin < 0:
+        raise BudgetFileError(f'{path}: "margin" must be a number of 0 or more')
+    return float(margin)
+
+
+def _read(path: Path) -> tuple[Mapping[str, object], list[object]]:
+    try:
+        data: object = json.loads(path.read_text("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise BudgetFileError(f"{path}: cannot read the budgets file: {error}") from error
+    rows = data.get("rows") if isinstance(data, dict) else None
+    if not isinstance(data, dict) or not isinstance(rows, list):
+        raise BudgetFileError(f'{path}: expected an object with a "rows" list')
+    return data, rows
 
 
 def _entry(path: Path, index: int, entry: object) -> tuple[tuple[str, str], Budget]:
@@ -55,11 +80,15 @@ def _entry(path: Path, index: int, entry: object) -> tuple[tuple[str, str], Budg
     api_calls = _number(where, entry, "api_calls")
     if api_calls is not None and not isinstance(api_calls, int):
         raise BudgetFileError(f'{where}: "api_calls" must be a whole number')
+    enforced = entry.get("enforced", False)
+    if not isinstance(enforced, bool):
+        raise BudgetFileError(f'{where}: "enforced" must be true or false')
     return (kind, row_path), Budget(
         p95_ms=_number(where, entry, "p95_ms"),
         api_calls=api_calls,
         rss_mb=_number(where, entry, "rss_mb"),
         source=source,
+        enforced=enforced,
     )
 
 
