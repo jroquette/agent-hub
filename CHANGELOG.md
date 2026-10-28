@@ -11,6 +11,16 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- A ticket can own several repos (AGH-585, [ADR 0051](docs/adr/0051-a-ticket-owns-one-or-more-repos.md)): its
+  `features.json` entry names `repos: [{repo, slices}]` in contract order, which is also the order its pull requests
+  merge in. `hub step ticket-brief` reads main and the plan slices of each repo; one preflight covers every repo
+  (`--commit REPO=SHA` per repo, record `agent-hub/preflight/2`); `hub worktree --only` can be given more than once;
+  review rounds go to `reviews/<ticket>/<repo>/`; the eval is `agent-hub/eval/2` (a base and a commit per repo);
+  the review record and the outcome list the PRs as `prs`, and hub web shows each one. `/implement` conducts such a
+  ticket, and the `implement` workflow stops for it and names `/implement`. A ticket with one repo is unchanged.
+
 ## [0.26.0] - 2026-10-27
 
 ### Added
