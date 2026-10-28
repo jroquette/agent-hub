@@ -379,7 +379,8 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
       inputs: { external_ref: "T-1" },
       mode: "regression",
     });
-  });
+    // Long under the gates' parallel lanes: a plan, a confirm and a start on the one screen.
+  }, 20_000);
 
   it("scenarios detail shows a started run on the blocks as soon as the start is accepted", async () => {
     // AC-596.2.33: ?run= is set right after the 202, while the run is not listed yet, and

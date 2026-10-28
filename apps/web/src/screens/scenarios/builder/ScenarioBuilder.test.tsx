@@ -525,7 +525,9 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const changed = expected.stages[0]?.steps[1];
     if (changed) changed.timeout = "20m";
     expect(await savedDocument(requests)).toStrictEqual(expected);
-  });
+    // Long under the gates' parallel lanes: every block of the reference renders, and a step
+    // selected twice opens in place (past 5 s on CI's runner).
+  }, 20_000);
 
   it("scenario builder has no serious a11y violation on a scenario written as blocks (a11y)", async () => {
     const { container } = renderTree(REFERENCE);
