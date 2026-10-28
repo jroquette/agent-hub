@@ -686,6 +686,7 @@ export function anEvalRecord(overrides: Partial<EvalRecord> = {}): EvalRecord {
     acs: ["AC-200.1", "AC-200.2", "AC-200.3"],
     prs: ["agent-hub#80"],
     commit: "0a1b2c3",
+    commits: [],
     evaluated_at: "2026-10-11",
     legacy: false,
     problem: null,
