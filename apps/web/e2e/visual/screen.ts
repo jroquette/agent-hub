@@ -38,6 +38,8 @@ export interface ScreenOptions {
    * shell. jsdom has no layout, so this is only checked here.
    */
   fitsViewport?: boolean;
+  /** After opening, what to do before the screenshot (open a step, switch a view). */
+  act?: (page: Page) => Promise<void>;
 }
 
 const VIEWPORT = { width: 1440, height: 900 };
@@ -62,6 +64,10 @@ export function screen(
 
     test(`${area}/${route} matches its baseline`, async ({ page }) => {
       await open(page, path, options.follow);
+      if (options.act) {
+        await options.act(page);
+        await page.waitForLoadState("networkidle");
+      }
       if (options.fitsViewport) {
         expect(
           await page.evaluate(
