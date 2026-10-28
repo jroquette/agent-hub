@@ -27,3 +27,7 @@ apps/web/playwright-report/
 *.tsbuildinfo
 # make playground-export's packages: the owner's requests stay on this machine.
 .playground/
+# make perf's fixture cache and its outputs.
+/.perf/
+/perf.json
+/perf.log
