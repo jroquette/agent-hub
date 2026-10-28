@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts.perf import budgets as budgets_module
 from scripts.perf.budgets import Budget, BudgetFileError, load_budgets
 from scripts.perf.fixture import FEATURE_SLUG, PAGE_SESSION
 
@@ -76,11 +77,11 @@ def test_ignores_unknown_fields_when_an_entry_has_them(tmp_path: Path) -> None:
                 "path": "guard (PreToolUse Bash)",
                 "p95_ms": 80,
                 "source": PROPOSED,
-                "enforced": True,
-                "margin": 0.2,
+                "owner": "AGH-601",
+                "note": "seeded",
             }
         ],
-        margin=0.2,
+        comment="unknown top-level field",
     )
 
     assert load_budgets(path).get(("hook", "guard (PreToolUse Bash)")) == Budget(
@@ -118,6 +119,102 @@ def test_raises_budget_file_error_when_the_json_is_malformed(tmp_path: Path) -> 
 
     with pytest.raises(BudgetFileError, match=re.escape("broken-budgets.json")):
         load_budgets(path)
+
+
+def test_reads_enforced_as_false_when_the_entry_omits_it(tmp_path: Path) -> None:
+    budgets = load_budgets(_two_entries(tmp_path))
+    assert len(budgets) == 2
+
+    assert [budget.enforced for budget in budgets.values()] == [False, False]
+
+
+def test_reads_enforced_from_the_file_when_an_entry_sets_it(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path / "budgets.json",
+        [
+            {
+                "kind": "route",
+                "path": "/api/v1/sessions",
+                "p95_ms": 150,
+                "source": PROPOSED,
+                "enforced": True,
+            },
+            {
+                "kind": "hook",
+                "path": "session_end",
+                "p95_ms": 80,
+                "source": PROPOSED,
+                "enforced": False,
+            },
+        ],
+    )
+
+    budgets = load_budgets(path)
+
+    assert budgets.get(("route", "/api/v1/sessions")) == Budget(
+        p95_ms=150, api_calls=None, rss_mb=None, source=PROPOSED, enforced=True
+    )
+    assert budgets.get(("hook", "session_end")) == Budget(
+        p95_ms=80, api_calls=None, rss_mb=None, source=PROPOSED, enforced=False
+    )
+
+
+@pytest.mark.parametrize(
+    ("top", "expected"), [({}, 0.2), ({"margin": 0.5}, 0.5), ({"margin": 0}, 0.0)]
+)
+def test_reads_the_margin_when_the_file_sets_or_omits_it(
+    tmp_path: Path, top: dict[str, object], expected: float
+) -> None:
+    path = _write(
+        tmp_path / "budgets.json",
+        [{"kind": "route", "path": "/api/v1/sessions", "p95_ms": 150, "source": PROPOSED}],
+        **top,
+    )
+
+    assert budgets_module.load_margin(path) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("margin", ["0.2", -0.1, True, None])
+def test_raises_budget_file_error_when_the_margin_is_not_a_fraction(
+    tmp_path: Path, margin: object
+) -> None:
+    path = _write(
+        tmp_path / "bad-margin-budgets.json",
+        [{"kind": "route", "path": "/api/v1/sessions", "p95_ms": 150, "source": PROPOSED}],
+        margin=margin,
+    )
+
+    with pytest.raises(BudgetFileError, match=re.escape("bad-margin-budgets.json")):
+        budgets_module.load_margin(path)
+
+
+@pytest.mark.parametrize("enforced", ["yes", 1, None])
+def test_raises_budget_file_error_when_enforced_is_not_a_boolean(
+    tmp_path: Path, enforced: object
+) -> None:
+    path = _write(
+        tmp_path / "bad-enforced-budgets.json",
+        [
+            {
+                "kind": "route",
+                "path": "/api/v1/sessions",
+                "p95_ms": 150,
+                "source": PROPOSED,
+                "enforced": enforced,
+            }
+        ],
+    )
+
+    with pytest.raises(BudgetFileError, match=re.escape("bad-enforced-budgets.json")):
+        load_budgets(path)
+
+
+def test_enforces_nothing_with_the_default_margin_when_shipped() -> None:
+    budgets = load_budgets(SHIPPED)
+    assert len(budgets) == 23
+
+    assert [key for key, budget in budgets.items() if budget.enforced] == []
+    assert budgets_module.load_margin(SHIPPED) == pytest.approx(0.2)
 
 
 def test_marks_every_seeded_entry_proposed_when_shipped() -> None:
