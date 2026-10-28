@@ -1,6 +1,6 @@
 """The perf budgets file (``scripts/perf/budgets.py``, ``scripts/perf/budgets.json``): entries keyed
 by ``(kind, path)``, unknown fields ignored, edits seen on the next load, a malformed file named
-in the error, and the seeded values (AGH-601's option A2, owner answer of 2026-10-28)."""
+in the error, and the seeded budget values."""
 
 import json
 import re
@@ -145,8 +145,7 @@ ROUTES = (
     "/api/v1/live-sessions",
 )
 PAGES = ("/", "/features", f"/features/perf/{FEATURE_SLUG}", f"/sessions/{PAGE_SESSION}")
-# The owner's budget table (plan.md, "Owner answer"), one (kind, path, budget) per row of the
-# plan's "Rows" table; None where A2 sets no budget.
+# The seeded budgets, one (kind, path, budget) per suite row; None where a row has no budget.
 OWNER_TABLE: list[tuple[str, str, Budget | None]] = [
     ("cli", "hub --version", Budget(p95_ms=150, api_calls=None, rss_mb=None, source=PROPOSED)),
     (

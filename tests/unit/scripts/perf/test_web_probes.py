@@ -1,9 +1,9 @@
 """The perf suite's ``hub web`` probes (``scripts/perf/web_probes.py``): readiness by an HTTP
 answer, hub registration with the server's ``Origin``, the canonical route and restart paths, the
-200-and-sessions checks (spec AC-7), the two restart rows per start, and peak RSS from ``VmHWM``.
+200-and-sessions checks, the two restart rows per start, and peak RSS from ``VmHWM``.
 
 Every process, request and clock is injected, so no test starts ``hub web`` or opens a socket.
-Seam (plan C8): ``start_web(argv, env, *, spawn, get, clock, sleep)`` returns an object with
+Seam: ``start_web(argv, env, *, spawn, get, clock, sleep)`` returns an object with
 ``base_url`` and ``token``; ``register_hub(base_url, hub_dir, *, post)``; ``route_probes()``
 (items with ``kind`` and ``path``) and the ``ROUTE_PATHS`` and ``RESTART_PATHS`` constants;
 ``measure_route(base_url, probe, *, runs, get, clock)``; ``restart_rows(argv, env, *, runs, spawn,
@@ -40,7 +40,7 @@ PORT = 7431
 BASE_URL = f"http://127.0.0.1:{PORT}"
 URL_NONCE = "synthetic-token"
 URL_LINE = f"agent-hub at {BASE_URL}/?token={URL_NONCE}\n"
-# The plan's "Rows" table, route and restart kinds, written out by hand.
+# The route and restart rows, written out by hand.
 ROUTES = (
     "/api/v1/sessions",
     "/api/v1/sessions?issue=AGH-7",
@@ -201,8 +201,8 @@ def test_lists_the_canonical_routes_and_restarts_when_probes_are_built() -> None
     assert sorted(RESTART_PATHS) == sorted(RESTARTS)
 
 
-@pytest.mark.parametrize("status", [404, 500, 503])
-def test_fails_the_suite_when_a_route_answers_an_error_status(status: int) -> None:
+@pytest.mark.parametrize("status", [204, 302, 404, 500, 503])
+def test_fails_the_suite_when_a_route_answers_any_status_but_ok(status: int) -> None:
     clock = FakeClock()
     get = FakeGet(clock, lambda url, _call: _response(url, status, {"title": "failed"}))
 
@@ -270,8 +270,8 @@ STATUS_WITHOUT_HWM = "Name:\thub\nVmPeak:\t  300000 kB\nVmRSS:\t  150000 kB\nThr
 @pytest.mark.parametrize(
     ("status_text", "expected"),
     [
-        # 176128 kB is exactly 172 MiB.
-        (STATUS_WITH_HWM, 176128 / 1024),
+        # 176128 kB is 176.128 MB (1 MB = 1000 kB).
+        (STATUS_WITH_HWM, 176.128),
         (STATUS_WITHOUT_HWM, None),
     ],
 )
@@ -353,6 +353,30 @@ def test_fails_the_suite_when_hub_web_never_answers_before_the_deadline() -> Non
 
     assert clock.now >= 500.0 + web_probes.START_SECONDS
     assert signal.SIGINT in spawn.processes[0].signals
+
+
+def test_caps_each_readiness_request_at_the_time_left_when_requests_hang(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A start deadline shorter than one request's own timeout.
+    monkeypatch.setattr(web_probes, "START_SECONDS", 30.0)
+    clock = FakeClock()
+    spawn = Spawner()
+    timeouts: list[float] = []
+
+    def hanging(url: object, *, timeout: float, **_: object) -> httpx.Response:
+        # A request that hangs until its own timeout runs out.
+        timeouts.append(timeout)
+        clock.now += timeout
+        raise httpx.ReadTimeout("timed out", request=httpx.Request("GET", str(url)))
+
+    with pytest.raises(SuiteError, match=re.escape("hub web start → /: no 200 within")):
+        start_web(ARGV, ENV, spawn=spawn, get=hanging, clock=clock, sleep=clock.sleep)
+
+    assert timeouts
+    assert all(timeout <= 30.0 for timeout in timeouts)
+    deadline = 500.0 + 30.0
+    assert clock.now <= deadline + web_probes.POLL_SECONDS * 2
 
 
 def test_fails_the_suite_when_hub_web_exits_before_answering() -> None:

@@ -1,6 +1,6 @@
 """The perf suite's environment (``scripts/perf/environment.py``): the child environment built
 from scratch, the tool bin with its ``uvx`` stand-in, the ``hub web`` argv and the temp hub
-(spec AC-5). Every port and URL is passed in, and the temp hub is made over a recording runner,
+Every port and URL is passed in, and the temp hub is made over a recording runner,
 so no test opens a socket or starts a process."""
 
 import json
@@ -16,7 +16,7 @@ import pytest
 from scripts.perf.environment import child_env, create_hub, make_tool_bin, web_argv
 from scripts.perf.fixture import BRANCH_PREFIX, FEATURE_SLUG, PAGE_SESSION
 
-# Plan C5: the variables that must point under the temp root, and the parent variables that
+# The variables that must point under the temp root, and the parent variables that
 # must not reach a child (a proxy or a tracker token would let a call leave the machine,
 # AGENT_HUB_IN_CONTAINER would widen the bind, CLAUDECODE switches doctor to its network probe).
 ROOTED_VARIABLES = (
@@ -40,14 +40,14 @@ REAL_DB = "/real.db"
 # A loopback URL given as a value: nothing listens and nothing connects in these tests.
 SENSOR_URL = "http://127.0.0.1:9"
 PORT = 7431
-# Plan Q3 and C5: the temp hub's init flags and its synthetic identity.
+# The temp hub's init flags and its synthetic identity.
 TRACKER = "linear:AGH"
 HUB_REPOS = "acme/perf-api"
 AUTHOR_NAME = "Perf Author"
 AUTHOR_EMAIL = "perf@example.com"
 HUB_NAME = "perf"
 FEATURE_ISSUE_LINE = "linear: [AGH-7]"
-# Claude Code's folder name for the fixture's cwd ``/work/perf-api`` (plan C6).
+# Claude Code's folder name for the fixture's cwd ``/work/perf-api``.
 TRANSCRIPT_FOLDER = "-work-perf-api"
 ABSOLUTE_PATH = re.compile(r"(?<![\w.])/[\w.+-]+(?:/[\w.+-]+)*")
 

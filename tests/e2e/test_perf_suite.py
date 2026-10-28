@@ -22,7 +22,7 @@ type Run = Callable[..., subprocess.CompletedProcess[str]]
 EVENTS = 2_000
 BUILD_SECONDS = 300
 CANARY = "canary-from-a-real-home-7f3e9b"
-# Every column of ``events`` the store does not mint itself (spec AC-6), in append order.
+# Every column of ``events`` the store does not mint itself, in append order.
 STABLE_ROWS = (
     "SELECT id, project, session, type, source, source_id, timestamp, payload, repo, agent,"
     " workflow, step FROM events ORDER BY id"
@@ -30,7 +30,7 @@ STABLE_ROWS = (
 SUITE_SECONDS = 1_200
 SHIPPED_BUDGETS = Path(__file__).resolve().parents[2] / "scripts" / "perf" / "budgets.json"
 OVER_ROW = ("route", "/api/v1/sessions")
-# Plan "Rows (canonical paths)", written out by hand (<SLUG> = search-index).
+# Every suite row's canonical path, written out by hand (<SLUG> = search-index).
 EXPECTED_ROWS = {
     ("cli", "hub --version"),
     ("cli", "./hub --version (local uvx stand-in)"),

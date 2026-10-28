@@ -96,6 +96,7 @@ def page_rows(
     env: Mapping[str, str],
     *,
     npm: str | None,
+    node: str | None,
     chromium: str | None,
     web_dir: Path,
     pages: Sequence[str],
@@ -104,7 +105,7 @@ def page_rows(
     runner: Runner,
 ) -> list[PageRow]:
     """Run the spec once over ``pages`` × ``runs`` and return one row per page, in order."""
-    reason = _missing(npm=npm, chromium=chromium, web_dir=web_dir)
+    reason = _missing(npm=npm, node=node, chromium=chromium, web_dir=web_dir)
     # A missing npm always has a reason; the second test only narrows the type.
     if reason is not None or npm is None:
         return [PageRow(PAGE, path, reason=reason) for path in pages]
@@ -132,9 +133,13 @@ def page_rows(
     return _read(results, pages)
 
 
-def _missing(*, npm: str | None, chromium: str | None, web_dir: Path) -> str | None:
+def _missing(
+    *, npm: str | None, node: str | None, chromium: str | None, web_dir: Path
+) -> str | None:
     if chromium is None:
         return "no Chromium: set AGENT_HUB_CHROMIUM or PLAYWRIGHT_BROWSERS_PATH"
+    if node is None:
+        return "node not found on PATH"
     if npm is None:
         return "npm not found on PATH"
     if web_deps_missing(web_dir):

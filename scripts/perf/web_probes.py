@@ -142,10 +142,14 @@ def _first_line(stream: IO[str] | None, *, seconds: float) -> str:
 def _wait_for(
     web: RunningWeb, path: str, *, get: Get, clock: Clock, sleep: Sleep, deadline: float
 ) -> None:
-    """Poll ``GET path`` until it answers 200; ``SuiteError`` on exit or past ``deadline``."""
+    """Poll ``GET path`` until it answers 200; ``SuiteError`` on exit or past ``deadline``.
+
+    Each request waits no longer than the time left, so a hanging one cannot outlast the deadline.
+    """
     while True:
+        timeout = min(REQUEST_SECONDS, max(deadline - clock(), POLL_SECONDS))
         try:
-            if get(f"{web.base_url}{path}", timeout=REQUEST_SECONDS).status_code == 200:
+            if get(f"{web.base_url}{path}", timeout=timeout).status_code == 200:
                 return
         except httpx.HTTPError:
             pass
@@ -183,7 +187,7 @@ def register_hub(base_url: str, hub_dir: Path, *, post: Get = httpx.post) -> Non
 
 
 def route_probes() -> list[RouteProbe]:
-    """The route rows, in the plan's order."""
+    """The route rows, in table order."""
     return [RouteProbe(ROUTE, path) for path in ROUTE_PATHS]
 
 
@@ -266,10 +270,10 @@ def restart_rows(
 
 
 def peak_rss_mb(pid: int, *, proc: Path = Path("/proc")) -> float | None:
-    """``pid``'s peak RSS in MiB from ``VmHWM``; ``None`` when it cannot be read (off Linux)."""
+    """``pid``'s peak RSS in MB from ``VmHWM`` (kB); ``None`` when it cannot be read (off Linux)."""
     try:
         text = (proc / str(pid) / "status").read_text("utf-8")
     except OSError:
         return None
     found = re.search(r"^VmHWM:\s+(\d+)\s+kB", text, re.MULTILINE)
-    return int(found[1]) / 1024 if found else None
+    return int(found[1]) / 1000 if found else None

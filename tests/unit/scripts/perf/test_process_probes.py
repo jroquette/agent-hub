@@ -1,8 +1,8 @@
-"""The perf suite's CLI and hook probes (``scripts/perf/process_probes.py``): the canonical paths
-of the plan's "Rows" table, hook inputs taken from the temp hub (spec AC-5), and ``measure`` over
+"""The perf suite's CLI and hook probes (``scripts/perf/process_probes.py``): the canonical row
+paths, hook inputs taken from the temp hub, and ``measure`` over
 an injected runner and a fake clock, so no process starts and no wall-clock time is asserted.
 
-Seam (plan C8): ``Probe(kind, path, argv, stdin)``; ``cli_probes(hub_bin, hub_dir)``;
+Seam: ``Probe(kind, path, argv, stdin)``; ``cli_probes(hub_bin, hub_dir)``;
 ``hook_probes(hub_dir, transcript)``; ``CLI_PATHS`` and ``HOOK_PATHS``; ``measure(probe, *, runs,
 runner, clock)`` returns one duration in milliseconds per run, where ``clock`` reads seconds (like
 ``time.perf_counter``) and ``runner(argv, stdin=...)`` returns an object with ``returncode``; a
@@ -25,7 +25,7 @@ from scripts.perf.process_probes import (
     measure,
 )
 
-# The plan's "Rows" table, cli and hook kinds, written out by hand.
+# The cli and hook rows, written out by hand.
 CLI_ROWS = (
     "hub --version",
     "./hub --version (local uvx stand-in)",

@@ -1,6 +1,6 @@
 """``make perf``'s entry point (``scripts/perf/run_suite.py``): the settings read from the
-environment, the exit code of a run over fake phase functions (spec AC-3), and the Makefile's
-gates, which never reach the ``perf`` target (spec AC-8). No process, socket or database."""
+environment, the exit code of a run over fake phase functions, and the Makefile's
+gates, which never reach the ``perf`` target. No process, socket or database."""
 
 import json
 import re
@@ -174,6 +174,32 @@ def test_reports_a_suite_failure_when_an_unexpected_error_is_raised(
 
     assert code == 2
     assert "make perf: ValueError" in capsys.readouterr().err
+    assert not (tmp_path / "perf.json").exists()
+
+
+@pytest.mark.parametrize(
+    "knob",
+    [
+        pytest.param(("PERF_RUNS", "0"), id="zero-runs"),
+        pytest.param(("PERF_RESTART_RUNS", "-1"), id="negative-restart-runs"),
+    ],
+)
+def test_fails_the_suite_with_one_line_when_a_run_count_is_below_one(
+    tmp_path: Path, knob: tuple[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    name, value = knob
+    environ = {
+        "PERF_OUT": str(tmp_path / "perf.json"),
+        "PERF_BUDGETS": str(_budgets_file(tmp_path)),
+        "PERF_CACHE": str(tmp_path / "cache"),
+        name: value,
+    }
+
+    code = main(environ)
+
+    assert code == 2
+    err = capsys.readouterr().err
+    assert err.splitlines() == [f"make perf: {name} must be 1 or more, got {value}"]
     assert not (tmp_path / "perf.json").exists()
 
 

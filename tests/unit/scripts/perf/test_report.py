@@ -1,5 +1,5 @@
 """The perf report (``scripts/perf/report.py``): median and p95 of the samples, each row's status
-against its budget, the printed table, ``perf.json`` and the exit code (spec AC-1, AC-3, AC-4)."""
+against its budget, the printed table, ``perf.json`` and the exit code."""
 
 import json
 from pathlib import Path
@@ -205,7 +205,7 @@ ROWS = [
         reason="no Chromium found",
     ),
 ]
-# What each row's table line must show (AC-1): path, runs, median, p95, budget, status, plus the
+# What each row's table line must show: path, runs, median, p95, budget, status, plus the
 # API call count for pages and RSS for restarts.
 SHOWN = [
     ("hub --version", "10", "101", "133", "150", "pass"),

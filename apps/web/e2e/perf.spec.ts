@@ -59,8 +59,10 @@ test.describe("make perf pages", () => {
   // Playwright's 30 s default would end a test before READY_LIMIT_MS does.
   test.setTimeout(READY_LIMIT_MS + 30_000);
   // Every page is opened as the owner opens hub web: once through the token URL (the cookie).
+  // It waits for the same quiet period as a measured page, so the measured page does not share
+  // the server with the first page's requests.
   test.beforeEach(async ({ page }) => {
-    await page.goto(`/?token=${process.env.PERF_TOKEN ?? ""}`);
+    await measure(page, `/?token=${process.env.PERF_TOKEN ?? ""}`);
   });
 
   for (const path of pages) {

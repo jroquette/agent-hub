@@ -31,12 +31,12 @@ from scripts.perf.fixture import (
     session_events,
 )
 
-# The ticket's numbers (spec AC-2): 400,000 events over 2,500 sessions (plus or minus 5%), about
+# The fixture's size: 400,000 events over 2,500 sessions (plus or minus 5%), about
 # 90 days.
 TICKET_EVENTS = 400_000
 SESSIONS_LOW, SESSIONS_HIGH = 2_375, 2_625
 SPAN_LOW, SPAN_HIGH = timedelta(days=89), timedelta(days=91)
-# Plan C2: issue keys AGH-1..AGH-50, AGH-7 being the feature's.
+# Issue keys AGH-1..AGH-50, AGH-7 being the feature's.
 ISSUE_KEYS = frozenset(f"AGH-{n}" for n in range(1, 51))
 FEATURE_ISSUE = "AGH-7"
 REAL_HANDLES = frozenset({"roquettejh", "jroquette", "roquette", "henrique", "jose"})

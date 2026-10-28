@@ -205,8 +205,8 @@ test-docker: ## build the image, run its Compose service and test it (marker doc
 test-live: ## a real claude -p session in a temp hub, seen through hub web (marker live)
 	AGENT_HUB_LIVE=1 $(RUN) pytest -m live tests/e2e/test_live_agent.py
 
-# Not part of check: measures interactive paths on a synthetic fixture (10-15 min, cached fixture
-# in .perf/); writes perf.json. PERF_STRICT=1 exits 1 when a row is over its budget.
+# Not part of check: measures interactive paths on a synthetic fixture (about 7 min the first time,
+# fixture build about 20 s, cached in .perf/; about 6.5 min cached, on 4 vCPU Linux); writes perf.json. PERF_STRICT=1 exits 1 when a row is over its budget.
 perf: web-install ## measure interactive paths on a 400k-event fixture (PERF_EVENTS, PERF_RUNS, PERF_STRICT)
 	$(RUN) python -m scripts.perf.run_suite
 

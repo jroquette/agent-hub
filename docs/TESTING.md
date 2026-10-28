@@ -283,7 +283,8 @@ Knobs, all optional: `PERF_EVENTS` (400000), `PERF_RUNS` (10), `PERF_RESTART_RUN
 `PERF_REBUILD` (off: rebuild the cached fixture), `PERF_OUT` (`perf.json`), `PERF_BUDGETS`
 (`scripts/perf/budgets.json`), `PERF_CACHE` (`.perf/`), and `AGENT_HUB_CHROMIUM` (else the headless shell under
 `PLAYWRIGHT_BROWSERS_PATH`). The fixture is cached in `.perf/` by event count, seed and Alembic head, so a rerun skips
-the build. A first run takes about 10-12 minutes, a cached one about 7.
+the build. On a 4 vCPU Linux machine a first run takes about 7 minutes (the fixture build about 20 s), a cached
+one about 6.5.
 
 It prints one table and writes `perf.json`: a list of rows, each with `kind`, `path`, `runs`, `median_ms`, `p95_ms`,
 `budget`, `status` (`pass`, `over`, `no budget` or `skipped`, with a `reason`), `api_calls` (pages), `rss_mb`

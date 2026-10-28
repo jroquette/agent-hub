@@ -66,7 +66,7 @@ _ON = {"1", "true", "yes", "on"}
 
 @dataclass(frozen=True)
 class Settings:
-    """The suite's knobs, each from its ``PERF_*`` variable or the plan's default."""
+    """The suite's knobs, each from its ``PERF_*`` variable or its default."""
 
     events: int
     runs: int
@@ -82,6 +82,12 @@ class Settings:
         def number(name: str, default: int) -> int:
             return int(environ.get(name) or default)
 
+        def count(name: str, default: int) -> int:
+            value = number(name, default)
+            if value < 1:
+                raise SuiteError(f"{name} must be 1 or more, got {value}")
+            return value
+
         def flag(name: str) -> bool:
             return environ.get(name, "").strip().lower() in _ON
 
@@ -91,8 +97,8 @@ class Settings:
 
         return cls(
             events=number("PERF_EVENTS", fixture.DEFAULT_EVENTS),
-            runs=number("PERF_RUNS", DEFAULT_RUNS),
-            restart_runs=number("PERF_RESTART_RUNS", DEFAULT_RESTART_RUNS),
+            runs=count("PERF_RUNS", DEFAULT_RUNS),
+            restart_runs=count("PERF_RESTART_RUNS", DEFAULT_RESTART_RUNS),
             strict=flag("PERF_STRICT"),
             rebuild=flag("PERF_REBUILD"),
             out=path("PERF_OUT", REPO_ROOT / "perf.json"),
@@ -320,7 +326,8 @@ def _page_rows(suite: Suite, *, url: str, token: str) -> list[Row]:
         )
     found = page_rows(
         env,
-        npm=npm if node is not None else None,
+        npm=npm,
+        node=node,
         chromium=chromium,
         web_dir=WEB_DIR,
         pages=PAGE_PATHS,

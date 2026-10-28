@@ -1,14 +1,14 @@
 """The perf suite's page rows (``scripts/perf/pages.py``): the Chromium and web-dependency
-lookups, the page rows skipped with a reason when a piece is missing (plan Q7), the page child
-environment (spec AC-5), the Playwright call made like the smoke's (plan Q10, spec AC-1) and the
+lookups, the page rows skipped with a reason when a piece is missing, the page child
+environment, the Playwright call made like the smoke's and the
 rows read back from the results file the spec writes.
 
 Every process is injected, so no test starts npm, node or a browser, and no socket is opened.
-Seam (plan C9): ``chromium_executable(environ, *, web_dir)`` returns a path string or ``None``
+Seam: ``chromium_executable(environ, *, web_dir)`` returns a path string or ``None``
 (``AGENT_HUB_CHROMIUM`` first, else a headless shell under ``PLAYWRIGHT_BROWSERS_PATH``);
 ``web_deps_missing(web_dir)``; ``page_env(base, *, node_dir, browsers, chromium, url, token)``;
-``page_rows(env, *, npm, chromium, web_dir, pages, runs, results, runner)`` returns one item per
-page with ``kind``, ``path``, ``samples_ms``, ``api_calls`` and ``reason`` (set only when
+``page_rows(env, *, npm, node, chromium, web_dir, pages, runs, results, runner)`` returns one item
+per page with ``kind``, ``path``, ``samples_ms``, ``api_calls`` and ``reason`` (set only when
 skipped). ``runner`` is called like ``environment.Runner`` (``argv``, ``cwd``, ``env``); the spec
 appends one JSON object per line, ``{path, run, ready_ms, api_calls}``, to ``PERF_PAGES_OUT``."""
 
@@ -23,9 +23,10 @@ from scripts.perf.environment import child_env
 from scripts.perf.fixture import FEATURE_SLUG, PAGE_SESSION
 from scripts.perf.pages import chromium_executable, page_env, page_rows, web_deps_missing
 
-# The plan's "Rows" table, page kind, written out by hand.
+# The page rows, written out by hand.
 PAGES = ("/", "/features", f"/features/perf/{FEATURE_SLUG}", f"/sessions/{PAGE_SESSION}")
 NPM = "/usr/local/bin/npm"
+NODE = "/usr/local/bin/node"
 CHROMIUM = "/opt/browsers/chrome-headless-shell"
 WEB_URL = "http://127.0.0.1:7431"
 URL_NONCE = "synthetic-token"
@@ -100,6 +101,7 @@ def test_skips_page_rows_with_a_reason_when_no_chromium_is_found(tmp_path: Path)
     rows = page_rows(
         {"PATH": "/perf-root/bin"},
         npm=NPM,
+        node=NODE,
         chromium=chromium,
         web_dir=web_dir,
         pages=PAGES,
@@ -118,6 +120,7 @@ def test_skips_page_rows_with_a_reason_when_npm_is_missing(tmp_path: Path) -> No
     rows = page_rows(
         {"PATH": "/perf-root/bin"},
         npm=None,
+        node=NODE,
         chromium=CHROMIUM,
         web_dir=web_dir,
         pages=PAGES,
@@ -129,6 +132,29 @@ def test_skips_page_rows_with_a_reason_when_npm_is_missing(tmp_path: Path) -> No
     _assert_skipped(rows, runner)
 
 
+def test_skips_page_rows_with_a_reason_naming_node_when_node_is_missing(tmp_path: Path) -> None:
+    web_dir = _web_dir(tmp_path, deps=True)
+    runner = RecordingRunner(_results_lines())
+
+    rows = page_rows(
+        {"PATH": "/perf-root/bin"},
+        npm=NPM,
+        node=None,
+        chromium=CHROMIUM,
+        web_dir=web_dir,
+        pages=PAGES,
+        runs=2,
+        results=tmp_path / "pages.jsonl",
+        runner=runner,
+    )
+
+    _assert_skipped(rows, runner)
+    for row in rows:
+        assert row.reason is not None
+        assert "node" in row.reason
+        assert "npm" not in row.reason
+
+
 def test_skips_page_rows_with_a_reason_when_web_dependencies_are_missing(tmp_path: Path) -> None:
     web_dir = _web_dir(tmp_path, deps=False)
     runner = RecordingRunner(_results_lines())
@@ -136,6 +162,7 @@ def test_skips_page_rows_with_a_reason_when_web_dependencies_are_missing(tmp_pat
     rows = page_rows(
         {"PATH": "/perf-root/bin"},
         npm=NPM,
+        node=NODE,
         chromium=CHROMIUM,
         web_dir=web_dir,
         pages=PAGES,
@@ -220,6 +247,7 @@ def test_calls_playwright_like_the_smoke_when_pages_are_measured(tmp_path: Path)
     page_rows(
         env,
         npm=NPM,
+        node=NODE,
         chromium=CHROMIUM,
         web_dir=web_dir,
         pages=PAGES,
@@ -260,6 +288,7 @@ def test_reads_page_rows_when_the_spec_wrote_results(tmp_path: Path) -> None:
     rows = page_rows(
         {"PATH": "/perf-root/bin"},
         npm=NPM,
+        node=NODE,
         chromium=CHROMIUM,
         web_dir=web_dir,
         pages=PAGES,
