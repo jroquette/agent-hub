@@ -292,9 +292,11 @@ It prints one table and writes `perf.json`: a list of rows, each with `kind`, `p
 one entry per `(kind, path)` with `p95_ms`, `api_calls` or `rss_mb`; every entry's `source` is "AGH-601 proposed" until
 the ADR that sets them is accepted. A path with no entry shows `no budget`. Without npm, Chromium or
 `apps/web/node_modules`, the page rows are `skipped`; `make perf` itself runs `npm ci` first, so on a machine without
-npm run `uv run --locked --all-packages python -m scripts.perf.run_suite` instead. Exit code: 0, also when a row is
-over; 1 when `PERF_STRICT=1` and a row is `over`; 2 when the suite itself fails (a bad budgets file or knob, `hub web`
-not starting, a route not answering 200 or timing out), after writing the rows measured before the failure.
+npm run `uv run --locked --all-packages python -m scripts.perf.run_suite` instead. The runner's exit code: 0, also
+when a row is over; 1 when `PERF_STRICT=1` and a row is `over`; 2 when the suite itself fails (a bad budgets file or
+knob, `hub web` not starting, a route not answering 200 or timing out), after writing the rows measured before the
+failure. `make perf` exits 0 or, in both failure cases, 2 (make's own code for a failed recipe), so a caller that must
+tell "over budget" from "suite broken", such as CI, runs the runner directly.
 
 Known gaps:
 
