@@ -804,6 +804,13 @@ export function StepList(props: StepListProps) {
               }
             : null
         }
+        onChangeNode={
+          editable
+            ? (next) => {
+                onEditNode(id, next);
+              }
+            : null
+        }
         onSet={
           editable
             ? (name, value) => {

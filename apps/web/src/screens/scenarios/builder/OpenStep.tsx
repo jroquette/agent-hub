@@ -1,13 +1,15 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { CopyButton, Icon } from "../../../components";
 import { ActionFiles } from "../ActionPanel";
 import type { ScenarioAction } from "../queries";
 import { maxChecks, pace } from "../story";
 import { TokenText, ValueToken, tokenOf } from "./CardParts";
+import { JsonField } from "./JsonField";
 import { looksLikeJson, parseLoose, stringifyLoose } from "./looseJson";
 import { useServiceField, type ServiceOption } from "./ServicePicker";
 import { resolveInputs } from "./StepScript";
+import type { LibraryAction } from "./useScenarioDraft";
 import {
   OPERATORS,
   parseCondition,
@@ -15,6 +17,7 @@ import {
   shown,
   text,
   upstreamOf,
+  valueSources,
   type BuilderDocument,
   type BuilderNode,
   type Json,
@@ -38,6 +41,8 @@ export interface StepSources {
   kept: readonly { name: string; number: string; step?: string; node: string }[];
   /** The services declared in the environment, for a `service` input's picker. */
   services?: readonly ServiceOption[];
+  /** The hub's actions: the one the step runs is picked from them, here as in the panel. */
+  library?: readonly LibraryAction[];
 }
 
 export interface OpenStepProps {
@@ -62,6 +67,8 @@ export interface OpenStepProps {
   number?: string;
   /** Opens the step's full editor in the side panel (the open step folds meanwhile). */
   onOpenPanel?: (() => void) | null;
+  /** Changes the step itself (the action it runs). */
+  onChangeNode?: ((next: BuilderNode) => void) | null;
 }
 
 function written(value: Json): string {
@@ -146,7 +153,17 @@ export function OpenStep({
   mode = "interactive",
   number = "",
   onOpenPanel = null,
+  onChangeNode = null,
 }: OpenStepProps) {
+  // The body edited here, in the panel's own JSON editor (fields or JSON).
+  const [editingBody, setEditingBody] = useState<string | null>(null);
+  const library = sources?.library ?? [];
+  const ref = text(node.action);
+  const outputs = (name: string) =>
+    library
+      .find((item) => item.action.ref === name || item.action.name === name)
+      ?.output_fields.map((field) => field.path) ?? [];
+  const bodySources = sources ? valueSources(sources.document, node.id, outputs) : [];
   const params = values.filter(([, value]) => !isBody(value));
   const bodies = values.filter(([, value]) => isBody(value));
   const env = sources?.environment ?? null;
@@ -325,6 +342,54 @@ export function OpenStep({
         )}
       </div>
 
+      <Group title={check ? "Reads with the action" : "Action"}>
+        <Row
+          label={check ? "Reads" : "Runs"}
+          value={
+            <span className="st-open-value-ref">
+              {onChangeNode ? (
+                <select
+                  className="ah-input st-open-action"
+                  aria-label={`Action of step ${number}`}
+                  value={ref}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                  }}
+                  onChange={(event) => {
+                    onChangeNode({ ...node, action: event.target.value });
+                  }}
+                >
+                  <option value="">Choose an action</option>
+                  {ref !== "" &&
+                    !library.some(
+                      (item) => item.action.ref === ref || item.action.name === ref,
+                    ) && <option value={ref}>{ref} (not in this hub)</option>}
+                  {library
+                    .filter((item) => !check || item.action.effect === "read")
+                    .map((item) => (
+                      <option
+                        key={item.action.ref}
+                        value={item.action.name === ref ? ref : item.action.ref}
+                      >
+                        {item.action.name}
+                        {item.action.draft ? " · draft" : ""}
+                      </option>
+                    ))}
+                </select>
+              ) : (
+                <span className="st-open-mono st-open-strong">{action?.name ?? ref}</span>
+              )}
+              {action?.runtime && (
+                <span className="st-open-quiet">{RUNTIME[action.runtime] ?? action.runtime}</span>
+              )}
+            </span>
+          }
+          note={
+            check ? "Only an action that reads can wait: it runs again on every check." : undefined
+          }
+        />
+      </Group>
+
       {check && (
         <Group title="Done when">
           {conditions === null ? (
@@ -471,25 +536,54 @@ export function OpenStep({
                   <span className="st-open-mono">{name}</span>
                   <span className="st-open-quiet">JSON</span>
                   <span className="ah-grow" />
-                  {onEditInPanel && (
+                  {onSet && (
                     <button
                       type="button"
                       className="st-g-link"
+                      aria-expanded={editingBody === name}
                       onClick={(event) => {
                         event.stopPropagation();
-                        onEditInPanel(name);
+                        setEditingBody(editingBody === name ? null : name);
                       }}
                     >
-                      <Icon name="pencil" size="sm" /> Edit {name}
+                      {editingBody === name ? (
+                        <>
+                          <Icon name="check" size="sm" /> Done
+                        </>
+                      ) : (
+                        <>
+                          <Icon name="pencil" size="sm" /> Edit {name}
+                        </>
+                      )}
                     </button>
                   )}
                   <CopyButton text={body} label={`Copy ${name}`} compact />
                 </span>
-                {/* A scrollable region is reached by keyboard. */}
-                {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
-                <pre className="ah-json st-open-json" tabIndex={0} aria-label={`${name}, as JSON`}>
-                  <JsonText source={body} />
-                </pre>
+                {editingBody === name && onSet ? (
+                  <div className="st-open-json-edit">
+                    <JsonField
+                      id={`open-${number}-${name}`}
+                      name={name}
+                      value={written(value)}
+                      sources={bodySources}
+                      onChange={(next) => {
+                        onSet(name, next);
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <pre
+                      className="ah-json st-open-json"
+                      // A scrollable region is reached by keyboard.
+                      // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+                      tabIndex={0}
+                      aria-label={`${name}, as JSON`}
+                    >
+                      <JsonText source={body} />
+                    </pre>
+                  </>
+                )}
                 {about && <span className="st-g-note">{about}</span>}
               </li>
             );
@@ -535,21 +629,6 @@ export function OpenStep({
         </summary>
         <div className="st-more-body">
           <Group title={check ? "How it checks" : "What it does"}>
-            <Row
-              value={
-                <>
-                  <span className="st-open-mono st-open-strong">
-                    {action?.name ?? text(node.action)}
-                  </span>
-                  {action?.runtime && (
-                    <span className="st-open-quiet">
-                      {RUNTIME[action.runtime] ?? action.runtime}
-                    </span>
-                  )}
-                </>
-              }
-              label={check ? "Reads" : "Action"}
-            />
             {check && readsWith.length > 0 && (
               <Row
                 label="Reads with"

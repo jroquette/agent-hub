@@ -2534,6 +2534,7 @@ export function ScenarioBuilder({
                   node: item.step,
                 })),
                 services: serviceOptions,
+                library: items,
               }}
               current={shownRun.current}
               breakpoints={

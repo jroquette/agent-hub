@@ -1511,3 +1511,18 @@
   gap: var(--space-2);
   flex: none;
 }
+
+/* The action an open step runs, picked in place. */
+.st-open-action {
+  height: var(--control-sm);
+  min-width: 200px;
+  padding: 0 28px 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.st-open-json-edit {
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}

@@ -3209,7 +3209,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
       within(within(fetch).getByRole("group", { name: "Step 1 settings" }))
         .getAllByRole("region")
         .map((region) => region.getAttribute("aria-label")),
-    ).toEqual(["Values for this step", "What it does", "Values from earlier"]);
+    ).toEqual(["Action", "Values for this step", "What it does", "Values from earlier"]);
     expect(
       within(fetch).getByText("Scenario input · asked when the scenario run starts"),
     ).toBeInTheDocument();
@@ -3625,10 +3625,13 @@ describe("ScenarioBuilder (scenario builder)", () => {
       within(open)
         .getAllByRole("region")
         .map((region) => region.getAttribute("aria-label")),
-    ).toEqual(["Values for this step", "What it does"]);
-    // What it does: the action, with its runtime in words.
-    const does = within(open).getByRole("region", { name: "What it does" });
-    expect(does).toHaveTextContent("Actionsend-queue-messagePython");
+    ).toEqual(["Action", "Values for this step", "What it does"]);
+    // Action: the action it runs, picked in place, with its runtime in words.
+    const does = within(open).getByRole("region", { name: "Action" });
+    expect(within(does).getByRole("combobox", { name: "Action of step 1" })).toHaveValue(
+      "send-queue-message",
+    );
+    expect(does).toHaveTextContent("Python");
     // Open, the row's own line 2 and technical line give way to the open part.
     expect(fetch.querySelector(".st-lines > .st-detail")).toBeNull();
     expect(fetch.querySelector(".st-lines > .st-tech")).toBeNull();
@@ -3820,6 +3823,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
         .getAllByRole("region")
         .map((region) => region.getAttribute("aria-label")),
     ).toEqual([
+      "Action",
       "Values for this step",
       "Keeps for later steps",
       "What it does",
@@ -3872,17 +3876,17 @@ describe("ScenarioBuilder (scenario builder)", () => {
       "Changes data",
     );
 
+    // Edit body edits it right here, in the panel's own JSON editor; Done folds it back.
     await user.click(within(values).getByRole("button", { name: "Edit body" }));
-    const panel = await inPanel(user, "Inspector: Run an action fetch-order");
-    expect(within(panel).getByRole("tab", { name: /Settings/ })).toHaveAttribute(
-      "aria-selected",
+    expect(screen.queryByRole("region", { name: /^Inspector: / })).not.toBeInTheDocument();
+    expect(within(values).queryByLabelText("body, as JSON")).not.toBeInTheDocument();
+    expect(within(values).getByRole("button", { name: "Done" })).toHaveAttribute(
+      "aria-expanded",
       "true",
     );
-    // At the body's field: its first row, shown as fields.
-    await waitFor(() => {
-      expect(panel.contains(globalThis.document.activeElement)).toBe(true);
-    });
-    expect(globalThis.document.activeElement?.tagName).toMatch(/^(INPUT|TEXTAREA|SELECT|BUTTON)$/);
+    expect(within(values).getByDisplayValue("FETCH_ORDERS")).toBeInTheDocument();
+    await user.click(within(values).getByRole("button", { name: "Done" }));
+    expect(within(values).getByLabelText("body, as JSON")).toBeInTheDocument();
   });
 
   it("scenario builder's Set it in the panel focuses that value's own field, region apart from region_code", async () => {
@@ -4625,5 +4629,39 @@ describe("ScenarioBuilder (scenario builder)", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it("scenario builder changes a step's action and edits its body on the step itself", async () => {
+    const user = userEvent.setup();
+    renderBuilder({
+      [DETAIL]: detailWith({
+        nodes: [
+          { ...document.nodes[0], with: { body: '{"event_type":"FETCH_ORDERS"}' } },
+          document.nodes[1],
+        ],
+      }),
+    });
+    const fetch = await screen.findByRole("treeitem", { name: FETCH });
+    await user.click(fetch);
+    const open = within(fetch).getByRole("group", { name: "Step 1 settings" });
+
+    // The action is picked here, as in the panel.
+    await user.selectOptions(
+      within(open).getByRole("combobox", { name: "Action of step 1" }),
+      "orders/get-order-by-ref",
+    );
+    expect(screen.getByText("Unsaved")).toBeInTheDocument();
+    expect(within(fetch).getByRole("combobox", { name: "Action of step 1" })).toHaveValue(
+      "orders/get-order-by-ref",
+    );
+
+    // The body edits here: a field changed, Done shows it written.
+    const values = within(fetch).getByRole("region", { name: "Values for this step" });
+    await user.click(within(values).getByRole("button", { name: "Edit body" }));
+    const field = within(values).getByDisplayValue("FETCH_ORDERS");
+    await user.clear(field);
+    await user.type(field, "POLL_QUOTE");
+    await user.click(within(values).getByRole("button", { name: "Done" }));
+    expect(within(values).getByLabelText("body, as JSON")).toHaveTextContent('"POLL_QUOTE"');
   });
 });
