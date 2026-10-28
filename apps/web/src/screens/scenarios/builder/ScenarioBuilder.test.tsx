@@ -2016,7 +2016,8 @@ describe("ScenarioBuilder (scenario builder)", () => {
       "external_ref",
     );
     await user.type(within(form).getByLabelText("external_ref"), "T-1");
-    expect(fetch).toHaveTextContent("external_ref T-1");
+    // The open step lists the value under its name.
+    expect(fetch).toHaveTextContent(/external_ref.*T-1/);
 
     await save(user);
     const nodes = (await savedNodes(requests)) as (SentNode & { action?: string; with?: object })[];
@@ -2527,5 +2528,68 @@ describe("ScenarioBuilder (scenario builder)", () => {
       screen.queryByRole("complementary", { name: "Scenario runs of order-lifecycle" }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("form", { name: "Run order-lifecycle" })).toBeInTheDocument();
+  });
+
+  it("scenario builder opens a selected step in place with its JSON body indented", async () => {
+    const user = userEvent.setup();
+    renderBuilder({
+      [DETAIL]: aScenarioDetail({
+        document: {
+          ...document,
+          nodes: [
+            {
+              id: "fetch-order",
+              type: "action",
+              action: "send-queue-message",
+              with: { body: '{"event_type":"FETCH_ORDERS","minutes":$INPUTS.external_ref}' },
+            },
+            ...document.nodes.slice(1),
+          ],
+        },
+        content_hash: "sha256:aaa",
+      }),
+    });
+    const tree = await screen.findByRole("tree", { name: "Steps of order-lifecycle" });
+    const fetch = within(tree).getByRole("treeitem", { name: FETCH });
+    expect(within(fetch).queryByLabelText("body, as JSON")).not.toBeInTheDocument();
+
+    await user.click(fetch);
+    const body = within(fetch).getByLabelText("body, as JSON");
+    expect(body.textContent).toContain('"event_type": "FETCH_ORDERS",\n');
+    // The bare reference reads as the builder's token, as on the closed row.
+    expect(within(body).getByTitle("Scenario input external_ref")).toHaveTextContent(
+      "external_ref",
+    );
+    // The open step reads in order: what it runs, then the values it uses and where they come from.
+    expect(within(fetch).getByText("Runs")).toBeInTheDocument();
+    expect(
+      within(fetch).getByText("scenario input · asked when the scenario run starts"),
+    ).toBeInTheDocument();
+  });
+
+  it("scenario builder folds the code an open step runs, coloured, its script apart from its action file", async () => {
+    const user = userEvent.setup();
+    renderBuilder();
+    const tree = await screen.findByRole("tree", { name: "Steps of order-lifecycle" });
+    const fetch = within(tree).getByRole("treeitem", { name: FETCH });
+    await user.click(fetch);
+
+    const script = within(fetch).getByLabelText(
+      "Text of actions/orders/scripts/send_queue_message.py",
+    );
+    // Folded until asked for.
+    expect(script).not.toBeVisible();
+    await user.click(within(fetch).getByText("Show the code it runs"));
+    expect(script).toBeVisible();
+    expect(script).toHaveTextContent("print('{}')");
+    // Coloured as Python, its file says it is the one that runs; the action file only declares.
+    await waitFor(() => {
+      expect(script.querySelector("code")).toHaveClass("hljs");
+    });
+    expect(within(fetch).getByText("Runs.")).toBeInTheDocument();
+    expect(within(fetch).getByText("Declares.")).toBeInTheDocument();
+    expect(within(fetch).getByText("Declares.").closest(".sc-file")).toHaveTextContent(
+      "name: send-queue-message",
+    );
   });
 });

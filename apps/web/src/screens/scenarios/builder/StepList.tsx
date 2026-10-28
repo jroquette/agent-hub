@@ -16,6 +16,7 @@ import type { ScenarioAction, ScenarioPlanRow } from "../queries";
 import { pace } from "../story";
 import { TokenText, ValueToken, cardTitle, firstSentence, tokenOf } from "./CardParts";
 import { kindLook } from "./FlowCanvas";
+import { OpenStep, type StepSources } from "./OpenStep";
 import { conditionWords, shown, text, type BuilderNode, type Json } from "./model";
 import { itemId, listsOf, type Item, type Slot } from "./program";
 import type { BuilderProblem } from "./useScenarioDraft";
@@ -86,6 +87,8 @@ export interface StepListProps {
   onEditNode?: ((id: string, node: BuilderNode) => void) | undefined;
   onDuplicate?: ((id: string) => void) | undefined;
   onDelete?: ((id: string) => void) | undefined;
+  /** Where a step's values come from (environment, scenario variables, kept values). */
+  sources?: StepSources | null | undefined;
 }
 
 function record(value: Json | undefined): Record<string, Json> {
@@ -410,6 +413,7 @@ export function StepList(props: StepListProps) {
     onEditNode,
     onDuplicate,
     onDelete,
+    sources = null,
   } = props;
   const nodeOfRow = (id: string): BuilderNode | null => {
     const find = (list: readonly Item[]): BuilderNode | null => {
@@ -594,7 +598,12 @@ export function StepList(props: StepListProps) {
     group: boolean,
     spoken = "",
     stage = false,
-    extra: { news?: ReactNode; titleEditor?: ReactNode; tech?: ReactNode } = {},
+    extra: {
+      news?: ReactNode;
+      titleEditor?: ReactNode;
+      tech?: ReactNode;
+      open?: ReactNode;
+    } = {},
   ) => {
     const number = numbers.get(id) ?? "";
     const isSelected = selected === id;
@@ -709,7 +718,8 @@ export function StepList(props: StepListProps) {
         data-current={isCurrent ? "true" : undefined}
         data-run={state !== null ? "true" : undefined}
         aria-current={isCurrent ? "step" : undefined}
-        title={detailText ? `${titleText}\n${detailText}` : titleText}
+        // Open, the row shows it all: no tooltip over the open part.
+        title={extra.open ? undefined : detailText ? `${titleText}\n${detailText}` : titleText}
         onClick={() => {
           setFocused(id);
           onSelect(id);
@@ -763,6 +773,7 @@ export function StepList(props: StepListProps) {
           {state !== null && <span className="st-run-state">{state}</span>}
           {quick}
         </span>
+        {extra.open}
       </div>
     );
   };
@@ -871,93 +882,50 @@ export function StepList(props: StepListProps) {
             description: typed.trim(),
           }))
         : undefined;
-    // Line 2 with its values as chips: a click edits one in place (the row is selected).
+    // Selected, the row opens in place: what it does in full, the action it runs, each value it
+    // sends (a JSON body indented, its references drawn as tokens), the values that come from
+    // elsewhere, what it keeps. Plain values and the timing edit right there.
     const detail: ReactNode = lines.detail;
-    let tech: ReactNode = lines.tech;
     const values =
       node.type === "action" || node.type === "expect" || node.type === "include"
         ? ownValues(node, action)
         : [];
-    const timed = node.type === "expect" && text(node.every) !== "" && text(node.timeout) !== "";
-    if (editable && selected === id && (values.length > 0 || timed)) {
-      const given = record(node.with);
-      const parts: ReactNode[] = [];
-      const ref = text(node.action);
-      if (ref)
-        parts.push(
-          <span key="ref" className="st-mono">
-            {action?.name ?? ref}
-          </span>,
-        );
-      if (node.type === "expect") {
+    const isOpen = selected === id && (node.type === "action" || node.type === "expect");
+    const given = record(node.with);
+    const number = numbers.get(id) ?? id;
+    const editor = (name: string): ReactNode => {
+      if (!editable || editingHere !== name) return null;
+      if (name === "timing") {
         const every = text(node.every);
-        const timeout = text(node.timeout);
-        if (every && timeout) {
-          parts.push(
-            editingHere === "timing" ? (
-              <span key="timing" className="st-inline">
-                every{" "}
-                {field("timing", `How often ${numbers.get(id) ?? id} checks`, every, (typed) => ({
-                  ...node,
-                  every: typed.trim() || every,
-                }))}
-              </span>
-            ) : (
-              <button
-                key="timing"
-                type="button"
-                className="st-chip-edit"
-                tabIndex={-1}
-                title="Edit how often it checks"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setEditing({ id, field: "timing" });
-                }}
-              >
-                every {pace(every)}, up to {pace(timeout)}
-              </button>
-            ),
-          );
-        }
+        return field("timing", `How often ${number} checks`, every, (typed) => ({
+          ...node,
+          every: typed.trim() || every,
+        }));
       }
-      for (const [name, value] of values) {
-        const key = `with:${name}`;
-        if (editingHere === key) {
-          parts.push(
-            <span key={key} className="st-inline">
-              <span className="st-key">{name}</span>{" "}
-              {field(key, `${name} of ${numbers.get(id) ?? id}`, compact(value), (typed) => ({
-                ...node,
-                with: { ...given, [name]: typedAs(value, typed) },
-              }))}
-            </span>,
-          );
-        } else if (editableValue(value)) {
-          parts.push(
-            <button
-              key={key}
-              type="button"
-              className="st-chip-edit"
-              tabIndex={-1}
-              title={`Edit ${name}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                setEditing({ id, field: key });
-              }}
-            >
-              <span className="st-key">{name}</span> <Value value={value} />
-            </button>,
-          );
-        } else {
-          parts.push(
-            <span key={key} title="Edit it in the panel">
-              <span className="st-key">{name}</span> <Value value={value} />
-            </span>,
-          );
+      const key = name.slice("with:".length);
+      const value = given[key];
+      if (value === undefined) return null;
+      return field(name, `${key} of ${number}`, compact(value), (typed) => ({
+        ...node,
+        with: { ...given, [key]: typedAs(value, typed) },
+      }));
+    };
+    const open = isOpen ? (
+      <OpenStep
+        node={node}
+        action={action}
+        sources={sources}
+        values={values}
+        editor={editor}
+        onEdit={
+          editable
+            ? (name) => {
+                setEditing({ id, field: name });
+              }
+            : null
         }
-      }
-      tech = <span className="st-detail-edit">{interleave(parts)}</span>;
-    }
+      />
+    ) : null;
     return row(
       id,
       level,
@@ -965,7 +933,8 @@ export function StepList(props: StepListProps) {
       node.type,
       <TokenText value={lines.title} />,
       lines.title,
-      detail,
+      // Open, the operation's header says what it does: line 2 would say it twice.
+      isOpen ? null : detail,
       lines.detailText,
       right,
       group,
@@ -976,7 +945,7 @@ export function StepList(props: StepListProps) {
         status ? ` ${status.label}.` : "",
       ].join(""),
       false,
-      { news, titleEditor, tech },
+      { news, titleEditor, tech: isOpen ? null : lines.tech, open },
     );
   };
 

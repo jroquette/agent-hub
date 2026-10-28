@@ -10,6 +10,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router";
 
 import {
@@ -2215,6 +2216,13 @@ export function ScenarioBuilder({
                       }
               }
               keptOf={tree && !reviewProgram ? shownRun.keptOf : undefined}
+              sources={{
+                environment: environmentInfo
+                  ? { name: environmentInfo.name, values: environmentValues ?? {} }
+                  : null,
+                inputs: declaredInputs.map(([name]) => name),
+                kept: keptValues.map((item) => ({ name: item.name, number: item.number })),
+              }}
               current={shownRun.current}
               breakpoints={
                 debuggable && !reviewProgram
@@ -2453,7 +2461,8 @@ export function ScenarioBuilder({
           </Toast>
         </div>
       )}
-      {rowMenuView}
+      {/* On the body: a fixed menu inside the page would be placed against the wrong box. */}
+      {rowMenuView && createPortal(rowMenuView, globalThis.document.body)}
       {paletteDrag && (
         <div
           className="sb-pal-ghost"

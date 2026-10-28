@@ -1119,3 +1119,208 @@
 .st-row[data-selected="true"] .st-tech {
   white-space: normal;
 }
+
+/* The selected block, open in place: part of the row, under the title, as wide as the row. Open,
+ * it keeps the accent edge but a neutral ground, so its groups read calmly. */
+.st-row[data-selected="true"] {
+  align-items: start;
+}
+.st-row[data-selected="true"]:has(> .st-open) {
+  background: var(--surface);
+}
+.st-row[data-selected="true"] > .st-num,
+.st-row[data-selected="true"] > .st-tile,
+.st-row[data-selected="true"] > .st-handle {
+  margin-top: 2px;
+}
+.st-open {
+  /* From the row's left edge: the open part uses the whole width of the row. */
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-top: var(--space-2);
+  padding: var(--space-3) 0 var(--space-1);
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--text);
+  cursor: default;
+}
+.st-open-about {
+  margin: 0;
+  max-width: 72ch;
+  color: var(--text-muted);
+}
+.st-open-mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.st-open-strong {
+  color: var(--text);
+  font-weight: 500;
+}
+.st-open-quiet {
+  color: var(--text-subtle);
+}
+
+/* Grouped lists, as system settings show them: a small title, then rows in one rounded group,
+ * the label at the left and the value at the right, hairlines between rows. */
+.st-g-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.st-g-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0 0 0 var(--space-3);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.st-g {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  overflow: hidden;
+}
+.st-g-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+}
+/* An inset hairline between rows, starting at the text, not at the group's edge. */
+.st-g-row + .st-g-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: var(--space-3);
+  right: 0;
+  border-top: 1px solid var(--border);
+}
+.st-g-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.st-g-row[data-quiet="true"] .st-g-label {
+  color: var(--text-muted);
+}
+.st-g-note {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-g-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  min-width: 0;
+  max-width: 60%;
+  text-align: right;
+}
+.st-open-src {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+  white-space: nowrap;
+}
+.st-g-foot {
+  margin-left: var(--space-3);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+}
+
+/* Body: the app's code well, the copy button in its corner. */
+.st-open-body {
+  position: relative;
+}
+.st-open-json {
+  max-height: 320px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  line-height: 20px;
+  white-space: pre;
+}
+.st-open-copy {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+}
+
+/* An editable value: one line, a quiet dashed edge that says it can be changed. */
+.st-chip-edit {
+  min-height: 24px;
+  max-width: 100%;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+  border-color: var(--border-control);
+}
+.st-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* What it runs: the action's script and file, folded under Runs. */
+.st-g-more {
+  display: block;
+}
+.st-code > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  list-style: none;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.st-code > summary::-webkit-details-marker {
+  display: none;
+}
+.st-code > summary > svg {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.st-code[open] > summary > svg {
+  transform: rotate(90deg);
+}
+.st-code > summary:hover {
+  color: var(--text);
+}
+.st-code-files {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+.st-code-files .ah-json {
+  max-height: 360px;
+  white-space: pre;
+}
+@media (prefers-reduced-motion: reduce) {
+  .st-code > summary > svg {
+    transition: none;
+  }
+}
