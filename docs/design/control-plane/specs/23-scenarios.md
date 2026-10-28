@@ -91,6 +91,8 @@ this wins.
   `git restore <path>`." Delete scenario (it reads "Deleting…" while it is on its way) sends `DELETE
   /api/v1/scenarios/{project}/{name}`; the dialog closes, a toast says "Deleted scenario <name>." with Copy restore
   command and leaves after 6 s, and focus moves to the next row, else the previous one, else the filter.
+  `git restore` brings back only the last committed version of the file. A scenario that was never committed cannot
+  be restored, and nor can edits that were not committed.
 - **AC-596.1.16 Refused.** Given the server refuses the delete (a 409), then the dialog stays open with "Could not
   delete the scenario. <detail> Nothing was deleted."; a 401 says "Deleting is locked in this browser. Open the link
   hub web printed when it started (it ends with ?token=…) once in this browser."
@@ -325,6 +327,8 @@ otherwise, this wins.
     place, even when the row sets no value, and the row reads the new pace.
   - **AC-596.2.37 What it does.** A row's second line says what it does in words: its action's first sentence (when
     not the title), "until …", "checks every X, up to Y", what it keeps.
+  - **AC-596.2.43 Title room.** A step's title keeps its room when the row's right side is full (badges, plan line,
+    quick actions): the right side never pushes the title out.
   - **AC-596.2.38 Technical line.** The action name and its short values move to a quieter line under it; a JSON
     body or a value over 40 characters is only counted ("+N values") until the row is selected.
   - **AC-596.2.36 The tree.** On a graph scenario too, the `+` in each gap is hidden from the tree (`aria-hidden`),
@@ -466,8 +470,10 @@ builder it is picked, never typed, the same way in the open step and in the side
   field (a button "target: <service>" or "target: choose a service"), in the open step and in the side panel; a pick
   in either sets the step's value.
 - **AC-596.4.2 The list.** Given the field pressed, then a dialog "Choose <input>" lists the declared services
-  grouped by kind under headings (Queues (SQS), Databases, APIs and backends…), the kinds in a fixed order, then by
-  name.
+  grouped by kind under headings (Queues (SQS), Databases, APIs and backends…), the kinds in the snapshot's fixed
+  order (APIs, then databases, then queues…), then by name. Kinds are named with the Environments page's words: a
+  `queue` kind is "Queue or topic" ("Queues and topics" as a heading). Each row keeps the `server` icon, and the
+  current pick shows a check.
 - **AC-596.4.3 Addresses.** Each row shows its address in the run bar's environment (its URL, else its resource), or
   "no address in <env>"; the header says "services in <env>".
 - **AC-596.4.4 Search.** Typing in "Find a service by name, kind or address" keeps the services whose name, kind,

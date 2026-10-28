@@ -16,6 +16,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - hub web deletes a scenario from its row's menu on the Scenarios list or from the scenario page's Scenario actions
   menu. A confirm names the file and the `git restore` command; the scenario's file and Claude's proposal for it leave
   the hub folder (never through a link), its recorded scenario runs stay, and the toast offers the restore command.
+  That command brings back only the last committed version: a scenario never committed, or edits not committed,
+  cannot be restored.
   Delete is off while a scenario run of it is in progress. The API gains `DELETE /api/v1/scenarios/{project}/{name}`
   (204; 409 `scenario_run_in_progress`, `link_in_path` or `hub_read_only`), a strict item write (AGH-596).
 - In the scenario builder, a selected step opens in place on its row: what it does (its action, runtime, timing and
@@ -24,8 +26,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   ("Needs a value", with Set it in the panel). A draft action says so, with its commit command (AGH-596).
 - A step's service input is picked, never typed, in the open step and in the side panel: a searchable list of the
   services the hub declares, grouped by kind, each with its address in the run bar's environment, and a kind select
-  that filters it. The pick is written as the service's name, or `<repo>/<name>` only when two repos share the name
-  (AGH-596).
+  that filters it. The list keeps its group order and its server icon on each row, and names kinds with the
+  Environments page's words (a queue is "Queue or topic"). The pick is written as the service's name, or
+  `<repo>/<name>` only when two repos share the name (AGH-596).
 
 ### Changed
 
@@ -38,7 +41,7 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   run panel beside them holds the debug pause, This plan, the draft actions to commit in one commit, and the scenario
   runs, each with Show (`?run=`). Each block shows its state in the shown run, what it kept, its plan line and its
   breakpoint (`b`), and renames in place with `F2`. Old `?mode=run` and `?view=document` links land on the one screen
-  (AGH-596).
+  (AGH-596). A step's title keeps its room when the row's right side is full (AGH-596).
 - The Graph view of a scenario written as blocks is drawn by its stages: a band per stage between Start and End, its
   blocks left to right, If, At the same time and Repeat as frames. Each graph card reads as its Blocks row, for a
   graph scenario too (AGH-596).
@@ -46,8 +49,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   ([ADR 0051](docs/adr/0051-syntax-highlighting-across-the-app.md), proposed): the builder's YAML and the Migrate
   preview, an action's files, every command, a hook's command, a skill's Raw view and bundled files, and a Studio
   draft's files. No new dependency (AGH-596).
-- Every select in hub web is drawn as a macOS pop-up button: a small up-and-down chevron from the tokens, with the
-  same hover, focus and disabled look everywhere (AGH-596).
+- Every select drawn as an input in hub web (`select.ah-input`) is drawn as a macOS pop-up button: a small
+  up-and-down chevron from the tokens, with the same hover, focus and disabled look everywhere. The pill selects in
+  New feature, the Composer and New session keep their own look (AGH-596).
 
 ## [0.26.0] - 2026-10-27
 

@@ -22,8 +22,10 @@ adds them, `hub.lock` does not list them, and the init report does not count the
 hub web's Delete (AGH-596, `DELETE /scenarios/{project}/{name}`, [API.md](../API.md) § Scenarios) removes a
 scenario's file and Claude's proposal for it under `.agent-runs/proposals/scenarios/<pack>/`. It checks both paths
 for a link first and removes neither when one holds a link (409 `link_in_path`). It refuses while the scenario's newest
-scenario run is in progress, a paused one included (409 `scenario_run_in_progress`). It runs no git command, so `git
-restore` brings the file back until the removal is committed, and the scenario's recorded runs stay.
+scenario run is in progress, a paused one included (409 `scenario_run_in_progress`). It runs no git
+command, and the scenario's recorded runs stay. Until the removal is committed, `git restore <path>` brings back the
+last committed version of the file. A scenario that was never committed cannot be restored, and nor can edits that
+were not committed.
 
 ### Kind and node keys
 

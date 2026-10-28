@@ -510,8 +510,10 @@ the chat's own keys are in [agent-sessions.md](../../agent-sessions.md#chat-beha
 | `Alt ↑` / `Alt ↓` | Move the selected step |
 | `Delete` / `Backspace` | Delete the selected step, from its row (an Undo toast follows); a chip or the code of an open step keeps the key |
 | `⌘Z` / `Shift ⌘Z` | Undo / redo an edit |
+| `⌘S` | Save the scenario (when it has changes and no errors); it works in a text field too |
+| `Esc` | Clear the selection |
 
-The keys are off while focus is in a text field. See [23-scenarios.md](23-scenarios.md).
+The keys are off while focus is in a text field, except `⌘S`. See [23-scenarios.md](23-scenarios.md).
 
 ### Learnings triage (P3)
 
@@ -524,7 +526,7 @@ The keys are off while focus is in a text field. See [23-scenarios.md](23-scenar
 - `[` and `]` collide with nothing in Chrome/Firefox/Safari; on keyboards where they need AltGr (German, Portuguese layouts), `Alt ←` / `Alt →` are aliases that only work inside the tab list's focus scope (they are browser Back/Forward elsewhere and are not captured).
 - `g g` vs `g <letter>`: the second key decides. `g` followed by nothing for 1 s cancels silently.
 - `t` (time zone) and `f` (follow) are single keys; both are disabled in inputs and can be turned off with single-key shortcuts.
-- `e` is "next error", not "edit". The only key that edits in place is `F2`, on the scenario builder's rows (AGH-596).
+- `e` is "next error", not "edit". The only screen whose keys edit content is the scenario builder (AGH-596).
 - `⌘K` overrides the Safari/Chrome "focus address bar search" only on macOS Firefox (`⌘K` focuses web search); accepted because ⌘K is the de facto standard for command palettes. `Ctrl K` on Windows/Linux Chrome focuses the omnibox search; the app captures it only when the page has focus.
 - Number keys `1`–`6` on Session detail do not conflict with list views (they mean nothing there).
 

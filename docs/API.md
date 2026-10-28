@@ -50,7 +50,9 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   /projects/{project}/actions/{pack}/{name}`, `PUT /scenarios/{project}/{name}`, `GET
   /scenarios/{project}/{name}/proposal` and `POST …/proposal/dismiss`), the five AGH-507 added to them: `PUT
   /scenario-runs/{run_id}/breakpoints`, `POST /scenario-runs/{run_id}/step|continue`, `GET
-  /scenario-runs/{run_id}/values` and `POST /scenarios/{project}/{name}/migrate`, and the two AGH-393 added (`KNOWLEDGE_PATHS`, both GET):
+  /scenario-runs/{run_id}/values` and `POST /scenarios/{project}/{name}/migrate`, the one AGH-596
+  added to them: `DELETE /scenarios/{project}/{name}` ([Scenarios](#scenarios)), and the two AGH-393 added
+  (`KNOWLEDGE_PATHS`, both GET):
   `/projects/{project}/knowledge/search` and `/projects/{project}/brain/backlinks` ([Knowledge](#knowledge)). A test
   fails on any other path.
 - A field kept only for compatibility is marked `deprecated` in the document and stays until `/api/v2`: a session's
