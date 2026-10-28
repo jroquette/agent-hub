@@ -57,8 +57,8 @@ RUN_WRITES = re.compile(
 # The item writes (AGH-295, S7, D13) write into a hub's working tree: strict too, and they need
 # the launch's cookie (``session_access``, which answers 409 ``hub_read_only`` in the container).
 # Restore of a Toolkit item's or a hub workflow's version, the Studio's Publish of a draft, the
-# scenario builder's save (a PUT of ``/scenarios/{project}/{name}``; its GET is a read) and a
-# scenario's migrate to blocks (ADR 0049).
+# scenario builder's save and a scenario's delete (a PUT or a DELETE of
+# ``/scenarios/{project}/{name}``; its GET is a read) and a scenario's migrate to blocks (ADR 0049).
 ITEM_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/((projects/[^/]+/skills/[^/]+/[^/]+/[^/]+"
     r"|workflows/[^/]+/[^/]+)/versions/[^/]+/restore"
@@ -336,7 +336,8 @@ class LocalSecurityMiddleware:
 def _strict_refusal(method: str, path: str, headers: Headers) -> tuple[int, str, str] | None:
     """Why a strict write or a hub registry write is refused (``strict_refusal``), or None."""
     if is_strict_write(method, path):
-        strict = strict_refusal(headers)
+        # A DELETE carries no body (as ``session_access`` reads it); its Origin is still checked.
+        strict = strict_refusal(headers, needs_json=method != "DELETE")
         if strict is not None:
             return strict
     if is_hub_registry_write(method, path):

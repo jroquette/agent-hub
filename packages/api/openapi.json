@@ -23116,6 +23116,63 @@
       }
     },
     "/api/v1/scenarios/{project}/{name}": {
+      "delete": {
+        "description": "Remove the scenario's file (and Claude's proposal for it) from the hub folder (a strict\nwrite that needs the launch cookie); its recorded scenario runs stay; no git command runs.",
+        "operationId": "delete_scenario_api_v1_scenarios__project___name__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Delete Scenario",
+        "tags": [
+          "scenarios"
+        ]
+      },
       "get": {
         "description": "One scenario: its steps and its scenario runs, newest first.",
         "operationId": "get_scenario_api_v1_scenarios__project___name__get",

@@ -23,6 +23,11 @@
   writer does not write is a problem, and nothing is written; the hash is checked against the
   bytes read for a refused file too, but a link is never read, so its refusal is the answer
   whatever hash is sent. A ``version: 2`` scenario is 409 ``scenario_already_tree``.
+- ``delete`` removes the scenario's file and Claude's proposal for it from the hub folder, never
+  through a link (409 ``link_in_path``), and not while its newest scenario run is in progress
+  (409 ``scenario_run_in_progress``, a run waiting for you too). The scenario runs already
+  recorded stay in the store; the file comes back only from the hub's git history. No git
+  command runs.
 """
 
 import contextlib
@@ -339,6 +344,33 @@ class ScenarioBuilder:
             content_hash=content_hash(text.encode()),
             problems=(),
         )
+
+    def delete(self, project: str, name: str) -> str:
+        """Remove scenario ``name``'s file and its proposal; the file's path below the hub."""
+        hub_text, _plan, found = self.catalog.scenario_source(project, name)
+        last = self.catalog.last_run(project, name)
+        if last is not None and last.status == "running":
+            reason = f"scenario run {last.run_id} of {name} is in progress: let it end or cancel it"
+            raise RunConflictError(code="scenario_run_in_progress", reason=reason)
+        hub = Path(hub_text)
+        relative = found.path.relative_to(hub)
+        if not relative.parts or relative.parts[0] != HUB_SCENARIOS:
+            raise RunConflictError(
+                code="link_in_path", reason="the scenario file is not in the scenarios folder"
+            )
+        _unlink_no_link(hub, relative, what="the scenario path")
+        _unlink_no_link(hub, proposal_path(found.pack, name), what="the proposal path")
+        return relative.as_posix()
+
+
+def _unlink_no_link(hub: Path, relative: Path, *, what: str) -> None:
+    """Remove ``hub / relative`` (none is fine), refusing a link anywhere on its path: unlink
+    would follow a linked folder."""
+    below = (relative, *(parent for parent in relative.parents if parent != Path()))
+    if any((hub / part).is_symlink() for part in below):
+        raise RunConflictError(code="link_in_path", reason=f"{what} holds a link")
+    with contextlib.suppress(FileNotFoundError):
+        (hub / relative).unlink()
 
 
 def _not_in_place(path: Path, unit_path: str) -> str | None:
@@ -691,13 +723,7 @@ def drop_proposal(builder: ScenarioBuilder, project: str, name: str) -> None:
     """Removes Claude's proposal (accepted into the draft, or rejected); none is fine."""
     hub = Path(builder.catalog.hub_of(project))
     pack = builder.catalog.scenario(project, name)[2]
-    relative = proposal_path(pack, name)
-    # Every folder below the hub, and the file: unlink would follow a linked folder.
-    below = (relative, *(parent for parent in relative.parents if parent != Path()))
-    if any((hub / part).is_symlink() for part in below):
-        raise RunConflictError(code="link_in_path", reason="the proposal path holds a link")
-    with contextlib.suppress(FileNotFoundError):
-        (hub / relative).unlink()
+    _unlink_no_link(hub, proposal_path(pack, name), what="the proposal path")
 
 
 def create_action(

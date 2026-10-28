@@ -116,6 +116,13 @@ def save_scenario(
     return ScenarioBuilder(reads).save(project, name, request=body, writes=writes)
 
 
+@router.delete("/scenarios/{project}/{name}", status_code=204, response_class=Response)
+def delete_scenario(project: NamePath, name: NamePath, reads: ScenarioReadsDep) -> None:
+    """Remove the scenario's file (and Claude's proposal for it) from the hub folder (a strict
+    write that needs the launch cookie); its recorded scenario runs stay; no git command runs."""
+    ScenarioBuilder(reads).delete(project, name)
+
+
 @router.get("/scenarios/{project}/{name}/proposal")
 def get_proposal(project: NamePath, name: NamePath, reads: ScenarioReadsDep) -> ProposalView:
     """Claude's proposal for the scenario (a file in the hub's ignored ``.agent-runs/``),

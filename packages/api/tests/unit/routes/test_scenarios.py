@@ -2200,6 +2200,63 @@ def test_reads_checks_and_drops_claudes_proposal_when_builder_reviews(scenarios:
     assert not proposal.exists()
 
 
+def test_removes_file_and_proposal_when_scenario_deleted(scenarios: Any) -> None:
+    target = scenarios.hub / "scenarios" / "demo" / "order-walk.yaml"
+    proposal = (
+        scenarios.hub / ".agent-runs" / "proposals" / "scenarios" / "demo" / "order-walk.yaml"
+    )
+    proposal.parent.mkdir(parents=True)
+    proposal.write_text(WALK)
+
+    deleted = scenarios.client.delete(
+        "/api/v1/scenarios/demo/order-walk", headers=_origin(scenarios)
+    )
+    again = scenarios.client.delete("/api/v1/scenarios/demo/order-walk", headers=_origin(scenarios))
+
+    assert deleted.status_code == 204, deleted.text
+    assert (target.exists(), proposal.exists()) == (False, False)
+    assert scenarios.client.get("/api/v1/scenarios/demo/order-walk").status_code == 404
+    assert again.status_code == 404
+
+
+def test_refuses_when_scenario_deleted_while_its_run_in_progress(scenarios: Any) -> None:
+    scenarios.events.runs.append(
+        read_model_builders.a_run(
+            id="walk-1", workflow="scenario:order-walk", status="running", issue=None
+        )
+    )
+
+    refused = scenarios.client.delete(
+        "/api/v1/scenarios/demo/order-walk", headers=_origin(scenarios)
+    )
+
+    assert refused.status_code == 409, refused.text
+    assert "walk-1" in refused.json()["detail"]
+    assert (scenarios.hub / "scenarios" / "demo" / "order-walk.yaml").exists()
+
+
+def test_refuses_link_when_scenario_deleted(scenarios: Any, tmp_path: Path) -> None:
+    target = scenarios.hub / "scenarios" / "demo" / "order-walk.yaml"
+    outside = tmp_path / "outside.yaml"
+    outside.write_bytes(target.read_bytes())
+    target.unlink()
+    target.symlink_to(outside)
+
+    refused = scenarios.client.delete(
+        "/api/v1/scenarios/demo/order-walk", headers=_origin(scenarios)
+    )
+
+    assert refused.status_code in (404, 409), refused.text
+    assert outside.exists()
+
+
+def test_needs_origin_when_scenario_deleted(scenarios: Any) -> None:
+    refused = scenarios.client.delete("/api/v1/scenarios/demo/order-walk")
+
+    assert refused.status_code == 403
+    assert (scenarios.hub / "scenarios" / "demo" / "order-walk.yaml").exists()
+
+
 NEW_ACTION = {
     "pack": "demo",
     "name": "render-invoice-pdf",

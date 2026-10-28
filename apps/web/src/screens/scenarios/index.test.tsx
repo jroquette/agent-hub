@@ -84,9 +84,17 @@ describe("ScenariosScreen (scenarios list)", () => {
   it("scenarios list renders each scenario with its pack, steps and last scenario run", async () => {
     renderList();
 
-    const table = await screen.findByRole("table", { name: "Scenarios" });
-    const rows = within(table).getAllByRole("row");
-    expect(rows).toHaveLength(5);
+    const table = await screen.findByRole("list", { name: "Scenarios" });
+    const rows = within(table).getAllByRole("listitem");
+    // The one waiting for you first, then by name.
+    expect(rows.map((row) => row.dataset.rowKey)).toEqual([
+      "demo/order-lifecycle",
+      "demo/invoice-pdf",
+      "demo/refund-flow",
+      "demo/stock-sync",
+    ]);
+    expect(rows[0]).toHaveAttribute("data-tone", "waiting");
+    expect(rows[2]).toHaveTextContent("payments");
     expect(within(table).getByRole("link", { name: "order-lifecycle" })).toHaveAttribute(
       "href",
       "/scenarios/demo/order-lifecycle",
@@ -100,9 +108,9 @@ describe("ScenariosScreen (scenarios list)", () => {
       "href",
       "/scenarios/demo/invoice-pdf/runs/9b0d1f37",
     );
-    expect(
-      screen.getByText("4 scenarios in 2 packs · 1 scenario run waits for you"),
-    ).toBeInTheDocument();
+    expect(document.querySelector(".ft-summary")).toHaveTextContent(
+      "4 scenarios2 packs1 waits for you",
+    );
     const problems = screen.getByRole("table", { name: "Files that do not load (1)" });
     expect(within(problems).getByText("scenarios/orders/returns.yaml:14")).toBeInTheDocument();
     expect(
@@ -120,7 +128,7 @@ describe("ScenariosScreen (scenarios list)", () => {
     expect(
       within(card).getByRole("link", { name: `Open scenario run ${SCENARIO_RUN}` }),
     ).toHaveAttribute("href", `/scenarios/demo/order-lifecycle/runs/${SCENARIO_RUN}`);
-    const table = screen.getByRole("table", { name: "Scenarios" });
+    const table = screen.getByRole("list", { name: "Scenarios" });
     expect(within(table).getByText("Waiting for you")).toBeInTheDocument();
   });
 
@@ -194,8 +202,8 @@ describe("ScenariosScreen (scenarios list)", () => {
 
     await user.type(filter, "pdf");
     expect(router.state.location.search).toBe("?q=pdf");
-    const table = screen.getByRole("table", { name: "Scenarios" });
-    expect(within(table).getAllByRole("row")).toHaveLength(2);
+    const table = screen.getByRole("list", { name: "Scenarios" });
+    expect(within(table).getAllByRole("listitem")).toHaveLength(1);
     await user.clear(filter);
     await user.type(filter, "refnd");
     expect(screen.getByText(/No scenarios match "refnd"\./)).toBeInTheDocument();
@@ -247,7 +255,7 @@ describe("ScenariosScreen (scenarios list)", () => {
     it("scenarios list states: no waiting card when the open gates cannot be read", async () => {
       renderList({ "/api/v1/approvals": aProblem({ status: 500 }) });
 
-      const table = await screen.findByRole("table", { name: "Scenarios" });
+      const table = await screen.findByRole("list", { name: "Scenarios" });
       expect(screen.queryByRole("region", { name: "Waiting for you" })).toBeNull();
       expect(within(table).getByText("Running")).toBeInTheDocument();
     });
@@ -255,7 +263,7 @@ describe("ScenariosScreen (scenarios list)", () => {
     it("scenarios list states: stamps the header as stale when the collector is offline", async () => {
       renderList();
 
-      await screen.findByRole("table", { name: "Scenarios" });
+      await screen.findByRole("list", { name: "Scenarios" });
       expect(screen.getByText(/^Stale · as of/)).toBeInTheDocument();
     });
   });
@@ -274,5 +282,78 @@ describe("ScenariosScreen (scenarios list)", () => {
     ).toBeInTheDocument();
     const card = screen.getByRole("region", { name: "Waiting for you" });
     expect(card.style.borderLeft).toBe("");
+  });
+
+  describe("delete scenario", () => {
+    const openDelete = async (name: string) => {
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("button", { name: `Actions for ${name}` }));
+      await user.click(screen.getByRole("button", { name: "Delete scenario…" }));
+      return user;
+    };
+
+    it("deletes a scenario from its row menu after confirming, toasts and moves focus on", async () => {
+      const { requests } = renderList({
+        "DELETE /api/v1/scenarios/demo/invoice-pdf": {},
+      });
+
+      const user = await openDelete("invoice-pdf");
+      const dialog = screen.getByRole("alertdialog", { name: "Delete scenario invoice-pdf?" });
+      expect(dialog).toHaveTextContent("scenarios/orders/invoice-pdf.yaml");
+      expect(dialog).toHaveTextContent("Its recorded scenario runs stay.");
+      expect(dialog).toHaveTextContent("git restore scenarios/orders/invoice-pdf.yaml");
+      await user.click(within(dialog).getByRole("button", { name: "Delete scenario" }));
+
+      expect(await screen.findByText("Deleted scenario invoice-pdf.")).toBeInTheDocument();
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Copy restore command" })).toBeInTheDocument();
+      const deleted = requests.find((r) => r.method === "DELETE");
+      expect(new URL(deleted?.url ?? "").pathname).toBe("/api/v1/scenarios/demo/invoice-pdf");
+      expect(document.activeElement).toHaveAttribute("data-row-key", "demo/refund-flow");
+    });
+
+    it("keeps the dialog open with the server's reason when the delete is refused", async () => {
+      renderList({
+        "DELETE /api/v1/scenarios/demo/stock-sync": aProblem({
+          status: 409,
+          title: "Conflict",
+          detail: "the scenario path holds a link",
+        }),
+      });
+
+      const user = await openDelete("stock-sync");
+      await user.click(screen.getByRole("button", { name: "Delete scenario" }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Could not delete the scenario. the scenario path holds a link Nothing was deleted.",
+      );
+      expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    });
+
+    it("counts a scenario already gone as deleted", async () => {
+      renderList({
+        "DELETE /api/v1/scenarios/demo/stock-sync": aProblem({ status: 404, title: "Not found" }),
+      });
+
+      const user = await openDelete("stock-sync");
+      await user.click(screen.getByRole("button", { name: "Delete scenario" }));
+
+      expect(
+        await screen.findByText("stock-sync was already gone from the hub folder."),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    });
+
+    it("offers no delete while a scenario run of it waits for you", async () => {
+      const user = userEvent.setup();
+      renderList();
+
+      await user.click(await screen.findByRole("button", { name: "Actions for order-lifecycle" }));
+
+      expect(screen.queryByRole("button", { name: "Delete scenario…" })).toBeNull();
+      expect(
+        screen.getByText("A scenario run of it is in progress. Let it end or cancel it first."),
+      ).toBeInTheDocument();
+    });
   });
 });
