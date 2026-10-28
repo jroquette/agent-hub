@@ -1419,6 +1419,18 @@ select.ah-input:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
+/* A field that opens a list (a button, not a native select) hovers and focuses as a select. */
+button.ah-input {
+  cursor: pointer;
+}
+button.ah-input:hover:not(:disabled) {
+  background-color: var(--surface-hover);
+  border-color: var(--text-subtle);
+}
+button.ah-input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
 select.ah-input:disabled {
   cursor: default;
   opacity: 0.6;

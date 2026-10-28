@@ -3,11 +3,10 @@ import { useId, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Button,
   CopyButton,
+  HighlightedCode,
   Icon,
   JsonViewer,
   TOOL_ICON,
-  highlightable,
-  useHighlight,
   type IconName,
 } from "../../components";
 import { cx } from "../../lib/cx";
@@ -357,7 +356,6 @@ function ResultBody({ result }: { result: ToolResultView }) {
 
 /** A shell command as a terminal line: `$`, then the command coloured as bash, wrapped. */
 function CommandText({ command, description }: { command: string; description: string | null }) {
-  const nodes = useHighlight(command, "bash", highlightable(command));
   return (
     <>
       {description && <p className="as-tool-description">{description}</p>}
@@ -366,7 +364,7 @@ function CommandText({ command, description }: { command: string; description: s
         <span className="as-command-prompt" aria-hidden="true">
           ${" "}
         </span>
-        <code className={nodes ? "hljs" : undefined}>{nodes ?? command}</code>
+        <HighlightedCode text={command} lang="bash" />
       </pre>
     </>
   );

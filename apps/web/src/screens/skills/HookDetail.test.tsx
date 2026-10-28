@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
@@ -35,6 +35,19 @@ describe("HookDetail hook", () => {
     expect(code?.textContent).toBe("python3 plugin/hub-workflow/hooks/guard.py");
     expect(screen.queryByRole("button")).toBeNull();
     expect(screen.getByText(/never runs it/)).toBeInTheDocument();
+  });
+
+  // AC-596.5.20: the hook's command is coloured as shell.
+  it("colours the command as shell", async () => {
+    const command = 'python3 "$CLAUDE_PROJECT_DIR/hooks/guard.py" --strict';
+    const { container } = render(<HookDetail hook={{ ...HOOK, command }} />);
+
+    const code = container.querySelector("pre code");
+    await waitFor(() => {
+      expect(code).toHaveClass("hljs");
+    });
+    expect(code?.querySelector("span[class^='hljs-']")).not.toBeNull();
+    expect(code?.textContent).toBe(command);
   });
 
   it("lists event, matcher, type and state as facts", () => {

@@ -11,6 +11,7 @@ import {
 import type { components } from "../../api/schema";
 import {
   Button,
+  HighlightedCode,
   Icon,
   Markdown,
   OptionRow,
@@ -409,7 +410,8 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
           tabIndex={0}
           aria-label="What it will run"
         >
-          {request.summary}
+          {/* A Bash call's command reads as shell; another tool's summary stays plain. */}
+          <HighlightedCode text={request.summary} lang={request.tool === "Bash" ? "bash" : ""} />
         </pre>
       )}
       {plan !== null && <Markdown source={plan} className="as-plan" />}

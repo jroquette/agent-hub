@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
@@ -59,6 +59,20 @@ describe("BodyView detail_header_raw", () => {
     expect(screen.queryByRole("navigation", { name: "Contents" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Rendered" }));
     expect(container.querySelector("pre.ah-skill-raw")).toBeNull();
+  });
+
+  // AC-596.5.21: the Raw view colours the file's text as Markdown, keeping it exact.
+  it("colours the raw text as Markdown", async () => {
+    const { container } = view();
+
+    fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+
+    const code = container.querySelector("pre.ah-skill-raw code");
+    await waitFor(() => {
+      expect(code).toHaveClass("hljs");
+    });
+    expect(code?.querySelector("span[class^='hljs-']")).not.toBeNull();
+    expect(code?.textContent).toBe(DETAIL.raw);
   });
 
   it("follows a controlled view when the page owns it", () => {

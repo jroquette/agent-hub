@@ -568,6 +568,12 @@ describe("ProjectOverviewScreen", () => {
       expect(
         screen.getByText(codeText("cd /home/dev/agent-hub-hub && claude")),
       ).toBeInTheDocument();
+      // AC-596.5.19: the command is coloured as shell, not only found by its text.
+      const command = screen.getByText(codeText("cd /home/dev/agent-hub-hub && claude"));
+      await waitFor(() => {
+        expect(command).toHaveClass("hljs");
+      });
+      expect(command.querySelector("span[class^='hljs-']")).not.toBeNull();
       expect(await screen.findByText("No findings.")).toBeInTheDocument();
       expect(await screen.findByText("Setup · all good")).toBeInTheDocument();
     });

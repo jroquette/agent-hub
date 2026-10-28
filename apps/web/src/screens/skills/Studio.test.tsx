@@ -160,6 +160,56 @@ describe("StudioScreen (start)", () => {
   });
 });
 
+describe("StudioScreen (files)", () => {
+  // AC-596.5.22: a draft's file is coloured by the language its path names.
+  it("colours each draft file by its language", async () => {
+    const script = "def notes(prs):\n    return [pr.title for pr in prs]\n";
+    const base = routes();
+    const events = base[`${SESSION}/events`] as { items: unknown[]; next_after: null };
+    saveDraft(DRAFT, { project: "demo", kind: "skill" }, { sessionId: ID });
+    renderStudio({
+      ...base,
+      [`${SESSION}/events`]: {
+        ...events,
+        items: [
+          ...events.items.slice(0, 3),
+          aLogRecord("tool.call", {
+            seq: 4,
+            body: {
+              input: {
+                file_path: `${HUB}/.hub-drafts/${DRAFT}/scripts/notes.py`,
+                content: script,
+              },
+              name: "Write",
+              parent_tool_use_id: null,
+              tool_use_id: "toolu_02",
+            },
+          }),
+          aLogRecord("tool.result", { seq: 5 }),
+          aLogRecord("result", { seq: 6 }),
+        ],
+      },
+      [SESSION]: anAgentSession({ id: ID, status: "idle", last_seq: 6 }),
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: /^Files 2/ }));
+    const tree = screen.getByRole("list", { name: "Draft files" });
+    await userEvent.click(within(tree).getByRole("button", { name: /scripts\/notes\.py/ }));
+    const python = screen.getByLabelText("scripts/notes.py").querySelector("code");
+    await waitFor(() => {
+      expect(python).toHaveClass("hljs");
+    });
+    expect(python?.querySelector(".hljs-keyword")).toHaveTextContent("def");
+
+    await userEvent.click(within(tree).getByRole("button", { name: /SKILL\.md/ }));
+    const markdown = screen.getByLabelText("SKILL.md").querySelector("code");
+    await waitFor(() => {
+      expect(markdown).toHaveClass("hljs");
+    });
+    expect(markdown?.querySelector("span[class^='hljs-']")).not.toBeNull();
+  });
+});
+
 describe("StudioScreen (publish)", () => {
   it("publish_route sends the route and no chat message", async () => {
     const view = await openDraft(routes({ [`POST ${PUBLISH}`]: "pending" }));

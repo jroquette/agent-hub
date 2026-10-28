@@ -222,6 +222,12 @@ describe("HealthScreen", () => {
       expect(
         screen.getByText(codeText("cd /home/dev/agent-hub-hub && ./hub doctor")),
       ).toBeInTheDocument();
+      // AC-596.5.19: the command is coloured as shell, not only found by its text.
+      const command = screen.getByText(codeText("cd /home/dev/agent-hub-hub && ./hub doctor"));
+      await waitFor(() => {
+        expect(command).toHaveClass("hljs");
+      });
+      expect(command.querySelector("span[class^='hljs-']")).not.toBeNull();
     });
 
     it("shows the problem in the findings region with Try again", async () => {

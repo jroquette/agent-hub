@@ -1,8 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../testing/axe";
+import { codeText } from "../testing/text";
 import {
   CodeBlock,
   DiffViewer,
@@ -32,6 +33,31 @@ describe("CodeBlock", () => {
 
     expect(container.querySelector(".ah-code-prompt")).toBeNull();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  // AC-596.5.19: a command with the `$` prompt is coloured as shell, found by its whole text.
+  it("colours a command as shell", async () => {
+    render(<CodeBlock code="cd /a && ./hub sync" />);
+
+    const code = screen.getByText(codeText("cd /a && ./hub sync"));
+    await waitFor(() => {
+      expect(code).toHaveClass("hljs");
+    });
+    expect(code.querySelector("span[class^='hljs-']")).not.toBeNull();
+  });
+
+  // AC-596.5.19: with no prompt and no language, the text is not a command and stays plain.
+  it("leaves a block with no prompt and no language plain", async () => {
+    render(<CodeBlock code="cd /a && ./hub sync" />);
+    const { container } = render(<CodeBlock code="plain words" prompt="" noCopy />);
+
+    // Once the shell command is coloured, the highlighter has loaded.
+    await waitFor(() => {
+      expect(document.querySelector("code.hljs")).not.toBeNull();
+    });
+    const code = container.querySelector("code");
+    expect(code).not.toHaveClass("hljs");
+    expect(code?.querySelector("span")).toBeNull();
   });
 
   it("lets the keyboard scroll a command that does not wrap", () => {
