@@ -747,7 +747,9 @@ describe("ScenarioBuilder (scenario builder)", () => {
       { wait: { duration: "30s" }, id: "pause" },
       { ...pinned, id: "fetch-order--2" },
     ]);
-  });
+    // Long under the gates' parallel lanes: two ids typed, a block added and a save (past 5 s on
+    // CI's runner).
+  }, 20_000);
 
   it("scenario builder rewrites what reads a block written as blocks when its own id is renamed", async () => {
     const user = userEvent.setup();
