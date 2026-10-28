@@ -1,4 +1,5 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { createMemoryRouter, RouterProvider } from "react-router";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -11,19 +12,25 @@ import {
   aDebugScenarioRun,
   aRun,
   aScenarioAction,
+  aScenarioCatalog,
   aScenarioDetail,
   aScenarioRunDetail,
   aScenarioPlan,
   aScenarioPlanRow,
   aScenarioRunRef,
+  aScenarioSummary,
   aTreeDocument,
   at,
   renderWithApi,
   SCENARIO_RUN,
+  stubApi,
+  stubEventSource,
+  TestProviders,
+  testQueryClient,
   type ApiRoutes,
 } from "../../testing/builders";
 import { DiscussProvider, useDiscuss } from "../../shell/discuss";
-import { ScenarioDetailScreen } from ".";
+import { ScenarioDetailScreen, ScenariosScreen } from ".";
 import { codeText } from "../../testing/text";
 
 /** What the Discuss panel would be handed on this page. */
@@ -374,6 +381,56 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
     });
   });
 
+  it("scenarios detail shows a started run on the blocks as soon as the start is accepted", async () => {
+    // AC-596.2.33: ?run= is set right after the 202, while the run is not listed yet, and
+    // Follow is on once it shows.
+    let listed = false;
+    const { requests, router, queryClient } = renderDetail({
+      [PLAN]: aScenarioPlan(),
+      [START]: () => ({ run_id: SCENARIO_RUN, project: "demo", action: "start" }),
+      // The scenario lists the run only when the test says so: first only the start names it.
+      [DETAIL]: () => graphDetail({ runs: listed ? [aScenarioRunRef()] : [] }),
+      [WORKFLOW_RUN]: aScenarioWorkflowRun({
+        steps: [
+          {
+            attempt: 1,
+            ended_at: null,
+            key: "fetch-order",
+            max_attempts: 1,
+            reason: null,
+            session_ids: [],
+            started_at: "2026-10-23T10:00:00Z",
+            status: "running",
+          },
+        ],
+      }),
+      [SCENARIO_RUN_RECORD]: aScenarioRunDetail({ polls: [] }),
+    });
+    const user = await planIn("personal");
+    await within(runBar()).findByText(/^Can start in personal/);
+    await user.click(startButton());
+    const dialog = screen.getByRole("alertdialog", { name: "Start a scenario run in personal?" });
+    expect(new URLSearchParams(router.state.location.search).get("run")).toBeNull();
+    await user.click(within(dialog).getByRole("button", { name: "Start scenario run" }));
+
+    await waitFor(() => {
+      expect(new URLSearchParams(router.state.location.search).get("run")).toBe(SCENARIO_RUN);
+    });
+    expect(startRequest(requests)).toBeDefined();
+    expect(router.state.location.pathname).toBe(PATH);
+    // Not listed yet: the run panel has no row for it, and the confirm still waits for it.
+    const runs = within(runPanel()).getByRole("region", { name: "Scenario runs" });
+    expect(
+      within(runs).queryByRole("link", { name: `Open scenario run ${SCENARIO_RUN}` }),
+    ).not.toBeInTheDocument();
+
+    listed = true;
+    await act(async () => {
+      await queryClient.invalidateQueries();
+    });
+    expect(await screen.findByRole("checkbox", { name: "Follow" })).toBeChecked();
+  });
+
   it("scenarios detail refuses a start with the server's reason", async () => {
     renderDetail({
       [PLAN]: aScenarioPlan(),
@@ -549,6 +606,66 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
     expect(row(/^Step 3,/)).toHaveTextContent("Not started");
     // While it runs, a new start waits.
     expect(startButton()).toBeDisabled();
+  });
+
+  it("scenarios detail scrolls the row the run is at into view while Follow is on", async () => {
+    // AC-596.2.12: Follow (on) scrolls the current row into view each time the run moves;
+    // turned off, the run moves without scrolling the page.
+    const scrolled = vi.fn<(this: Element, options?: ScrollIntoViewOptions) => void>();
+    // jsdom has no scrollIntoView: the test gives every element one that records its calls.
+    Element.prototype.scrollIntoView = scrolled;
+    try {
+      const step = (key: string, status: "ok" | "running") => ({
+        attempt: 1,
+        ended_at: status === "ok" ? "2026-10-23T10:01:00Z" : null,
+        key,
+        max_attempts: 1,
+        reason: null,
+        session_ids: [],
+        started_at: "2026-10-23T10:00:00Z",
+        status,
+      });
+      let steps = [step("fetch-order", "running")];
+      const { queryClient } = renderDetail({
+        [DETAIL]: graphDetail({ runs: [aScenarioRunRef({ status: "running" })] }),
+        [WORKFLOW_RUN]: () => aScenarioWorkflowRun({ steps }),
+        [SCENARIO_RUN_RECORD]: aScenarioRunDetail(),
+      });
+      const scrolledRows = () =>
+        scrolled.mock.contexts.map((element) => element.getAttribute("data-row"));
+      const moveTo = async (next: typeof steps, at: RegExp) => {
+        steps = next;
+        await act(async () => {
+          await queryClient.invalidateQueries();
+        });
+        await waitFor(() => {
+          expect(row(at)).toHaveAttribute("aria-current", "step");
+        });
+      };
+
+      await waitFor(() => {
+        expect(row(/^Step 1,/)).toHaveAttribute("aria-current", "step");
+      });
+      expect(screen.getByRole("checkbox", { name: "Follow" })).toBeChecked();
+      expect(scrolledRows()).toContain("fetch-order");
+
+      scrolled.mockClear();
+      await moveTo([step("fetch-order", "ok"), step("order-on-hold", "running")], /^Step 2,/);
+      expect(scrolledRows()).toContain("order-on-hold");
+      expect(scrolled).toHaveBeenCalledWith({ block: "nearest" });
+
+      await userEvent.setup().click(screen.getByRole("checkbox", { name: "Follow" }));
+      expect(screen.getByRole("checkbox", { name: "Follow" })).not.toBeChecked();
+      scrolled.mockClear();
+      await moveTo(
+        [step("fetch-order", "ok"), step("order-on-hold", "ok"), step("render-pdf", "running")],
+        /^Step 3,/,
+      );
+      expect(scrolledRows()).not.toContain("render-pdf");
+    } finally {
+      // @ts-expect-error -- jsdom has none: take the stub away again.
+      delete Element.prototype.scrollIntoView;
+    }
   });
 
   it("scenarios detail follows a scenario run written as blocks: each block's state and what it kept", async () => {
@@ -1296,6 +1413,84 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
       expect(toggle).toHaveAttribute("aria-pressed", "true");
       await user.keyboard("b");
       expect(toggle).toHaveAttribute("aria-pressed", "false");
+    });
+  });
+
+  describe("scenario actions", () => {
+    /** The scenario's page and the list, in one router, so a delete can go from one to the
+     * other with its notice in the history state. */
+    function renderWithList(extra: ApiRoutes = {}) {
+      const requests = stubApi({
+        ...routes,
+        "/api/v1/scenarios": aScenarioCatalog({
+          items: [aScenarioSummary({ name: "refund-flow", pack: "payments" })],
+        }),
+        [`DELETE ${DETAIL}`]: {},
+        ...extra,
+      });
+      stubEventSource();
+      const router = createMemoryRouter(
+        [
+          { path: "/scenarios", element: <ScenariosScreen /> },
+          { path: "/scenarios/:project/:name", element: <ScenarioDetailScreen /> },
+        ],
+        { initialEntries: ["/scenarios", PATH], initialIndex: 1 },
+      );
+      render(
+        <TestProviders client={testQueryClient()}>
+          <RouterProvider router={router} />
+        </TestProviders>,
+      );
+      return { requests, router };
+    }
+
+    it("scenarios detail deletes the scenario from its menu and lands on the list once", async () => {
+      // AC-596.1.19: confirmed, the page replaces itself with /scenarios, which shows the
+      // deleted toast once (not again on Back) and focuses the Scenarios heading.
+      const user = userEvent.setup();
+      const { requests, router } = renderWithList();
+
+      await user.click(await screen.findByRole("button", { name: "Scenario actions" }));
+      await user.click(screen.getByRole("button", { name: "Delete scenario…" }));
+      const dialog = screen.getByRole("alertdialog", { name: "Delete scenario order-lifecycle?" });
+      await user.click(within(dialog).getByRole("button", { name: "Delete scenario" }));
+
+      expect(await screen.findByText("Deleted scenario order-lifecycle.")).toBeInTheDocument();
+      expect(router.state.location.pathname).toBe("/scenarios");
+      const deleted = requests.find((request) => request.method === "DELETE");
+      expect(new URL(deleted?.url ?? "").pathname).toBe(DETAIL);
+      await waitFor(() => {
+        expect(screen.getByRole("heading", { level: 1, name: "Scenarios" })).toHaveFocus();
+      });
+      // The notice is read once: the history state is cleared, so a reload shows no toast.
+      await waitFor(() => {
+        expect(router.state.location.state).toBeNull();
+      });
+      // The page replaced itself, and coming Back to the list later shows no toast again.
+      expect(router.state.historyAction).toBe("REPLACE");
+      await act(async () => {
+        await router.navigate(PATH);
+      });
+      expect(await screen.findByRole("button", { name: "Scenario actions" })).toBeInTheDocument();
+      await act(async () => {
+        await router.navigate(-1);
+      });
+      expect(router.state.location.pathname).toBe("/scenarios");
+      expect(router.state.location.state).toBeNull();
+      expect(await screen.findByRole("heading", { level: 1, name: "Scenarios" })).toBeVisible();
+      expect(screen.queryByText("Deleted scenario order-lifecycle.")).not.toBeInTheDocument();
+    });
+
+    it("scenarios detail turns the menu's delete off while the newest run is running", async () => {
+      // AC-596.1.19: the menu's delete is off while the newest run is running.
+      const user = userEvent.setup();
+      renderDetail({ [DETAIL]: graphDetail({ runs: [aScenarioRunRef({ status: "running" })] }) });
+
+      await user.click(await screen.findByRole("button", { name: "Scenario actions" }));
+      expect(screen.queryByRole("button", { name: "Delete scenario…" })).not.toBeInTheDocument();
+      expect(
+        screen.getByText("A scenario run of it is in progress. Let it end or cancel it first."),
+      ).toBeInTheDocument();
     });
   });
 

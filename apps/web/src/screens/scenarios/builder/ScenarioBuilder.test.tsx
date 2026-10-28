@@ -5,6 +5,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ICONS } from "../../../components/icons";
 import { seriousViolations } from "../../../testing/axe";
 import {
   aDebugScenarioRun,
@@ -191,6 +192,20 @@ const CARDS_RUN = {
 
 /** A stylesheet of the web app, as written. */
 const cssOf = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
+/** The body of a stylesheet's first top-level rule for exactly `selector`. */
+const ruleOf = (css: string, selector: string): string => {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const rule = new RegExp(`(?:^|\\n)${escaped} \\{([^}]*)\\}`).exec(css);
+  if (!rule?.[1]) throw new Error(`no rule ${selector}`);
+  return rule[1];
+};
+/** Every rule body of a stylesheet whose selector names `name` (`.st-column`, …). */
+const rulesNaming = (css: string, name: string): string[] =>
+  [...css.matchAll(/([^{}]*)\{([^}]*)\}/g)]
+    .filter(([, selector]) =>
+      new RegExp(`${name.replace(".", "\\.")}(?![\\w-])`).test(selector ?? ""),
+    )
+    .map(([, , body]) => body ?? "");
 
 // What migrate gives for the graph scenario above, checked (nothing written).
 const MIGRATION = {
@@ -1213,6 +1228,87 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(selected?.[1]).toContain("border-color: var(--accent);");
   });
 
+  describe("scenario builder layout rules", () => {
+    const steps = cssOf("src/screens/scenarios/builder/steps.css");
+    const builder = cssOf("src/screens/scenarios/builder/builder.css");
+    const blocks = cssOf("src/screens/scenarios/builder/blocks.css");
+    const tokens = cssOf("src/styles/tokens.css");
+    const px = (token: string) => {
+      const value = new RegExp(`--${token}: (\\d+)px;`).exec(tokens)?.[1];
+      if (value === undefined) throw new Error(`no token ${token}`);
+      return Number(value);
+    };
+
+    it("scenario builder keeps the blocks against the left column inside a capped page box", () => {
+      // AC-596.2.30: the blocks column is at most 960px with no auto margin (never centred
+      // away from the palette), and the page box is capped at 1920px.
+      const column = ruleOf(steps, ".st-column");
+      expect(column).toContain("max-width: 960px;");
+      expect(column).toMatch(/\n\s*margin: 0;/);
+      for (const body of [steps, builder, blocks].flatMap((css) =>
+        rulesNaming(css, ".st-column"),
+      )) {
+        expect(body).not.toMatch(/margin[\w-]*:[^;]*auto/);
+      }
+      const page = ruleOf(steps, ".sb-page");
+      expect(page).toContain("max-width: 1920px;");
+      expect(page).toContain("width: 100%;");
+    });
+
+    it("scenario builder groups the run bar's controls and leaves the environment select room", () => {
+      // AC-596.2.41: a separator between the groups; the environment select is wide enough
+      // for its name and its arrow.
+      const sep = ruleOf(steps, ".sb-runbar-sep");
+      expect(sep).toContain("width: 1px;");
+      expect(sep).toContain("align-self: stretch;");
+      expect(sep).toContain("background: var(--border);");
+      expect(ruleOf(steps, ".sb-runbar-controls .sb-env select")).toContain("min-width: 240px;");
+    });
+
+    it("scenario builder keeps a step's title a readable minimum width when its right side is full", () => {
+      // AC-596.2.43: the title's column never shrinks under 160px; the right side wraps.
+      expect(ruleOf(steps, ".st-row")).toMatch(
+        /grid-template-columns: [^;]*minmax\(160px, 1fr\) minmax\(0, auto\);/,
+      );
+      const right = ruleOf(steps, ".st-right");
+      expect(right).toContain("flex-wrap: wrap;");
+      expect(right).toContain("min-width: 0;");
+    });
+
+    it("scenario builder shows an editable plain value on one line, cut with an ellipsis", () => {
+      // AC-596.3.8: the chip does not wrap; its text is ellipsed inside it.
+      const chip = ruleOf(steps, ".st-chip-edit");
+      expect(chip).toContain("white-space: nowrap;");
+      expect(chip).toContain("max-width: 100%;");
+      const text = ruleOf(steps, ".st-chip-text");
+      expect(text).toContain("text-overflow: ellipsis;");
+      expect(text).toContain("overflow: hidden;");
+      expect(text).toContain("min-width: 0;");
+    });
+
+    it("scenario builder runs an open step's body left to right at the row's full width", () => {
+      // AC-596.3.26: its cells stretch, not centred.
+      const body = ruleOf(steps, ".st-g-body");
+      expect(body).toContain("flex-direction: column;");
+      expect(body).toContain("align-items: stretch;");
+    });
+
+    it("scenario builder insets an open step's part as much on its left as on its right", () => {
+      // AC-596.3.28: the row's 4px plus the open part's own padding equal the row's right 12px.
+      const row =
+        /\n\s*padding: var\(--([\w-]+)\) var\(--([\w-]+)\) var\(--([\w-]+)\) var\(--([\w-]+)\);/.exec(
+          ruleOf(steps, ".st-row"),
+        );
+      if (!row) throw new Error("no padding on .st-row");
+      const [, , right = "", , left = ""] = row;
+      const open = /padding-left: var\(--([\w-]+)\);/.exec(ruleOf(steps, ".st-open-group"));
+      if (!open?.[1]) throw new Error("no padding-left on .st-open-group");
+      expect(px(left)).toBe(4);
+      expect(px(left) + px(open[1])).toBe(px(right));
+      expect(px(right)).toBe(12);
+    });
+  });
+
   it("scenario builder's Graph view of a scenario written as blocks has no serious a11y violation (a11y)", async () => {
     // AC-596.5.13: bands as regions, frames as groups, cards as buttons.
     const user = userEvent.setup();
@@ -2099,6 +2195,49 @@ describe("ScenarioBuilder (scenario builder)", () => {
     );
   });
 
+  it("scenario builder plans after a value left the form when another environment gives it", async () => {
+    // AC-596.2.5: only the inputs the form asks for are checked and required; a value kept for
+    // one that left it (the environment now gives it) blocks nothing and is not sent empty.
+    const user = userEvent.setup();
+    const { requests } = renderBuilder({
+      [DETAIL]: aScenarioDetail({
+        document: {
+          ...document,
+          inputs: { ...document.inputs, count: { type: "integer", required: true } },
+        },
+        content_hash: "sha256:aaa",
+        environments: [
+          { name: "personal", access: "write", production: false, values: { external_ref: "T-9" } },
+          {
+            name: "qa",
+            access: "read",
+            production: false,
+            values: { external_ref: "T-9", count: "3" },
+          },
+        ],
+      }),
+      [`POST ${DETAIL}/plan`]: aScenarioPlan(),
+    });
+
+    await screen.findByText("No problems");
+    await user.click(screen.getByRole("button", { name: "Plan in personal" }));
+    const form = screen.getByRole("form", { name: "Values to plan with" });
+    const count = within(form).getByRole("spinbutton", { name: "count" });
+    await user.type(count, "5");
+    await user.clear(count);
+
+    // qa gives count: the form no longer shows it, so the empty value kept for it is ignored.
+    await user.selectOptions(screen.getByRole("combobox", { name: "Environment" }), "qa");
+    const open = screen.getByRole("form", { name: "Values to plan with" });
+    expect(within(open).queryByRole("spinbutton", { name: "count" })).not.toBeInTheDocument();
+    await user.click(within(open).getByRole("button", { name: "Plan in qa" }));
+    await waitFor(() => {
+      expect(requests.some((request) => request.url.endsWith("/plan"))).toBe(true);
+    });
+    const sent = requests.find((request) => request.url.endsWith("/plan"));
+    expect(await sent?.clone().json()).toEqual({ environment: "qa", inputs: {} });
+  });
+
   it("scenario builder's Environment select drives ?env= and what the page reads in", async () => {
     const user = userEvent.setup();
     const { router } = renderBuilder({}, `${PATH}?env=qa`);
@@ -2130,6 +2269,32 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const nodes = await savedNodes(requests);
     expect(nodes.map((node) => node.id)).toEqual(["fetch-order", "order-on-hold", "manual-step"]);
     expect(nodes[2]).toMatchObject({ depends_on: ["order-on-hold"], capture_response: true });
+  });
+
+  it("scenario builder words an expect step's stop in its Inspector by the scenario run mode", async () => {
+    // AC-596.2.4: the step's stop follows the run bar's mode: Interactive pauses for a
+    // read-only agent, Regression fails the scenario run.
+    const user = userEvent.setup();
+    renderBuilder();
+
+    await user.click(await screen.findByRole("treeitem", { name: CHECK }));
+    const editor = screen.getByRole("region", { name: "Inspector: Wait until order-on-hold" });
+    await user.click(within(editor).getByRole("button", { name: /^Where it can stop: / }));
+    expect(
+      within(editor).getByText(
+        "If its condition (status is 'ON_HOLD') still does not hold after 5 min, the scenario run pauses and a read-only agent investigates with you (Interactive).",
+      ),
+    ).toBeInTheDocument();
+    expect(within(editor).queryByText(/\(Regression\)/)).not.toBeInTheDocument();
+
+    const mode = screen.getByRole("group", { name: "Scenario run mode" });
+    await user.click(within(mode).getByRole("button", { name: "Regression" }));
+    expect(
+      within(editor).getByText(
+        "If its condition (status is 'ON_HOLD') still does not hold after 5 min, the scenario run fails here (Regression).",
+      ),
+    ).toBeInTheDocument();
+    expect(within(editor).queryByText(/\(Interactive\)/)).not.toBeInTheDocument();
   });
 
   it("scenario builder edits a step in the step editor", async () => {
@@ -3199,6 +3364,11 @@ describe("ScenarioBuilder (scenario builder)", () => {
       within(panel).getByRole("button", { name: "target: payments-queue" }),
     ).toBeInTheDocument();
     expect(within(panel).queryByRole("textbox", { name: /target/ })).not.toBeInTheDocument();
+    // AC-596.4.10: the side panel keeps the input's own description under its field, beside
+    // the field's note on the service picked; the open step's note never shows it (AC-596.4.16).
+    const panelField = within(panel).getByRole("button", { name: "target: payments-queue" });
+    expect(panelField.closest(".ah-stack")).toHaveTextContent("Where it is sent.");
+    expect(kind.closest(".st-g-row")).not.toHaveTextContent("Where it is sent.");
   });
 
   it("scenario builder has no serious a11y violation with a service input open and its list shown (a11y)", async () => {
@@ -3926,6 +4096,84 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(ghost.querySelector("svg")).not.toBeNull();
   });
 
+  it("scenario builder groups the services in the picker's order of kinds, each row with the service icon", async () => {
+    // AC-596.4.2: kinds in a fixed order: the snapshot's (api, frontend, database, sqs, queue,
+    // bucket, lambda, dynamodb, cognito), each kind Add service writes next to its like, a kind
+    // hub web does not know after them and other last; every row has the service icon, the
+    // current pick a check.
+    const user = userEvent.setup();
+    const kinds = [
+      "other",
+      "cache",
+      "cognito",
+      "dynamodb",
+      "function",
+      "lambda",
+      "storage",
+      "bucket",
+      "queue",
+      "sqs",
+      "database",
+      "web",
+      "frontend",
+      "api",
+    ];
+    renderBuilder({
+      "/api/v1/projects/demo/actions": SEND_TO_TARGET,
+      "/api/v1/projects/demo/config": configWith(
+        kinds.map((kind) => aService(`${kind}-one`, kind, `${kind}.example.com`)),
+      ),
+    });
+    const fetch = await screen.findByRole("treeitem", { name: FETCH });
+    await user.click(fetch);
+    await user.click(within(fetch).getByRole("button", { name: "target: choose a service" }));
+    const picker = screen.getByRole("dialog", { name: "Choose target" });
+    expect(
+      [...picker.querySelectorAll(".bk-menu-group")].map((group) => group.textContent),
+    ).toEqual([
+      "APIs and backends",
+      "Frontends",
+      "Frontends and portals",
+      "Databases",
+      "Queues (SQS)",
+      "Queues and topics",
+      "Buckets",
+      "Storage buckets",
+      "Functions",
+      "Functions and jobs",
+      "Tables (DynamoDB)",
+      "User pools",
+      "cache",
+      "Other services",
+    ]);
+    const drawn = (name: "server" | "check") =>
+      ICONS[name]
+        .map(
+          ([tag, attrs]) =>
+            `<${tag}${Object.entries(attrs)
+              .map(([attr, value]) => ` ${attr}="${value}"`)
+              .join("")}></${tag}>`,
+        )
+        .join("");
+    const icons = () =>
+      within(screen.getByRole("dialog", { name: "Choose target" }))
+        .getAllByRole("option")
+        .map((option) => option.querySelector("svg")?.innerHTML);
+    expect(icons()).toEqual(kinds.map(() => drawn("server")));
+
+    await user.click(within(picker).getByRole("option", { name: /queue-one/ }));
+    await user.click(within(fetch).getByRole("button", { name: "target: queue-one" }));
+    await user.selectOptions(
+      within(fetch).getByRole("combobox", { name: "Kind of service for target" }),
+      "",
+    );
+    await user.click(within(fetch).getByRole("button", { name: "target: queue-one" }));
+    const names = within(screen.getByRole("dialog", { name: "Choose target" }))
+      .getAllByRole("option")
+      .map((option) => option.querySelector(".bk-menu-label")?.textContent);
+    expect(icons()).toEqual(names.map((name) => drawn(name === "queue-one" ? "check" : "server")));
+  });
+
   it("scenario builder lists each service with its address in the run bar's environment, found by name, kind or address", async () => {
     // AC-596.4.3: each row has its address in the environment, or says it has none there.
     // AC-596.4.4: the search keeps what matches by name, kind or address, else says so.
@@ -4026,8 +4274,11 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const panel = screen.getByRole("region", { name: /^Inspector: / });
     expect(within(panel).queryByRole("textbox", { name: /target/ })).not.toBeInTheDocument();
     // Nothing picked: the panel says what to choose, not the action's own words.
-    expect(within(panel).getByText("Choose a service in personal")).toBeInTheDocument();
-    expect(within(panel).queryByText("Where it is sent.")).not.toBeInTheDocument();
+    const note = within(panel).getByText("Choose a service in personal");
+    expect(note).toBeInTheDocument();
+    expect(note).not.toHaveTextContent("Where it is sent.");
+    // The input's own description stays a line of its own under the field (as the snapshot).
+    expect(within(panel).getByText("Where it is sent.")).not.toBe(note);
 
     await user.click(within(panel).getByRole("button", { name: "target: choose a service" }));
     const picker = screen.getByRole("dialog", { name: "Choose target" });

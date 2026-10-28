@@ -373,16 +373,15 @@ export function serviceKind(id: string | null | undefined): ServiceKind | undefi
   return SERVICE_KINDS.find((kind) => kind.id === id);
 }
 
-/** Kinds a hub.json may name by hand that Add service does not offer, each a form of one it does
- * (`like`): its icon, and its place after that kind in a list. */
-const MORE_SERVICE_KINDS: readonly (ServiceKindWords & { like: string })[] = [
+/** Kinds a hub.json may name by hand that Add service does not offer, each a form of one it does:
+ * its words and icon. */
+const MORE_SERVICE_KINDS: readonly ServiceKindWords[] = [
   {
     id: "frontend",
     label: "Frontend",
     plural: "Frontends",
     one: "a frontend",
     icon: "globe",
-    like: "web",
   },
   {
     id: "dynamodb",
@@ -390,7 +389,6 @@ const MORE_SERVICE_KINDS: readonly (ServiceKindWords & { like: string })[] = [
     plural: "Tables (DynamoDB)",
     one: "a table (DynamoDB)",
     icon: "database",
-    like: "database",
   },
   {
     id: "sqs",
@@ -398,7 +396,6 @@ const MORE_SERVICE_KINDS: readonly (ServiceKindWords & { like: string })[] = [
     plural: "Queues (SQS)",
     one: "a queue (SQS)",
     icon: "layers",
-    like: "queue",
   },
   {
     id: "bucket",
@@ -406,7 +403,6 @@ const MORE_SERVICE_KINDS: readonly (ServiceKindWords & { like: string })[] = [
     plural: "Buckets",
     one: "a bucket",
     icon: "package",
-    like: "storage",
   },
   {
     id: "lambda",
@@ -414,7 +410,6 @@ const MORE_SERVICE_KINDS: readonly (ServiceKindWords & { like: string })[] = [
     plural: "Functions",
     one: "a function",
     icon: "cpu",
-    like: "function",
   },
   {
     id: "cognito",
@@ -422,7 +417,6 @@ const MORE_SERVICE_KINDS: readonly (ServiceKindWords & { like: string })[] = [
     plural: "User pools",
     one: "a user pool",
     icon: "users",
-    like: "other",
   },
 ];
 
@@ -441,15 +435,29 @@ export function serviceKindWords(id: string): ServiceKindWords {
   );
 }
 
-/** Where a kind goes in a list grouped by kind: in the order Add service offers them, each kind
- * written by hand after the one it is a form of, a kind hub web does not know last. */
+/** The order the scenario service picker groups kinds in (spec 23): the snapshot's order, with
+ * each kind Add service offers next to the kind it is like (web after frontend, storage after
+ * bucket, function after lambda), a kind hub web does not know after them, and other last. */
+const PICKER_KIND_ORDER: readonly string[] = [
+  "api",
+  "frontend",
+  "web",
+  "database",
+  "sqs",
+  "queue",
+  "bucket",
+  "storage",
+  "lambda",
+  "function",
+  "dynamodb",
+  "cognito",
+];
+
+/** Where a kind goes in the service picker's list grouped by kind (PICKER_KIND_ORDER). */
 export function serviceKindRank(id: string | null | undefined): number {
-  const own = SERVICE_KINDS.findIndex((kind) => kind.id === id);
-  if (own !== -1) return own * 10;
-  const more = MORE_SERVICE_KINDS.findIndex((kind) => kind.id === id);
-  if (more === -1) return SERVICE_KINDS.length * 10;
-  const like = SERVICE_KINDS.findIndex((kind) => kind.id === MORE_SERVICE_KINDS[more]?.like);
-  return like * 10 + 1 + more;
+  if (id === "other") return PICKER_KIND_ORDER.length + 1;
+  const at = PICKER_KIND_ORDER.indexOf(id ?? "");
+  return at === -1 ? PICKER_KIND_ORDER.length : at;
 }
 
 /** The example address of a kind in an environment: local-looking ones get the local example. */

@@ -1299,16 +1299,25 @@ export function ScenarioBuilder({
   const missingToPlan = asksAtStart.filter(
     (name) => !isBoolean(name) && (planValues[name] ?? "") === "",
   );
-  /** The values a plan sends, typed, and a problem per value that does not fit its type. */
+  /** The values a plan sends, typed, and a problem per value that does not fit its type. Only
+   * the names the form shows (asksAtStart) are checked and required: a value kept for a name
+   * that left the form (another environment gives it) has no field to say its problem, so it
+   * is sent as typed when it fits, as written when it does not, and not at all when empty. */
   const typedValues = () => {
     const inputs: PlanRequest["inputs"] = {};
     const problems: Record<string, string> = {};
-    const names = [...Object.keys(planValues), ...asksAtStart];
-    for (const name of new Set(names)) {
+    for (const name of asksAtStart) {
       const raw = planValues[name] ?? (isBoolean(name) ? false : "");
       const value = parsed(specOf(name), raw, badValues[name] ?? false);
       if (value instanceof Error) problems[name] = value.message;
       else if (value !== undefined) inputs[name] = value;
+    }
+    for (const [name, raw] of Object.entries(planValues)) {
+      if (asksAtStart.includes(name) || raw === "") continue;
+      const value = parsed(specOf(name), raw);
+      if (value instanceof Error || value === undefined) {
+        if (String(raw).trim() !== "") inputs[name] = raw;
+      } else inputs[name] = value;
     }
     return { inputs, problems };
   };

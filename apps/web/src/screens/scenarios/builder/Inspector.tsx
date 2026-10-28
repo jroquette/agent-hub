@@ -1019,6 +1019,9 @@ export function BlockInspector({
                             set("with", { ...given, [input.name]: picked });
                           }}
                         />
+                        {input.description && (
+                          <span className="ah-small ah-muted">{input.description}</span>
+                        )}
                       </div>
                     );
                   }

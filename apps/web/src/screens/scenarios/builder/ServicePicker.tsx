@@ -212,8 +212,8 @@ export function ServicePicker({
     field.current?.focus();
   }, []);
   const needle = query.trim().toLowerCase();
-  // Grouped by kind, in the order Add service offers the kinds (a service of no kind with the
-  // others), then by name.
+  // Grouped by kind, in the picker's order of kinds (a service of no kind with the others), then
+  // by name.
   const kindOf = (option: ServiceOption) => option.kind ?? "other";
   const sorted = [...options].sort(
     (a, b) =>
@@ -306,10 +306,7 @@ export function ServicePicker({
                     pick(index);
                   }}
                 >
-                  <Icon
-                    name={current ? "check" : serviceKindWords(kindOf(option)).icon}
-                    size="sm"
-                  />
+                  <Icon name={current ? "check" : "server"} size="sm" />
                   <span className="bk-menu-label">{option.name}</span>
                   <span className="bk-menu-hint">{option.repo ?? ""}</span>
                   <span className="bk-menu-about">
