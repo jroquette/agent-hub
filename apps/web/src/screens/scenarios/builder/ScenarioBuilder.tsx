@@ -817,6 +817,7 @@ export function ScenarioBuilder({
       return (
         <BlockInspector
           key={key}
+          services={serviceOptions}
           document={serialized}
           node={node}
           library={items}

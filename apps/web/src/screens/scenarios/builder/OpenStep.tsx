@@ -5,7 +5,7 @@ import type { ScenarioAction } from "../queries";
 import { pace } from "../story";
 import { ValueToken, tokenOf } from "./CardParts";
 import { looksLikeJson, parseLoose, stringifyLoose } from "./looseJson";
-import { ServiceField, type ServiceOption } from "./ServicePicker";
+import { useServiceField, type ServiceOption } from "./ServicePicker";
 import { ActionFiles } from "./StepScript";
 import { conditionWords, shown, text, type BuilderNode, type Json } from "./model";
 
@@ -176,10 +176,13 @@ export function OpenStep({
   const unsetServices = serviceInputs.filter(
     (input) => !values.some(([name]) => name === input.name),
   );
-  const serviceField = (name: string, value: string): ReactNode => (
-    <ServiceField
-      label={name}
+  const isService = (name: string) => serviceInputs.some((input) => input.name === name);
+  const serviceRow = (name: string, value: string, required: boolean, about: string | null) => (
+    <ServiceRow
+      key={name}
+      name={name}
       value={value}
+      note={`${name}${required ? " · required" : ""}${about ? ` · ${about}` : ""}`}
       options={sources?.services ?? []}
       environment={env?.name ?? null}
       onPick={(picked) => {
@@ -189,8 +192,6 @@ export function OpenStep({
   );
 
   const valueOf = (name: string, value: Json): ReactNode => {
-    if (onSet && serviceInputs.some((input) => input.name === name) && typeof value === "string")
-      return serviceField(name, value);
     const field = `with:${name}`;
     const editing = editor(field);
     if (editing) return editing;
@@ -264,16 +265,13 @@ export function OpenStep({
       {(params.length > 0 || (onSet && unsetServices.length > 0)) && (
         <Group title="Set in this step">
           {onSet &&
-            unsetServices.map((input) => (
-              <Row
-                key={input.name}
-                label={<span className="st-open-mono">{input.name}</span>}
-                note={`${input.required ? "Required · " : ""}${input.description ?? "A service of this environment"}`}
-                value={serviceField(input.name, "")}
-              />
-            ))}
+            unsetServices.map((input) =>
+              serviceRow(input.name, "", input.required, input.description ?? null),
+            )}
           {params.map(([name, value]) => {
             const spec = specOf(name);
+            if (onSet && isService(name) && typeof value === "string")
+              return serviceRow(name, value, spec?.required ?? false, spec?.description ?? null);
             return (
               <Row
                 key={name}
@@ -399,4 +397,31 @@ function Row({
       </span>
     </li>
   );
+}
+
+/** A service input's row: its kind where an input's name goes (the input's name moves to the
+ * note), the service itself where its value goes. */
+function ServiceRow({
+  name,
+  value,
+  note,
+  options,
+  environment,
+  onPick,
+}: {
+  name: string;
+  value: string;
+  note: string;
+  options: readonly ServiceOption[];
+  environment: string | null;
+  onPick: (value: string) => void;
+}) {
+  const { kindSelect, field } = useServiceField({
+    label: name,
+    value,
+    options,
+    environment,
+    onPick,
+  });
+  return <Row label={kindSelect} note={note} value={field} />;
 }

@@ -33,46 +33,89 @@ const KIND_WORDS: Readonly<Record<string, string>> = {
 
 const MENU_WIDTH = 440;
 
-/** The value a picked service is written as. */
-export function serviceValue(option: ServiceOption): string {
-  return option.repo ? `${option.repo}/${option.name}` : option.name;
+/** One of each kind, as the kind filter names it. */
+const KIND_ONE: Readonly<Record<string, string>> = {
+  api: "API or backend",
+  frontend: "Frontend",
+  database: "Database",
+  sqs: "Queue (SQS)",
+  queue: "Queue",
+  bucket: "Bucket",
+  lambda: "Function",
+  dynamodb: "Table (DynamoDB)",
+  cognito: "User pool",
+};
+
+/** The value a picked service is written as: its name, or `<repo>/<name>` only when another
+ * repo has a service of that name (the run refuses an ambiguous name). */
+export function serviceValue(option: ServiceOption, all: readonly ServiceOption[] = []): string {
+  const shared = all.some((other) => other.name === option.name && other.repo !== option.repo);
+  return shared && option.repo ? `${option.repo}/${option.name}` : option.name;
+}
+
+function key(option: ServiceOption): string {
+  return `${option.repo ?? ""}/${option.name}`;
 }
 
 function matches(option: ServiceOption, value: string): boolean {
-  return value === option.name || value === serviceValue(option);
+  return value === option.name || value === `${option.repo ?? ""}/${option.name}`;
 }
 
-/** The field: the picked service and its address; a press opens the list. */
-export function ServiceField({
-  label,
-  value,
-  options,
-  environment,
-  onPick,
-}: {
+interface ServiceFieldProps {
   label: string;
   value: string;
   options: readonly ServiceOption[];
   environment: string | null;
   onPick: (value: string) => void;
-}) {
+}
+
+/** A service input's two controls: the kind (a filter, set by the picked service unless one is
+ * chosen) and the field that opens the list. They share one state, so a row can lay them apart:
+ * the kind where the input's name goes, the service where its value goes. */
+export function useServiceField({ label, value, options, environment, onPick }: ServiceFieldProps) {
   const [anchor, setAnchor] = useState<DOMRect | null>(null);
   const picked = options.find((option) => matches(option, value)) ?? null;
-  return (
+  const [chosenKind, setChosenKind] = useState<string | null>(null);
+  const kind = chosenKind ?? picked?.kind ?? "";
+  const kinds = [...new Set(options.map((option) => option.kind ?? "").filter(Boolean))].sort(
+    (a, b) => (KIND_ONE[a] ?? a).localeCompare(KIND_ONE[b] ?? b),
+  );
+  const listed = kind === "" ? options : options.filter((option) => option.kind === kind);
+  const kindSelect = (
+    <select
+      className="ah-input st-service-kind"
+      aria-label={`Kind of service for ${label}`}
+      value={kind}
+      onClick={(event) => {
+        event.stopPropagation();
+      }}
+      onChange={(event) => {
+        setChosenKind(event.target.value);
+      }}
+    >
+      <option value="">Any kind</option>
+      {kinds.map((each) => (
+        <option key={each} value={each}>
+          {KIND_ONE[each] ?? each}
+        </option>
+      ))}
+    </select>
+  );
+  const field = (
     <>
       <button
         type="button"
         className="st-service"
         aria-haspopup="dialog"
         aria-expanded={anchor !== null}
-        aria-label={`${label}: ${value || "choose a service"}`}
+        aria-label={`${label}: ${picked?.name ?? (value || "choose a service")}`}
         title={picked?.address ?? undefined}
         onClick={(event) => {
           event.stopPropagation();
           setAnchor(event.currentTarget.getBoundingClientRect());
         }}
       >
-        <span className="st-service-name">{value || "Choose a service"}</span>
+        <span className="st-service-name">{picked?.name ?? (value || "Choose a service")}</span>
         {picked?.address && <span className="st-service-address">{picked.address}</span>}
         {value !== "" && picked === null && (
           <span className="st-service-missing">
@@ -87,10 +130,14 @@ export function ServiceField({
             anchor={anchor}
             title={label}
             value={value}
-            options={options}
+            options={listed}
+            all={options}
+            kindWords={kind === "" ? null : (KIND_ONE[kind] ?? kind)}
             environment={environment}
             onPick={(next) => {
               setAnchor(null);
+              // The kind follows the service picked, unless one was chosen to filter by.
+              if (chosenKind === "") setChosenKind(null);
               onPick(next);
             }}
             onClose={() => {
@@ -101,6 +148,18 @@ export function ServiceField({
         )}
     </>
   );
+  return { kindSelect, field };
+}
+
+/** Both controls side by side (the side panel, under the input's name). */
+export function ServiceField(props: ServiceFieldProps) {
+  const { kindSelect, field } = useServiceField(props);
+  return (
+    <span className="st-service-pair">
+      {kindSelect}
+      {field}
+    </span>
+  );
 }
 
 export function ServicePicker({
@@ -108,6 +167,8 @@ export function ServicePicker({
   title,
   value,
   options,
+  all = options,
+  kindWords = null,
   environment,
   onPick,
   onClose,
@@ -116,6 +177,10 @@ export function ServicePicker({
   title: string;
   value: string;
   options: readonly ServiceOption[];
+  /** Every declared service, the filter aside: a name is written short when it is unique. */
+  all?: readonly ServiceOption[];
+  /** The kind the list is filtered to, in words (null: every kind). */
+  kindWords?: string | null;
   environment: string | null;
   onPick: (value: string) => void;
   onClose: () => void;
@@ -146,7 +211,7 @@ export function ServicePicker({
     : sorted;
   const pick = (index: number) => {
     const option = shown[index];
-    if (option) onPick(serviceValue(option));
+    if (option) onPick(serviceValue(option, all));
   };
   const onKey = (event: KeyboardEvent) => {
     event.stopPropagation();
@@ -180,7 +245,7 @@ export function ServicePicker({
       >
         <div className="bk-menu-head">
           Choose {title}
-          {environment ? ` · services in ${environment}` : ""}
+          {` · ${kindWords ?? "services"}${environment ? ` in ${environment}` : ""}`}
         </div>
         <input
           ref={field}
@@ -205,7 +270,7 @@ export function ServicePicker({
             const head = previous === undefined || groupOf(previous) !== group ? group : null;
             const current = matches(option, value);
             return (
-              <div key={serviceValue(option)}>
+              <div key={key(option)}>
                 {head && <div className="bk-menu-group">{head}</div>}
                 <button
                   type="button"

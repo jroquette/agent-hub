@@ -1369,3 +1369,25 @@
   flex: none;
   color: var(--text-subtle);
 }
+
+/* A service input: the kind (a filter) and the service itself, side by side. */
+.st-service-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  min-width: 0;
+}
+.st-service-kind {
+  flex: none;
+  height: 28px;
+  padding: 0 28px 0 var(--space-2);
+  font-size: 12px;
+}
+.st-service-pair > .st-service {
+  min-width: 0;
+}
+/* In an open step the kind takes the input name's place: left, at its own width. */
+.st-g-label > .st-service-kind {
+  align-self: flex-start;
+}
