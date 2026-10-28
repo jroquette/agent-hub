@@ -4576,4 +4576,46 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.keyboard("{Escape}");
     expect(within(fetch).queryByRole("group", { name: "Step 1 settings" })).not.toBeInTheDocument();
   });
+
+  it("scenario builder's left column is a rail below 1920 px, opening over the list", async () => {
+    // A laptop's width: no (min-width: 1920px).
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
+    try {
+      const user = userEvent.setup();
+      renderBuilder();
+      const rail = await screen.findByRole("navigation", { name: "Blocks, variables and actions" });
+      // Only the rail: the column itself is not there until a tab is pressed.
+      expect(
+        screen.queryByRole("complementary", { name: "Blocks, variables and actions" }),
+      ).not.toBeInTheDocument();
+      await user.click(within(rail).getByRole("button", { name: "Variables" }));
+      const column = screen.getByRole("complementary", { name: "Blocks, variables and actions" });
+      expect(within(rail).getByRole("button", { name: "Variables" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+      expect(within(column).getByRole("tab", { name: "Variables" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      // Esc closes it, and so does its close button.
+      await user.click(within(column).getByRole("tab", { name: "Variables" }));
+      await user.keyboard("{Escape}");
+      expect(
+        screen.queryByRole("complementary", { name: "Blocks, variables and actions" }),
+      ).not.toBeInTheDocument();
+      await user.click(within(rail).getByRole("button", { name: "Blocks" }));
+      await user.click(screen.getByRole("button", { name: "Close Blocks, variables and actions" }));
+      expect(
+        screen.queryByRole("complementary", { name: "Blocks, variables and actions" }),
+      ).not.toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

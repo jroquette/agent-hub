@@ -1408,6 +1408,9 @@ export function ScenarioBuilder({
   const slowPlan = useAfter(SLOW_PLAN_MS, planner.isPending);
   // A tablet plans, but a start needs a desktop screen (spec 23, Responsive).
   const tablet = useMediaQuery(TABLET);
+  // jsdom has no matchMedia: tests see the wide layout.
+  const railed = !useMediaQuery("(min-width: 1920px)", true);
+  const [leftOpen, setLeftOpen] = useState(false);
   // A plan's 422 names its inputs by pointer: each message at its field, the others listed.
   const messages = planMessages(planner.error, asksAtStart);
   const [erred, setErred] = useState<unknown>(null);
@@ -1645,6 +1648,8 @@ export function ScenarioBuilder({
     };
     const move = (moving: PointerEvent) => {
       if (!moved && Math.hypot(moving.clientX - origin.x, moving.clientY - origin.y) < 4) return;
+      // Over the list, the column gets out of the way of the drop.
+      if (!moved) setLeftOpen(false);
       moved = true;
       target = inList(moving.clientX)
         ? nearestGap(listScroll.current, moving.clientY, undefined, kind)
@@ -1656,6 +1661,7 @@ export function ScenarioBuilder({
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       setPaletteDrag(null);
+      setLeftOpen(false);
       if (!moved) addAtEnd(made);
       else if (target) {
         placeAt([made], target);
@@ -1744,6 +1750,134 @@ export function ScenarioBuilder({
           Delete {rowNoun}
         </MenuItem>
       </div>
+    </>
+  );
+
+  // The left column (Blocks, Variables, Actions): a column on a wide screen; below 1920 px a
+  // narrow rail of its three tabs, each opening the column over the list, so the blocks keep
+  // the width (one editor at a time leaves the right column to the run panel).
+  const leftContent = (
+    <>
+      <Tabs
+        label="Left column"
+        value={leftTab}
+        onChange={(id) => {
+          setLeftTab(id === "actions" ? "actions" : id === "variables" ? "variables" : "blocks");
+        }}
+        tabs={[
+          { id: "blocks", label: "Blocks" },
+          { id: "variables", label: "Variables" },
+          { id: "actions", label: "Actions", count: items.length },
+        ]}
+      />
+      {leftTab === "blocks" ? (
+        <BlocksTab
+          library={items}
+          pack={scenario.pack}
+          taken={taken}
+          where={
+            tree && selected && stageOf(selected)?.key === selected
+              ? `at the end of stage ${selected}`
+              : selected && locate(main, selected)
+                ? `after step ${numbersNow.get(selected) ?? selected}`
+                : "at the end"
+          }
+          locked={underReview}
+          onAdd={addAtEnd}
+          onPress={pressBlock}
+          stages={
+            tree
+              ? {
+                  names: main.flatMap((item) => (item.kind === "stage" ? [item.name] : [])),
+                  where: stageOf(selected)
+                    ? `after stage ${stageOf(selected)?.key ?? ""}`
+                    : "at the end",
+                }
+              : null
+          }
+        />
+      ) : leftTab === "variables" ? (
+        variablesPanel
+      ) : (
+        <ActionsTab
+          library={items}
+          libraryError={library.isError}
+          usage={actionUsage}
+          onOpen={(item, opener) => {
+            actionOpener.current = opener;
+            setActionPanel(item.action.ref);
+          }}
+          onNewAction={() => {
+            setNewAction({ node: null, readOnly: false });
+          }}
+          onAskAction={() => {
+            setAskingAction({ step: null, readOnly: false });
+          }}
+        />
+      )}
+    </>
+  );
+  const railTabs = [
+    { id: "blocks", label: "Blocks", icon: "puzzle" },
+    { id: "variables", label: "Variables", icon: "flag" },
+    { id: "actions", label: `Actions (${String(items.length)})`, icon: "circle-play" },
+  ] as const;
+  const leftColumn = !railed ? (
+    <aside className="sb-left" aria-label="Blocks, variables and actions">
+      {leftContent}
+    </aside>
+  ) : (
+    <>
+      <nav className="sb-rail" aria-label="Blocks, variables and actions">
+        {railTabs.map((tab) => (
+          <IconButton
+            key={tab.id}
+            icon={tab.icon}
+            label={tab.label}
+            aria-pressed={leftOpen && leftTab === tab.id}
+            onClick={() => {
+              if (leftOpen && leftTab === tab.id) setLeftOpen(false);
+              else {
+                setLeftTab(tab.id);
+                setLeftOpen(true);
+              }
+            }}
+          />
+        ))}
+      </nav>
+      {leftOpen && (
+        <>
+          <div
+            className="sb-rail-scrim"
+            aria-hidden
+            onPointerDown={() => {
+              setLeftOpen(false);
+            }}
+          />
+          {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Esc closes it */}
+          <aside
+            className="sb-left sb-left-over"
+            aria-label="Blocks, variables and actions"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.stopPropagation();
+                setLeftOpen(false);
+              }
+            }}
+          >
+            <IconButton
+              icon="x"
+              size="sm"
+              label="Close Blocks, variables and actions"
+              className="sb-left-close"
+              onClick={() => {
+                setLeftOpen(false);
+              }}
+            />
+            {leftContent}
+          </aside>
+        </>
+      )}
     </>
   );
 
@@ -2288,68 +2422,13 @@ export function ScenarioBuilder({
           file.
         </Banner>
       )}
-      <div className="sb-body" data-panel="open" ref={bodyRef}>
-        <aside className="sb-left" aria-label="Blocks, variables and actions">
-          <Tabs
-            label="Left column"
-            value={leftTab}
-            onChange={(id) => {
-              setLeftTab(
-                id === "actions" ? "actions" : id === "variables" ? "variables" : "blocks",
-              );
-            }}
-            tabs={[
-              { id: "blocks", label: "Blocks" },
-              { id: "variables", label: "Variables" },
-              { id: "actions", label: "Actions", count: items.length },
-            ]}
-          />
-          {leftTab === "blocks" ? (
-            <BlocksTab
-              library={items}
-              pack={scenario.pack}
-              taken={taken}
-              where={
-                tree && selected && stageOf(selected)?.key === selected
-                  ? `at the end of stage ${selected}`
-                  : selected && locate(main, selected)
-                    ? `after step ${numbersNow.get(selected) ?? selected}`
-                    : "at the end"
-              }
-              locked={underReview}
-              onAdd={addAtEnd}
-              onPress={pressBlock}
-              stages={
-                tree
-                  ? {
-                      names: main.flatMap((item) => (item.kind === "stage" ? [item.name] : [])),
-                      where: stageOf(selected)
-                        ? `after stage ${stageOf(selected)?.key ?? ""}`
-                        : "at the end",
-                    }
-                  : null
-              }
-            />
-          ) : leftTab === "variables" ? (
-            variablesPanel
-          ) : (
-            <ActionsTab
-              library={items}
-              libraryError={library.isError}
-              usage={actionUsage}
-              onOpen={(item, opener) => {
-                actionOpener.current = opener;
-                setActionPanel(item.action.ref);
-              }}
-              onNewAction={() => {
-                setNewAction({ node: null, readOnly: false });
-              }}
-              onAskAction={() => {
-                setAskingAction({ step: null, readOnly: false });
-              }}
-            />
-          )}
-        </aside>
+      <div
+        className="sb-body"
+        data-panel="open"
+        data-left={railed ? "rail" : undefined}
+        ref={bodyRef}
+      >
+        {leftColumn}
         <div className="sb-stage">
           {view === "blocks" && (
             <StepList

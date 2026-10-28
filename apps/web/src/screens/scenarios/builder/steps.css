@@ -1428,3 +1428,51 @@
   flex: none;
   margin-left: auto;
 }
+
+/* Below 1920 px the left column is a rail of its three tabs; one opens the column over the list. */
+.sb-body[data-left="rail"],
+.sb-body[data-left="rail"][data-panel] {
+  grid-template-columns: 56px minmax(0, 1fr) 400px;
+}
+@media (min-width: 1600px) {
+  .sb-body[data-left="rail"],
+  .sb-body[data-left="rail"][data-panel] {
+    grid-template-columns: 56px minmax(0, 1fr) 440px;
+  }
+}
+.sb-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
+  border-right: 1px solid var(--border);
+}
+.sb-rail [aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.sb-rail-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 19;
+}
+.sb-left.sb-left-over {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 56px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  width: 320px;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-overlay);
+}
+.sb-left-close {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  z-index: 1;
+}
