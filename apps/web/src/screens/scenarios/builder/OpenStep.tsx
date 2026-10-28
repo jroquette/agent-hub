@@ -5,7 +5,7 @@ import type { ScenarioAction } from "../queries";
 import { pace } from "../story";
 import { ValueToken, tokenOf } from "./CardParts";
 import { looksLikeJson, parseLoose, stringifyLoose } from "./looseJson";
-import { useServiceField, type ServiceOption } from "./ServicePicker";
+import { kindWordsOf, useServiceField, type ServiceOption } from "./ServicePicker";
 import { ActionFiles } from "./StepScript";
 import { conditionWords, shown, text, type BuilderNode, type Json } from "./model";
 
@@ -20,8 +20,8 @@ export interface StepSources {
   environment: { name: string; values: Readonly<Record<string, string>> } | null;
   /** The scenario's run inputs. */
   inputs: readonly string[];
-  /** The values earlier steps keep, with the step that keeps each. */
-  kept: readonly { name: string; number: string }[];
+  /** The values earlier steps keep, with the step that keeps each (its id and number). */
+  kept: readonly { name: string; number: string; step?: string }[];
   /** The services declared in the environment, for a `service` input's picker. */
   services?: readonly ServiceOption[];
 }
@@ -38,6 +38,10 @@ export interface OpenStepProps {
   onEdit: ((field: string) => void) | null;
   /** Sets one value of the step (a service picked from the list). */
   onSet?: ((name: string, value: Json) => void) | null;
+  /** Edits one value of the step in the side panel (a body, a value it takes from elsewhere). */
+  onEditInPanel?: ((name: string) => void) | null;
+  /** Selects the step that keeps a value, by its id. */
+  onGoToStep?: ((step: string) => void) | null;
 }
 
 const REFERENCE = /\$(?:INPUTS|CTX)\.[A-Za-z0-9_]+|\$[a-z0-9_-]+\.output(?:\.[A-Za-z0-9_.]+)?/gi;
@@ -134,6 +138,8 @@ export function OpenStep({
   editor,
   onEdit,
   onSet = null,
+  onEditInPanel = null,
+  onGoToStep = null,
 }: OpenStepProps) {
   const params = values.filter(([, value]) => !isBody(value));
   const bodies = values.filter(([, value]) => isBody(value));
@@ -151,12 +157,13 @@ export function OpenStep({
     }
   }
 
-  const editChip = (field: string, label: ReactNode, title: string) =>
+  const given = record(node.with);
+  const editChip = (field: string, label: string, title: string) =>
     onEdit ? (
       <button
         type="button"
         className="st-chip-edit"
-        tabIndex={-1}
+        aria-label={`${title}: ${label}`}
         title={title}
         onClick={(event) => {
           event.stopPropagation();
@@ -170,25 +177,39 @@ export function OpenStep({
       <span>{label}</span>
     );
 
-  // A service input is picked from the declared services, never typed; one the step does not
-  // set yet is listed too, so a place to send to is chosen right here.
+  // Needs a value: a required input this step does not set and nothing else gives (not a
+  // scenario input, not the environment's, no default). The side panel says the same.
+  const needsValue = (name: string): boolean => {
+    const spec = specOf(name);
+    if (spec?.required !== true || name in given) return false;
+    if (sources?.inputs.includes(name)) return false;
+    if (env !== null && name in env.values) return false;
+    return spec.default === undefined || spec.default === null;
+  };
   const serviceInputs = (action?.inputs ?? []).filter((input) => input.type === "service");
-  const unsetServices = serviceInputs.filter(
-    (input) => !values.some(([name]) => name === input.name),
-  );
   const isService = (name: string) => serviceInputs.some((input) => input.name === name);
-  const serviceRow = (name: string, value: string, required: boolean, about: string | null) => (
+  // A service input the step does not set yet is listed too, so where it goes is chosen here.
+  const unsetServices = serviceInputs.filter((input) => !(input.name in given));
+  const missing = (action?.inputs ?? []).filter(
+    (input) => input.type !== "service" && needsValue(input.name),
+  );
+  const needCount = missing.length + unsetServices.filter((input) => input.required).length;
+  const Needs = () => (
+    <span className="st-g-missing">
+      <Icon name="circle-alert" size="sm" />
+      Needs a value
+    </span>
+  );
+
+  // The note follows what is picked (its kind and address), never the action's own words about
+  // one kind of service, which no longer hold once another kind is chosen.
+  const serviceRow = (name: string, value: string, required: boolean) => (
     <ServiceRow
       key={name}
       name={name}
       value={value}
-      note={
-        <>
-          <span className="st-open-mono">{name}</span>
-          {required ? " · Required" : ""}
-          {about ? ` · ${about}` : ""}
-        </>
-      }
+      required={required}
+      needs={<Needs />}
       options={sources?.services ?? []}
       environment={env?.name ?? null}
       onPick={(picked) => {
@@ -204,14 +225,29 @@ export function OpenStep({
     const said = written(value);
     if (said.includes("$")) {
       return (
-        <span className="st-open-mono">
-          <WithTokens value={said} />
+        <span className="st-open-value-ref">
+          <span className="st-open-mono">
+            <WithTokens value={said} />
+          </span>
+          {onEditInPanel && (
+            <button
+              type="button"
+              className="st-g-link"
+              onClick={(event) => {
+                event.stopPropagation();
+                onEditInPanel(name);
+              }}
+            >
+              Change in the panel
+            </button>
+          )}
         </span>
       );
     }
     return editChip(field, shown(value), `Edit ${name}`);
   };
 
+  const draft = action?.draft === true;
   return (
     // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- clicks inside keep the row as it is
     <div
@@ -222,17 +258,36 @@ export function OpenStep({
     >
       {action?.description && <p className="st-open-about">{action.description}</p>}
 
-      <Group title="Runs">
+      <Group title="What it does">
         <Row
-          label={
-            <span className="st-open-mono st-open-strong">{action?.name ?? text(node.action)}</span>
-          }
+          label="Action"
           value={
-            <span className="st-open-quiet">
-              {[action?.runtime, action?.draft === true ? "Draft action" : null]
-                .filter(Boolean)
-                .join(" · ")}
-            </span>
+            <>
+              <span className="st-open-mono st-open-strong">
+                {action?.name ?? text(node.action)}
+              </span>
+              {action?.runtime && (
+                <span className="st-open-quiet">{RUNTIME[action.runtime] ?? action.runtime}</span>
+              )}
+            </>
+          }
+          note={
+            draft ? (
+              <span className="st-open-draft">
+                <span className="ah-badge ah-badge-quiet">
+                  <Icon name="pencil" size="sm" />
+                  Draft: needs acceptance
+                </span>
+                It plans now; a scenario run starts once it is committed in the hub checkout.
+                {action.accept_command && (
+                  <CopyButton
+                    text={action.accept_command}
+                    label={`Copy the commit command for ${action.name}`}
+                    compact
+                  />
+                )}
+              </span>
+            ) : undefined
           }
         />
         {node.type === "expect" && every && timeout && (
@@ -268,16 +323,50 @@ export function OpenStep({
         )}
       </Group>
 
-      {(params.length > 0 || (onSet && unsetServices.length > 0)) && (
-        <Group title="Set in this step">
-          {onSet &&
-            unsetServices.map((input) =>
-              serviceRow(input.name, "", input.required, input.description ?? null),
-            )}
+      {(params.length > 0 ||
+        bodies.length > 0 ||
+        missing.length > 0 ||
+        (onSet && unsetServices.length > 0)) && (
+        <Group
+          title="Values for this step"
+          status={
+            needCount > 0 ? (
+              <span className="st-g-missing">
+                <Icon name="circle-alert" size="sm" />
+                {needCount} {needCount === 1 ? "needs a value" : "need a value"}
+              </span>
+            ) : null
+          }
+        >
+          {onSet && unsetServices.map((input) => serviceRow(input.name, "", input.required))}
+          {missing.map((input) => (
+            <Row
+              key={input.name}
+              label={<span className="st-open-mono">{input.name}</span>}
+              value={
+                <>
+                  <Needs />
+                  {onEditInPanel && (
+                    <button
+                      type="button"
+                      className="st-g-link"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onEditInPanel(input.name);
+                      }}
+                    >
+                      Set it in the panel
+                    </button>
+                  )}
+                </>
+              }
+              note={input.description ?? undefined}
+            />
+          ))}
           {params.map(([name, value]) => {
             const spec = specOf(name);
             if (onSet && isService(name) && typeof value === "string")
-              return serviceRow(name, value, spec?.required ?? false, spec?.description ?? null);
+              return serviceRow(name, value, spec?.required ?? false);
             return (
               <Row
                 key={name}
@@ -291,28 +380,77 @@ export function OpenStep({
               />
             );
           })}
+          {bodies.map(([name, value]) => {
+            const body = pretty(value);
+            const about = specOf(name)?.description;
+            return (
+              <li key={name} className="st-g-row st-g-body">
+                <span className="st-g-body-head">
+                  <span className="st-open-mono">{name}</span>
+                  <span className="st-open-quiet">JSON</span>
+                  <span className="ah-grow" />
+                  {onEditInPanel && (
+                    <button
+                      type="button"
+                      className="st-g-link"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onEditInPanel(name);
+                      }}
+                    >
+                      <Icon name="pencil" size="sm" /> Edit {name}
+                    </button>
+                  )}
+                  <CopyButton text={body} label={`Copy ${name}`} compact />
+                </span>
+                {/* A scrollable region is reached by keyboard. */}
+                {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+                <pre className="ah-json st-open-json" tabIndex={0} aria-label={`${name}, as JSON`}>
+                  <JsonText source={body} />
+                </pre>
+                {about && <span className="st-g-note">{about}</span>}
+              </li>
+            );
+          })}
         </Group>
       )}
 
       {uses.size > 0 && (
-        <Group title="Variables">
+        <Group title="Values from earlier">
           {[...uses.entries()].map(([ref, name]) => {
             const scenario = ref.startsWith("$INPUTS.");
             const envValue = scenario && env !== null ? env.values[name] : undefined;
-            const keptBy = sources?.kept.find((item) => item.name === name)?.number;
+            const kept = sources?.kept.find((item) => item.name === name);
+            const asked = sources?.inputs.includes(name) ?? false;
             return (
               <Row
                 key={ref}
                 label={<ValueToken value={ref} />}
                 value={
-                  <span className="st-open-quiet">
-                    {scenario
-                      ? envValue !== undefined
-                        ? `scenario input · ${envValue} from environment ${env?.name ?? ""}`
-                        : "scenario input · asked when the scenario run starts"
-                      : keptBy
-                        ? `kept by ${keptBy}`
-                        : "kept by an earlier step"}
+                  <span className="st-open-value-ref">
+                    <span className="st-open-quiet">
+                      {scenario
+                        ? envValue !== undefined
+                          ? `Scenario input · ${envValue} from ${env?.name ?? ""}`
+                          : asked
+                            ? "Scenario input · asked when the scenario run starts"
+                            : "Not asked by the scenario"
+                        : kept
+                          ? `Kept by ${kept.number}`
+                          : "Not given by any earlier step"}
+                    </span>
+                    {!scenario && kept?.step && onGoToStep && (
+                      <button
+                        type="button"
+                        className="st-g-link"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onGoToStep(kept.step ?? "");
+                        }}
+                      >
+                        Go to {kept.number}
+                      </button>
+                    )}
                   </span>
                 }
               />
@@ -321,41 +459,8 @@ export function OpenStep({
         </Group>
       )}
 
-      {bodies.map(([name, value]) => {
-        const body = pretty(value);
-        const about = specOf(name)?.description;
-        return (
-          <section
-            key={name}
-            className="st-g-section"
-            aria-label={name === "body" ? "Body" : `Body ${name}`}
-          >
-            <h4 className="st-g-title">
-              {name === "body" ? (
-                "Body"
-              ) : (
-                <>
-                  Body · <span className="st-open-mono">{name}</span>
-                </>
-              )}
-            </h4>
-            <div className="st-open-body">
-              {/* A scrollable region is reached by keyboard. */}
-              {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
-              <pre className="ah-json st-open-json" tabIndex={0} aria-label={`${name}, as JSON`}>
-                <JsonText source={body} />
-              </pre>
-              <span className="st-open-copy">
-                <CopyButton text={body} label={`Copy ${name}`} compact />
-              </span>
-            </div>
-            {about && <span className="st-g-foot">{about}</span>}
-          </section>
-        );
-      })}
-
       {keeps.length > 0 && (
-        <Group title="Keeps">
+        <Group title="Keeps for later steps">
           {keeps.map(([name, from]) => (
             <Row
               key={name}
@@ -373,11 +478,24 @@ export function OpenStep({
   );
 }
 
-/** A titled group of rows, as a grouped list in system settings. */
-function Group({ title, children }: { title: string; children: ReactNode }) {
+const RUNTIME: Readonly<Record<string, string>> = { python: "Python", shell: "Shell" };
+
+/** A titled group of rows, as a grouped list in system settings; `status` beside its title. */
+function Group({
+  title,
+  status = null,
+  children,
+}: {
+  title: string;
+  status?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <section className="st-g-section" aria-label={title}>
-      <h4 className="st-g-title">{title}</h4>
+      <h4 className="st-g-title">
+        {title}
+        {status}
+      </h4>
       <ul className="st-g">{children}</ul>
     </section>
   );
@@ -388,12 +506,15 @@ function Row({
   label,
   value,
   note,
+  noteText,
   source,
   quiet = false,
 }: {
   label: ReactNode;
   value: ReactNode;
   note?: ReactNode;
+  /** The note in words, as its tooltip, when the note is more than text. */
+  noteText?: string | undefined;
   source?: ReactNode;
   quiet?: boolean;
 }) {
@@ -405,7 +526,7 @@ function Row({
         {source}
       </span>
       {note && (
-        <span className="st-g-note" title={typeof note === "string" ? note : undefined}>
+        <span className="st-g-note" title={typeof note === "string" ? note : noteText}>
           {note}
         </span>
       )}
@@ -418,24 +539,54 @@ function Row({
 function ServiceRow({
   name,
   value,
-  note,
+  required,
+  needs,
   options,
   environment,
   onPick,
 }: {
   name: string;
   value: string;
-  note: ReactNode;
+  required: boolean;
+  /** How a missing value is said (icon and words). */
+  needs: ReactNode;
   options: readonly ServiceOption[];
   environment: string | null;
   onPick: (value: string) => void;
 }) {
-  const { kindSelect, field } = useServiceField({
+  const { kindSelect, field, picked, kindWords } = useServiceField({
     label: name,
     value,
     options,
     environment,
     onPick,
   });
-  return <Row label={kindSelect} note={note} value={field} />;
+  const where = environment ? ` in ${environment}` : "";
+  const about =
+    picked !== null
+      ? [kindWordsOf(picked.kind), picked.description, picked.address ?? `no address${where}`]
+          .filter(Boolean)
+          .join(" · ")
+      : value === ""
+        ? `Choose ${kindWords ? `a ${kindWords.toLowerCase()}` : "a service"}${where}`
+        : null;
+  const empty = value === "" && required;
+  const noteText = [name, empty ? "Needs a value" : required ? "Required" : null, about]
+    .filter(Boolean)
+    .join(" · ");
+  const note = (
+    <>
+      <span className="st-open-mono">{name}</span>
+      {empty ? (
+        <>
+          {" · "}
+          {needs}
+        </>
+      ) : required ? (
+        " · Required"
+      ) : null}
+      {about ? ` · ${about}` : ""}
+    </>
+  );
+  return <Row label={kindSelect} note={note} noteText={noteText} value={field} />;
 }

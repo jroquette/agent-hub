@@ -2241,7 +2241,11 @@ export function ScenarioBuilder({
                   ? { name: environmentInfo.name, values: environmentValues ?? {} }
                   : null,
                 inputs: declaredInputs.map(([name]) => name),
-                kept: keptValues.map((item) => ({ name: item.name, number: item.number })),
+                kept: keptValues.map((item) => ({
+                  name: item.name,
+                  number: item.number,
+                  step: keyOf(item.step),
+                })),
                 services: serviceOptions,
               }}
               current={shownRun.current}
@@ -2255,6 +2259,32 @@ export function ScenarioBuilder({
                   : null
               }
               onEditNode={reviewProgram ? undefined : editNode}
+              onEditField={
+                reviewProgram
+                  ? undefined
+                  : (id, name) => {
+                      // The panel's Settings, at that value's field.
+                      setSettings(false);
+                      setSelected(id);
+                      setStepTab("settings");
+                      requestAnimationFrame(() => {
+                        const panel = globalThis.document.querySelector<HTMLElement>(
+                          '[aria-label^="Inspector: "]',
+                        );
+                        const label = [
+                          ...(panel?.querySelectorAll<HTMLLabelElement>("label") ?? []),
+                        ].find((each) => each.textContent.trim().startsWith(name));
+                        const control = label?.htmlFor
+                          ? globalThis.document.getElementById(label.htmlFor)
+                          : null;
+                        const target = control ?? panel;
+                        target?.focus();
+                        // jsdom has no scrollIntoView: scrolled only where the browser can.
+                        if (target && typeof target.scrollIntoView === "function")
+                          target.scrollIntoView({ block: "nearest" });
+                      });
+                    }
+              }
               onDuplicate={reviewProgram ? undefined : duplicate}
               onDelete={
                 reviewProgram

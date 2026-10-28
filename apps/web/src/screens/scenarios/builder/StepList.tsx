@@ -89,6 +89,8 @@ export interface StepListProps {
   onDelete?: ((id: string) => void) | undefined;
   /** Where a step's values come from (environment, scenario variables, kept values). */
   sources?: StepSources | null | undefined;
+  /** Edits one value of a step in the side panel (its body, a value taken from elsewhere). */
+  onEditField?: ((id: string, name: string) => void) | undefined;
 }
 
 function record(value: Json | undefined): Record<string, Json> {
@@ -414,6 +416,7 @@ export function StepList(props: StepListProps) {
     onDuplicate,
     onDelete,
     sources = null,
+    onEditField,
   } = props;
   const nodeOfRow = (id: string): BuilderNode | null => {
     const find = (list: readonly Item[]): BuilderNode | null => {
@@ -699,6 +702,7 @@ export function StepList(props: StepListProps) {
       // The tree handles the keys of its rows (roving focus: j / k, Enter, Alt ↑ / ↓).
       // eslint-disable-next-line jsx-a11y/click-events-have-key-events
       <div
+        data-open={extra.open ? "true" : undefined}
         role="treeitem"
         tabIndex={current === id ? 0 : -1}
         data-row={id}
@@ -773,7 +777,16 @@ export function StepList(props: StepListProps) {
           {state !== null && <span className="st-run-state">{state}</span>}
           {quick}
         </span>
-        {extra.open}
+        {extra.open && (
+          // Open, the step's settings are one named group under its row's header.
+          <div
+            role="group"
+            className="st-open-group"
+            aria-label={`${stage ? "Stage" : "Step"} ${number} settings`}
+          >
+            {extra.open}
+          </div>
+        )}
       </div>
     );
   };
@@ -930,6 +943,20 @@ export function StepList(props: StepListProps) {
                 onEditNode(id, { ...node, with: { ...given, [name]: value } });
               }
             : null
+        }
+        onEditInPanel={
+          onEditField
+            ? (name) => {
+                onEditField(id, name);
+              }
+            : null
+        }
+        onGoToStep={
+          readOnly
+            ? null
+            : (step) => {
+                onSelect(step);
+              }
         }
       />
     ) : null;

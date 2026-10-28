@@ -46,6 +46,12 @@ const KIND_ONE: Readonly<Record<string, string>> = {
   cognito: "User pool",
 };
 
+/** A kind in words ("Queue (SQS)"), or null for none. */
+export function kindWordsOf(kind: string | null | undefined): string | null {
+  if (!kind) return null;
+  return KIND_ONE[kind] ?? kind;
+}
+
 /** The value a picked service is written as: its name, or `<repo>/<name>` only when another
  * repo has a service of that name (the run refuses an ambiguous name). */
 export function serviceValue(option: ServiceOption, all: readonly ServiceOption[] = []): string {
@@ -148,7 +154,9 @@ export function useServiceField({ label, value, options, environment, onPick }: 
         )}
     </>
   );
-  return { kindSelect, field };
+  /** The kind in words ("Queue (SQS)"), the one chosen or the picked service's; null for any. */
+  const kindWords = kind === "" ? null : (KIND_ONE[kind] ?? kind);
+  return { kindSelect, field, picked, kindWords };
 }
 
 /** Both controls side by side (the side panel, under the input's name). */

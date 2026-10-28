@@ -2489,7 +2489,11 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const tree = await screen.findByRole("tree", { name: "Steps of order-lifecycle" });
     await user.click(within(tree).getByRole("treeitem", { name: CHECK }));
 
-    await user.click(within(tree).getByRole("button", { name: "every 10 s, up to 5 min" }));
+    await user.click(
+      within(tree).getByRole("button", {
+        name: "Edit how often it checks: every 10 s, up to 5 min",
+      }),
+    );
     const field = screen.getByRole("textbox", { name: "How often 2 checks" });
     await user.clear(field);
     await user.type(field, "30s{Enter}");
@@ -2560,10 +2564,10 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(within(body).getByTitle("Scenario input external_ref")).toHaveTextContent(
       "external_ref",
     );
-    // The open step reads in order: what it runs, then the values it uses and where they come from.
-    expect(within(fetch).getByText("Runs")).toBeInTheDocument();
+    // The open step reads in order: what it does, its values, then the values from earlier.
+    expect(within(fetch).getByText("What it does")).toBeInTheDocument();
     expect(
-      within(fetch).getByText("scenario input · asked when the scenario run starts"),
+      within(fetch).getByText("Scenario input · asked when the scenario run starts"),
     ).toBeInTheDocument();
   });
 
@@ -2656,7 +2660,10 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const kind = within(fetch).getByRole("combobox", { name: "Kind of service for target" });
     expect(kind).toHaveValue("sqs");
     // The kind takes the input name's place; the name moves to the note under it.
-    expect(kind.closest(".st-g-row")).toHaveTextContent("target · Required · Where it is sent.");
+    // The note follows the service picked: its kind and its address, not the action's words.
+    expect(kind.closest(".st-g-row")).toHaveTextContent(
+      "target · Required · Queue (SQS) · payments-queue-personal",
+    );
     // A kind chosen filters the list.
     await user.selectOptions(kind, "database");
     await user.click(within(fetch).getByRole("button", { name: "target: payments-queue" }));
@@ -2727,5 +2734,44 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.click(within(fetch).getByRole("button", { name: "target: choose a service" }));
     expect(screen.getByRole("dialog", { name: "Choose target" })).toBeInTheDocument();
     expect(await seriousViolations(globalThis.document.body)).toEqual([]);
+  });
+
+  it("scenario builder's open step says which values it still needs and that its action is a draft", async () => {
+    const user = userEvent.setup();
+    renderBuilder({
+      "/api/v1/projects/demo/actions": {
+        ...library,
+        items: [
+          {
+            ...library.items[0],
+            action: aScenarioAction({
+              ref: "orders/send-queue-message",
+              name: "send-queue-message",
+              effect: "write",
+              draft: true,
+              accept_command: "git add -- actions/orders/send-queue-message.yaml && git commit",
+              inputs: [
+                { name: "region_code", type: "string", required: true, description: "The region." },
+              ],
+            }),
+          },
+          library.items[1],
+        ],
+      },
+    });
+    const fetch = await screen.findByRole("treeitem", { name: FETCH });
+    await user.click(fetch);
+    const open = within(fetch).getByRole("group", { name: "Step 1 settings" });
+
+    // A required value nothing gives: counted on the group, named on its row.
+    const values = within(open).getByRole("region", { name: "Values for this step" });
+    expect(values).toHaveTextContent("1 needs a value");
+    expect(values).toHaveTextContent("region_codeNeeds a value");
+    expect(within(values).getByRole("button", { name: "Set it in the panel" })).toBeInTheDocument();
+    // The draft says what it means and gives its commit command.
+    expect(within(open).getByText("Draft: needs acceptance")).toBeInTheDocument();
+    expect(
+      within(open).getByRole("button", { name: "Copy the commit command for send-queue-message" }),
+    ).toBeInTheDocument();
   });
 });
