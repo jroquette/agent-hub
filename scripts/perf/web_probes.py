@@ -270,10 +270,13 @@ def restart_rows(
 
 
 def peak_rss_mb(pid: int, *, proc: Path = Path("/proc")) -> float | None:
-    """``pid``'s peak RSS in MB from ``VmHWM`` (kB); ``None`` when it cannot be read (off Linux)."""
+    """``pid``'s peak RSS in MB from ``VmHWM``; ``None`` when it cannot be read (off Linux).
+
+    ``/proc`` writes "kB" but means KiB (1024 bytes).
+    """
     try:
         text = (proc / str(pid) / "status").read_text("utf-8")
     except OSError:
         return None
     found = re.search(r"^VmHWM:\s+(\d+)\s+kB", text, re.MULTILINE)
-    return int(found[1]) / 1000 if found else None
+    return int(found[1]) * 1024 / 1_000_000 if found else None

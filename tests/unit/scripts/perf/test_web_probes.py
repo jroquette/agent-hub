@@ -270,8 +270,8 @@ STATUS_WITHOUT_HWM = "Name:\thub\nVmPeak:\t  300000 kB\nVmRSS:\t  150000 kB\nThr
 @pytest.mark.parametrize(
     ("status_text", "expected"),
     [
-        # 176128 kB is 176.128 MB (1 MB = 1000 kB).
-        (STATUS_WITH_HWM, 176.128),
+        # /proc's "kB" is KiB: 176128 KiB is 176128 * 1024 bytes, 180.355072 MB.
+        (STATUS_WITH_HWM, 180.355072),
         (STATUS_WITHOUT_HWM, None),
     ],
 )
