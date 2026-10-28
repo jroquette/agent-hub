@@ -2418,8 +2418,7 @@ export function ScenarioBuilder({
             </Button>
           }
         >
-          Your unsaved changes came back from this browser. Save them, or discard them to see the
-          file.
+          Your unsaved changes came back from this browser.
         </Banner>
       )}
       <div
