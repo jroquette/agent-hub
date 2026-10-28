@@ -7,11 +7,12 @@ fraction, default 0.2) widens only the gate's comparison for runner noise, never
 Unknown fields, in an entry or at the top level, are ignored, so new fields can be added without
 breaking a run. A path with no entry has no budget. A file that is not valid JSON, or an entry
 without a string ``kind``, ``path`` and ``source``, with a non-numeric limit or a non-boolean
-``enforced``, or a ``margin`` that is not a number of 0 or more, raises ``BudgetFileError`` naming
-the file.
+``enforced``, or a ``margin`` that is not a finite number of 0 or more, raises ``BudgetFileError``
+naming the file.
 """
 
 import json
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,9 +54,14 @@ def load_margin(path: Path) -> float:
     if "margin" not in data:
         return DEFAULT_MARGIN
     margin = data["margin"]
-    if isinstance(margin, bool) or not isinstance(margin, int | float) or margin < 0:
-        raise BudgetFileError(f'{path}: "margin" must be a number of 0 or more')
+    if isinstance(margin, bool) or not isinstance(margin, int | float) or not _fraction(margin):
+        raise BudgetFileError(f'{path}: "margin" must be a finite number of 0 or more')
     return float(margin)
+
+
+def _fraction(value: float) -> bool:
+    # json.loads reads NaN and Infinity; either would make every limit NaN or inf, never over.
+    return math.isfinite(value) and value >= 0
 
 
 def _read(path: Path) -> tuple[Mapping[str, object], list[object]]:

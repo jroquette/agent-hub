@@ -5,7 +5,8 @@ again against its budget, and prints a Markdown table (also appended to ``$GITHU
 when that is set). A row over its budget prints a GitHub ``::warning::`` line naming the path. A
 row whose entry is ``enforced`` and whose p95, API call count or peak RSS is strictly above the
 budget times ``1 + margin`` prints an ``::error::`` line instead, and the gate exits 1. Skipped
-and no-budget rows never fail. An unreadable ``perf.json`` or budgets file exits 2.
+and no-budget rows never fail; an enforced row that was skipped warns. An unreadable or wrongly
+typed ``perf.json``, a bad budgets file, or a step summary that cannot be written exits 2.
 """
 
 import argparse
@@ -17,7 +18,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from scripts.perf.budgets import Budget, BudgetFileError, load_budgets, load_margin
-from scripts.perf.report import OVER, Row, status_of
+from scripts.perf.report import OVER, SKIPPED, Row, status_of
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -46,19 +47,25 @@ def main(argv: Sequence[str] | None = None, environ: Mapping[str, str] | None = 
     try:
         budgets = load_budgets(args.budgets)
         margin = load_margin(args.budgets)
-        rows = read_rows(args.perf)
+        judged, table = _judge_all(args.perf, read_rows(args.perf), budgets=budgets, margin=margin)
     except (BudgetFileError, PerfFileError) as error:
         print(f"::error::perf gate: {error}")
         return 2
-    judged = [_judge(row, budgets.get((row.kind, row.path))) for row in rows]
-    table = table_markdown(judged, margin)
     print(table, end="")
     summary = env.get("GITHUB_STEP_SUMMARY")
     if summary:
-        with Path(summary).open("a", encoding="utf-8") as file:
-            file.write(f"### Perf budgets (margin {margin:.0%})\n\n{table}\n")
+        try:
+            with Path(summary).open("a", encoding="utf-8") as file:
+                file.write(f"### Perf budgets (margin {margin:.0%})\n\n{table}\n")
+        except OSError as error:
+            print(f"::error::perf gate: cannot append to {summary}: {error}")
+            return 2
     failed = False
     for row in judged:
+        if row.status == SKIPPED and row.budget is not None and row.budget.enforced:
+            # Once a budget is enforced, a run that stops measuring it must not stay silent.
+            print(f"::warning::perf: {row.kind} {row.path} is enforced but was skipped")
+            continue
         if row.status != OVER or row.budget is None:
             continue
         over = _over_limit(row, row.budget, margin)
@@ -104,6 +111,17 @@ def _row(item: object) -> Row:
         raise TypeError("a row is not an object")
     # The budget is read again from the budgets file, so perf.json's copy is dropped.
     return Row(**{**item, "budget": None})
+
+
+def _judge_all(
+    path: Path, rows: Sequence[Row], *, budgets: Mapping[tuple[str, str], Budget], margin: float
+) -> tuple[list[Row], str]:
+    """The judged rows and their table; a field of the wrong type raises ``PerfFileError``."""
+    try:
+        judged = [_judge(row, budgets.get((row.kind, row.path))) for row in rows]
+        return judged, table_markdown(judged, margin)
+    except (TypeError, ValueError) as error:
+        raise PerfFileError(f"{path}: a row has a field of the wrong type: {error}") from error
 
 
 def _judge(row: Row, budget: Budget | None) -> Row:

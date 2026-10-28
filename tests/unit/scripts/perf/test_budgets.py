@@ -174,7 +174,7 @@ def test_reads_the_margin_when_the_file_sets_or_omits_it(
     assert budgets_module.load_margin(path) == pytest.approx(expected)
 
 
-@pytest.mark.parametrize("margin", ["0.2", -0.1, True, None])
+@pytest.mark.parametrize("margin", ["0.2", -0.1, True, None, float("nan"), float("inf")])
 def test_raises_budget_file_error_when_the_margin_is_not_a_fraction(
     tmp_path: Path, margin: object
 ) -> None:

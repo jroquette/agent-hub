@@ -143,6 +143,8 @@ class MarginCase:
     [
         # Default margin 0.2: 150 * 1.2 = 180, so 175 is within it.
         pytest.param(MarginCase({}, 175.0, 0, warns=True), id="default-margin-within"),
+        # Exactly at the limit (150 * 1.2 = 180) is not strictly above it, so it only warns.
+        pytest.param(MarginCase({}, 180.0, 0, warns=True), id="default-margin-boundary"),
         # File margin 0.5: 150 * 1.5 = 225, so 200 passes (it would fail the default 180).
         pytest.param(MarginCase({"margin": 0.5}, 200.0, 0, warns=True), id="file-margin-within"),
         # File margin 0: the limit is the budget itself, so 151 fails.
@@ -207,7 +209,7 @@ def test_never_fails_when_rows_are_skipped_or_have_no_budget(
     )
     perf = _perf(tmp_path, [skipped, unbudgeted])
     budgets = _budgets(
-        tmp_path, [_entry("page", FEATURES_PAGE, enforced=True, p95_ms=800, api_calls=5)]
+        tmp_path, [_entry("page", FEATURES_PAGE, enforced=False, p95_ms=800, api_calls=5)]
     )
 
     code = main(_argv(perf, budgets), {})
@@ -216,6 +218,33 @@ def test_never_fails_when_rows_are_skipped_or_have_no_budget(
     assert code == 0
     assert _lines(out, "::error") == []
     assert _lines(out, "::warning") == []
+
+
+# AGH-602 (AC-2): an enforced row that was skipped passes, but says so, so CI cannot stop
+# measuring an enforced budget without a sign.
+def test_passes_with_one_warning_naming_the_path_when_an_enforced_row_is_skipped(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    skipped = _row("page", FEATURES_PAGE, p95_ms=None, status="skipped", reason="no Chromium")
+    passing = _row("hook", GUARD, p95_ms=40.0, status="pass")
+    perf = _perf(tmp_path, [passing, skipped])
+    budgets = _budgets(
+        tmp_path,
+        [
+            _entry("hook", GUARD, enforced=True, p95_ms=80),
+            _entry("page", FEATURES_PAGE, enforced=True, p95_ms=800, api_calls=5),
+        ],
+    )
+
+    code = main(_argv(perf, budgets), {})
+
+    out = capsys.readouterr().out
+    warnings = _lines(out, "::warning")
+    assert code == 0
+    assert _lines(out, "::error") == []
+    assert len(warnings) == 1
+    assert FEATURES_PAGE in warnings[0]
+    assert "skipped" in warnings[0]
 
 
 def _table_rows() -> list[Row]:
@@ -304,6 +333,14 @@ def _bad_perf_missing(tmp_path: Path) -> Path:
     return tmp_path / "absent.json"
 
 
+def _bad_perf_wrong_type(tmp_path: Path) -> Path:
+    path = _perf(tmp_path, [_row("route", SESSIONS, p95_ms=120.0, status="pass")])
+    items = json.loads(path.read_text("utf-8"))
+    items[0]["p95_ms"] = "x"
+    path.write_text(json.dumps(items), "utf-8")
+    return path
+
+
 @pytest.mark.parametrize(
     "make_perf",
     [
@@ -311,6 +348,7 @@ def _bad_perf_missing(tmp_path: Path) -> Path:
         pytest.param(_bad_perf_not_a_list, id="not-a-list"),
         pytest.param(_bad_perf_unknown_field, id="unknown-field"),
         pytest.param(_bad_perf_missing, id="missing"),
+        pytest.param(_bad_perf_wrong_type, id="wrong-type"),
     ],
 )
 def test_exits_two_with_one_error_line_when_perf_json_is_bad(
@@ -334,6 +372,8 @@ def test_exits_two_with_one_error_line_when_perf_json_is_bad(
         pytest.param({"margin": -0.1}, id="negative-margin"),
         pytest.param({"margin": True}, id="bool-margin"),
         pytest.param({"margin": "20%"}, id="text-margin"),
+        pytest.param({"margin": float("nan")}, id="nan-margin"),
+        pytest.param({"margin": float("inf")}, id="infinite-margin"),
     ],
 )
 def test_exits_two_with_one_error_line_when_the_budgets_file_is_bad(
@@ -349,3 +389,22 @@ def test_exits_two_with_one_error_line_when_the_budgets_file_is_bad(
     assert len(errors) == 1
     assert errors[0].startswith("::error::perf gate:")
     assert "margin" in errors[0]
+
+
+# AGH-602: a step summary that cannot be written is bad input, not an enforced budget over.
+def test_exits_two_with_one_error_line_when_the_step_summary_cannot_be_written(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    perf = _perf(tmp_path, [_row("route", SESSIONS, p95_ms=120.0, status="pass")])
+    budgets = _budgets(tmp_path, [_entry("route", SESSIONS, enforced=True, p95_ms=150)])
+    # A directory cannot be opened for appending.
+    summary = tmp_path / "summary-dir"
+    summary.mkdir()
+
+    code = main(_argv(perf, budgets), {"GITHUB_STEP_SUMMARY": str(summary)})
+
+    errors = _lines(capsys.readouterr().out, "::error")
+    assert code == 2
+    assert len(errors) == 1
+    assert errors[0].startswith("::error::perf gate:")
+    assert str(summary) in errors[0]

@@ -317,7 +317,7 @@ entry marked `"enforced": true` is over its p95, API calls or RSS times `1 + mar
 fraction, default 0.2) absorbs runner noise and never changes the stored budget, which stays under the ADR 0053
 ceiling. Skipped and no-budget rows never fail, and no entry is enforced until a milestone meets its budgets. A broken
 suite (runner exit 2) fails the job on its own; a bad `perf.json` or budgets file makes the gate exit 2. An enforced
-row over its budget but within the margin passes with a `::warning::` line that says so.
+row over its budget but within the margin, or skipped, passes with a `::warning::` line that says so.
 
 The job runs on `ubuntu-latest`, which may have fewer cores than ADR 0053's reference machine (Linux, 4 vCPU). Before
 an entry is marked enforced, check the core count in the `machine` field of a CI `perf.json`; if it is below 4, move
@@ -388,7 +388,8 @@ CI (`.github/workflows/ci.yml`) runs the same make targets as separate jobs at o
 shards set by `TESTS`: `packages/generator`, `packages/cli`, and the rest, each running its own serial tests after its
 parallel ones), `coverage` (combines the shards' data, then the floors), `e2e`, `e2e-serial` (the visual file and
 the rest, each on its own runner), and `perf` (the perf suite and its gate, see Performance). The required `check`
-job passes only when all of them did. PR titles are not checked in CI: run `make pr-title TITLE="<title>"` before opening the PR ([CONTRIBUTING.md](CONTRIBUTING.md)).
+job passes only when all of them did. PR titles are not checked in CI: run `make pr-title TITLE="<title>"` before
+opening the PR ([CONTRIBUTING.md](CONTRIBUTING.md)).
 
 Notes:
 
