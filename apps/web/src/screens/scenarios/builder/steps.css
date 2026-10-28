@@ -858,7 +858,7 @@
 .sb-runbar-controls .sb-env select {
   height: var(--control);
   min-width: 240px;
-  /* Room for the native arrow: the text never runs under it. */
+  /* Room for the chevron (bundle.css, select.ah-input): the text never runs under it. */
   padding-right: 32px;
 }
 .sb-runbar-sep {
@@ -1379,7 +1379,7 @@
 .st-service-kind {
   flex: none;
   height: var(--control-sm);
-  padding: 0 var(--space-6) 0 var(--space-2);
+  padding: 0 28px 0 var(--space-2);
   font-size: 12px;
 }
 .st-service-pair > .st-service {
