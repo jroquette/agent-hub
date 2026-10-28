@@ -71,6 +71,7 @@ import {
   useDismissProposal,
   useProposal,
 } from "./ClaudeDialogs";
+import { StageGraph } from "./StageGraph";
 import { StartCard } from "./StartCard";
 import { MigrateDialog } from "./MigrateDialog";
 import { ActionPanel } from "../ActionPanel";
@@ -2333,6 +2334,11 @@ export function ScenarioBuilder({
               nodes={document.nodes}
               actionOf={actionFacts}
               problemsOf={(id) => problems.filter((problem) => problem.node === id)}
+              numberOf={(id) => numbersNow.get(id)}
+              statusOf={(id) => {
+                const step = fresh.steps.find((each) => each.id === id);
+                return step ? shownRun.stepState(step) : null;
+              }}
               selected={selected}
               onSelect={setSelected}
               onAdd={onGraphAdd}
@@ -2340,19 +2346,34 @@ export function ScenarioBuilder({
           )}
           {view === "graph" && tree && (
             <div className="sb-graph-picture">
-              <span className="ah-small ah-muted" role="note">
-                The graph shows how the blocks run: edit them in Blocks.
-              </span>
-              <FlowCanvas
-                nodes={document.nodes}
+              <div className="sb-graph-note">
+                <span className="ah-small ah-muted" role="note">
+                  The graph shows how the blocks run: edit them in Blocks.
+                </span>
+                <span className="ah-grow" />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon="puzzle"
+                  onClick={() => {
+                    setView("blocks");
+                  }}
+                >
+                  {selected ? "Open it in Blocks" : "Back to Blocks"}
+                </Button>
+              </div>
+              <StageGraph
+                items={main}
+                numbers={numbersNow}
                 actionOf={actionFacts}
-                problemsOf={(id) => problemsOf(keyOf(id))}
-                selected={selected ? nodeIdOf(selected) : null}
-                onSelect={(id) => {
-                  setSelected(id === null ? null : keyOf(id));
+                problemsOf={problemsOf}
+                statusOf={shownRun.blockState}
+                current={shownRun.current}
+                selected={selected}
+                onSelect={(key) => {
+                  setSettings(false);
+                  setSelected(key);
                 }}
-                onAdd={() => undefined}
-                readOnly
               />
             </div>
           )}
