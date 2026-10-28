@@ -48,6 +48,19 @@ export function tokenOf(value: string): { icon: IconName; label: string; title: 
   return null;
 }
 
+/** A kind's tile: its icon on its tint, as the Blocks rows and the graph cards draw it. */
+export function KindTile({ look }: { look: { icon: IconName; tint: string; soft: string } }) {
+  return (
+    <span
+      className="st-tile"
+      style={{ ["--tile" as string]: look.tint, ["--tile-soft" as string]: look.soft }}
+      aria-hidden
+    >
+      <Icon name={look.icon} size="sm" />
+    </span>
+  );
+}
+
 /** A reference drawn as a token: its source's icon and its name. */
 export function ValueToken({ value }: { value: string }) {
   const token = tokenOf(value);
@@ -82,7 +95,7 @@ function firstLine(value: string): string {
 }
 
 /** The first sentence of a text (an action's description). */
-function firstSentence(value: string): string {
+export function firstSentence(value: string): string {
   const line = firstLine(value).trim();
   const cut = /^(.+?[.!?])(\s|$)/.exec(line);
   return cut?.[1] ?? line;

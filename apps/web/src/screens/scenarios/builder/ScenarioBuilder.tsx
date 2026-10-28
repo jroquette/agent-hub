@@ -4,18 +4,21 @@ import "./steps.css";
 
 import {
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
+import { createPortal, flushSync } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router";
 
 import {
   Banner,
   Button,
   CopyButton,
+  HighlightedCode,
   Icon,
   IconButton,
   MenuItem,
@@ -24,16 +27,41 @@ import {
   Toast,
 } from "../../../components";
 import { readStored, writeStored } from "../../../lib/storage";
-import { environmentsPage } from "../../hub-config/environments";
+import { TABLET, useMediaQuery } from "../../../lib/useMediaQuery";
+import { inputSpecs, parsed } from "../../runs-list/StartRun";
+import { endpointText, environmentsPage } from "../../hub-config/environments";
+import { useApi } from "../../../lib/api";
+import type { ServiceOption } from "./ServicePicker";
 import { DiscussButton, useDiscuss } from "../../../shell/discuss";
-import { EffectBadge } from "../parts";
+import { DebugBar } from "../DebugBar";
+import { isRunControlOff } from "../Investigation";
+import { useShownRun } from "../LiveRun";
+import { EffectBadge, type WaitingRow } from "../parts";
 import {
   usePlanScenario,
   useSaveEnvironmentValue,
   useScenario,
+  useSetBreakpoints,
   type ScenarioAction,
   type ScenarioDetail,
+  type PlanRequest,
+  type ScenarioMode,
 } from "../queries";
+import {
+  BeforeYouStart,
+  MODE_LINE,
+  PlanProblem,
+  PlanSummary,
+  RunsList,
+  StartScenarioRun,
+  UndeclaredEnvironment,
+  accessWords,
+  defaultEnvironment,
+  planMessages,
+  remember,
+  useAfter,
+  verdict,
+} from "../RunPanel";
 import { BlocksTab, type BlockLook } from "./BlocksTab";
 import { StepList, nearestGap, scrollNear, type GapKind, type InsertTarget } from "./StepList";
 import { VariablesPanel, type KeptValue } from "./VariablesPanel";
@@ -51,6 +79,7 @@ import {
   useDismissProposal,
   useProposal,
 } from "./ClaudeDialogs";
+import { StageGraph } from "./StageGraph";
 import { StartCard } from "./StartCard";
 import { MigrateDialog } from "./MigrateDialog";
 import { ActionPanel } from "../ActionPanel";
@@ -137,6 +166,8 @@ interface TreeWrite {
 }
 
 const FILE_POLL_MS = 4000;
+/** After this long a plan says it is still planning, and when it stops. */
+const SLOW_PLAN_MS = 10_000;
 const HELP_KEY = "ah.builder.help.v6";
 
 /** The Actions tab: the hub's actions, what each does, its effect and how many steps use it. */
@@ -273,12 +304,14 @@ function inspectorProblems(
 export function ScenarioBuilder({
   scenario,
   mode,
-  onRun,
+  onModeChange,
+  waiting = [],
 }: {
   scenario: ScenarioDetail;
-  mode: "interactive" | "regression";
-  /** Switches the page to its Run mode (plan, start, watch). */
-  onRun: () => void;
+  mode: ScenarioMode;
+  onModeChange: (mode: ScenarioMode) => void;
+  /** The open gates of this scenario's runs: a block waiting on one says so. */
+  waiting?: readonly WaitingRow[];
 }) {
   const library = useActionLibrary(scenario.project);
   const items = library.data?.items ?? [];
@@ -306,9 +339,8 @@ export function ScenarioBuilder({
   const [migrating, setMigrating] = useState(false);
   const planner = usePlanScenario(scenario.project, scenario.name);
   const [params, setParams] = useSearchParams();
-  const environment =
-    params.get("env") ??
-    (scenario.environments.length > 0 ? (scenario.environments[0]?.name ?? "") : "");
+  // Never production unless the person picks it (spec 23, build and run on one screen).
+  const environment = params.get("env") ?? defaultEnvironment(scenario);
   const setEnvironment = (next: string) => {
     setParams(
       (current) => {
@@ -322,12 +354,34 @@ export function ScenarioBuilder({
   };
   // Where values come from, in the chosen environment.
   const environmentInfo = scenario.environments.find((item) => item.name === environment) ?? null;
+  // The services the hub declares, with their address in this environment: a service input
+  // picks one of them.
+  const hubConfig = useApi("/api/v1/projects/{project}/config", {
+    path: { project: scenario.project },
+  });
+  const serviceOptions: ServiceOption[] = (hubConfig.data?.environments.services ?? []).map(
+    (service) => {
+      const here = service.endpoints.find((endpoint) => endpoint.environment === environment);
+      return {
+        name: service.name,
+        repo: service.repo === "" ? null : service.repo,
+        kind: service.kind,
+        description: service.description,
+        address: here ? endpointText(here) || null : null,
+      };
+    },
+  );
   const environmentValues: Record<string, string> | null = environmentInfo
     ? (environmentInfo.values ?? {})
     : null;
   const [stepTab, setStepTab] = useState<"settings" | "script">("settings");
-  const [planValues, setPlanValues] = useState<Record<string, string>>({});
-  const [planAfterSave, setPlanAfterSave] = useState<Record<string, string> | null>(null);
+  // The values typed for the run inputs, as typed (a checkbox's for a boolean); a plan and a
+  // start send them typed by their declaration (`inputs`, below).
+  const [planValues, setPlanValues] = useState<Record<string, string | boolean>>({});
+  const [badValues, setBadValues] = useState<Record<string, boolean>>({});
+  const [valueErrors, setValueErrors] = useState<Record<string, string>>({});
+  const planFormId = useId();
+  const [planAfterSave, setPlanAfterSave] = useState<PlanRequest["inputs"] | null>(null);
   const [leftTab, setLeftTab] = useState<"blocks" | "variables" | "actions">("blocks");
   // A block dragged from the Blocks tab: how it looks, where the pointer is, where it would land.
   const [paletteDrag, setPaletteDrag] = useState<{
@@ -779,6 +833,7 @@ export function ScenarioBuilder({
       return (
         <BlockInspector
           key={key}
+          services={serviceOptions}
           document={serialized}
           node={node}
           library={items}
@@ -1164,6 +1219,10 @@ export function ScenarioBuilder({
     }
     if (underReview) return;
     if (event.key === "Delete" || event.key === "Backspace") {
+      // Only the row (or the list) deletes it: a chip, a link, a tab or the body of the open
+      // step takes the key as its own, and the step stays.
+      const row = target.closest('[role="treeitem"]');
+      if (row !== null && row !== target) return;
       event.preventDefault();
       const stage = findItem(main, selected)?.kind === "stage";
       removeItem(selected);
@@ -1226,8 +1285,50 @@ export function ScenarioBuilder({
       return item.default === undefined && !(environmentValues && name in environmentValues);
     })
     .map(([name]) => name);
-  const missingToPlan = asksAtStart.filter((name) => (planValues[name] ?? "") === "");
-  const planNow = (values: Record<string, string>) => {
+  // Each run input typed by its declaration (a number, a boolean), as the CLI takes it.
+  const specs = inputSpecs(document);
+  const specOf = (name: string) =>
+    specs.find((spec) => spec.name === name) ?? {
+      name,
+      type: "string" as const,
+      required: false,
+      default: undefined,
+      description: null,
+    };
+  const isBoolean = (name: string) => specOf(name).type === "boolean";
+  const missingToPlan = asksAtStart.filter(
+    (name) => !isBoolean(name) && (planValues[name] ?? "") === "",
+  );
+  /** The values a plan sends, typed, and a problem per value that does not fit its type. Only
+   * the names the form shows (asksAtStart) are checked and required: a value kept for a name
+   * that left the form (another environment gives it) has no field to say its problem, so it
+   * is sent as typed when it fits, as written when it does not, and not at all when empty. */
+  const typedValues = () => {
+    const inputs: PlanRequest["inputs"] = {};
+    const problems: Record<string, string> = {};
+    for (const name of asksAtStart) {
+      const raw = planValues[name] ?? (isBoolean(name) ? false : "");
+      const value = parsed(specOf(name), raw, badValues[name] ?? false);
+      if (value instanceof Error) problems[name] = value.message;
+      else if (value !== undefined) inputs[name] = value;
+    }
+    for (const [name, raw] of Object.entries(planValues)) {
+      if (asksAtStart.includes(name) || raw === "") continue;
+      const value = parsed(specOf(name), raw);
+      if (value instanceof Error || value === undefined) {
+        if (String(raw).trim() !== "") inputs[name] = raw;
+      } else inputs[name] = value;
+    }
+    return { inputs, problems };
+  };
+  const planNow = () => {
+    const { inputs: values, problems } = typedValues();
+    setValueErrors(problems);
+    if (Object.keys(problems).length > 0) {
+      // A value that does not fit stays at its field: nothing is planned.
+      setMenu("preview");
+      return;
+    }
     setMenu(null);
     if (draft.dirty) {
       setPlanAfterSave(values);
@@ -1248,6 +1349,166 @@ export function ScenarioBuilder({
       });
     }
   }
+
+  // The run side of the page: the plan's verdict, Start, the scenario run shown on the blocks,
+  // and the breakpoints a start passes (spec 23, build and run on one screen).
+  const noun = tree ? "block" : "step";
+  const planFor = planner.isSuccess ? planner.variables : null;
+  const nodesNow = JSON.stringify(document.nodes);
+  const staleWords =
+    preview === null || planFor === null
+      ? null
+      : draft.dirty
+        ? "Save your changes, then plan again: a plan reads the saved file."
+        : planFor.environment !== environment
+          ? `This plan is for ${planFor.environment}. Plan again to start in ${environment || "another environment"}.`
+          : previewFor !== null && previewFor !== nodesNow
+            ? `The ${noun}s changed since this plan. Plan again to start.`
+            : JSON.stringify(planFor.inputs) !== JSON.stringify(typedValues().inputs)
+              ? Object.keys(planFor.inputs).length === 0
+                ? "This plan was made with no values. Plan again to start with the new values."
+                : `This plan is for ${Object.entries(planFor.inputs)
+                    .map(([name, value]) => `${name} ${String(value)}`)
+                    .join(", ")}. Plan again to start with the new values.`
+              : null;
+  // Plans and starts cannot run from the agent-hub container (no credentials, no env files).
+  const runControlOff = planner.isError && isRunControlOff(planner.error);
+  // An environment this hub does not declare (an old `?env=`, or a plan's with no access):
+  // the run panel names the command that declares it, and nothing starts there.
+  const undeclared =
+    preview !== null && staleWords === null && preview.access === null
+      ? preview.environment
+      : environment !== "" && environmentInfo === null
+        ? environment
+        : null;
+  const judged =
+    undeclared !== null
+      ? {
+          ok: false,
+          text: `Environment ${undeclared} is not declared in this hub.`,
+          drafts: false,
+        }
+      : preview === null
+        ? null
+        : verdict(preview, staleWords, noun);
+  const slowPlan = useAfter(SLOW_PLAN_MS, planner.isPending);
+  // A tablet plans, but a start needs a desktop screen (spec 23, Responsive).
+  const tablet = useMediaQuery(TABLET);
+  // A plan's 422 names its inputs by pointer: each message at its field, the others listed.
+  const messages = planMessages(planner.error, asksAtStart);
+  const [erred, setErred] = useState<unknown>(null);
+  if (planner.error !== erred) {
+    setErred(planner.error);
+    if (messages.atFields.size > 0) setMenu("preview");
+  }
+  const onProduction = environmentInfo?.production === true;
+  const shownRun = useShownRun({
+    scenario: fresh,
+    waiting,
+    chosen: params.get("run"),
+    edited: draft.dirty,
+    onHide: () => {
+      setShownParam(null);
+    },
+  });
+  const inProgress = fresh.runs.some((run) => run.status === "running");
+  const startBlocked =
+    judged?.ok !== true
+      ? (judged?.text ?? "Plan the scenario first.")
+      : errors.length > 0
+        ? "Fix the problems first."
+        : inProgress
+          ? "A scenario run of it is in progress."
+          : null;
+  const startable =
+    startBlocked === null && preview !== null && planFor !== null
+      ? { plan: preview, request: planFor }
+      : null;
+  const canStart = startable !== null;
+  // Breakpoints before a start, by block address (a scenario written as blocks, off production);
+  // while a live scenario run is shown, its own set (written to the run).
+  const [marked, setMarked] = useState<readonly string[]>([]);
+  const runRecord = shownRun.record;
+  const setRunBreakpoints = useSetBreakpoints(shownRun.runId ?? "");
+  const liveBreakpoints = shownRun.live && runRecord !== null && shownRun.production === false;
+  const debuggable = tree && (liveBreakpoints || (!shownRun.live && !onProduction));
+  const runSet: readonly string[] = liveBreakpoints
+    ? ((setRunBreakpoints.isPending ? setRunBreakpoints.variables : undefined) ??
+      runRecord.breakpoints)
+    : marked;
+  const toggleBreakpoint = (address: string) => {
+    const wanted = new Set(runSet);
+    if (wanted.has(address)) wanted.delete(address);
+    else wanted.add(address);
+    if (liveBreakpoints) {
+      setRunBreakpoints.mutate(
+        runRecord.blocks.map((block) => block.address).filter((each) => wanted.has(each)),
+      );
+    } else {
+      setMarked([...wanted]);
+    }
+  };
+  const breakpoints =
+    tree && !onProduction
+      ? fresh.blocks.map((block) => block.address).filter((address) => marked.includes(address))
+      : [];
+  const setShownParam = (runId: string | null) => {
+    setParams(
+      (current) => {
+        const copy = new URLSearchParams(current);
+        if (runId === null) copy.delete("run");
+        else copy.set("run", runId);
+        return copy;
+      },
+      { replace: true },
+    );
+  };
+  // Follow: while it is on (its checkbox), the block the scenario run is at is scrolled into view
+  // each time the run moves to another one.
+  const [follow, setFollow] = useState(true);
+  const current = shownRun.current;
+  useEffect(() => {
+    if (!follow || current === null) return;
+    const row = listScroll.current?.querySelector<HTMLElement>(
+      `[data-row="${CSS.escape(current)}"]`,
+    );
+    // jsdom has no scrollIntoView: a row is scrolled to only where the browser can.
+    if (row && typeof row.scrollIntoView === "function") row.scrollIntoView({ block: "nearest" });
+  }, [follow, current]);
+
+  // The right column while no block is open in the editor: the plan, the drafts to commit,
+  // the debug pause and the scenario runs.
+  const runPanel = (
+    <aside className="sb-inspector sb-run-panel" aria-label={`Scenario runs of ${scenario.name}`}>
+      <div className="sb-inspector-body ah-stack" style={{ gap: 12 }}>
+        {shownRun.record?.debug && (
+          <DebugBar run={shownRun.record} production={shownRun.production} />
+        )}
+        {undeclared !== null && <UndeclaredEnvironment environment={undeclared} />}
+        {messages.others.length > 0 && (
+          <ul role="alert" className="ah-small" style={{ margin: 0, color: "var(--failed)" }}>
+            {messages.others.map((message) => (
+              <li key={message}>{message}</li>
+            ))}
+          </ul>
+        )}
+        {/* Every message of a 422 at a field of the form: the fields say it all. */}
+        {planner.isError && !(messages.atFields.size > 0 && messages.others.length === 0) && (
+          <PlanProblem error={planner.error} name={scenario.name} environment={environment} />
+        )}
+        {preview && (
+          <PlanSummary
+            plan={preview}
+            pending={planner.isPending}
+            stale={staleWords !== null}
+            noun={noun}
+          />
+        )}
+        <BeforeYouStart scenario={fresh} />
+        <RunsList scenario={fresh} shown={shownRun.runId} onShow={setShownParam} />
+      </div>
+    </aside>
+  );
 
   // Which steps use a variable: a reference to it, or an action input of its name the step
   // leaves to the run (or the environment).
@@ -1486,14 +1747,12 @@ export function ScenarioBuilder({
           label="View"
           value={view}
           onChange={(id) => {
-            if (id === "run") onRun();
-            else setView(id === "yaml" || id === "graph" ? id : "blocks");
+            setView(id === "yaml" || id === "graph" ? id : "blocks");
           }}
           options={[
             { id: "blocks", label: "Blocks", icon: "puzzle" },
             { id: "graph", label: "Graph", icon: "workflow" },
             { id: "yaml", label: "YAML", icon: "file-text" },
-            { id: "run", label: "Run", icon: "play" },
           ]}
         />
         <span className="sb-menu-anchor">
@@ -1517,11 +1776,11 @@ export function ScenarioBuilder({
               </span>
             ) : (
               <>
-                <Icon name="circle-check" size="sm" style={{ color: "var(--done)" }} /> Loads
+                <Icon name="circle-check" size="sm" style={{ color: "var(--done)" }} /> No problems
                 {drafts > 0 && (
                   <span className="ah-muted">
                     {" "}
-                    · {drafts} draft {drafts === 1 ? "action" : "actions"}
+                    · {drafts} draft {drafts === 1 ? "action" : "actions"} to commit
                   </span>
                 )}
               </>
@@ -1531,7 +1790,11 @@ export function ScenarioBuilder({
           {menu === "problems" && (
             <div className="ah-pop sb-pop" role="dialog" aria-label="Problems">
               {problems.length === 0 ? (
-                <span className="ah-small ah-muted">The scenario loads. Nothing to fix.</span>
+                <span className="ah-small ah-muted">
+                  {drafts > 0
+                    ? `Nothing to fix in the file. ${String(drafts)} draft ${drafts === 1 ? "action needs" : "actions need"} a commit before a scenario run can start: the commands are in Before you start.`
+                    : "The scenario file has no problem."}
+                </span>
               ) : (
                 problems.map((problem, index) => (
                   <button
@@ -1589,7 +1852,7 @@ export function ScenarioBuilder({
           <DiscussButton label="Chat" />
         </span>
         <Button
-          variant="primary"
+          variant={draft.dirty ? "primary" : "default"}
           icon="save"
           disabled={!draft.dirty || draft.saving || errors.length > 0 || draft.check === null}
           title={errors.length > 0 ? `Fix ${String(errors.length)} problems to save` : undefined}
@@ -1633,108 +1896,288 @@ export function ScenarioBuilder({
           )}
         </span>
       </div>
-      <div className="sb-context">
-        <label className="sb-env">
-          <span className="ah-small ah-muted">Environment</span>
-          <select
-            className="ah-input"
-            aria-label="Environment"
-            value={environment}
-            disabled={scenario.environments.length === 0}
-            onChange={(event) => {
-              setEnvironment(event.target.value);
-            }}
-          >
-            {scenario.environments.length === 0 && <option value="">No environment</option>}
-            {scenario.environments.map((item) => (
-              <option key={item.name} value={item.name}>
-                {item.name} · {item.access}
-                {item.production ? " · production" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-        <span className="sb-menu-anchor">
-          <Button
-            size="sm"
-            icon="list-checks"
-            disabled={environment === "" || planner.isPending || draft.saving || errors.length > 0}
-            title={
-              errors.length > 0
-                ? "Fix the problems first"
-                : "Each action's script runs in plan mode, with no credential: nothing is changed."
-            }
-            onClick={() => {
-              if (missingToPlan.length > 0) setMenu(menu === "preview" ? null : "preview");
-              else planNow({});
-            }}
-          >
-            {planner.isPending
-              ? "Planning…"
-              : draft.dirty
-                ? "Save and plan"
-                : `Plan in ${environment || "…"}`}
-          </Button>
-          {menu === "preview" && (
-            <form
-              className="ah-pop sb-pop sb-preview"
-              aria-label="Values to plan with"
-              onSubmit={(event) => {
-                event.preventDefault();
-                planNow(planValues);
+      <form
+        className="sb-runbar"
+        aria-label={`Run ${scenario.name}`}
+        onSubmit={(event) => {
+          event.preventDefault();
+          // Enter in the Inputs plans with them; with an input left to fill, Plan opens them.
+          if (menu !== "preview" && missingToPlan.length > 0) setMenu("preview");
+          else {
+            remember(scenario.project, environment);
+            planNow();
+          }
+        }}
+      >
+        <div className="sb-runbar-controls">
+          <label className="sb-env">
+            <span className="ah-small ah-muted">Environment</span>
+            <select
+              className="ah-input"
+              aria-label="Environment"
+              value={environment}
+              disabled={scenario.environments.length === 0 || planner.isPending}
+              title={environmentInfo ? accessWords(environmentInfo) : undefined}
+              onChange={(event) => {
+                setEnvironment(event.target.value);
               }}
             >
-              <b className="ah-small">Values to plan with</b>
-              <span className="ah-small ah-muted">
-                Nothing gives these a value in {environment}. Nothing is changed by a plan.
-              </span>
-              {asksAtStart.map((name) => (
-                <label key={name} className="ah-stack ah-small" style={{ gap: 4 }}>
-                  {name}
-                  <input
-                    className="ah-input"
-                    value={planValues[name] ?? ""}
-                    onChange={(event) => {
-                      setPlanValues({ ...planValues, [name]: event.target.value });
-                    }}
-                  />
-                </label>
+              {scenario.environments.length === 0 && <option value="">No environment</option>}
+              {environment === "" && scenario.environments.length > 0 && (
+                <option value="">Choose an environment</option>
+              )}
+              {environment !== "" && environmentInfo === null && (
+                // An environment the hub does not declare (an old ?env=): named, not hidden.
+                <option value={environment}>{environment} · not declared</option>
+              )}
+              {scenario.environments.map((item) => (
+                <option key={item.name} value={item.name}>
+                  {item.name} · {item.production ? "production · " : ""}access {item.access}
+                </option>
               ))}
-              <span className="ah-row" style={{ gap: 6, justifyContent: "flex-end" }}>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    setMenu(null);
+            </select>
+          </label>
+          <span
+            className="sb-env"
+            title={`${MODE_LINE[mode]} Blocks that ask still pause for your approval.`}
+          >
+            <span className="ah-small ah-muted">Scenario run mode</span>
+            <SegmentedControl
+              label="Scenario run mode"
+              value={mode}
+              onChange={(id) => {
+                onModeChange(id === "regression" ? "regression" : "interactive");
+              }}
+              options={[
+                { id: "interactive", label: "Interactive" },
+                { id: "regression", label: "Regression" },
+              ]}
+            />
+          </span>
+          <span className="sb-runbar-sep" aria-hidden />
+          {asksAtStart.length > 0 && (
+            <Button
+              size="sm"
+              variant="ghost"
+              icon="braces"
+              aria-expanded={menu === "preview"}
+              onClick={() => {
+                setMenu(menu === "preview" ? null : "preview");
+              }}
+            >
+              {missingToPlan.length > 0
+                ? `Inputs · ${String(missingToPlan.length)} to fill`
+                : `Inputs · ${String(asksAtStart.length)} set`}
+            </Button>
+          )}
+          <span className="sb-menu-anchor">
+            <Button
+              type="submit"
+              variant={draft.dirty || canStart ? "default" : "primary"}
+              icon="list-checks"
+              disabled={
+                environment === "" ||
+                planner.isPending ||
+                draft.saving ||
+                errors.length > 0 ||
+                runControlOff
+              }
+              title={
+                errors.length > 0
+                  ? "Fix the problems first"
+                  : "Each action's script runs in plan mode, with no credential: nothing is changed."
+              }
+            >
+              {planner.isPending
+                ? "Planning…"
+                : draft.dirty
+                  ? "Save and plan"
+                  : preview && staleWords === null
+                    ? "Plan again"
+                    : `Plan in ${environment || "…"}`}
+            </Button>
+            {menu === "preview" && (
+              <div
+                className="ah-pop sb-pop sb-preview"
+                role="form"
+                aria-label="Values to plan with"
+              >
+                <b className="ah-small">Values to plan and start with</b>
+                <span className="ah-small ah-muted">
+                  Nothing gives these a value in {environment}. Nothing is changed by a plan.
+                </span>
+                {asksAtStart.map((name) => {
+                  const type = specOf(name).type;
+                  const problem = valueErrors[name] ?? messages.atFields.get(name) ?? null;
+                  const problemId = `${planFormId}-${name}`;
+                  const onValue = (value: string | boolean, bad: boolean) => {
+                    setPlanValues({ ...planValues, [name]: value });
+                    setBadValues({ ...badValues, [name]: bad });
+                  };
+                  return (
+                    <span key={name} className="ah-stack ah-small" style={{ gap: 4 }}>
+                      {type === "boolean" ? (
+                        <label className="ah-row" style={{ gap: 6 }}>
+                          <input
+                            type="checkbox"
+                            checked={planValues[name] === true}
+                            aria-describedby={problem ? problemId : undefined}
+                            onChange={(event) => {
+                              onValue(event.target.checked, false);
+                            }}
+                          />
+                          {name}
+                        </label>
+                      ) : (
+                        <label className="ah-stack" style={{ gap: 4 }}>
+                          {name}
+                          <input
+                            className="ah-input"
+                            type={type === "string" ? "text" : "number"}
+                            step={type === "integer" ? 1 : type === "number" ? "any" : undefined}
+                            value={String(planValues[name] ?? "")}
+                            aria-invalid={problem ? true : undefined}
+                            aria-describedby={problem ? problemId : undefined}
+                            onChange={(event) => {
+                              onValue(event.target.value, event.target.validity.badInput);
+                            }}
+                          />
+                        </label>
+                      )}
+                      {problem && (
+                        <span id={problemId} style={{ color: "var(--failed)" }}>
+                          {problem}
+                        </span>
+                      )}
+                    </span>
+                  );
+                })}
+                <span className="ah-row" style={{ gap: 6, justifyContent: "flex-end" }}>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setMenu(null);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button size="sm" variant="primary" type="submit">
+                    {draft.dirty ? "Save and plan" : `Plan in ${environment}`}
+                  </Button>
+                </span>
+              </div>
+            )}
+          </span>
+          {preview && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                planner.reset();
+              }}
+            >
+              Clear plan
+            </Button>
+          )}
+          <span className="ah-grow" />
+          {tablet ? (
+            <span className="ah-small">Starting a scenario run needs a desktop screen.</span>
+          ) : startable ? (
+            <StartScenarioRun
+              scenario={fresh}
+              plan={startable.plan}
+              request={startable.request}
+              mode={mode}
+              breakpoints={breakpoints}
+              disabled={false}
+              noun={noun}
+              onStarted={(runId) => {
+                setShownParam(runId);
+                setFollow(true);
+              }}
+            />
+          ) : (
+            <Button variant="default" icon="play" disabled title={startBlocked ?? undefined}>
+              Start scenario run
+            </Button>
+          )}
+        </div>
+        <span
+          className="sb-runbar-verdict ah-small"
+          role="status"
+          data-tone={judged === null ? undefined : judged.ok ? "ok" : "bad"}
+        >
+          {planner.isPending ? (
+            <>
+              Planning in {environment}… each {noun}&apos;s script runs in plan mode.
+              {slowPlan && " Still planning. A plan stops after 5 min."}
+            </>
+          ) : judged !== null ? (
+            <>
+              <Icon name={judged.ok ? "circle-check" : "octagon-x"} size="sm" />
+              {judged.drafts ? (
+                <a
+                  href="#before-you-start"
+                  onClick={(event) => {
+                    // Before you start is in the run panel: an open block (or the settings)
+                    // gives its column back first, so the link always lands.
+                    event.preventDefault();
+                    flushSync(() => {
+                      setSelected(null);
+                      setSettings(false);
+                    });
+                    const target = globalThis.document.getElementById("before-you-start");
+                    if (typeof target?.scrollIntoView === "function") {
+                      target.scrollIntoView({ block: "nearest" });
+                    }
+                    target?.focus();
                   }}
                 >
-                  Cancel
-                </Button>
-                <Button size="sm" variant="primary" type="submit">
-                  {draft.dirty ? "Save and plan" : `Plan in ${environment}`}
-                </Button>
-              </span>
-            </form>
+                  {judged.text}
+                </a>
+              ) : (
+                judged.text
+              )}
+              {judged.ok && inProgress && " · a scenario run of it is in progress"}
+            </>
+          ) : planner.isError ? (
+            <>
+              <Icon name="circle-x" size="sm" />
+              Could not plan: {planner.error.detail ?? planner.error.title}
+            </>
+          ) : draft.dirty ? (
+            "Save your changes, then plan: a plan reads the saved file."
+          ) : environment === "" ? (
+            "Choose an environment to plan in."
+          ) : (
+            `Plan the scenario to see what each ${noun} will do in ${environment}. Nothing is changed by a plan.`
           )}
         </span>
-        {preview && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              planner.reset();
-            }}
-          >
-            Clear plan
-          </Button>
-        )}
-        {planner.error && (
-          <span className="ah-small" style={{ color: "var(--failed)" }}>
-            {planner.error.detail ?? planner.error.title}
-          </span>
-        )}
-        <span className="ah-grow" />
-      </div>
+      </form>
+      {onProduction && (
+        <Banner tone="info" boxed live={false}>
+          {environment} is a production environment: writes and destroys are denied there, and
+          breakpoints are off.
+        </Banner>
+      )}
+      {shownRun.strip && (
+        <div className="sb-strip-row">
+          {shownRun.strip}
+          {shownRun.live && shownRun.current !== null && (
+            <label className="sb-follow ah-small">
+              <input
+                type="checkbox"
+                checked={follow}
+                onChange={(event) => {
+                  setFollow(event.target.checked);
+                }}
+              />
+              Follow
+            </label>
+          )}
+        </div>
+      )}
       {draft.saveError && (
         <Banner tone="error" boxed>
           Could not save: {draft.saveError.detail ?? draft.saveError.title}
@@ -1831,11 +2274,7 @@ export function ScenarioBuilder({
           file.
         </Banner>
       )}
-      <div
-        className="sb-body"
-        data-panel={(reviewPanel ?? inspector) ? "open" : undefined}
-        ref={bodyRef}
-      >
+      <div className="sb-body" data-panel="open" ref={bodyRef}>
         <aside className="sb-left" aria-label="Blocks, variables and actions">
           <Tabs
             label="Left column"
@@ -1950,6 +2389,91 @@ export function ScenarioBuilder({
                 if (reviewProgram) return;
                 setRowMenu({ id, anchor });
               }}
+              runStateOf={
+                reviewProgram
+                  ? undefined
+                  : tree
+                    ? shownRun.blockState
+                    : (id) => {
+                        const step = fresh.steps.find((each) => each.id === id);
+                        return step ? shownRun.stepState(step) : null;
+                      }
+              }
+              keptOf={tree && !reviewProgram ? shownRun.keptOf : undefined}
+              sources={{
+                environment: environmentInfo
+                  ? { name: environmentInfo.name, values: environmentValues ?? {} }
+                  : null,
+                inputs: declaredInputs.map(([name]) => name),
+                document,
+                kept: keptValues.map((item) => ({
+                  name: item.name,
+                  number: item.number,
+                  step: keyOf(item.step),
+                  node: item.step,
+                })),
+                services: serviceOptions,
+              }}
+              current={shownRun.current}
+              breakpoints={
+                debuggable && !reviewProgram
+                  ? {
+                      on: (id) => runSet.includes(id),
+                      toggle: toggleBreakpoint,
+                      busy: setRunBreakpoints.isPending,
+                    }
+                  : null
+              }
+              onEditNode={reviewProgram ? undefined : editNode}
+              onEditField={
+                reviewProgram
+                  ? undefined
+                  : (id, name) => {
+                      // The panel's Settings, at that value's field.
+                      setSettings(false);
+                      setSelected(id);
+                      setStepTab("settings");
+                      requestAnimationFrame(() => {
+                        const panel = globalThis.document.querySelector<HTMLElement>(
+                          '[aria-label^="Inspector: "]',
+                        );
+                        // By the exact name the label gives (region, not region_code).
+                        const label = [
+                          ...(panel?.querySelectorAll<HTMLLabelElement>("label") ?? []),
+                        ].find(
+                          (each) =>
+                            (
+                              each.querySelector(".ah-mono")?.textContent ?? each.textContent
+                            ).trim() === name,
+                        );
+                        const control = label?.htmlFor
+                          ? globalThis.document.getElementById(label.htmlFor)
+                          : null;
+                        // A body shown as fields names its rows by the label: the first one.
+                        const FOCUSABLE = "input, textarea, select, button, [tabindex]";
+                        const target =
+                          (control && !control.matches(FOCUSABLE)
+                            ? control.querySelector<HTMLElement>(FOCUSABLE)
+                            : control) ?? panel;
+                        target?.focus();
+                        // jsdom has no scrollIntoView: scrolled only where the browser can.
+                        if (target && typeof target.scrollIntoView === "function")
+                          target.scrollIntoView({ block: "nearest" });
+                      });
+                    }
+              }
+              onDuplicate={reviewProgram ? undefined : duplicate}
+              onDelete={
+                reviewProgram
+                  ? undefined
+                  : (id) => {
+                      const stage = findItem(main, id)?.kind === "stage";
+                      removeItem(id);
+                      setToast(
+                        stage ? `Deleted stage ${id} and its steps.` : `Deleted step ${id}.`,
+                      );
+                    }
+              }
               variable={variable}
               usesVariable={(node) => (variable ? nodeUses(node, variable) : false)}
               suggested={reviewProgram ? suggestedIds : undefined}
@@ -1986,6 +2510,11 @@ export function ScenarioBuilder({
               nodes={document.nodes}
               actionOf={actionFacts}
               problemsOf={(id) => problems.filter((problem) => problem.node === id)}
+              numberOf={(id) => numbersNow.get(id)}
+              statusOf={(id) => {
+                const step = fresh.steps.find((each) => each.id === id);
+                return step ? shownRun.stepState(step) : null;
+              }}
               selected={selected}
               onSelect={setSelected}
               onAdd={onGraphAdd}
@@ -1993,19 +2522,34 @@ export function ScenarioBuilder({
           )}
           {view === "graph" && tree && (
             <div className="sb-graph-picture">
-              <span className="ah-small ah-muted" role="note">
-                The graph shows how the blocks run: edit them in Blocks.
-              </span>
-              <FlowCanvas
-                nodes={document.nodes}
+              <div className="sb-graph-note">
+                <span className="ah-small ah-muted" role="note">
+                  The graph shows how the blocks run: edit them in Blocks.
+                </span>
+                <span className="ah-grow" />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon="puzzle"
+                  onClick={() => {
+                    setView("blocks");
+                  }}
+                >
+                  {selected ? "Open it in Blocks" : "Back to Blocks"}
+                </Button>
+              </div>
+              <StageGraph
+                items={main}
+                numbers={numbersNow}
                 actionOf={actionFacts}
-                problemsOf={(id) => problemsOf(keyOf(id))}
-                selected={selected ? nodeIdOf(selected) : null}
-                onSelect={(id) => {
-                  setSelected(id === null ? null : keyOf(id));
+                problemsOf={problemsOf}
+                statusOf={shownRun.blockState}
+                current={shownRun.current}
+                selected={selected}
+                onSelect={(key) => {
+                  setSettings(false);
+                  setSelected(key);
                 }}
-                onAdd={() => undefined}
-                readOnly
               />
             </div>
           )}
@@ -2032,12 +2576,12 @@ export function ScenarioBuilder({
               </div>
               {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- a scrollable region */}
               <pre className="ah-json sb-yaml-text" tabIndex={0} aria-label="Generated YAML">
-                {draft.check?.yaml ?? ""}
+                <HighlightedCode text={draft.check?.yaml ?? ""} lang="yaml" />
               </pre>
             </div>
           )}
         </div>
-        {reviewPanel ?? inspector}
+        {reviewPanel ?? inspector ?? runPanel}
       </div>
       {migrating && (
         <MigrateDialog
@@ -2165,7 +2709,8 @@ export function ScenarioBuilder({
           </Toast>
         </div>
       )}
-      {rowMenuView}
+      {/* On the body: a fixed menu inside the page would be placed against the wrong box. */}
+      {rowMenuView && createPortal(rowMenuView, globalThis.document.body)}
       {paletteDrag && (
         <div
           className="sb-pal-ghost"

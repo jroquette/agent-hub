@@ -268,12 +268,20 @@ export function lineWithValue(text: string): number | null {
   return index === -1 ? null : index + 1;
 }
 
-/** What kind of thing a service is: the word people use, a default name and example addresses. */
-export interface ServiceKind {
+/** How a kind of service is said: one of it, several (a list's group heading), in a sentence. */
+export interface ServiceKindWords {
   id: string;
   label: string;
-  hint: string;
+  /** Several of the kind, as a list groups them ("Databases"). */
+  plural: string;
+  /** One of the kind in a sentence, with its article ("a database"). */
+  one: string;
   icon: IconName;
+}
+
+/** What kind of thing a service is: the word people use, a default name and example addresses. */
+export interface ServiceKind extends ServiceKindWords {
+  hint: string;
   /** The service name offered first; empty: the person names it. */
   name: string;
   /** An example address on this machine, and on a shared or cloud environment. */
@@ -285,6 +293,8 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
   {
     id: "api",
     label: "API or backend",
+    plural: "APIs and backends",
+    one: "an API or backend",
     hint: "A server agents call over HTTP.",
     icon: "plug",
     name: "api",
@@ -294,6 +304,8 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
   {
     id: "web",
     label: "Frontend or portal",
+    plural: "Frontends and portals",
+    one: "a frontend or portal",
     hint: "A site or admin portal in the browser.",
     icon: "globe",
     name: "web",
@@ -303,6 +315,8 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
   {
     id: "database",
     label: "Database",
+    plural: "Databases",
+    one: "a database",
     hint: "Postgres, MySQL, DynamoDB, Redis…",
     icon: "database",
     name: "db",
@@ -312,6 +326,8 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
   {
     id: "queue",
     label: "Queue or topic",
+    plural: "Queues and topics",
+    one: "a queue or topic",
     hint: "SQS, SNS, Kafka, RabbitMQ…",
     icon: "layers",
     name: "queue",
@@ -321,6 +337,8 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
   {
     id: "storage",
     label: "Storage bucket",
+    plural: "Storage buckets",
+    one: "a storage bucket",
     hint: "S3 or another file store.",
     icon: "package",
     name: "bucket",
@@ -330,6 +348,8 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
   {
     id: "function",
     label: "Function or job",
+    plural: "Functions and jobs",
+    one: "a function or job",
     hint: "A Lambda, cron job or worker.",
     icon: "cpu",
     name: "worker",
@@ -339,6 +359,8 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
   {
     id: "other",
     label: "Something else",
+    plural: "Other services",
+    one: "a service",
     hint: "Name it and give its address.",
     icon: "circle-dashed",
     name: "",
@@ -349,6 +371,93 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
 
 export function serviceKind(id: string | null | undefined): ServiceKind | undefined {
   return SERVICE_KINDS.find((kind) => kind.id === id);
+}
+
+/** Kinds a hub.json may name by hand that Add service does not offer, each a form of one it does:
+ * its words and icon. */
+const MORE_SERVICE_KINDS: readonly ServiceKindWords[] = [
+  {
+    id: "frontend",
+    label: "Frontend",
+    plural: "Frontends",
+    one: "a frontend",
+    icon: "globe",
+  },
+  {
+    id: "dynamodb",
+    label: "Table (DynamoDB)",
+    plural: "Tables (DynamoDB)",
+    one: "a table (DynamoDB)",
+    icon: "database",
+  },
+  {
+    id: "sqs",
+    label: "Queue (SQS)",
+    plural: "Queues (SQS)",
+    one: "a queue (SQS)",
+    icon: "layers",
+  },
+  {
+    id: "bucket",
+    label: "Bucket",
+    plural: "Buckets",
+    one: "a bucket",
+    icon: "package",
+  },
+  {
+    id: "lambda",
+    label: "Function",
+    plural: "Functions",
+    one: "a function",
+    icon: "cpu",
+  },
+  {
+    id: "cognito",
+    label: "User pool",
+    plural: "User pools",
+    one: "a user pool",
+    icon: "users",
+  },
+];
+
+/** How any kind is said, the ones Add service offers and the ones written by hand; a kind hub web
+ * does not know is said by its id. */
+export function serviceKindWords(id: string): ServiceKindWords {
+  return (
+    serviceKind(id) ??
+    MORE_SERVICE_KINDS.find((kind) => kind.id === id) ?? {
+      id,
+      label: id,
+      plural: id,
+      one: `a ${id} service`,
+      icon: "server",
+    }
+  );
+}
+
+/** The order the scenario service picker groups kinds in (spec 23): the snapshot's order, with
+ * each kind Add service offers next to the kind it is like (web after frontend, storage after
+ * bucket, function after lambda), a kind hub web does not know after them, and other last. */
+const PICKER_KIND_ORDER: readonly string[] = [
+  "api",
+  "frontend",
+  "web",
+  "database",
+  "sqs",
+  "queue",
+  "bucket",
+  "storage",
+  "lambda",
+  "function",
+  "dynamodb",
+  "cognito",
+];
+
+/** Where a kind goes in the service picker's list grouped by kind (PICKER_KIND_ORDER). */
+export function serviceKindRank(id: string | null | undefined): number {
+  if (id === "other") return PICKER_KIND_ORDER.length + 1;
+  const at = PICKER_KIND_ORDER.indexOf(id ?? "");
+  return at === -1 ? PICKER_KIND_ORDER.length : at;
 }
 
 /** The example address of a kind in an environment: local-looking ones get the local example. */

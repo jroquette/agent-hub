@@ -29,6 +29,7 @@ import { apiKey } from "../../lib/api";
 import { servedCheckout } from "../../lib/devCheckout";
 import { GLOBAL_STREAM, GlobalStreamProvider } from "../../shell/GlobalStream";
 import { SessionsListScreen } from "./index";
+import { codeText } from "../../testing/text";
 
 vi.mock("../../lib/devCheckout", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../lib/devCheckout")>();
@@ -278,7 +279,13 @@ describe("SessionsListScreen", () => {
         /Each Claude Code session in a registered hub is listed here after its first event\./,
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText("cd ~/agent-hub-hub && claude")).toBeInTheDocument();
+    expect(screen.getByText(codeText("cd ~/agent-hub-hub && claude"))).toBeInTheDocument();
+    // AC-596.5.19: the command is coloured as shell, not only found by its text.
+    const command = screen.getByText(codeText("cd ~/agent-hub-hub && claude"));
+    await waitFor(() => {
+      expect(command).toHaveClass("hljs");
+    });
+    expect(command.querySelector("span[class^='hljs-']")).not.toBeNull();
     expect(screen.queryByRole("button", { name: "Show all time" })).not.toBeInTheDocument();
     // New session stays in the header.
     expect(

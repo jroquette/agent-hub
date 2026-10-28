@@ -3,7 +3,14 @@ import "./SkillDetail.css";
 
 import { useEffect, useState } from "react";
 
-import { Button, Icon, ProblemError, Skeleton } from "../../components";
+import {
+  Button,
+  HighlightedCode,
+  Icon,
+  ProblemError,
+  Skeleton,
+  languageOfPath,
+} from "../../components";
 import type { IconName } from "../../components";
 import type { components } from "../../api/schema";
 import { bundledFileAnchor } from "../../lib/skillLinks";
@@ -51,7 +58,7 @@ function FileText({ project, item, file }: { project: string; item: SkillRef; fi
       {/* A scrolling region must take keyboard focus (axe scrollable-region-focusable). */}
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
       <pre className="ah-skill-raw" tabIndex={0}>
-        {text.data.text}
+        <HighlightedCode text={text.data.text} lang={languageOfPath(file.path)} />
       </pre>
       <p className="ah-small ah-muted" style={{ margin: "6px 0 0" }}>
         Shown as text; this page never runs or follows it.

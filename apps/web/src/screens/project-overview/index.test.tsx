@@ -22,6 +22,7 @@ import {
   type ApiRoutes,
 } from "../../testing/builders";
 import { ProjectOverviewScreen } from ".";
+import { codeText } from "../../testing/text";
 
 const recent = new Date(Date.now() - 3_600_000).toISOString();
 const old = new Date(Date.now() - 30 * 86_400_000).toISOString();
@@ -564,7 +565,15 @@ describe("ProjectOverviewScreen", () => {
         await screen.findByText("No agent is working on a ticket right now."),
       ).toBeInTheDocument();
       expect(await screen.findByText("No sessions yet.")).toBeInTheDocument();
-      expect(screen.getByText("cd /home/dev/agent-hub-hub && claude")).toBeInTheDocument();
+      expect(
+        screen.getByText(codeText("cd /home/dev/agent-hub-hub && claude")),
+      ).toBeInTheDocument();
+      // AC-596.5.19: the command is coloured as shell, not only found by its text.
+      const command = screen.getByText(codeText("cd /home/dev/agent-hub-hub && claude"));
+      await waitFor(() => {
+        expect(command).toHaveClass("hljs");
+      });
+      expect(command.querySelector("span[class^='hljs-']")).not.toBeNull();
       expect(await screen.findByText("No findings.")).toBeInTheDocument();
       expect(await screen.findByText("Setup · all good")).toBeInTheDocument();
     });

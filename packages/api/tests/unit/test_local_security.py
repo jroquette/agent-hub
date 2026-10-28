@@ -388,6 +388,8 @@ BUILDER_WRITES = (
     ("PUT", "/api/v1/projects/demo/actions/demo/send"),
     # Migrate rewrites the scenario's file as blocks (ADR 0049).
     ("POST", "/api/v1/scenarios/demo/walk/migrate"),
+    # AC-596.1.5: deleting a scenario removes its file from the hub.
+    ("DELETE", "/api/v1/scenarios/demo/walk"),
 )
 
 

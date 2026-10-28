@@ -1386,6 +1386,60 @@ pre {
 .ah-input::placeholder {
   color: var(--text-subtle);
 }
+/* A select, as a macOS pop-up button draws it: the native arrow, which sits against the edge, gives
+ * way to a small up-and-down chevron with room on both sides. Drawn from tokens (four 4px
+ * triangles), so it follows the theme; the text never runs under it. */
+select.ah-input {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: calc(var(--space-3) + 20px);
+  background-color: var(--surface);
+  background-image:
+    linear-gradient(135deg, transparent 50%, var(--text-muted) 50%),
+    linear-gradient(45deg, var(--text-muted) 50%, transparent 50%),
+    linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+    linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+  background-position:
+    right 16px top calc(50% - 4px),
+    right 12px top calc(50% - 4px),
+    right 16px top calc(50% + 1px),
+    right 12px top calc(50% + 1px);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+select.ah-input:hover:not(:disabled) {
+  background-color: var(--surface-hover);
+  border-color: var(--text-subtle);
+}
+select.ah-input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+/* A field that opens a list (a button, not a native select) hovers and focuses as a select. */
+button.ah-input {
+  cursor: pointer;
+}
+button.ah-input:hover:not(:disabled) {
+  background-color: var(--surface-hover);
+  border-color: var(--text-subtle);
+}
+button.ah-input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+select.ah-input:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+@media (prefers-reduced-motion: reduce) {
+  select.ah-input {
+    transition: none;
+  }
+}
 .ah-search {
   position: relative;
   display: flex;

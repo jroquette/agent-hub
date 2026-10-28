@@ -1,8 +1,9 @@
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import { aBundledFileText, aProblem, aSkillDetail, renderWithApi } from "../../testing/builders";
+import { codeText } from "../../testing/text";
 import { BundledFiles } from "./BundledFiles";
 
 const ITEM = { kind: "skill", source: "hub-workflow", name: "feature" } as const;
@@ -62,9 +63,11 @@ describe("BundledFiles bundled_files", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "View references/checklist.md" }));
 
-    const text = await screen.findByText(/The spec is approved/);
-    expect(text.tagName).toBe("PRE");
-    expect(text.textContent).toBe(aBundledFileText().text);
+    // The text sits in a code element in the pre, coloured by its path.
+    const code = await screen.findByText(codeText(aBundledFileText().text ?? ""));
+    const text = code.parentElement;
+    expect(text?.tagName).toBe("PRE");
+    expect(text?.textContent).toBe(aBundledFileText().text);
     expect(screen.getByRole("button", { name: "Hide references/checklist.md" })).toHaveAttribute(
       "aria-expanded",
       "true",
@@ -86,6 +89,26 @@ describe("BundledFiles bundled_files", () => {
 
     expect(await screen.findByText(/make check/)).toHaveTextContent("#!/bin/sh make check");
     expect(screen.getByText(/never run/)).toBeInTheDocument();
+  });
+
+  // AC-596.5.22: a bundled file's text is coloured by the language its path names.
+  it("colours a file's text by its language", async () => {
+    files({
+      [`${FILES}/fedcba9876543210`]: aBundledFileText({
+        id: "fedcba9876543210",
+        path: "scripts/check.sh",
+        role: "scripts",
+        text: 'if [ -n "$CI" ]; then make check; fi\n',
+      }),
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "View scripts/check.sh" }));
+
+    const code = await screen.findByText(codeText('if [ -n "$CI" ]; then make check; fi\n'));
+    await waitFor(() => {
+      expect(code).toHaveClass("hljs");
+    });
+    expect(code.querySelector(".hljs-keyword")).toHaveTextContent("if");
   });
 
   it("says a binary file is not shown", async () => {

@@ -17,7 +17,7 @@ answers 404 in the container); ``POST /scenarios/{project}/{name}/migrate`` is a
 as the builder's save is.
 """
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Path, Response
 
@@ -62,7 +62,12 @@ from agent_hub.api.scenario_catalog import (
     ScenarioStartRequest,
 )
 from agent_hub.api.scenario_investigation import InvestigationSession
-from agent_hub.api.schemas import MAX_QUERY_TEXT, PROBLEM_RESPONSES, ProjectParam
+from agent_hub.api.schemas import (
+    MAX_QUERY_TEXT,
+    PROBLEM_RESPONSES,
+    ProblemDetails,
+    ProjectParam,
+)
 from agent_hub.core.readmodels.filters import Scope
 from agent_hub.core.workflows.launch import RUN_ID_PATTERN, RunAccepted
 
@@ -114,6 +119,31 @@ def save_scenario(
     launch cookie): only a document that loads, over the file the builder last read
     (409 ``stale_document`` else), recorded as a version; no git command runs."""
     return ScenarioBuilder(reads).save(project, name, request=body, writes=writes)
+
+
+# The problems a scenario delete documents beyond the ranges.
+DELETE_SCENARIO_RESPONSES: dict[int | str, dict[str, Any]] = {
+    204: {"description": "The scenario's file and Claude's proposal for it are gone"},
+    401: {"model": ProblemDetails, "description": "No launch cookie (open hub web's address)"},
+    404: {"model": ProblemDetails, "description": "No such scenario (already gone counts too)"},
+    409: {
+        "model": ProblemDetails,
+        "description": "Delete refused and nothing removed, with a code: "
+        "scenario_run_in_progress, link_in_path or hub_read_only",
+    },
+}
+
+
+@router.delete(
+    "/scenarios/{project}/{name}",
+    status_code=204,
+    response_class=Response,
+    responses=DELETE_SCENARIO_RESPONSES,
+)
+def delete_scenario(project: NamePath, name: NamePath, reads: ScenarioReadsDep) -> None:
+    """Remove the scenario's file (and Claude's proposal for it) from the hub folder (a strict
+    write that needs the launch cookie); its recorded scenario runs stay; no git command runs."""
+    ScenarioBuilder(reads).delete(project, name)
 
 
 @router.get("/scenarios/{project}/{name}/proposal")

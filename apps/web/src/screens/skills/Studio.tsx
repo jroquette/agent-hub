@@ -15,7 +15,9 @@ import {
   Button,
   ConfirmDialog,
   EmptyState,
+  HighlightedCode,
   Icon,
+  languageOfPath,
   Markdown,
   SegmentedControl,
   Skeleton,
@@ -1247,7 +1249,7 @@ function OutsideWarning({ paths }: { paths: readonly string[] }) {
 function FileText({ file }: { file: DraftFile }) {
   return (
     <pre className="ah-studio-code" aria-label={file.path}>
-      <code>{file.content}</code>
+      <HighlightedCode text={file.content} lang={languageOfPath(file.path)} />
     </pre>
   );
 }

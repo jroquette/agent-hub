@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { rememberScreenshot } from "../../lib/screenshotCopy";
 import { AppShell } from "../../shell/AppShell";
 import { seriousViolations } from "../../testing/axe";
+import { codeText } from "../../testing/text";
 import {
   aCapabilities,
   aCatalogItem,
@@ -683,7 +684,8 @@ describe("AgentSessionScreen (permission)", () => {
     );
 
     const card = await screen.findByRole("region", { name: /Claude wants to use Bash/ });
-    expect(within(card).getByText("echo raw-value")).toBeInTheDocument();
+    // A Bash command is coloured as shell (AC-596.5.19): its text spans the code element.
+    expect(within(card).getByText(codeText("echo raw-value"))).toBeInTheDocument();
     await waitFor(() => {
       expect(card).toHaveFocus();
     });

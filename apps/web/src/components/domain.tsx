@@ -798,7 +798,7 @@ export function AcTable({ acs }: { acs: AcRowData[] }) {
               </td>
               <td style={{ minWidth: 220 }}>
                 {ac.command ? (
-                  <CodeBlock code={ac.command} prompt="" />
+                  <CodeBlock code={ac.command} prompt="" lang="bash" />
                 ) : (
                   <span className="ah-subtle ah-small">Manual</span>
                 )}

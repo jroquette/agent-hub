@@ -4,11 +4,15 @@ import {
   Button,
   CopyButton,
   DataTable,
+  Dialog,
   Icon,
   JsonViewer,
   PathText,
   SidePanel,
   Tabs,
+  HighlightedCode,
+  languageName,
+  languageOfPath,
 } from "../../components";
 import { DraftLine, EffectBadge } from "./parts";
 import type { ScenarioAction, ScenarioStep } from "./queries";
@@ -23,16 +27,21 @@ const EFFECT_WORDS: Readonly<Record<string, string>> = {
   destroy: "It deletes or replaces data.",
 };
 
-/** A file's text, read-only, with its path and Copy. */
+/** A file's text, read-only, with its path, its language and Copy; coloured by its language. */
 export function FileText({
   path,
   text,
   truncated = false,
+  caption,
 }: {
   path: string;
   text: string | null | undefined;
   truncated?: boolean;
+  /** What the file is for, under its path ("The code the step runs."). */
+  caption?: ReactNode;
 }) {
+  const language = languageOfPath(path);
+  const languageWords = languageName(language);
   return (
     <div className="ah-stack sc-file" style={{ gap: 6 }}>
       <div className="ah-row" style={{ gap: 6 }}>
@@ -40,16 +49,18 @@ export function FileText({
         <span className="ah-mono ah-small">
           <PathText path={path} max={72} dimDir />
         </span>
+        {languageWords !== "" && <span className="ah-badge ah-badge-quiet">{languageWords}</span>}
         <span className="ah-grow" />
         {text && <CopyButton text={text} label={`Copy the text of ${path}`} compact />}
       </div>
+      {caption && <span className="ah-small ah-muted">{caption}</span>}
       {text === null || text === undefined ? (
         <span className="ah-small ah-muted">This file could not be read.</span>
       ) : (
         // A scrollable region must be reachable by keyboard.
         // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
         <pre className="ah-json" tabIndex={0} aria-label={`Text of ${path}`}>
-          {text}
+          <HighlightedCode text={text} lang={language} />
         </pre>
       )}
       {truncated && (
@@ -77,7 +88,6 @@ export function ActionPanel({
   /** Buttons at the top of the panel (the builder's Edit, Add to the scenario). */
   tools?: ReactNode;
 }) {
-  const [tab, setTab] = useState<"script" | "document">("script");
   const usedBy = steps.filter((step) => step.action === action.ref);
   return (
     <SidePanel
@@ -198,26 +208,7 @@ export function ActionPanel({
           <h3 className="ah-h3" style={{ margin: 0 }}>
             Files
           </h3>
-          <Tabs
-            label="Files of the action"
-            value={tab}
-            onChange={(id) => {
-              setTab(id === "document" ? "document" : "script");
-            }}
-            tabs={[
-              { id: "script", label: "Script" },
-              { id: "document", label: "Action file" },
-            ]}
-          />
-          {tab === "script" ? (
-            <FileText
-              path={action.script ?? ""}
-              text={action.script_text}
-              truncated={action.script_truncated}
-            />
-          ) : (
-            <FileText path={action.path ?? ""} text={action.document_text} />
-          )}
+          <ActionFiles action={action} expand={false} />
           <span className="ah-small ah-subtle">
             Edit the files, or ask Claude with Discuss, and this page updates. A changed action is a
             draft until you commit it.
@@ -225,5 +216,93 @@ export function ActionPanel({
         </div>
       </div>
     </SidePanel>
+  );
+}
+
+/** An action's two files in tabs, Script first (what runs) and the action file (what it
+ * declares), with Expand into a dialog (`expand`); `captions` says what each one is for. The
+ * action panel, the step editor's Script tab and an open step show them alike. */
+export function ActionFiles({
+  action,
+  captions = false,
+  expand = true,
+}: {
+  action: ScenarioAction;
+  captions?: boolean;
+  expand?: boolean;
+}) {
+  const [file, setFile] = useState<"script" | "document">("script");
+  const [expanded, setExpanded] = useState(false);
+  const path = file === "script" ? (action.script ?? "") : (action.path ?? "");
+  const text = file === "script" ? action.script_text : action.document_text;
+  const caption = !captions ? undefined : file === "script" ? (
+    <>
+      <b>Runs.</b> The code this step executes: the hub calls it with the step&apos;s values as its
+      inputs.
+    </>
+  ) : (
+    <>
+      <b>Declares.</b> The action file is not run: it names the script, the inputs it takes, whether
+      it changes data and what it answers.
+    </>
+  );
+  const fileView = (
+    <FileText
+      path={path}
+      text={text}
+      truncated={file === "script" ? action.script_truncated : false}
+      caption={caption}
+    />
+  );
+  const tabs = (
+    <Tabs
+      label="Files of the action"
+      value={file}
+      onChange={(id) => {
+        setFile(id === "document" ? "document" : "script");
+      }}
+      tabs={[
+        { id: "script", label: "Script" },
+        { id: "document", label: "Action file" },
+      ]}
+    />
+  );
+  if (!expand) {
+    return (
+      <>
+        {tabs}
+        {fileView}
+      </>
+    );
+  }
+  return (
+    <>
+      <span className="ah-row" style={{ gap: 8 }}>
+        {tabs}
+        <span className="ah-grow" />
+        <Button
+          size="sm"
+          variant="ghost"
+          icon="expand"
+          onClick={() => {
+            setExpanded(true);
+          }}
+        >
+          Expand
+        </Button>
+      </span>
+      {fileView}
+      {expanded && (
+        <Dialog
+          title={`${path} · ${action.name}`}
+          onClose={() => {
+            setExpanded(false);
+          }}
+          size="lg"
+        >
+          <div className="sb-script-dialog">{fileView}</div>
+        </Dialog>
+      )}
+    </>
   );
 }

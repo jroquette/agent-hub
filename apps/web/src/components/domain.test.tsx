@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { createMemoryRouter, RouterProvider } from "react-router";
@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../testing/axe";
 import { aGoldenPath, aGoldenStep } from "../testing/builders";
+import { codeText } from "../testing/text";
 import {
   AcTable,
   ActivityFeed,
@@ -347,6 +348,29 @@ describe("AcTable, ApprovalPanel, FindingRow", () => {
     expect(screen.getByRole("cell", { name: "Passes" })).toBeInTheDocument();
     expect(screen.getByText("Fails")).toBeInTheDocument();
     expect(screen.getByText("Owner step")).toBeInTheDocument();
+  });
+
+  // AC-596.5.19: a criterion's verify command, shown with no prompt, is still coloured as shell.
+  it("colours a criterion's verify command as shell", async () => {
+    render(
+      <AcTable
+        acs={[
+          {
+            id: "AC-1",
+            description: "a",
+            repo: "agent-hub",
+            passes: true,
+            command: "cd /a && make test",
+          },
+        ]}
+      />,
+    );
+
+    const code = screen.getByText(codeText("cd /a && make test"));
+    await waitFor(() => {
+      expect(code).toHaveClass("hljs");
+    });
+    expect(code.querySelector("span[class^='hljs-']")).not.toBeNull();
   });
 
   it("explains terminal approval in Phase 2 and disables Phase 4 actions", () => {

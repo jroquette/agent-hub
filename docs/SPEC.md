@@ -481,7 +481,9 @@ instruction" for actions and for the deterministic nodes of a workflow that decl
   and, while paused, the investigation chat, the options with their plans and the pick; a policy ask is answered on
   that page; a run written as blocks also shows the blocks it pinned, with their breakpoints, Step and Continue in a
   debug pause, and its values while paused ([screen spec 23](design/control-plane/specs/23-scenarios.md), Layer 2 §
-  Scenarios).
+  Scenarios). A scenario can be deleted from the list or its page: its file and Claude's proposal for it leave the hub
+  folder, never through a link and never while a scenario run of it is in progress; its recorded scenario runs stay,
+  and git restores the file (AGH-596).
 
 ## Layer 2: control plane and observability
 
@@ -672,6 +674,8 @@ replaces Live sessions and the separate list of driven sessions (design in
   of about a dozen languages is coloured by `lowlight` (MIT; highlight.js grammars, BSD-3-Clause) from a lazy chunk,
   rendered as React nodes by our own walker (no `innerHTML`), with design-token colours in both themes. A block still
   streaming, an unknown language and a block over 2,000 lines or 64 KiB stay plain.
+  [ADR 0052](adr/0052-syntax-highlighting-across-the-app.md) (AGH-596, proposed) colours every other code and file the
+  app shows the same way, through one `HighlightedCode` component, a file's language by its extension.
 - **Credit.** Open WebUI (github.com/open-webui/open-webui, Open WebUI License, a BSD-3 variant with a branding
   clause) was read as design study material at commit `6a18585` (v0.12.2) for chat and list interaction patterns.
   We write our own React code. Nothing was copied, no asset or branding is used, and `NOTICE` and `LICENSES/` do not

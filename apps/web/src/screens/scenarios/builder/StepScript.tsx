@@ -1,12 +1,10 @@
-import { useState } from "react";
-
-import { Button, DataTable, Dialog, Icon, Tabs } from "../../../components";
-import { FileText } from "../ActionPanel";
+import { DataTable, Icon } from "../../../components";
+import { ActionFiles } from "../ActionPanel";
 import { EffectBadge } from "../parts";
 import type { ScenarioAction } from "../queries";
 import { pace } from "../story";
 import { ValueToken, tokenOf } from "./CardParts";
-import { shown, type BuilderDocument, type BuilderNode, type Json } from "./model";
+import { record, shown, type BuilderDocument, type BuilderNode, type Json } from "./model";
 
 /* The Script tab of the step editor (scenario builder v6): what the step will run, with what.
  * The action's description and facts, where each of its inputs gets its value in the chosen
@@ -22,10 +20,6 @@ export interface ResolvedInput {
   from: InputSource;
   /** The value as written (a literal, or a reference shown as a token); null when missing. */
   value: string | null;
-}
-
-function record(value: Json | undefined): Record<string, Json> {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : {};
 }
 
 /** Where each input of the step's action gets its value, first match wins: the value the step
@@ -113,22 +107,11 @@ export function StepScript({
   environment: string | null;
   environmentValues: Readonly<Record<string, string>> | null;
 }) {
-  const [file, setFile] = useState<"script" | "document">("script");
-  const [expanded, setExpanded] = useState(false);
   const rows = resolveInputs(node, action, document, environmentValues);
   const gives = Object.keys(record(action.output_format?.properties as Json | undefined));
   const kept = Object.entries(record(node.capture));
   const keptAs = (field: string) =>
     kept.find(([, from]) => shown(from) === `$self.output.${field}`)?.[0];
-  const path = file === "script" ? (action.script ?? "") : (action.path ?? "");
-  const text = file === "script" ? action.script_text : action.document_text;
-  const fileView = (
-    <FileText
-      path={path}
-      text={text}
-      truncated={file === "script" ? action.script_truncated : false}
-    />
-  );
   return (
     <div className="sb-script">
       <section className="sb-section-v5" aria-label="What it does">
@@ -208,47 +191,12 @@ export function StepScript({
       </section>
 
       <section className="sb-section-v5" aria-label="Files">
-        <span className="ah-row" style={{ gap: 8 }}>
-          <Tabs
-            label="Files of the action"
-            value={file}
-            onChange={(id) => {
-              setFile(id === "document" ? "document" : "script");
-            }}
-            tabs={[
-              { id: "script", label: "Script" },
-              { id: "document", label: "Action file" },
-            ]}
-          />
-          <span className="ah-grow" />
-          <Button
-            size="sm"
-            variant="ghost"
-            icon="expand"
-            onClick={() => {
-              setExpanded(true);
-            }}
-          >
-            Expand
-          </Button>
-        </span>
-        {fileView}
+        <ActionFiles action={action} />
         <span className="ah-small ah-subtle">
           Edit the files in your editor, or ask in Chat, and this updates. A changed action is a
           draft until you commit it.
         </span>
       </section>
-      {expanded && (
-        <Dialog
-          title={`${path} · ${action.name}`}
-          onClose={() => {
-            setExpanded(false);
-          }}
-          size="lg"
-        >
-          <div className="sb-script-dialog">{fileView}</div>
-        </Dialog>
-      )}
     </div>
   );
 }

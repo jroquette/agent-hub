@@ -316,6 +316,18 @@ describe("NewFeatureScreen", () => {
     expect(await ready()).toHaveAttribute("aria-disabled", "true");
   });
 
+  // AC-596.5.14: Size is drawn as every other select, with the shared chevron only, not a
+  // second caret of its own.
+  it("draws Size with the shared select chevron only", async () => {
+    renderNew();
+
+    const size = await screen.findByLabelText("Size");
+    expect(size.tagName).toBe("SELECT");
+    expect(size.className).toBe("ah-input");
+    expect(size.parentElement?.querySelector(".ah-icon")).toBeNull();
+    expect(size.parentElement).toHaveClass("ft-new-field");
+  });
+
   it("shows the options as one field shape with their defaults, the ids in mono (AC-420.5)", async () => {
     const user = userEvent.setup();
     renderNew();

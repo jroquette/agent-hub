@@ -1,9 +1,8 @@
 import { useMemo } from "react";
 
-import { Banner, CodeBlock, StatusBadge } from "../../components";
+import { Banner, Button, CodeBlock, StatusBadge } from "../../components";
 import { isRunControlOff } from "./Investigation";
 import { DEBUG_LOCKED } from "./parts";
-import { BreakpointToggle } from "./StepCard";
 import { useSetBreakpoints, type RunBlock, type ScenarioRunDetail } from "./queries";
 
 /* The blocks a scenario run written as blocks pinned when it started (ADR 0049, spec 23): each
@@ -27,6 +26,44 @@ const KIND_WORDS: Readonly<Record<string, string>> = {
 const OWN_NODES = new Set(["do", "wait_until", "you", "wait", "include", "repeat"]);
 const GATE_SUFFIXES = ["__ask", "__investigation"];
 
+/** A breakpoint before block `address` (a scenario written as blocks, ADR 0049): a toggle whose
+ * name stays the same, its state in `aria-pressed`; Tab reaches it, Space or Enter presses it.
+ * While `busy` (a change on its way) a press does nothing, and the toggle keeps focus
+ * (`aria-disabled`, not `disabled`). */
+function BreakpointToggle({
+  address,
+  on,
+  busy,
+  onToggle,
+}: {
+  address: string;
+  on: boolean;
+  busy?: boolean | undefined;
+  onToggle: () => void;
+}) {
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      icon={on ? "circle-dot" : "circle"}
+      className={on ? "sc-break sc-break-on" : "sc-break"}
+      aria-pressed={on}
+      aria-label={`Breakpoint before block ${address}`}
+      title={
+        on
+          ? `The scenario run pauses before block ${address}. Press to remove the breakpoint.`
+          : `Press to pause the scenario run before block ${address}.`
+      }
+      aria-disabled={busy === true || undefined}
+      onClick={() => {
+        if (!busy) onToggle();
+      }}
+    >
+      Breakpoint
+    </Button>
+  );
+}
+
 /** A block in words: its kind, then its label (`Do: queue-send`). */
 export function blockWords(block: RunBlock | undefined): string {
   if (block === undefined) return "";
@@ -43,12 +80,15 @@ function depthOf(address: string): number {
   return address.split(".").filter((part) => /^[0-9]+$/.test(part)).length - 1;
 }
 
-type BlockState = "paused" | "running" | "done" | "failed" | "skipped" | "waiting" | null;
+/** A block's state in a run; `waiting` is a gate that waits for a person, `pending` a block
+ * of its own nodes not started yet. */
+export type BlockState =
+  "paused" | "running" | "done" | "failed" | "skipped" | "waiting" | "pending" | null;
 type TimelineLine = ScenarioRunDetail["timeline"][number];
 
 /** Each block's last start or end line of its own, in one pass over the timeline (a gate's
  * lines are its step's, but neither starts nor ends the step). */
-function lastLines(timeline: readonly TimelineLine[]): ReadonlyMap<string, TimelineLine> {
+export function lastLines(timeline: readonly TimelineLine[]): ReadonlyMap<string, TimelineLine> {
   const last = new Map<string, TimelineLine>();
   for (const entry of timeline) {
     if (entry.block === null || entry.block === undefined) continue;
@@ -59,9 +99,9 @@ function lastLines(timeline: readonly TimelineLine[]): ReadonlyMap<string, Timel
   return last;
 }
 
-/** A block's state in the run, from its last line of its own; `waiting` for a block of its own
+/** A block's state in the run, from its last line of its own; `pending` for a block of its own
  * nodes not started yet. */
-function stateOf(
+export function blockStateOf(
   run: ScenarioRunDetail,
   block: RunBlock,
   lines: ReadonlyMap<string, TimelineLine>,
@@ -69,7 +109,7 @@ function stateOf(
   if (run.debug?.block === block.address) return "paused";
   if (!OWN_NODES.has(block.kind)) return null;
   const last = lines.get(block.address);
-  if (last === undefined) return run.status === null ? "waiting" : null;
+  if (last === undefined) return run.status === null ? "pending" : null;
   if (last.event === "step_start") return "running";
   if (last.status === "failed") return "failed";
   if (last.status === "skipped") return "skipped";
@@ -82,7 +122,8 @@ function State({ state }: { state: BlockState }) {
   if (state === "done") return <StatusBadge status="done" />;
   if (state === "failed") return <StatusBadge status="failed" />;
   if (state === "skipped") return <span className="ah-small ah-subtle">Skipped</span>;
-  if (state === "waiting") return <span className="ah-small ah-subtle">Not started</span>;
+  if (state === "pending") return <span className="ah-small ah-subtle">Not started</span>;
+  if (state === "waiting") return <StatusBadge status="waiting" label="Waiting for you" />;
   return null;
 }
 
@@ -140,7 +181,7 @@ export function RunBlocks({
               {blockWords(block)}
             </span>
             <span className="ah-grow" />
-            <State state={stateOf(run, block, lines)} />
+            <State state={blockStateOf(run, block, lines)} />
             {settable && (
               <BreakpointToggle
                 address={block.address}

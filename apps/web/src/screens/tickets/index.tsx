@@ -9,6 +9,7 @@ import {
   FacetMenu,
   Icon,
   ProblemError,
+  SearchField,
   Skeleton,
   type IconName,
 } from "../../components";
@@ -264,19 +265,15 @@ export function TicketsScreen() {
       ) : (
         <>
           <div className="ft-toolbar" role="group" aria-label="Filters">
-            <div className="ah-search ft-search">
-              <Icon name="search" size="sm" />
-              <input
-                type="search"
-                className="ah-input"
-                aria-label="Find tickets"
-                placeholder="Find by issue, title, repo or skill"
-                value={q}
-                onChange={(event) => {
-                  set("q", event.target.value);
-                }}
-              />
-            </div>
+            <SearchField
+              value={q}
+              onChange={(value) => {
+                set("q", value);
+              }}
+              label="Find tickets"
+              placeholder="Find by issue, title, repo or skill"
+              className="ft-search"
+            />
             <FacetMenu
               label="Kind"
               options={KINDS.map((k) => ({

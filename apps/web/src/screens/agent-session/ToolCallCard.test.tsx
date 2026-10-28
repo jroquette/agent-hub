@@ -47,6 +47,18 @@ describe("ToolCallCard (transcript)", () => {
     );
   });
 
+  // AC-596.5.19: the command is coloured as shell through the shared HighlightedCode.
+  it("AC-596.5.19: colours a Bash call's command as shell", async () => {
+    await expand(aTool({ input: { command: 'grep -rn "TODO" src && echo $?' } }));
+
+    const code = screen.getByLabelText("Command").querySelector("code");
+    await waitFor(() => {
+      expect(code).toHaveClass("hljs");
+    });
+    expect(code?.querySelector("span[class^='hljs-']")).not.toBeNull();
+    expect(code?.textContent).toBe('grep -rn "TODO" src && echo $?');
+  });
+
   it("AC-423.8: copies the command without its prompt", async () => {
     await expand(aTool());
     const writeText = vi.fn().mockResolvedValue(undefined);

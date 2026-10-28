@@ -87,6 +87,24 @@ describe("PermissionCard (permission)", () => {
     expect(within(card).getByRole("button", { name: "Deny" })).toBeEnabled();
   });
 
+  // AC-596.5.19: a Bash call's command is coloured as shell; another tool's summary stays plain.
+  it("colours a Bash command as shell and leaves another tool's summary plain", async () => {
+    const { unmount } = open(aView({ summary: 'grep -rn "TODO" src' }));
+    const command = screen.getByLabelText("What it will run").querySelector("code");
+    await waitFor(() => {
+      expect(command).toHaveClass("hljs");
+    });
+    expect(command?.querySelector("span[class^='hljs-']")).not.toBeNull();
+    expect(command?.textContent).toBe('grep -rn "TODO" src');
+    unmount();
+
+    open(aView({ tool: "WebFetch", summary: "https://demo.example.com/docs" }));
+    const summary = screen.getByLabelText("What it will run").querySelector("code");
+    expect(summary).not.toHaveClass("hljs");
+    expect(summary?.querySelector("span")).toBeNull();
+    expect(summary?.textContent).toBe("https://demo.example.com/docs");
+  });
+
   it("posts once and disables the card when answered", async () => {
     const { card, onAnswer } = open(aView());
     const allow = within(card).getByRole("button", { name: "Allow once" });

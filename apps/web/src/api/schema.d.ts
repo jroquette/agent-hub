@@ -1721,7 +1721,12 @@ export interface paths {
      */
     put: operations["save_scenario_api_v1_scenarios__project___name__put"];
     post?: never;
-    delete?: never;
+    /**
+     * Delete Scenario
+     * @description Remove the scenario's file (and Claude's proposal for it) from the hub folder (a strict
+     *     write that needs the launch cookie); its recorded scenario runs stay; no git command runs.
+     */
+    delete: operations["delete_scenario_api_v1_scenarios__project___name__delete"];
     options?: never;
     head?: never;
     patch?: never;
@@ -12562,6 +12567,72 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["SaveResult"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  delete_scenario_api_v1_scenarios__project___name__delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The scenario's file and Claude's proposal for it are gone */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description No launch cookie (open hub web's address) */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description No such scenario (already gone counts too) */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Delete refused and nothing removed, with a code: scenario_run_in_progress, link_in_path or hub_read_only */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

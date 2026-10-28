@@ -14,6 +14,7 @@ import { EffectBadge } from "../parts";
 import type { ScenarioPlanRow } from "../queries";
 import { maxChecks, stopLines } from "../story";
 import { TokenText, ValueToken, cardTitle, tokenOf } from "./CardParts";
+import { ServiceField, type ServiceOption } from "./ServicePicker";
 import { JsonField } from "./JsonField";
 import { looksLikeJson } from "./looseJson";
 import { ValuePicker } from "./ValuePicker";
@@ -26,6 +27,7 @@ import {
   dependsOn,
   formatCondition,
   parseCondition,
+  record,
   refInWords,
   shown,
   text,
@@ -45,10 +47,6 @@ import type { BuilderProblem, LibraryAction } from "./useScenarioDraft";
  * settings (description, inputs). */
 
 type Record_ = Record<string, Json>;
-
-function record(value: Json | undefined): Record_ {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : {};
-}
 
 /** A field of the form: the label above, the control, its help and its error. */
 function Field({
@@ -699,7 +697,10 @@ export function BlockInspector({
   placeId,
   named = false,
   onId,
+  services = [],
 }: {
+  /** The services the environment declares: a service input picks one of them. */
+  services?: readonly ServiceOption[];
   document: BuilderDocument;
   node: BuilderNode;
   /** The step's number on the board ("3", "3.1"). */
@@ -998,6 +999,32 @@ export function BlockInspector({
                   const current = given[input.name];
                   const found = resolved.find((item) => item.name === input.name);
                   const back = overridden.includes(input.name) && found?.from !== "missing";
+                  // A reference ($INPUTS.x) stays a value with its token; a service is picked.
+                  if (
+                    input.type === "service" &&
+                    !(typeof current === "string" && current.includes("$"))
+                  ) {
+                    return (
+                      <div key={input.name} className="ah-stack" style={{ gap: 4 }}>
+                        <span className="ah-small">
+                          {input.name}
+                          {input.required && <span className="ah-subtle"> · required</span>}
+                        </span>
+                        <ServiceField
+                          label={input.name}
+                          value={typeof current === "string" ? current : ""}
+                          options={services}
+                          environment={environment?.name ?? null}
+                          onPick={(picked) => {
+                            set("with", { ...given, [input.name]: picked });
+                          }}
+                        />
+                        {input.description && (
+                          <span className="ah-small ah-muted">{input.description}</span>
+                        )}
+                      </div>
+                    );
+                  }
                   return (
                     <div key={input.name} className="ah-stack" style={{ gap: 2 }}>
                       <ValueField

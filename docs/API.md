@@ -50,7 +50,9 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   /projects/{project}/actions/{pack}/{name}`, `PUT /scenarios/{project}/{name}`, `GET
   /scenarios/{project}/{name}/proposal` and `POST …/proposal/dismiss`), the five AGH-507 added to them: `PUT
   /scenario-runs/{run_id}/breakpoints`, `POST /scenario-runs/{run_id}/step|continue`, `GET
-  /scenario-runs/{run_id}/values` and `POST /scenarios/{project}/{name}/migrate`, and the two AGH-393 added (`KNOWLEDGE_PATHS`, both GET):
+  /scenario-runs/{run_id}/values` and `POST /scenarios/{project}/{name}/migrate`, the one AGH-596
+  added to them: `DELETE /scenarios/{project}/{name}` ([Scenarios](#scenarios)), and the two AGH-393 added
+  (`KNOWLEDGE_PATHS`, both GET):
   `/projects/{project}/knowledge/search` and `/projects/{project}/brain/backlinks` ([Knowledge](#knowledge)). A test
   fails on any other path.
 - A field kept only for compatibility is marked `deprecated` in the document and stays until `/api/v2`: a session's
@@ -782,6 +784,13 @@ environment minus `LINEAR_API_KEY`); no problem quotes its output.
     scenario, 409 `name_taken` when another pack holds the name). The server sets `revision` (the file's plus one);
     a document whose canonical bytes with the file's own `revision` equal the file's writes nothing and keeps the
     revision (`changed: false`), a graph or a tree alike.
+  - `DELETE /api/v1/scenarios/{project}/{name}` → 204 removes the scenario's file and Claude's proposal for it from
+    the hub folder (never through a link, 409 `link_in_path`; not while its newest scenario run is in progress or
+    waits for you, 409 `scenario_run_in_progress`; no git command, so the file comes back only from the
+    hub's git history); its recorded scenario runs stay. 404 (`about:blank`) when no scenario of that name loads, so
+    a second DELETE answers 404. A DELETE sends no body, so it needs no JSON content type (no 415); its Origin is
+    checked as any strict write's (403), it needs the launch cookie (401), and in the container it answers 409
+    `hub_read_only`.
   - `GET /api/v1/scenarios/{project}/{name}/proposal` → 200 `ProposalView`: the document Claude wrote for the scenario
     under the hub's ignored `.agent-runs/`, checked as Save would check it; 404 when there is none. `POST
     …/proposal/dismiss` → 204 removes it once the owner accepted it into the draft or rejected it (never through a
@@ -791,7 +800,7 @@ environment minus `LINEAR_API_KEY`); no problem quotes its output.
     document and its script as a draft (409 `name_taken`, `document_invalid`); it runs and commits nothing. `PUT
     /api/v1/projects/{project}/actions/{pack}/{name}` rewrites an action of the hub the same way (409
     `unknown_action`); the action is a draft until it is committed again.
-  - The save, the dismiss and the two action writes are item writes (`ITEM_WRITES`): strict Origin rules and the
+  - The save, the delete, the dismiss and the two action writes are item writes (`ITEM_WRITES`): strict Origin rules and the
     launch cookie, and 409 `hub_read_only` in the container ([Local security](#local-security)).
 - `POST /api/v1/scenarios/{project}/{name}/plan` with `{environment, inputs?}` → 200 `ScenarioPlanView`: what `hub
   scenario plan NAME --env ENV --json` prints (`scenario`, `environment`, `access` (`null` when undeclared),
@@ -949,9 +958,9 @@ Problems:
 | Status | Type or code | When |
 | --- | --- | --- |
 | 400 | "Invalid request parameter" | `run_id` does not match `^[a-z0-9][a-z0-9-]{0,31}$`, or `finding_id` does not match `^f[0-9]{1,6}$` |
-| 401 · 403 · 415 | as in [Local security](#local-security) | a `POST` or `PUT` (but `POST …/scenarios/validate`), or the values `GET`, without the launch cookie · a foreign `Origin` or fetch site · a body that is not JSON |
+| 401 · 403 · 415 | as in [Local security](#local-security) | a `POST`, `PUT` or `DELETE` (but `POST …/scenarios/validate`), or the values `GET`, without the launch cookie · a foreign `Origin` or fetch site · a body that is not JSON (never asked of a `DELETE`, which sends none) |
 | 404 | `about:blank` | no registered hub holds the run (or its record), the run is not a scenario run, an unknown project, scenario or finding, or the hub has no workdir |
-| 404 | `urn:agent-hub:problem:run-control-off` | a run write or a run's values read in the container (`AGENT_HUB_IN_CONTAINER=1`); the builder's save, dismiss and action writes and a scenario's migrate answer 409 `hub_read_only` there instead, and its `POST …/scenarios/validate` needs no cookie |
+| 404 | `urn:agent-hub:problem:run-control-off` | a run write or a run's values read in the container (`AGENT_HUB_IN_CONTAINER=1`); the builder's save, dismiss and action writes and a scenario's migrate and delete answer 409 `hub_read_only` there instead, and its `POST …/scenarios/validate` needs no cookie |
 | 409 | `workflow-run-undeclared-environment` · `-denied` (`steps`) · `-plan-problem` | a start whose plan may not start; no run is created |
 | 409 | `workflow-run-not-paused` | not a scenario run, or not paused at an open, unanswered investigation (an answer); not paused at all (a values read) |
 | 409 | `workflow-run-pick-refused` | a pick of no option of the latest proposal, of one holding a `deny` or a draft action, or of one whose plan changed since it was shown |
@@ -959,7 +968,8 @@ Problems:
 | 409 | `workflow-run-not-debug-paused` · `-debug-production` · `-scenario-already-tree` · `-stale-document` | Step or Continue outside a debug pause · a debug write, a start with breakpoints or a values read on a production environment · migrate of a version-2 scenario · migrate over a file that changed since `base_content_hash` |
 | 422 | `workflow-run-unknown-block` | a breakpoint address the run's pinned tree (or, for a start, the scenario's tree) does not hold; `block` names it |
 | 409 | `workflow-run-issue-exists` · `-tracker-not-connected` · `-note-exists` · `-link-in-path` · `-finding-unusable` | a finding's issue or note cannot be made (see above) |
-| 409 | `workflow-run-link-in-path` | the link file `investigation-<n>.session` is a symbolic link |
+| 409 | `workflow-run-link-in-path` | the link file `investigation-<n>.session` is a symbolic link; a scenario's delete whose file, a folder on its path or its proposal's path is a link (nothing is removed) |
+| 409 | `workflow-run-scenario-run-in-progress` | a scenario's delete while its newest scenario run is in progress (a paused one too); the detail names the run |
 | 409 | `workflow-run-workspace-root` | a read root (the hub or a declared repo) is `/`, the home folder or one of its ancestors, where reads would reach the developer's own credentials |
 | 409 | `urn:agent-hub:problem:hub-registry-unreadable` (`hub_registry_unreadable`) | the hub registry cannot be read |
 | 409 | `urn:agent-hub:problem:hub-local-invalid` (`hub_local_invalid`) | the hub's `hub.local.json` cannot be read or conflicts with `hub.json` (it loosens an environment's access, for example), so its env files, credential names and environments are unknown (an investigation session, a plan, a start, a pick or an issue's create) |
@@ -986,12 +996,12 @@ The agent-session routes add a cookie and stricter Origin rules ([Agent sessions
 run writes (`RUN_WRITES`: start, cancel, resume and abandon a run, a gate's decision, an AC's check run, a
 change request's decision, and the scenario writes: a plan, a start, an investigation's session and answer, a
 finding's issue and inbox note; and, with AGH-507, a run's breakpoints, Step and Continue), the restores,
-the Publish, the scenario builder's save, proposal dismiss and action writes (AGH-521) and a scenario's migrate
-(AGH-507) (`ITEM_WRITES`) need that cookie too, as does the read of a scenario run's values (`RUN_READS`, with the
-agent-session reads' Origin rules) ([Workflow run commands](#workflow-run-commands), [Skills](#skills),
+the Publish, the scenario builder's save, proposal dismiss and action writes (AGH-521), a scenario's migrate
+(AGH-507) and its delete (AGH-596) (`ITEM_WRITES`) need that cookie too, as does the read of a scenario run's values
+(`RUN_READS`, with the agent-session reads' Origin rules) ([Workflow run commands](#workflow-run-commands), [Skills](#skills),
 [Workflows](#workflows)); every other route is unchanged and needs no cookie. In the container (`AGENT_HUB_IN_CONTAINER=1`, where no token is
-minted and the hubs are mounted read-only) a restore, a publish or a scenario builder write (a migrate included) answers 409
-`hub_read_only` before the cookie is checked, and a run write or the values read 404 `run-control-off`.
+minted and the hubs are mounted read-only) a restore, a publish or a scenario builder write (a migrate and a delete
+included) answers 409 `hub_read_only` before the cookie is checked, and a run write or the values read 404 `run-control-off`.
 
 The two learning decisions, which reach the network, the four workflow run commands and a workflow gate's decision,
 which start or stop processes, and the two restores and the Publish (`ITEM_WRITES`), which write into a hub's tree,

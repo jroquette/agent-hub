@@ -1,6 +1,7 @@
 import "./steps.css";
 
 import {
+  useEffect,
   useRef,
   useState,
   type KeyboardEvent,
@@ -10,12 +11,13 @@ import {
 } from "react";
 
 import { Button, Icon, IconButton } from "../../../components";
-import { EffectBadge } from "../parts";
+import { EffectBadge, PolicyBadge } from "../parts";
 import type { ScenarioAction, ScenarioPlanRow } from "../queries";
-import { pace } from "../story";
-import { TokenText, ValueToken, cardTitle, tokenOf } from "./CardParts";
+import { KindTile, TokenText } from "./CardParts";
 import { kindLook } from "./FlowCanvas";
-import { conditionWords, shown, text, type BuilderNode, type Json } from "./model";
+import { OpenStep, type StepSources } from "./OpenStep";
+import { conditionWords, record, text, type BuilderNode } from "./model";
+import { compact, nodeLines, ownValues, typedAs } from "./rowLines";
 import { itemId, listsOf, type Item, type Slot } from "./program";
 import type { BuilderProblem } from "./useScenarioDraft";
 
@@ -70,10 +72,25 @@ export interface StepListProps {
   externalTarget?: InsertTarget | null;
   /** The list's scrolling element, for a drag from the palette. */
   scrollRef?: RefObject<HTMLDivElement>;
-}
-
-function record(value: Json | undefined): Record<string, Json> {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : {};
+  /** The state of a row in the scenario run shown on the blocks (null: none shown). */
+  runStateOf?: ((id: string) => ReactNode) | undefined;
+  /** The values a row kept in the scenario run shown, as `name = value` words. */
+  keptOf?: ((id: string) => readonly string[]) | undefined;
+  /** The row the shown scenario run is at now. */
+  current?: string | null | undefined;
+  /** Breakpoints before blocks (a scenario written as blocks, off production). */
+  breakpoints?:
+    | { on: (id: string) => boolean; toggle: (id: string) => void; busy?: boolean }
+    | null
+    | undefined;
+  /** Edits made on the row itself: its sentence, a value it sets, its timing. */
+  onEditNode?: ((id: string, node: BuilderNode) => void) | undefined;
+  onDuplicate?: ((id: string) => void) | undefined;
+  onDelete?: ((id: string) => void) | undefined;
+  /** Where a step's values come from (environment, scenario variables, kept values). */
+  sources?: StepSources | null | undefined;
+  /** Edits one value of a step in the side panel (its body, a value taken from elsewhere). */
+  onEditField?: ((id: string, name: string) => void) | undefined;
 }
 
 const KIND_NAME: Readonly<Record<string, string>> = {
@@ -124,113 +141,6 @@ export function kindName(type: string): string {
   return KIND_NAME[type] ?? type;
 }
 
-function compact(value: Json): string {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (/^[[{]/.test(trimmed)) {
-      try {
-        return JSON.stringify(JSON.parse(trimmed));
-      } catch {
-        return trimmed.replace(/\s+/g, " ");
-      }
-    }
-    return trimmed.replace(/\s+/g, " ");
-  }
-  return shown(value);
-}
-
-/** Line 2's values: only what the step sets itself (never a run value it merely repeats). */
-function ownValues(node: BuilderNode, action: ScenarioAction | null): [string, Json][] {
-  const given = record(node.with);
-  const order = action?.inputs.map((input) => input.name) ?? [];
-  return Object.entries(given)
-    .filter(([name, value]) => value !== `$INPUTS.${name}`)
-    .sort((a, b) => {
-      const ia = order.indexOf(a[0]);
-      const ib = order.indexOf(b[0]);
-      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
-    });
-}
-
-function Value({ value }: { value: Json }) {
-  const written = compact(value);
-  if (tokenOf(written)) return <ValueToken value={written} />;
-  return <TokenText value={written} />;
-}
-
-/** What line 1 and line 2 say for a node (an action, a check, a repeat …). */
-function nodeLines(
-  node: BuilderNode,
-  action: ScenarioAction | null,
-  inner: number,
-): { title: string; detail: ReactNode; detailText: string } {
-  const named = typeof node.description === "string" && node.description.trim() !== "";
-  const title = cardTitle(node, action);
-  const parts: ReactNode[] = [];
-  const words: string[] = [];
-  const add = (part: ReactNode, word: string) => {
-    parts.push(<span key={parts.length}>{part}</span>);
-    words.push(word);
-  };
-  const ref = text(node.action);
-  if (node.type === "action" || node.type === "expect") {
-    if (ref) add(<span className="st-mono">{action?.name ?? ref}</span>, ref);
-  }
-  if (node.type === "expect") {
-    if (named && text(node.until_when)) {
-      const words_ = `until ${conditionWords(text(node.until_when))}`;
-      add(words_, words_);
-    }
-    const every = text(node.every);
-    const timeout = text(node.timeout);
-    if (every && timeout) {
-      const timing = `every ${pace(every)}, up to ${pace(timeout)}`;
-      add(timing, timing);
-    }
-  }
-  if (node.type === "action" || node.type === "expect" || node.type === "include") {
-    for (const [name, value] of ownValues(node, action)) {
-      add(
-        <>
-          <span className="st-key">{name}</span> <Value value={value} />
-        </>,
-        `${name} ${compact(value)}`,
-      );
-    }
-  }
-  const kept = Object.keys(record(node.capture));
-  if (kept.length > 0) {
-    const keep = `keeps ${kept.join(", ")}`;
-    add(keep, keep);
-  }
-  if (node.type === "approval") {
-    const asks = node.capture_response === true ? " · asks for a value" : "";
-    add(`You approve or reject${asks}`, `You approve or reject${asks}`);
-  }
-  if (node.type === "loop_group") {
-    const rounds = `at most ${text(node.max_iterations, "1")} rounds · ${String(inner)} ${inner === 1 ? "step" : "steps"}`;
-    add(rounds, rounds);
-  }
-  return {
-    title,
-    detail: parts.length > 0 ? interleave(parts) : null,
-    detailText: words.join(" · "),
-  };
-}
-
-function interleave(parts: ReactNode[]): ReactNode {
-  return parts.flatMap((part, index) =>
-    index === 0
-      ? [part]
-      : [
-          <span key={`dot-${String(index)}`} className="st-dot" aria-hidden>
-            ·
-          </span>,
-          part,
-        ],
-  );
-}
-
 function countSteps(items: readonly Item[]): number {
   return items.reduce((sum, item) => {
     if (item.kind === "block") return sum + 1;
@@ -256,6 +166,8 @@ interface Status {
   label: string;
   tone: string;
   title: string;
+  /** A plan's decision, shown as the run panel shows it (an ask is neutral until it waits). */
+  decision?: string;
 }
 
 function statusOf(
@@ -268,8 +180,9 @@ function statusOf(
     return {
       icon: plan.decision === "ask" ? "hand" : "octagon-x",
       label: DECISION[plan.decision] ?? plan.decision,
-      tone: plan.decision === "ask" ? "waiting" : "failed",
+      tone: plan.decision === "ask" ? "quiet" : "failed",
       title: plan.reason ?? plan.plan,
+      decision: plan.decision,
     };
   }
   return null;
@@ -317,6 +230,15 @@ export function StepList(props: StepListProps) {
   const [dragging, setDragging] = useState<{ id: string; target: InsertTarget | null } | null>(
     null,
   );
+  // Edited on the row: its sentence (`title`), one value it sets (`with:<name>`) or a timing.
+  const [editing, setEditing] = useState<{ id: string; field: string } | null>(null);
+  // The row an edit on it ended on: focus goes back to it once the field is gone.
+  // A new object each time, so the same row can be focused again.
+  const [refocus, setRefocus] = useState<{ id: string } | null>(null);
+  useEffect(() => {
+    if (refocus === null) return;
+    listRef.current?.querySelector<HTMLElement>(`[data-row="${CSS.escape(refocus.id)}"]`)?.focus();
+  }, [refocus, listRef]);
   const order = ["__start__", ...rowIds(items)];
   const current = focused && order.includes(focused) ? focused : (selected ?? "__start__");
 
@@ -325,10 +247,53 @@ export function StepList(props: StepListProps) {
     listRef.current?.querySelector<HTMLElement>(`[data-row="${CSS.escape(id)}"]`)?.focus();
   };
 
+  const {
+    runStateOf,
+    keptOf,
+    current: runAt = null,
+    breakpoints,
+    onEditNode,
+    onDuplicate,
+    onDelete,
+    sources = null,
+    onEditField,
+  } = props;
+  const nodeOfRow = (id: string): BuilderNode | null => {
+    const find = (list: readonly Item[]): BuilderNode | null => {
+      for (const item of list) {
+        if (itemId(item) === id) {
+          return item.kind === "block" || item.kind === "repeat" ? item.node : null;
+        }
+        for (const inner of listsOf(item)) {
+          const found = find(inner);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+    return find(items);
+  };
+
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
     const id = target.dataset.row;
     if (!id) return;
+    if (event.key === "F2" && !readOnly && onEditNode && nodeOfRow(id)) {
+      event.preventDefault();
+      setEditing({ id, field: "title" });
+      return;
+    }
+    if (
+      event.key === "b" &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      breakpoints &&
+      id !== "__start__"
+    ) {
+      event.preventDefault();
+      breakpoints.toggle(id);
+      return;
+    }
     const at = order.indexOf(id);
     const go = (to: number) => {
       const next = order[Math.max(0, Math.min(order.length - 1, to))];
@@ -448,9 +413,9 @@ export function StepList(props: StepListProps) {
             aria-label={label}
             title={label}
             tabIndex={-1}
-            // Written as blocks, the "+" is the pointer's way: a tree holds only its items, and
-            // the keys add from a row ("a"), the Blocks tab and Add step / Add stage below.
-            aria-hidden={tree ? true : undefined}
+            // The "+" is the pointer's way: a tree holds only its items, and the keys add from
+            // a row ("a"), the Blocks tab and Add step / Add stage below.
+            aria-hidden
             onClick={(event) => {
               if (kind === "stage") onInsertStage?.(index);
               else onInsert(at, event.currentTarget.getBoundingClientRect(), label);
@@ -476,14 +441,108 @@ export function StepList(props: StepListProps) {
     group: boolean,
     spoken = "",
     stage = false,
+    extra: {
+      news?: ReactNode;
+      titleEditor?: ReactNode;
+      tech?: ReactNode;
+      open?: ReactNode;
+    } = {},
   ) => {
     const number = numbers.get(id) ?? "";
     const isSelected = selected === id;
     const noun = stage ? "stage" : "step";
+    const state = runStateOf?.(id) ?? null;
+    const isCurrent = runAt === id;
+    const marked = breakpoints?.on(id) ?? false;
+    const quick =
+      readOnly || id === "__start__" ? null : (
+        <span className="st-quick" data-pinned={marked ? "true" : undefined}>
+          {breakpoints && (
+            <button
+              type="button"
+              className={marked ? "st-quick-btn st-break-on" : "st-quick-btn"}
+              tabIndex={-1}
+              aria-pressed={marked}
+              aria-label={`Breakpoint before block ${number || id} (b)`}
+              title={
+                marked
+                  ? `The scenario run pauses before block ${number || id}. Press to remove the breakpoint (b).`
+                  : `Pause the scenario run before block ${number || id} (b).`
+              }
+              aria-disabled={breakpoints.busy === true || undefined}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (!breakpoints.busy) breakpoints.toggle(id);
+              }}
+            >
+              <Icon name={marked ? "circle-dot" : "circle"} size="sm" />
+            </button>
+          )}
+          {!stage && onEditNode && nodeOfRow(id) && (
+            <button
+              type="button"
+              className="st-quick-btn st-quick-hover"
+              tabIndex={-1}
+              aria-label={`Rename ${noun} ${number} (F2)`}
+              title={`Rename ${noun} ${number} (F2)`}
+              onClick={(event) => {
+                event.stopPropagation();
+                setEditing({ id, field: "title" });
+              }}
+            >
+              <Icon name="pencil" size="sm" />
+            </button>
+          )}
+          {!stage && onDuplicate && (
+            <button
+              type="button"
+              className="st-quick-btn st-quick-hover"
+              tabIndex={-1}
+              aria-label={`Duplicate ${noun} ${number} (⌘D)`}
+              title={`Duplicate ${noun} ${number} (⌘D)`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onDuplicate(id);
+              }}
+            >
+              <Icon name="copy" size="sm" />
+            </button>
+          )}
+          {onDelete && (
+            <button
+              type="button"
+              className="st-quick-btn st-quick-hover"
+              tabIndex={-1}
+              aria-label={`Delete ${noun} ${number} (Delete)`}
+              title={`Delete ${noun} ${number} (Delete)`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete(id);
+              }}
+            >
+              <Icon name="trash" size="sm" />
+            </button>
+          )}
+          <button
+            type="button"
+            className="st-quick-btn st-quick-hover"
+            tabIndex={-1}
+            aria-label={`More for ${noun} ${number} (Shift F10)`}
+            title={`More for ${noun} ${number} (Shift F10)`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onRowMenu(id, event.currentTarget.getBoundingClientRect());
+            }}
+          >
+            <Icon name="ellipsis" size="sm" />
+          </button>
+        </span>
+      );
     return (
       // The tree handles the keys of its rows (roving focus: j / k, Enter, Alt ↑ / ↓).
       // eslint-disable-next-line jsx-a11y/click-events-have-key-events
       <div
+        data-open={extra.open ? "true" : undefined}
         role="treeitem"
         tabIndex={current === id ? 0 : -1}
         data-row={id}
@@ -500,7 +559,11 @@ export function StepList(props: StepListProps) {
         data-suggested={suggested?.has(id) ? "true" : undefined}
         data-problem={problemsOf(id).some((p) => p.severity === "error") ? "true" : undefined}
         data-dragging={dragging?.id === id ? "true" : undefined}
-        title={detailText ? `${titleText}\n${detailText}` : titleText}
+        data-current={isCurrent ? "true" : undefined}
+        data-run={state !== null ? "true" : undefined}
+        aria-current={isCurrent ? "step" : undefined}
+        // Open, the row shows it all: no tooltip over the open part.
+        title={extra.open ? undefined : detailText ? `${titleText}\n${detailText}` : titleText}
         onClick={() => {
           setFocused(id);
           onSelect(id);
@@ -535,21 +598,29 @@ export function StepList(props: StepListProps) {
           </span>
         )}
         <span className="st-num">{number}</span>
-        <span
-          className="st-tile"
-          style={{ ["--tile" as string]: look.tint, ["--tile-soft" as string]: look.soft }}
-          aria-hidden
-        >
-          <Icon name={look.icon} size="sm" />
-        </span>
+        <KindTile look={look} />
         <span className="st-lines">
-          <span className="st-title">{title}</span>
+          {extra.titleEditor ?? <span className="st-title">{title}</span>}
           {detail && <span className="st-detail">{detail}</span>}
+          {extra.tech && <span className="st-tech">{extra.tech}</span>}
+          {extra.news}
         </span>
         <span className="st-right">
           {suggested?.has(id) && <span className="st-chip">Suggested</span>}
           {right}
+          {state !== null && <span className="st-run-state">{state}</span>}
+          {quick}
         </span>
+        {extra.open && (
+          // Open, the step's settings are one named group under its row's header.
+          <div
+            role="group"
+            className="st-open-group"
+            aria-label={`${stage ? "Stage" : "Step"} ${number} settings`}
+          >
+            {extra.open}
+          </div>
+        )}
       </div>
     );
   };
@@ -577,22 +648,152 @@ export function StepList(props: StepListProps) {
           (node.type === "action" || node.type === "expect") &&
           action && <EffectBadge effect={action.effect} words />
         )}
-        {status && (
-          <span className="st-status" data-tone={status.tone} title={status.title}>
-            <Icon name={status.icon} size="sm" /> {status.label}
-          </span>
+        {status?.decision !== undefined ? (
+          <PolicyBadge decision={status.decision} reason={null} />
+        ) : (
+          status && (
+            <span className="st-status" data-tone={status.tone} title={status.title}>
+              <Icon name={status.icon} size="sm" /> {status.label}
+            </span>
+          )
         )}
       </>
     );
-    const detail = plan?.plan ? (
-      <span className={planStale ? "st-plan st-plan-stale" : "st-plan"}>
-        <Icon name={planStale ? "clock" : "scan-eye"} size="sm" />{" "}
-        {planStale ? "Planned before your changes · " : ""}
-        {plan.plan}
-      </span>
-    ) : (
-      lines.detail
+    const kept = keptOf?.(id) ?? [];
+    const news =
+      plan?.plan || kept.length > 0 ? (
+        <span className="st-news">
+          {plan?.plan && (
+            <span className={planStale ? "st-plan st-plan-stale" : "st-plan"}>
+              <Icon name={planStale ? "clock" : "scan-eye"} size="sm" />{" "}
+              {planStale ? "Planned before your changes · " : "Plan: "}
+              {plan.plan}
+            </span>
+          )}
+          {kept.length > 0 && (
+            <span className="st-kept">
+              <Icon name="bookmark" size="sm" /> Kept {kept.join(" · ")}
+            </span>
+          )}
+        </span>
+      ) : null;
+    const editable = !readOnly && onEditNode !== undefined;
+    const commitEdit = (next: BuilderNode) => {
+      setEditing(null);
+      onEditNode?.(id, next);
+    };
+    const field = (
+      name: string,
+      label: string,
+      initial: string,
+      write: (typed: string) => BuilderNode,
+    ) => (
+      <input
+        key={name}
+        className="ah-input st-inline-input"
+        aria-label={label}
+        defaultValue={initial}
+        // A field opened on purpose takes focus.
+        // eslint-disable-next-line jsx-a11y/no-autofocus
+        autoFocus
+        size={Math.max(8, Math.min(48, initial.length + 2))}
+        onClick={(event) => {
+          event.stopPropagation();
+        }}
+        onKeyDown={(event) => {
+          event.stopPropagation();
+          if (event.key === "Enter") {
+            event.preventDefault();
+            commitEdit(write(event.currentTarget.value));
+            setRefocus({ id });
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            setEditing(null);
+            setRefocus({ id });
+          }
+        }}
+        onBlur={(event) => {
+          if (editing?.id === id && editing.field === name) {
+            const typed = event.currentTarget.value;
+            if (typed !== initial) commitEdit(write(typed));
+            else setEditing(null);
+          }
+        }}
+      />
     );
+    const editingHere = editing?.id === id ? editing.field : null;
+    const titleEditor =
+      editable && editingHere === "title"
+        ? field("title", `What ${numbers.get(id) ?? id} does`, lines.title, (typed) => ({
+            ...node,
+            description: typed.trim(),
+          }))
+        : undefined;
+    // Selected, the row opens in place: what it does in full, the action it runs, each value it
+    // sends (a JSON body indented, its references drawn as tokens), the values that come from
+    // elsewhere, what it keeps. Plain values and the timing edit right there.
+    const detail: ReactNode = lines.detail;
+    const values =
+      node.type === "action" || node.type === "expect" || node.type === "include"
+        ? ownValues(node, action)
+        : [];
+    const isOpen = selected === id && (node.type === "action" || node.type === "expect");
+    const given = record(node.with);
+    const number = numbers.get(id) ?? id;
+    const editor = (name: string): ReactNode => {
+      if (!editable || editingHere !== name) return null;
+      if (name === "timing") {
+        const every = text(node.every);
+        return field("timing", `How often ${number} checks`, every, (typed) => ({
+          ...node,
+          every: typed.trim() || every,
+        }));
+      }
+      const key = name.slice("with:".length);
+      const value = given[key];
+      if (value === undefined) return null;
+      return field(name, `${key} of ${number}`, compact(value), (typed) => ({
+        ...node,
+        with: { ...given, [key]: typedAs(value, typed) },
+      }));
+    };
+    const open = isOpen ? (
+      <OpenStep
+        node={node}
+        action={action}
+        sources={sources}
+        values={values}
+        editor={editor}
+        onEdit={
+          editable
+            ? (name) => {
+                setEditing({ id, field: name });
+              }
+            : null
+        }
+        onSet={
+          editable
+            ? (name, value) => {
+                onEditNode(id, { ...node, with: { ...given, [name]: value } });
+              }
+            : null
+        }
+        onEditInPanel={
+          onEditField
+            ? (name) => {
+                onEditField(id, name);
+              }
+            : null
+        }
+        onGoToStep={
+          readOnly
+            ? null
+            : (step) => {
+                onSelect(step);
+              }
+        }
+      />
+    ) : null;
     return row(
       id,
       level,
@@ -600,7 +801,8 @@ export function StepList(props: StepListProps) {
       node.type,
       <TokenText value={lines.title} />,
       lines.title,
-      detail,
+      // Open, the operation's header says what it does: line 2 would say it twice.
+      isOpen ? null : detail,
       lines.detailText,
       right,
       group,
@@ -610,6 +812,8 @@ export function StepList(props: StepListProps) {
           : "",
         status ? ` ${status.label}.` : "",
       ].join(""),
+      false,
+      { news, titleEditor, tech: isOpen ? null : lines.tech, open },
     );
   };
 
@@ -787,16 +991,7 @@ export function StepList(props: StepListProps) {
             >
               <span aria-hidden />
               <span className="st-num" />
-              <span
-                className="st-tile"
-                style={{
-                  ["--tile" as string]: "var(--kind-control)",
-                  ["--tile-soft" as string]: "var(--kind-control-soft)",
-                }}
-                aria-hidden
-              >
-                <Icon name="flag" size="sm" />
-              </span>
+              <KindTile look={{ ...kindLook("stage"), icon: "flag" }} />
               <span className="st-lines">
                 <span className="st-title">
                   {start.environment

@@ -15,6 +15,8 @@ export interface PanelDismissOptions {
   fallbackFocus?: () => HTMLElement | null;
   /** Escape in a box with text in it stays the box's (a chat's composer). */
   keepTypedEscape?: boolean;
+  /** A press outside the panel closes it too: a menu, which the page around it does not keep. */
+  outsidePointer?: boolean;
 }
 
 /** Text typed in a box keeps its Escape: closing the panel would throw the reader out of it. */
@@ -29,8 +31,8 @@ function typedIn(target: EventTarget | null): boolean {
 const LAYER_ABOVE = "[aria-modal='true'], [role='menu']";
 
 /**
- * A side panel's ways out, shared by the panels that are not modal (`SidePanel` and the Discuss
- * panel): Escape closes it (after any layer above it, which spends Escape first), and once closed,
+ * A side panel's ways out, shared by the panels that are not modal (`SidePanel`, the Discuss
+ * panel and the scenario menu): Escape closes it (after any layer above it, which spends Escape first), and once closed,
  * by any path, focus goes back to its opener, unless the reader already moved it elsewhere on the
  * page.
  */
@@ -78,6 +80,18 @@ export function usePanelDismiss(
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("keydown", onKey);
+    };
+  }, [panel]);
+
+  useEffect(() => {
+    const onPointer = (event: PointerEvent) => {
+      if (!latest.current.options.outsidePointer) return;
+      if (event.target instanceof Node && panel.current?.contains(event.target) === true) return;
+      latest.current.onClose();
+    };
+    document.addEventListener("pointerdown", onPointer);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
     };
   }, [panel]);
 }

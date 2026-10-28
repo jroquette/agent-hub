@@ -6,8 +6,10 @@
   padding: var(--space-6) var(--space-5) var(--space-8);
 }
 .st-column {
-  max-width: 800px;
-  margin: 0 auto;
+  /* Against the left column: on a wide screen the free width is never between the palette and
+   * the blocks. */
+  max-width: 960px;
+  margin: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -19,7 +21,9 @@
 .st-row {
   position: relative;
   display: grid;
-  grid-template-columns: 16px 28px 24px minmax(0, 1fr) auto;
+  /* The title keeps a readable minimum: a full right side (effect, status, run state, time)
+   * wraps in its own column rather than squeezing the title to nothing. */
+  grid-template-columns: 16px 28px 24px minmax(160px, 1fr) minmax(0, auto);
   align-items: center;
   column-gap: var(--space-2);
   min-height: 56px;
@@ -134,8 +138,11 @@
 }
 .st-right {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-2);
+  min-width: 0;
   white-space: nowrap;
 }
 .st-status {
@@ -817,4 +824,593 @@
 }
 .st-row.st-stage[data-selected="true"] {
   background: var(--accent-soft);
+}
+
+/* ---------- Build and run on one screen ---------- */
+/* The page box: capped and centred on a wide screen, so the blocks stay near the palette. */
+.sb-page {
+  width: 100%;
+  max-width: 1920px;
+  margin: 0 auto;
+}
+.sb-description {
+  max-width: 640px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The run bar: environment, mode, plan, inputs, Start, then the verdict in one line. */
+.sb-runbar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.sb-runbar-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-5);
+}
+.sb-runbar-controls .sb-env {
+  margin-left: 0;
+  gap: var(--space-2);
+}
+.sb-runbar-controls .sb-env select {
+  height: var(--control);
+  min-width: 240px;
+}
+.sb-runbar-sep {
+  align-self: stretch;
+  width: 1px;
+  margin: 2px 0;
+  background: var(--border);
+}
+.sb-runbar-verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+}
+.sb-runbar-verdict[data-tone="ok"] {
+  color: var(--text);
+}
+.sb-runbar-verdict[data-tone="ok"] svg {
+  color: var(--done);
+}
+.sb-runbar-verdict[data-tone="bad"] {
+  color: var(--failed);
+}
+.sb-runbar-verdict a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+/* The run strip: the scenario run shown on the blocks, in one line. */
+.sb-strip-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.sb-strip {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  font-size: 13px;
+}
+.sb-strip[data-status="running"] {
+  border-color: var(--live);
+}
+.sb-strip[data-status="running"] > svg {
+  color: var(--live);
+}
+.sb-strip[data-status="waiting"] {
+  border-color: var(--waiting);
+  background: var(--waiting-soft);
+}
+.sb-strip[data-status="waiting"] > svg {
+  color: var(--waiting);
+}
+.sb-strip[data-status="failed"] > svg {
+  color: var(--failed);
+}
+.sb-strip[data-status="done"] > svg {
+  color: var(--done);
+}
+.sb-strip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-follow {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+/* The run panel (right column while no block is open in the editor). */
+.sb-run-panel .ah-card {
+  box-shadow: none;
+}
+.sc-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.sc-runs-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+}
+.sc-runs-row[data-shown="true"] {
+  background: var(--accent-soft);
+}
+
+/* A block in the scenario run shown: its state at the right, the current one marked. */
+.st-run-state {
+  display: inline-flex;
+  align-items: center;
+}
+.st-row[data-current="true"] {
+  border-color: var(--live);
+  box-shadow: inset 3px 0 0 var(--live);
+}
+.st-row[data-current="true"]:has([data-status="waiting"]) {
+  border-color: var(--waiting);
+  box-shadow: inset 3px 0 0 var(--waiting);
+}
+
+/* Line 3: only when there is news (the plan, what the block kept). */
+.st-news {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-3);
+  font-size: 12px;
+  line-height: 18px;
+}
+.st-news svg {
+  vertical-align: -2px;
+}
+.st-kept {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* Quick actions: on hover and keyboard focus of the row; a set breakpoint always shows. */
+.st-quick {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.st-quick-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-subtle);
+  cursor: pointer;
+}
+.st-quick-btn:hover {
+  background: var(--surface-sunken);
+  color: var(--text);
+}
+.st-quick-btn.st-break-on {
+  color: var(--accent);
+}
+.st-quick > .st-quick-btn:not(.st-break-on) {
+  opacity: 0;
+}
+.st-row:hover .st-quick > .st-quick-btn,
+.st-row:focus-visible .st-quick > .st-quick-btn,
+.st-row:focus-within .st-quick > .st-quick-btn,
+.st-row[data-selected="true"] .st-quick > .st-quick-btn {
+  opacity: 1;
+}
+@media (hover: none) {
+  .st-quick > .st-quick-btn:not(.st-break-on) {
+    opacity: 1;
+  }
+}
+.st-chip-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+/* Editing on the row: the sentence and the values open in place. */
+.st-inline-input {
+  height: 26px;
+  padding: 0 6px;
+  font-size: 13px;
+  max-width: 100%;
+}
+.st-lines > .st-inline-input {
+  font-weight: 600;
+  font-size: 14px;
+}
+.st-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.st-detail-edit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  row-gap: 4px;
+  white-space: normal;
+}
+.st-row[data-selected="true"] .st-detail {
+  white-space: normal;
+}
+.st-chip-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  height: var(--control-sm);
+  padding: 0 var(--space-2);
+  border: 1px dashed var(--border-control);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+  cursor: text;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.st-chip-edit:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+@media (prefers-reduced-motion: reduce) {
+  .st-row {
+    transition: none;
+  }
+}
+
+/* Before you start: one quiet card, its commands folded. */
+.sc-before .ah-h3 {
+  font-size: 14px;
+}
+.sc-before-more summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.sc-before-list {
+  margin: var(--space-2) 0;
+  padding-left: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* The technical line under the sentence: the action and its short values. */
+.st-tech {
+  display: block;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-row[data-selected="true"] .st-tech {
+  white-space: normal;
+}
+
+/* The selected block, open in place: part of the row, under the title, as wide as the row. Open,
+ * it keeps the accent edge but a neutral ground, so its groups read calmly. */
+.st-row[data-selected="true"] {
+  align-items: start;
+}
+/* Open, the row keeps its accent edge on a neutral ground; its settings span the whole row. */
+.st-row[data-open="true"] {
+  background: var(--surface);
+}
+.st-open-group {
+  grid-column: 1 / -1;
+  /* The row pads its left by 4px only (its drag handle sits there): the open part takes the
+   * row's right padding on its left too, so its text and groups sit 12px in from both edges. */
+  padding-left: var(--space-2);
+}
+.st-row[data-selected="true"] > .st-num,
+.st-row[data-selected="true"] > .st-tile,
+.st-row[data-selected="true"] > .st-handle {
+  margin-top: 2px;
+}
+.st-open {
+  margin-top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-3) 0 var(--space-1);
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--text);
+  cursor: default;
+}
+.st-open-about {
+  margin: 0;
+  max-width: 72ch;
+  color: var(--text-muted);
+}
+.st-open-mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.st-open-strong {
+  color: var(--text);
+  font-weight: 500;
+}
+.st-open-quiet {
+  color: var(--text-subtle);
+}
+
+/* Grouped lists, as system settings show them: a small title, then rows in one rounded group,
+ * the label at the left and the value at the right, hairlines between rows. */
+.st-g-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.st-g-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0 0 0 var(--space-3);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.st-g {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+/* A row: the label in a fixed column, its value right after it, both left-aligned; a note
+ * under them across the row. */
+.st-g-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(120px, 28%) minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-4);
+  row-gap: var(--space-1);
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+}
+/* An inset hairline between rows, starting at the text, not at the group's edge. */
+.st-g-row + .st-g-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: var(--space-3);
+  right: 0;
+  border-top: 1px solid var(--border);
+}
+.st-g-label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.st-g-note {
+  grid-column: 1 / -1;
+  max-width: 100%;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-g-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  min-width: 0;
+  text-align: left;
+}
+
+/* Body: the app's code well. */
+.st-open-json {
+  max-height: 320px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  line-height: 20px;
+  white-space: pre;
+}
+
+/* An editable value (.st-chip-edit above): its text ellipsed inside. */
+.st-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* What it runs: the action's script and file, folded under Runs. */
+.st-g-more {
+  display: block;
+}
+.st-code > summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-sm);
+  gap: var(--space-2);
+  list-style: none;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.st-code > summary::-webkit-details-marker {
+  display: none;
+}
+.st-code > summary > svg {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.st-code[open] > summary > svg {
+  transform: rotate(90deg);
+}
+.st-code > summary:hover {
+  color: var(--text);
+}
+.st-code-files {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+.st-code-files .ah-json {
+  max-height: 360px;
+  white-space: pre;
+}
+@media (prefers-reduced-motion: reduce) {
+  .st-code > summary > svg {
+    transition: none;
+  }
+}
+
+/* A service input: a field that opens the list of the environment's services, never free text.
+ * Its look is the shared field's (`button.ah-input`); only its size and layout are set here. */
+.st-service {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  height: var(--control-sm);
+  padding: 0 var(--space-2);
+}
+.st-service-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.st-service-missing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 12px;
+  color: var(--failed);
+  white-space: nowrap;
+}
+.st-service > svg {
+  flex: none;
+  color: var(--text-subtle);
+}
+
+/* A service input: the kind (a filter) and the service itself, side by side. */
+.st-service-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  min-width: 0;
+}
+.st-service-kind {
+  flex: none;
+  height: var(--control-sm);
+  font-size: 12px;
+}
+.st-service-pair > .st-service {
+  min-width: 0;
+}
+
+/* What the step still needs, said with an icon and a word (not a colour alone). */
+.st-g-missing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--text);
+}
+.st-g-missing > svg {
+  color: var(--waiting);
+}
+/* A quiet link to where a value is changed. */
+.st-g-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--control-sm);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.st-g-link:hover {
+  text-decoration: underline;
+}
+.st-open-value-ref {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+}
+/* The body, a value of the step: its name and tools, then its code well across the row. */
+.st-g-body {
+  display: flex;
+  flex-direction: column;
+  /* The row's grid centres its cells; a body runs left to right, at the row's full width. */
+  align-items: stretch;
+  gap: var(--space-2);
+}
+.st-g-body > .st-g-note {
+  align-self: flex-start;
+}
+.st-g-body-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.st-open-draft {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  white-space: normal;
 }

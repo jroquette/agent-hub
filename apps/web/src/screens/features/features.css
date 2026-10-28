@@ -487,25 +487,6 @@
   flex-direction: column;
   gap: var(--space-1);
 }
-/* Size reads as the fields around it: the same box, a caret for its choices. */
-.ft-new-select {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-.ft-new-select-input {
-  width: 100%;
-  appearance: none;
-  -webkit-appearance: none;
-  padding-right: 32px;
-  cursor: pointer;
-}
-.ft-new-select-caret {
-  position: absolute;
-  right: 10px;
-  color: var(--text-subtle);
-  pointer-events: none;
-}
 .ft-new-card .ah-input {
   width: 100%;
 }

@@ -1,8 +1,7 @@
 /* Sessions toolbar: a wide search, the period, and one Filters popover for the rest (sessions v2). */
 import { useEffect, useRef, useState } from "react";
 
-import { Button, FacetMenu, FilterChip, Icon, Kbd, Popover } from "../../components";
-import { typingIn } from "../../shell/goSequence";
+import { Button, FacetMenu, FilterChip, Icon, Popover, SearchField } from "../../components";
 import { OUTCOMES, PERIODS, TOOLS, WITHINS, badDecimal, type Period, type Within } from "./filters";
 
 type Update = (changes: Record<string, string | null>) => void;
@@ -58,49 +57,6 @@ function outcomeText(value: string | null): string {
 
 export function periodLabel(period: Period): string {
   return PERIOD_LABEL[period];
-}
-
-/** `/` focuses the search; Esc in it clears, then leaves. */
-function SearchField({ value, onChange }: { value: string; onChange: (q: string) => void }) {
-  const ref = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "/" || event.defaultPrevented) return;
-      if (event.ctrlKey || event.metaKey || event.altKey || typingIn(event.target)) return;
-      event.preventDefault();
-      ref.current?.focus();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-    };
-  }, []);
-  return (
-    <div className="ah-search sl-search">
-      <Icon name="search" size="sm" />
-      <input
-        ref={ref}
-        type="search"
-        className="ah-input"
-        aria-label="Find sessions"
-        placeholder="Find by name, issue, repo or branch"
-        value={value}
-        onChange={(event) => {
-          onChange(event.target.value);
-        }}
-        onKeyDown={(event) => {
-          if (event.key !== "Escape") return;
-          if (value) onChange("");
-          else event.currentTarget.blur();
-        }}
-      />
-      {!value && (
-        <span className="sl-search-kbd" aria-hidden="true">
-          <Kbd>/</Kbd>
-        </span>
-      )}
-    </div>
-  );
 }
 
 function Choices({
@@ -388,7 +344,14 @@ export function Toolbar({
   const anySet = Boolean(query) || more.length > 0 || params.get("period") !== null;
   return (
     <div className="ah-row ah-wrap sl-toolbar" role="group" aria-label="Filters">
-      <SearchField value={query} onChange={onQuery} />
+      <SearchField
+        value={query}
+        onChange={onQuery}
+        label="Find sessions"
+        placeholder="Find by name, issue, repo or branch"
+        className="sl-search"
+        kbdClassName="sl-search-kbd"
+      />
       {query && matches !== null && (
         <span className="ah-small ah-muted" role="status">
           {matches === 1 ? "1 match" : `${String(matches)} matches`}

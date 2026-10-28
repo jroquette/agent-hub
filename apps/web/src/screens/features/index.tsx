@@ -15,9 +15,9 @@ import {
   FilterChip,
   GOLDEN_STATE_TEXT,
   Icon,
-  Kbd,
   Popover,
   ProblemError,
+  SearchField,
   Skeleton,
   Tooltip,
   goldenStepSummary,
@@ -29,7 +29,6 @@ import { useScope } from "../../lib/scope";
 import { readStored, writeStored } from "../../lib/storage";
 import { useRowKeys } from "../../lib/useRowKeys";
 import { useCollectorState } from "../../shell/GlobalStream";
-import { typingIn } from "../../shell/goSequence";
 import {
   GROUPS,
   byGroupOrder,
@@ -113,49 +112,6 @@ function useCollapsed(): [Set<GroupId>, (id: GroupId) => void] {
     setCollapsed(next);
   };
   return [collapsed, toggle];
-}
-
-/** `/` focuses the search; Esc in it clears, then leaves. */
-function SearchField({ value, onChange }: { value: string; onChange: (q: string) => void }) {
-  const ref = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "/" || event.defaultPrevented) return;
-      if (event.ctrlKey || event.metaKey || event.altKey || typingIn(event.target)) return;
-      event.preventDefault();
-      ref.current?.focus();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-    };
-  }, []);
-  return (
-    <div className="ah-search ft-search">
-      <Icon name="search" size="sm" />
-      <input
-        ref={ref}
-        type="search"
-        className="ah-input"
-        aria-label="Find features"
-        placeholder="Find by name, issue or repo"
-        value={value}
-        onChange={(event) => {
-          onChange(event.target.value);
-        }}
-        onKeyDown={(event) => {
-          if (event.key !== "Escape") return;
-          if (value) onChange("");
-          else event.currentTarget.blur();
-        }}
-      />
-      {!value && (
-        <span className="ft-search-kbd" aria-hidden="true">
-          <Kbd>/</Kbd>
-        </span>
-      )}
-    </div>
-  );
 }
 
 /** The issue ids, mono and neutral: the list has no tracker URLs, so they are not links. */
@@ -749,6 +705,10 @@ export function FeaturesScreen() {
               onChange={(value) => {
                 update({ q: value });
               }}
+              label="Find features"
+              placeholder="Find by name, issue or repo"
+              className="ft-search"
+              kbdClassName="ft-search-kbd"
             />
             <FacetMenu
               label="Step"

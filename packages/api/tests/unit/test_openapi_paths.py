@@ -341,6 +341,7 @@ SCENARIO_SPEC_PATHS = {
     ("post", "/api/v1/projects/{project}/scenarios/validate"),
     ("get", "/api/v1/projects/{project}/actions"),
     ("put", "/api/v1/scenarios/{project}/{name}"),
+    ("delete", "/api/v1/scenarios/{project}/{name}"),
     ("get", "/api/v1/scenarios/{project}/{name}/proposal"),
     ("post", "/api/v1/scenarios/{project}/{name}/proposal/dismiss"),
     ("post", "/api/v1/projects/{project}/actions"),
@@ -398,3 +399,13 @@ def test_keeps_group_pins_when_scenario_paths_grouped(api_settings: ApiSettings)
     assert AGENT_SESSION_PATHS == AGENT_SESSION_SPEC_PATHS
     assert SKILL_PATHS == SKILL_SPEC_PATHS
     assert document_paths(create_app(api_settings)) >= AGENT_SESSION_PATHS | SKILL_PATHS
+
+
+def test_documents_refusal_codes_when_scenario_delete_built(api_settings: ApiSettings) -> None:
+    # AC-596.1.6: the DELETE documents its 204, 404 and 409 and the 409's codes.
+    paths = create_app(api_settings).openapi()["paths"]
+    responses = paths["/api/v1/scenarios/{project}/{name}"]["delete"]["responses"]
+
+    assert {"204", "401", "404", "409"} <= set(responses)
+    refused = responses["409"]["description"]
+    assert all(code in refused for code in ("scenario_run_in_progress", "link_in_path"))

@@ -532,24 +532,21 @@ function BriefForm({
               <label htmlFor={ids.size} className="ft-new-label">
                 Size
               </label>
-              <span className="ft-new-select">
-                <select
-                  id={ids.size}
-                  className="ah-input ft-new-select-input"
-                  value={size}
-                  aria-describedby={ids.sizeHint}
-                  onChange={(event) => {
-                    setSize(event.target.value);
-                  }}
-                >
-                  {SIZES.map((option) => (
-                    <option key={option.id || "ask"} value={option.id}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <Icon name="chevron-down" size="sm" className="ft-new-select-caret" />
-              </span>
+              <select
+                id={ids.size}
+                className="ah-input"
+                value={size}
+                aria-describedby={ids.sizeHint}
+                onChange={(event) => {
+                  setSize(event.target.value);
+                }}
+              >
+                {SIZES.map((option) => (
+                  <option key={option.id || "ask"} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
               <p id={ids.sizeHint} className="ft-new-hint">
                 {SIZES.find((option) => option.id === size)?.hint}
               </p>
