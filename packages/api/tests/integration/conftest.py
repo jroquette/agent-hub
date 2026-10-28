@@ -10,6 +10,9 @@ token is synthetic.
 
 ``knowledge_world`` registers a git checkout ``demo-hub`` with its repo ``demo-api`` beside it,
 for the knowledge routes (AGH-393); ``offline`` fails every non-loopback ``socket.connect``.
+
+``counted_sql`` counts the SQL statements and the new database connections of every SQLAlchemy
+engine in the process while its block runs (AGH-600), so a test can pin a route's queries.
 """
 
 import asyncio
@@ -23,7 +26,7 @@ import sys
 import threading
 import time
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping
-from contextlib import closing
+from contextlib import AbstractContextManager, closing, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from importlib.metadata import version
@@ -33,6 +36,8 @@ from typing import Any, ClassVar
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import Engine, event
+from sqlalchemy.pool import Pool
 from typer.testing import CliRunner
 
 from agent_hub.api.app import create_app
@@ -157,6 +162,54 @@ def open_composed(
 def composed(open_composed: Callable[..., Composed]) -> Composed:
     """The composed app on the temp paths."""
     return open_composed()
+
+
+@dataclass
+class SqlCounts:
+    """What ``counted_sql`` saw: statements sent through a cursor (``BEGIN`` included) and new
+    DB-API connections opened (with ``NullPool``, one per connection checkout)."""
+
+    statements: int = 0
+    connections: int = 0
+    _guard: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+
+    def add_statement(self) -> None:
+        with self._guard:
+            self.statements += 1
+
+    def add_connection(self) -> None:
+        with self._guard:
+            self.connections += 1
+
+
+@contextmanager
+def counted_sql() -> Iterator[SqlCounts]:
+    """Count, while the block runs, the statements and connections of every engine and pool.
+
+    The listeners are class-level (``Engine``, ``Pool``), so they reach the engines the app
+    already built, whatever thread a route runs in; they are removed when the block ends.
+    """
+    counts = SqlCounts()
+
+    def on_statement(*_: object) -> None:
+        counts.add_statement()
+
+    def on_connect(*_: object) -> None:
+        counts.add_connection()
+
+    event.listen(Engine, "before_cursor_execute", on_statement)
+    event.listen(Pool, "connect", on_connect)
+    try:
+        yield counts
+    finally:
+        event.remove(Engine, "before_cursor_execute", on_statement)
+        event.remove(Pool, "connect", on_connect)
+
+
+@pytest.fixture
+def count_sql() -> Callable[[], AbstractContextManager[SqlCounts]]:
+    """``counted_sql``, for a test module (helpers reach tests as fixtures)."""
+    return counted_sql
 
 
 type HubFactory = Callable[..., Path]
