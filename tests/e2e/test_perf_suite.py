@@ -1,6 +1,8 @@
 """``make perf``'s fixture generator (``python -m scripts.perf.fixture``) as a subprocess: the
-database it writes, read back with stdlib ``sqlite3``."""
+database it writes, read back with stdlib ``sqlite3``; and the whole suite
+(``python -m scripts.perf.run_suite``) on a small fixture: its table and ``perf.json``."""
 
+import json
 import os
 import sqlite3
 import subprocess
@@ -13,6 +15,7 @@ from typing import Any
 from alembic.script import ScriptDirectory
 
 from agent_hub.storage.migration import alembic_config
+from scripts.perf.fixture import PAGE_SESSION
 
 type Run = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -24,6 +27,40 @@ STABLE_ROWS = (
     "SELECT id, project, session, type, source, source_id, timestamp, payload, repo, agent,"
     " workflow, step FROM events ORDER BY id"
 )
+SUITE_SECONDS = 1_200
+SHIPPED_BUDGETS = Path(__file__).resolve().parents[2] / "scripts" / "perf" / "budgets.json"
+OVER_ROW = ("route", "/api/v1/sessions")
+# Plan "Rows (canonical paths)", written out by hand (<SLUG> = search-index).
+EXPECTED_ROWS = {
+    ("cli", "hub --version"),
+    ("cli", "./hub --version (local uvx stand-in)"),
+    ("cli", "hub brief --no-network"),
+    ("hook", "guard (PreToolUse Bash)"),
+    ("hook", "event_sensor (PreToolUse, sensor closed)"),
+    ("hook", "post_edit (PostToolUse Edit)"),
+    ("hook", "readonly_gate (PreToolUse Bash)"),
+    ("hook", "session_end"),
+    ("hook", "stop_gate (no changes)"),
+    ("hook", "session_start (local uvx stand-in)"),
+    ("hook", "pre_compact"),
+    ("route", "/api/v1/sessions"),
+    ("route", "/api/v1/sessions?issue=AGH-7"),
+    ("route", "/api/v1/features"),
+    ("route", "/api/v1/features/perf/search-index"),
+    ("route", "/api/v1/projects/perf/skills"),
+    ("route", "/api/v1/search?q=make"),
+    ("route", "/api/v1/live-sessions"),
+    ("page", "/"),
+    ("page", "/features"),
+    ("page", "/features/perf/search-index"),
+    ("page", f"/sessions/{PAGE_SESSION}"),
+    ("restart", "hub web start → GET /"),
+    ("restart", "hub web start → /api/v1/sessions"),
+}
+KINDS = {"cli", "hook", "route", "page", "restart"}
+STATUSES = {"pass", "over", "no budget", "skipped"}
+# What a parent may hold to point the page rows at a browser; nothing else is inherited.
+BROWSER_VARIABLES = ("PLAYWRIGHT_BROWSERS_PATH", "AGENT_HUB_CHROMIUM")
 
 
 def _home(tmp_path: Path) -> Path:
@@ -119,3 +156,55 @@ def test_reads_the_event_count_from_perf_events_when_no_flag_is_given(
     _build(run, out, home=_home(tmp_path), args=(), extra_env={"PERF_EVENTS": "1500"})
 
     assert _rows(out, "SELECT count(*) FROM events") == [(1_500,)]
+
+
+def _budgets_with_sessions_at_zero(path: Path) -> Path:
+    shipped = json.loads(SHIPPED_BUDGETS.read_text("utf-8"))
+    entries = [entry for entry in shipped["rows"] if (entry["kind"], entry["path"]) == OVER_ROW]
+    assert len(entries) == 1
+    entries[0]["p95_ms"] = 0
+    path.write_text(json.dumps(shipped), "utf-8")
+    return path
+
+
+def test_writes_one_row_per_table_line_when_run_on_a_small_fixture(
+    tmp_path: Path, run: Run
+) -> None:
+    home = _home(tmp_path)
+    (tmp_path / "tmp").mkdir()
+    out = tmp_path / "out" / "perf.json"
+    budgets = _budgets_with_sessions_at_zero(tmp_path / "budgets.json")
+    env = {
+        "PATH": os.environ["PATH"],
+        "PYTHONPATH": ".",
+        "HOME": str(home),
+        "XDG_DATA_HOME": str(home / ".local" / "share"),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "TMPDIR": str(tmp_path / "tmp"),
+        "PERF_EVENTS": str(EVENTS),
+        "PERF_RUNS": "2",
+        "PERF_RESTART_RUNS": "1",
+        "PERF_OUT": str(out),
+        "PERF_CACHE": str(tmp_path / "cache"),
+        "PERF_BUDGETS": str(budgets),
+        **{name: os.environ[name] for name in BROWSER_VARIABLES if name in os.environ},
+    }
+    assert "PERF_STRICT" not in env
+
+    result = run([sys.executable, "-m", "scripts.perf.run_suite"], env=env, timeout=SUITE_SECONDS)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    rows = json.loads(out.read_text("utf-8"))
+    assert isinstance(rows, list)
+    assert len(rows) == len(EXPECTED_ROWS)
+    assert {(row["kind"], row["path"]) for row in rows} == EXPECTED_ROWS
+    assert {row["kind"] for row in rows} == KINDS
+    assert {row["status"] for row in rows} <= STATUSES
+    words = [line.split() for line in result.stdout.splitlines()]
+    table_lines = [line for line in words if line and line[0] in KINDS]
+    assert len(table_lines) == len(rows)
+    assert sorted(line[0] for line in table_lines) == sorted(row["kind"] for row in rows)
+    over = [row for row in rows if (row["kind"], row["path"]) == OVER_ROW]
+    assert len(over) == 1
+    assert over[0]["status"] == "over"
+    assert over[0]["budget"]["p95_ms"] == 0

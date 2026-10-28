@@ -49,7 +49,7 @@ LIVE_API_PORT ?= 7421
         test-e2e-parallel test-e2e-serial test-suite test-suite-serial pr-title \
         lane-checks-fast lane-checks lane-tests-fast lane-tests web-static web-test \
         imports migrations coverage check llms-txt hub-schema output-schemas web-install web-fast web-build web-dist-check \
-        openapi openapi-check test-docker test-live run up down logs ps dev live playground playground-stop playground-export demo connect
+        openapi openapi-check test-docker test-live run up down logs ps dev live playground playground-stop playground-export demo connect perf
 
 help: ## List the targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "%-16s %s\n", $$1, $$2}'
@@ -204,6 +204,11 @@ test-docker: ## build the image, run its Compose service and test it (marker doc
 # Not part of check: runs a real `claude -p` session (a few cents), only when asked.
 test-live: ## a real claude -p session in a temp hub, seen through hub web (marker live)
 	AGENT_HUB_LIVE=1 $(RUN) pytest -m live tests/e2e/test_live_agent.py
+
+# Not part of check: measures interactive paths on a synthetic fixture (10-15 min, cached fixture
+# in .perf/); writes perf.json. PERF_STRICT=1 exits 1 when a row is over its budget.
+perf: web-install ## measure interactive paths on a 400k-event fixture (PERF_EVENTS, PERF_RUNS, PERF_STRICT)
+	$(RUN) python -m scripts.perf.run_suite
 
 run: ## serve the control plane locally, no Docker (Ctrl C stops it)
 	$(RUN) hub web --port $(AGENT_HUB_PORT)
