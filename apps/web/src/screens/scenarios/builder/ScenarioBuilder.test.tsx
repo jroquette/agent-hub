@@ -3202,14 +3202,14 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(within(body).getByTitle("Scenario input external_ref")).toHaveTextContent(
       "external_ref",
     );
-    // The open step reads in order: what it does, its values, then the values from earlier.
-    expect(within(fetch).getByText("What it does")).toBeInTheDocument();
+    // The open step reads in order: its action, its values, then the values from earlier.
+    expect(within(fetch).getByText("Action")).toBeInTheDocument();
     // AC-596.3.20: in that order.
     expect(
       within(within(fetch).getByRole("group", { name: "Step 1 settings" }))
         .getAllByRole("region")
         .map((region) => region.getAttribute("aria-label")),
-    ).toEqual(["Action", "Values for this step", "What it does", "Values from earlier"]);
+    ).toEqual(["Action", "Values for this step", "Values from earlier"]);
     expect(
       within(fetch).getByText("Scenario input · asked when the scenario run starts"),
     ).toBeInTheDocument();
@@ -3225,9 +3225,8 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const script = within(fetch).getByLabelText(
       "Text of actions/orders/scripts/send_queue_message.py",
     );
-    // Folded until asked for: under More details, then Show the code it runs.
+    // Folded until asked for, right under the action it runs: Show the code it runs.
     expect(script).not.toBeVisible();
-    await user.click(within(fetch).getByText("More details"));
     await user.click(within(fetch).getByText("Show the code it runs"));
     expect(script).toBeVisible();
     expect(script).toHaveTextContent("print('{}')");
@@ -3625,7 +3624,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
       within(open)
         .getAllByRole("region")
         .map((region) => region.getAttribute("aria-label")),
-    ).toEqual(["Action", "Values for this step", "What it does"]);
+    ).toEqual(["Action", "Values for this step"]);
     // Action: the action it runs, picked in place, with its runtime in words.
     const does = within(open).getByRole("region", { name: "Action" });
     expect(within(does).getByRole("combobox", { name: "Action of step 1" })).toHaveValue(
@@ -3822,13 +3821,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
       within(within(notify).getByRole("group", { name: "Step 3 settings" }))
         .getAllByRole("region")
         .map((region) => region.getAttribute("aria-label")),
-    ).toEqual([
-      "Action",
-      "Values for this step",
-      "Keeps for later steps",
-      "What it does",
-      "Values from earlier",
-    ]);
+    ).toEqual(["Action", "Values for this step", "Keeps for later steps", "Values from earlier"]);
     const later = within(notify).getByRole("region", { name: "Values from earlier" });
     expect(
       within(later).getByTitle("Kept value order_status").closest(".st-g-row"),
@@ -3998,7 +3991,6 @@ describe("ScenarioBuilder (scenario builder)", () => {
     renderBuilder();
     const fetch = await screen.findByRole("treeitem", { name: FETCH });
     await user.click(fetch);
-    await user.click(within(fetch).getByText("More details"));
     await user.click(within(fetch).getByText("Show the code it runs"));
     const script = within(fetch).getByText("Runs.").closest(".sc-file");
     if (!(script instanceof HTMLElement)) throw new Error("no script file");
@@ -4492,7 +4484,6 @@ describe("ScenarioBuilder (scenario builder)", () => {
     });
     const fetch = await screen.findByRole("treeitem", { name: FETCH });
     await user.click(fetch);
-    await user.click(within(fetch).getByText("More details"));
     await user.click(within(fetch).getByText("Show the code it runs"));
     expect(within(fetch).getByText("Draft action")).toBeVisible();
     expect(await seriousViolations(globalThis.document.body)).toEqual([]);
@@ -4525,9 +4516,9 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(done).toHaveTextContent("statusisON_HOLD");
     // (a token's hidden words, "Output of this step", sit before its name)
     expect(done).toHaveTextContent(/and(Output of this step)?coverisPENDING/);
-    // How it checks (folded) says what it reads with; How often edits both timings in place.
+    // Under the action it reads with: the values it reads with; How often edits both timings.
     expect(
-      within(within(open).getByRole("region", { name: "How it checks" })).getByTitle(
+      within(within(open).getByRole("region", { name: "Reads with the action" })).getByTitle(
         "Scenario input external_ref",
       ),
     ).toBeInTheDocument();
