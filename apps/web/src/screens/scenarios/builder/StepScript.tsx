@@ -113,22 +113,11 @@ export function StepScript({
   environment: string | null;
   environmentValues: Readonly<Record<string, string>> | null;
 }) {
-  const [file, setFile] = useState<"script" | "document">("script");
-  const [expanded, setExpanded] = useState(false);
   const rows = resolveInputs(node, action, document, environmentValues);
   const gives = Object.keys(record(action.output_format?.properties as Json | undefined));
   const kept = Object.entries(record(node.capture));
   const keptAs = (field: string) =>
     kept.find(([, from]) => shown(from) === `$self.output.${field}`)?.[0];
-  const path = file === "script" ? (action.script ?? "") : (action.path ?? "");
-  const text = file === "script" ? action.script_text : action.document_text;
-  const fileView = (
-    <FileText
-      path={path}
-      text={text}
-      truncated={file === "script" ? action.script_truncated : false}
-    />
-  );
   return (
     <div className="sb-script">
       <section className="sb-section-v5" aria-label="What it does">
@@ -208,36 +197,75 @@ export function StepScript({
       </section>
 
       <section className="sb-section-v5" aria-label="Files">
-        <span className="ah-row" style={{ gap: 8 }}>
-          <Tabs
-            label="Files of the action"
-            value={file}
-            onChange={(id) => {
-              setFile(id === "document" ? "document" : "script");
-            }}
-            tabs={[
-              { id: "script", label: "Script" },
-              { id: "document", label: "Action file" },
-            ]}
-          />
-          <span className="ah-grow" />
-          <Button
-            size="sm"
-            variant="ghost"
-            icon="expand"
-            onClick={() => {
-              setExpanded(true);
-            }}
-          >
-            Expand
-          </Button>
-        </span>
-        {fileView}
+        <ActionFiles action={action} />
         <span className="ah-small ah-subtle">
           Edit the files in your editor, or ask in Chat, and this updates. A changed action is a
           draft until you commit it.
         </span>
       </section>
+    </div>
+  );
+}
+
+/** An action's two files in tabs, Script first (what runs) and the action file (what it
+ * declares), with Expand into a dialog; `captions` says what each one is for. */
+export function ActionFiles({
+  action,
+  captions = false,
+}: {
+  action: ScenarioAction;
+  captions?: boolean;
+}) {
+  const [file, setFile] = useState<"script" | "document">("script");
+  const [expanded, setExpanded] = useState(false);
+  const path = file === "script" ? (action.script ?? "") : (action.path ?? "");
+  const text = file === "script" ? action.script_text : action.document_text;
+  const caption = !captions ? undefined : file === "script" ? (
+    <>
+      <b>Runs.</b> The code this step executes: the hub calls it with the step&apos;s values as its
+      inputs.
+    </>
+  ) : (
+    <>
+      <b>Declares.</b> The action file is not run: it names the script, the inputs it takes, whether
+      it changes data and what it answers.
+    </>
+  );
+  const fileView = (
+    <FileText
+      path={path}
+      text={text}
+      truncated={file === "script" ? action.script_truncated : false}
+      caption={caption}
+    />
+  );
+  return (
+    <>
+      <span className="ah-row" style={{ gap: 8 }}>
+        <Tabs
+          label="Files of the action"
+          value={file}
+          onChange={(id) => {
+            setFile(id === "document" ? "document" : "script");
+          }}
+          tabs={[
+            { id: "script", label: "Script" },
+            { id: "document", label: "Action file" },
+          ]}
+        />
+        <span className="ah-grow" />
+        <Button
+          size="sm"
+          variant="ghost"
+          icon="expand"
+          onClick={() => {
+            setExpanded(true);
+          }}
+        >
+          Expand
+        </Button>
+      </span>
+      {fileView}
       {expanded && (
         <Dialog
           title={`${path} · ${action.name}`}
@@ -249,6 +277,6 @@ export function StepScript({
           <div className="sb-script-dialog">{fileView}</div>
         </Dialog>
       )}
-    </div>
+    </>
   );
 }

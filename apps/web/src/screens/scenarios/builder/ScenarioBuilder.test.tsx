@@ -2587,6 +2587,8 @@ describe("ScenarioBuilder (scenario builder)", () => {
       expect(script.querySelector("code")).toHaveClass("hljs");
     });
     expect(within(fetch).getByText("Runs.")).toBeInTheDocument();
+    // The action file is the other tab, as in the side panel.
+    await user.click(within(fetch).getByRole("tab", { name: "Action file" }));
     expect(within(fetch).getByText("Declares.")).toBeInTheDocument();
     expect(within(fetch).getByText("Declares.").closest(".sc-file")).toHaveTextContent(
       "name: send-queue-message",

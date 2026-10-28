@@ -1,12 +1,12 @@
 import type { ReactNode } from "react";
 
 import { CopyButton, Icon } from "../../../components";
-import { FileText } from "../ActionPanel";
 import type { ScenarioAction } from "../queries";
 import { pace } from "../story";
 import { ValueToken, tokenOf } from "./CardParts";
 import { looksLikeJson, parseLoose, stringifyLoose } from "./looseJson";
 import { ServiceField, type ServiceOption } from "./ServicePicker";
+import { ActionFiles } from "./StepScript";
 import { conditionWords, shown, text, type BuilderNode, type Json } from "./model";
 
 /* A selected step, open in place: part of the row, not a card inside it. It reads in the order
@@ -254,27 +254,7 @@ export function OpenStep({
                 <span className="st-open-quiet">{action.script ?? ""}</span>
               </summary>
               <div className="st-code-files">
-                <FileText
-                  path={action.script ?? "script"}
-                  text={action.script_text}
-                  truncated={action.script_truncated}
-                  caption={
-                    <>
-                      <b>Runs.</b> The code this step executes: the hub calls it with the values
-                      above as its inputs.
-                    </>
-                  }
-                />
-                <FileText
-                  path={action.path ?? "action file"}
-                  text={action.document_text}
-                  caption={
-                    <>
-                      <b>Declares.</b> The action file is not run: it names the script, the inputs
-                      it takes, whether it changes data and what it answers.
-                    </>
-                  }
-                />
+                <ActionFiles action={action} captions />
               </div>
             </details>
           </li>
