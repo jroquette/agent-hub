@@ -2,8 +2,9 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from agent_hub.core.features.feature_record import PlannedTicket, RecordAc
+from agent_hub.core.features.feature_reviews import ReviewPullRequest
 from agent_hub.core.features.ticket_planning import TicketBoard, ticket_board
-from agent_hub.core.features.ticket_view import TicketEdge, TicketRow
+from agent_hub.core.features.ticket_view import TicketEdge, TicketPr, TicketRow
 from agent_hub.core.testing.read_model_builders import a_ticket_snapshot, an_issue_summary
 from agent_hub.core.tracker.tracker_reader import IssueState, IssueStateType, IssueSummary
 
@@ -336,6 +337,22 @@ def test_reads_plan_edges_when_no_snapshot() -> None:
     assert board.plan.order == ("T1", "DEM-2")
 
 
+def test_lists_owned_repos_in_order_when_ticket_names_repo_or_repos() -> None:
+    planned = (
+        _planned(1, repo="demo-api"),
+        _planned(2, repos=({"repo": "demo-api", "slices": ("BE-1",)}, {"repo": "demo-web"})),
+        _planned(3),
+    )
+
+    board = _board(planned, None)
+
+    assert [(row.repo, row.repos) for row in board.rows] == [
+        ("demo-api", ("demo-api",)),
+        (None, ("demo-api", "demo-web")),
+        (None, ()),
+    ]
+
+
 def test_marks_reviewed_when_completed_or_approved_record() -> None:
     planned = (_planned(1), _planned(2), _planned(3))
     summaries = (_summary(1, state=_DONE), _summary(2), _summary(3))
@@ -351,17 +368,19 @@ def test_marks_reviewed_when_completed_or_approved_record() -> None:
 def test_links_pull_request_when_id_or_key_has_one() -> None:
     planned = (_planned(1), _planned(2), _planned(3))
     snapshot = a_ticket_snapshot(summaries=(_summary(1), _summary(2)), missing=(), external=())
-    pulls = {
-        "DEM-1": "https://github.com/acme/demo-api/pull/1",
-        "T3": "https://github.com/acme/demo-api/pull/3",
-    }
+    first = ReviewPullRequest("demo-api", "https://github.com/acme/demo-api/pull/1")
+    second = ReviewPullRequest("demo-web", "https://github.com/acme/demo-web/pull/2")
+    third = ReviewPullRequest(None, "https://github.com/acme/other/pull/3")
+    pulls = {"DEM-1": (first, second), "T3": (third,)}
 
     board = ticket_board(planned, (), snapshot, pull_requests=pulls)
 
-    assert [row.pr_url for row in board.rows] == [
-        "https://github.com/acme/demo-api/pull/1",
-        None,
-        "https://github.com/acme/demo-api/pull/3",
+    assert [row.pr_url for row in board.rows] == [first.url, None, third.url]
+    # Every pull request of a ticket that owns several repos, in merge order (AGH-592).
+    assert [row.prs for row in board.rows] == [
+        (TicketPr(repo="demo-api", url=first.url), TicketPr(repo="demo-web", url=second.url)),
+        (),
+        (TicketPr(repo=None, url=third.url),),
     ]
 
 

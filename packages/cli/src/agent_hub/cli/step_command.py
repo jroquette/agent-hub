@@ -465,7 +465,14 @@ def preflight(
     ],
     text: Annotated[str, typer.Option("--input-text", help="The discovery, or the note.")] = "",
     commit: Annotated[
-        str, typer.Option("--commit", help="Main's commit the preflight read (ticket-brief's).")
+        list[str],
+        typer.Option(
+            "--commit",
+            help=(
+                "Main's commit the preflight read (ticket-brief's); REPO=SHA once per repo for a"
+                " ticket that owns several."
+            ),
+        ),
     ],
     request: Annotated[
         str, typer.Option("--request", help="The change request it opened or re-checked.")
@@ -491,7 +498,7 @@ def preflight(
     facts = PreflightFacts(
         ran_at=datetime.now(UTC),
         plan_version=1,
-        commit=commit,
+        commit="",
         run_id=os.environ.get(RUN_ID_VARIABLE, ""),
         input=kind,
         input_text=text,
@@ -501,7 +508,13 @@ def preflight(
     _record(
         "preflight",
         lambda: step_records.preflight(
-            hub, feature=feature, ticket=ticket, findings=findings.encode(), facts=facts, read=read
+            hub,
+            feature=feature,
+            ticket=ticket,
+            findings=findings.encode(),
+            facts=facts,
+            read=read,
+            commits=tuple(commit),
         ),
     )
 
@@ -528,7 +541,12 @@ def change_request(
     findings: Annotated[
         str, typer.Option("--findings", metavar="JSON", help="The preflight's, checked first.")
     ] = "",
-    commit: Annotated[str, typer.Option("--commit", help="Main's commit it read.")] = "",
+    commit: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--commit", help="Main's commit it read; REPO=SHA once per repo of a ticket of several."
+        ),
+    ] = None,
 ) -> None:
     """Open change-requests/<n>.md against the plan's current version; a text not given is the
     preflight's findings' (a session passes them whole, never pasting the agent's text)."""
@@ -552,7 +570,7 @@ def change_request(
         facts = PreflightFacts(
             ran_at=datetime.now(UTC),
             plan_version=1,
-            commit=commit,
+            commit="",
             run_id=run_id,
             input="none",
             input_text="",
@@ -571,6 +589,7 @@ def change_request(
             now=datetime.now(UTC),
             findings=findings.encode(),
             facts=facts,
+            commits=tuple(commit or ()),
         ),
     )
 
@@ -637,7 +656,16 @@ def outcome(
     *,
     feature: Feature,
     ticket: Ticket,
-    pr: Annotated[str, typer.Option("--pr", help="The merged pull request (URL or repo#n).")],
+    pr: Annotated[
+        list[str],
+        typer.Option(
+            "--pr",
+            help=(
+                "The merged pull request (URL or repo#n); once per repo, in merge order, for a"
+                " ticket that owns several."
+            ),
+        ),
+    ],
     merged_at: Annotated[
         str, typer.Option("--merged-at", help="When it merged, ISO 8601 with an offset (now).")
     ] = "",
@@ -653,7 +681,7 @@ def outcome(
             hub,
             feature=feature,
             ticket=ticket,
-            pr=pr,
+            prs=pr,
             merged_at=merged_at or datetime.now(UTC).isoformat(),
             built=built,
             changes=changes,

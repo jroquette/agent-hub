@@ -1,4 +1,4 @@
-# 0051. Syntax highlighting of every code and file the app shows
+# 0052. Syntax highlighting of every code and file the app shows
 
 - Status: proposed
 - Date: 2026-10-28

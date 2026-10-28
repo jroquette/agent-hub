@@ -9,8 +9,10 @@ bounds to the bytes it is given, whatever the caller read: ``MAX_OUTPUT_BYTES`` 
 ``MAX_RECORD_BYTES`` to the record, and the sibling's first ``EVAL_HEAD_BYTES`` only are read.
 
 The JSON Schemas of the outputs ship as package data beside this module (``review.v1.json``,
-``eval.v1.json``, ``preflight.v1.json``), regenerated with ``make output-schemas`` whenever a
-model changes; unit tests fail while a shipped file differs from the export.
+``eval.v1.json``, ``eval.v2.json``, ``preflight.v1.json``, ``preflight.v2.json``); an eval output is
+checked against the model its ``schema`` names (``agent-hub/eval/2``: ``EvalOutputV2``, else
+``EvalOutput``), regenerated with ``make output-schemas`` whenever a model changes; unit tests fail
+while a shipped file differs from the export.
 """
 
 import json
@@ -21,8 +23,10 @@ from typing import Any, Final, Literal
 from pydantic import BaseModel, ValidationError
 
 from agent_hub.core.features.eval_output_checks import eval_cross_problems
-from agent_hub.core.features.eval_output_scope import eval_scope_problems
+from agent_hub.core.features.eval_output_scope import eval_scope_problems, parsed_record
+from agent_hub.core.features.feature_record import RECORD_FILE, ticket_repos
 from agent_hub.core.features.output_models import (
+    EVAL_V2_SCHEMA_ID,
     MAX_EVAL_ACS,
     MAX_EVAL_TICKETS,
     MAX_FINDING_ACS,
@@ -32,9 +36,12 @@ from agent_hub.core.features.output_models import (
     MAX_PREFLIGHT_RUNS,
     MAX_RED_ON_PARENT,
     MAX_RESULTS,
+    PREFLIGHT_V2_SCHEMA_ID,
     EvalOutput,
+    EvalOutputV2,
     OutputProblem,
     PreflightRecord,
+    PreflightRecordV2,
     ReviewOutput,
 )
 from agent_hub.core.features.output_shape import (
@@ -47,17 +54,23 @@ from agent_hub.core.features.review_output_checks import review_cross_problems
 
 type _Document = dict[str, object]
 type OutputKind = Literal["review", "eval", "preflight"]
+# Each shipped schema: an output kind, or ``<kind>-<version>`` for a later version of one.
+type OutputSchema = Literal["review", "eval", "eval-2", "preflight", "preflight-2"]
 
 OUTPUT_SCHEMA_PACKAGE: Final = "agent_hub.core.features"
-OUTPUT_SCHEMA_FILES: Final[Mapping[OutputKind, str]] = {
+OUTPUT_SCHEMA_FILES: Final[Mapping[OutputSchema, str]] = {
     "review": "review.v1.json",
     "eval": "eval.v1.json",
+    "eval-2": "eval.v2.json",
     "preflight": "preflight.v1.json",
+    "preflight-2": "preflight.v2.json",
 }
-_OUTPUT_MODELS: Final[Mapping[OutputKind, type[BaseModel]]] = {
+_OUTPUT_MODELS: Final[Mapping[OutputSchema, type[BaseModel]]] = {
     "review": ReviewOutput,
     "eval": EvalOutput,
+    "eval-2": EvalOutputV2,
     "preflight": PreflightRecord,
+    "preflight-2": PreflightRecordV2,
 }
 
 # Each list of an eval output and its bound, in the model's field order.
@@ -72,18 +85,48 @@ _EVAL_LISTS: Final[tuple[tuple[str, int], ...]] = (
 
 
 def review_problems(
-    content: bytes, *, file_name: str, folder_name: str
+    content: bytes,
+    *,
+    file_name: str,
+    folder_name: str,
+    parent_name: str | None = None,
+    record: bytes | str | None = None,
 ) -> tuple[OutputProblem, ...]:
     """Every problem of a review output saved as ``<folder_name>/<file_name>``; () when valid.
 
-    ``file_name`` and ``folder_name`` are the file's own name and its ticket folder's name.
+    ``file_name`` and ``folder_name`` are the file's own name and its folder's name: its ticket's,
+    or one repo's of a ticket that owns several, under the ticket's folder ``parent_name``. Such a
+    repo must be one of the ticket's in ``record`` (``features.json``'s bytes, or why it could not
+    be read) when given.
     """
     document = parse_document(content)
     if isinstance(document, OutputProblem):
         return (document,)
     shape = _shape(document, model=ReviewOutput, overlong=_overlong_review_lists)
-    cross = review_cross_problems(document, file_name=file_name, folder_name=folder_name)
+    cross = review_cross_problems(
+        document,
+        file_name=file_name,
+        folder_name=folder_name,
+        parent_name=parent_name,
+        owned=None if record is None else _owned_repos(record),
+    )
     return (*shape, *cross)
+
+
+def _owned_repos(record: bytes | str) -> Mapping[str, tuple[str, ...]] | str:
+    """Each planned ticket's key and id, upper case, to the repos it owns; or the record's
+    problem."""
+    if isinstance(record, str):
+        return f"{RECORD_FILE} could not be read ({record})"
+    parsed = parsed_record(record)
+    if isinstance(parsed, OutputProblem):
+        return parsed.message
+    return {
+        name.upper(): tuple(repo.repo for repo in ticket_repos(ticket))
+        for ticket in (() if parsed is None else parsed.tickets)
+        for name in (ticket.key, ticket.id)
+        if name is not None
+    }
 
 
 def eval_problems(
@@ -97,7 +140,8 @@ def eval_problems(
     document = parse_document(content)
     if isinstance(document, OutputProblem):
         return (document,)
-    shape = _shape(document, model=EvalOutput, overlong=_overlong_eval_lists)
+    model = EvalOutputV2 if document.get("schema") == EVAL_V2_SCHEMA_ID else EvalOutput
+    shape = _shape(document, model=model, overlong=_overlong_eval_lists)
     cross = eval_cross_problems(document, file_name=file_name, sibling_head=sibling_head)
     return (*shape, *cross, *eval_scope_problems(document, record=record))
 
@@ -107,7 +151,9 @@ def preflight_problems(content: bytes) -> tuple[OutputProblem, ...]:
     document = parse_document(content)
     if isinstance(document, OutputProblem):
         return (document,)
-    return _shape(document, model=PreflightRecord, overlong=_overlong_preflight_runs)
+    v2 = document.get("schema") == PREFLIGHT_V2_SCHEMA_ID
+    model = PreflightRecordV2 if v2 else PreflightRecord
+    return _shape(document, model=model, overlong=_overlong_preflight_runs)
 
 
 def _shape(
@@ -145,13 +191,13 @@ def _overlong_preflight_runs(document: _Document) -> Iterator[OutputProblem]:
     yield from overlong_problem("runs", document.get("runs"), MAX_PREFLIGHT_RUNS)
 
 
-def export_output_schema_text(kind: OutputKind) -> str:
+def export_output_schema_text(kind: OutputSchema) -> str:
     """The JSON Schema of one output as its shipped file holds it: indented, one final newline."""
     schema = _OUTPUT_MODELS[kind].model_json_schema()
     return json.dumps(schema, indent=2, ensure_ascii=False) + "\n"
 
 
-def read_shipped_output_schema(kind: OutputKind) -> dict[str, Any]:
+def read_shipped_output_schema(kind: OutputSchema) -> dict[str, Any]:
     """The JSON Schema of one output shipped with the package, read as package data."""
     package_file = files(OUTPUT_SCHEMA_PACKAGE).joinpath(OUTPUT_SCHEMA_FILES[kind])
     schema: dict[str, Any] = json.loads(package_file.read_text(encoding="utf-8"))

@@ -4,6 +4,9 @@ repo's main checkout and read main at commit `$WITH.base` (`git show $WITH.base:
 `git log $WITH.base`), never the working tree: the run records that commit as the one checked. You read; you never create, edit or delete a file, check
 anything out or make a branch, and you run only read-only commands (`git log`, `git show`,
 `git diff`, `rg`, `cat`). The run fails this step if the checkout's git status changes.
+When the ticket owns several repos, you run in the workspace (the folder that holds the hub and
+the repos) and `$WITH.base` is one `<repo>: <commit>` line per repo: read each repo at its own
+commit (`git -C <repo> show <commit>:<path>`), and judge the plan for every repo's slice.
 
 Read, in the hub at `$WITH.hub`:
 1. The context brief `$WITH.hub/$WITH.brief`, its last `## Brief v<n>` section: its JSON block

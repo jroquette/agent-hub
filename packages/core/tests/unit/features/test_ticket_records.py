@@ -353,6 +353,19 @@ def test_reads_merged_at_pr_and_dependents_when_outcome_recorded() -> None:
     assert outcome_record(None, folder="DEM-7") is None
 
 
+def test_reads_every_pull_request_when_outcome_lists_prs() -> None:
+    # AGH-592: a ticket that owns several repos merged one pull request per repo, in order.
+    content = an_outcome(pr="-", prs="[demo-api#4, https://github.com/acme/demo-web/pull/5]")
+
+    assert outcome_record(content, folder="DEM-7") == TicketOutcome(
+        ticket="DEM-7",
+        merged_at=datetime(2026, 10, 22, 8, 0, tzinfo=UTC),
+        pr="demo-api#4",
+        dependents=("DEM-8", "T3"),
+        prs=("demo-api#4", "https://github.com/acme/demo-web/pull/5"),
+    )
+
+
 @pytest.mark.parametrize(
     ("fields", "why"),
     [
@@ -365,6 +378,8 @@ def test_reads_merged_at_pr_and_dependents_when_outcome_recorded() -> None:
         ({"pr": "#pending"}, "pr names no pull request: #pending"),
         ({"pr": "-"}, "pr names no pull request: none"),
         ({"dependents": "[DEM-8, 9x]"}, "dependents has an invalid item: 9x"),
+        ({"prs": "[demo-api#4]"}, "give pr or prs, not both"),
+        ({"pr": "-", "prs": "[demo-api#4, #pending]"}, "prs names no pull request: #pending"),
     ],
 )
 def test_names_the_problem_when_outcome_malformed(fields: dict[str, str], why: str) -> None:

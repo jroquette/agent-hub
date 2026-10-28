@@ -178,3 +178,43 @@ def test_reports_the_delivery_as_the_workflow_shapes_it_when_implement_rendered(
     assert "hub PR the owner opens" in report
     # A23: an approval the plan moved past is told to the owner.
     assert "`superseded` whenever it is not empty" in report
+
+
+def several_repos_text(text: str) -> str:
+    """The section on a ticket that owns several repos, up to the closing line (AGH-595)."""
+    start = text.index("**A ticket that owns several repos**")
+    return text[start : text.index("The PR is reviewed and merged by the user", start)]
+
+
+def test_keeps_the_one_repo_steps_when_implement_rendered(text: str) -> None:
+    # The steps above the section read as they did: a one-repo ticket runs exactly as today.
+    assert "./hub worktree <ticket in lowercase> --only <repo>` as a call of its own" in text
+    assert text.index("11. **Report the delivery**") < text.index(
+        "**A ticket that owns several repos**"
+    )
+
+
+def test_runs_each_repo_of_a_ticket_that_owns_several_when_implement_rendered(text: str) -> None:
+    section = several_repos_text(text)
+
+    for expected in (
+        # The brief names the repos, in contract order (also the merge order).
+        "`repos`",
+        # One preflight over every checkout, its commit per repo recorded.
+        "`<hub>/..`",
+        "`<repo>: <commit>`",
+        "`--commit <repo>=<commit>`",
+        # Every worktree in one call.
+        "`./hub worktree <ticket in lowercase> --only <repo> --only <repo> …`",
+        # The lenses per repo, in their own folders.
+        "`reviews/<ticket>/<repo>/<reviewer>-r<N>.json`",
+        # One eval with each repo's base and commit.
+        "`agent-hub/eval/2`",
+        # One PR per repo, in order, linked, and recorded in merge order.
+        "`gh pr create",
+        "`gh pr edit <url> --body-file <file>`",
+        "`## Merge order`",
+        "`prs: [<repo>#<n>, …]`",
+        "`--pr` once per pull request",
+    ):
+        assert expected in section, expected

@@ -1189,6 +1189,7 @@ AGENT_OUTPUT_TEMPLATES = (
 )
 AGENT_OUTPUT_SCHEMAS = (
     "plugin/hub-workflow/schemas/eval.v1.json",
+    "plugin/hub-workflow/schemas/eval.v2.json",
     "plugin/hub-workflow/schemas/review.v1.json",
 )
 

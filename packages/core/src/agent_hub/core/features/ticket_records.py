@@ -31,7 +31,13 @@ from agent_hub.core.features.feature_evals import (
 from agent_hub.core.features.feature_record import KEY_PATTERN
 from agent_hub.core.features.feature_reviews import names_pull_request
 from agent_hub.core.features.feature_view import ChangeDecisionView, ChangeRequestView
-from agent_hub.core.features.output_models import OutputProblem, PreflightRecord, PreflightRun
+from agent_hub.core.features.output_models import (
+    PREFLIGHT_V2_SCHEMA_ID,
+    OutputProblem,
+    PreflightRecord,
+    PreflightRecordV2,
+    PreflightRun,
+)
 from agent_hub.core.features.output_shape import parse_document, shape_problems
 from agent_hub.core.hub_config.problems import one_line
 
@@ -85,12 +91,15 @@ class OutcomeFile:
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class TicketOutcome:
-    """A merged ticket's outcome: when it merged, its pull request and the tickets it unblocks."""
+    """A merged ticket's outcome: when it merged, its pull request and the tickets it unblocks;
+    ``prs`` every pull request in merge order for a ticket that owns several repos (``pr`` is the
+    first), empty for one."""
 
     ticket: str
     merged_at: datetime
     pr: str
     dependents: tuple[str, ...]
+    prs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -204,7 +213,11 @@ def request_view(request: ChangeRequest, *, slug: str, body: bool = False) -> Ch
     )
 
 
-def preflight_record(read: bytes | str | None, *, folder: str) -> PreflightRecord | str | None:
+# A ticket's preflight record: schema 1, or 2 once it ran over several repos (AGH-591).
+type AnyPreflightRecord = PreflightRecord | PreflightRecordV2
+
+
+def preflight_record(read: bytes | str | None, *, folder: str) -> AnyPreflightRecord | str | None:
     """The preflight record of ``tickets/<folder>/``; its one-line problem when it cannot be
     read, is malformed (the first problem, at its JSON path) or names another ticket (ASCII case
     ignored); None when absent."""
@@ -215,8 +228,11 @@ def preflight_record(read: bytes | str | None, *, folder: str) -> PreflightRecor
     document = parse_document(read)
     if isinstance(document, OutputProblem):
         return _unreadable(PREFLIGHT_FILE, f"{document.path}: {document.message}")
+    model = (
+        PreflightRecordV2 if document.get("schema") == PREFLIGHT_V2_SCHEMA_ID else PreflightRecord
+    )
     try:
-        record = PreflightRecord.model_validate(document)
+        record: AnyPreflightRecord = model.model_validate(document)
     except ValidationError as error:
         first = shape_problems(error)[0]
         return _unreadable(PREFLIGHT_FILE, f"{first.path}: {first.message}")
@@ -229,8 +245,8 @@ def preflight_record(read: bytes | str | None, *, folder: str) -> PreflightRecor
 def outcome_record(read: bytes | str | None, *, folder: str) -> TicketOutcome | str | None:
     """The outcome of ``tickets/<folder>/``; its one-line problem when it cannot be read or its
     frontmatter does not hold a ``ticket-outcome`` of that ticket (ASCII case ignored) with
-    ``merged_at`` (a time with an offset), ``pr`` (a pull request) and ``dependents`` (ticket keys
-    or ids); None when absent."""
+    ``merged_at`` (a time with an offset), ``pr`` (a pull request) or ``prs`` (several, never
+    both) and ``dependents`` (ticket keys or ids); None when absent."""
     if read is None:
         return None
     if isinstance(read, str):
@@ -244,15 +260,28 @@ def outcome_record(read: bytes | str | None, *, folder: str) -> TicketOutcome | 
         if ticket.upper() != folder.upper():
             raise RecordFieldError(f"ticket: {ticket} is not the folder's ticket {folder}")
         merged_at = aware_time(text_field(fields, "merged_at"), "merged_at")
-        pr = text_field(fields, "pr")
-        if not names_pull_request(pr):
-            raise RecordFieldError(f"pr names no pull request: {(pr or 'none')[:64]}")
+        pr, prs = _pull_requests(fields)
         dependents = _names(fields.get("dependents"), "dependents")
     except RecordFieldError as problem:
         return _unreadable(OUTCOME_FILE, str(problem))
-    return TicketOutcome(
-        ticket=ticket, merged_at=merged_at, pr=cast("str", pr), dependents=dependents
-    )
+    return TicketOutcome(ticket=ticket, merged_at=merged_at, pr=pr, dependents=dependents, prs=prs)
+
+
+def _pull_requests(fields: dict[str, FrontmatterValue]) -> tuple[str, tuple[str, ...]]:
+    """The outcome's ``pr``, or its ``prs`` (several repos, AGH-592) and the first of them."""
+    pr = text_field(fields, "pr")
+    raw = fields.get("prs")
+    if raw is None or raw == "":
+        if not names_pull_request(pr):
+            raise RecordFieldError(f"pr names no pull request: {(pr or 'none')[:64]}")
+        return cast("str", pr), ()
+    if pr is not None:
+        raise RecordFieldError("give pr or prs, not both")
+    prs = tuple(dict.fromkeys(raw if isinstance(raw, list) else [raw]))
+    for item in prs:
+        if not names_pull_request(item):
+            raise RecordFieldError(f"prs names no pull request: {item[:64]}")
+    return prs[0], prs
 
 
 def recorded_outcomes(files: Iterable[OutcomeFile]) -> dict[str, TicketOutcome | str]:
@@ -268,7 +297,7 @@ def recorded_outcomes(files: Iterable[OutcomeFile]) -> dict[str, TicketOutcome |
 
 
 def already_read(
-    record: PreflightRecord | None, *, names: Iterable[str], merged_at: datetime
+    record: AnyPreflightRecord | None, *, names: Iterable[str], merged_at: datetime
 ) -> PreflightRun | None:
     """The latest preflight run that read a blocker's outcome: one that ran at or after the
     blocker's ``merged_at`` and lists the blocker (one of ``names``, any case) in

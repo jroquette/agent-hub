@@ -224,6 +224,11 @@ otherwise, this list wins. Each item is an acceptance criterion.
   read, then the ticket's row carries `pr_url`, the GitHub URL resolved with the hub's repos (matched by the ticket's
   id, else its plan key); `#pending`, a repo the hub does not have and a malformed record give none, and a later
   record of the same ticket wins.
+- **AGH-592** A ticket that owns several repos lists one pull request per repo, `prs: [backend#101, frontend#55]`, in
+  merge order: its row carries them all as `prs` (`pr_url` the first). The Tickets table's PR cell and the ticket
+  panel show each, `PR #101 → PR #55`, each link naming its repo and place ("merge 1 of 2"); the PR step reads
+  "1 of 2 PRs" until each repo has one. Start's first prompt names the repos in merge order. A ticket waiting on a
+  blocker with several pull requests is not offered a stacked start: it starts after the blocker merges.
 
 **Tickets tab**
 

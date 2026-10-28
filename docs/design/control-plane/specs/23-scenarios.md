@@ -578,7 +578,7 @@ other one. The builder never writes YAML: it holds the file's JSON, the server w
   - **AC-596.5.5** its state in the shown scenario run;
   - **AC-596.5.6** on a neutral card: no coloured top edge, no lift on hover, no entry animation; kind shows only by
     its tile, and a selected card has an accent border.
-- **Code in colour** (AGH-596, [ADR 0051](../../../adr/0051-syntax-highlighting-across-the-app.md)). The YAML view and
+- **Code in colour** (AGH-596, [ADR 0052](../../../adr/0052-syntax-highlighting-across-the-app.md)). The YAML view and
   Migrate's preview of the file as blocks are coloured as YAML (AC-596.5.16, AC-596.5.17); an action's files, in the
   action panel and the open step, by their language (AC-596.5.18); every command (`CodeBlock` with the `$` prompt) as
   shell (AC-596.5.19).

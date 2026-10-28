@@ -582,7 +582,7 @@ arrowheads) with `lib/usePanZoom` and `lib/canvasView`; the ticket flow ([17-fea
 
 The owner validated this in the playground (snapshot `3df1fa457`, on v0.26.0). The Toolkit shows its code coloured by
 its language, through the app's one `HighlightedCode` component
-([ADR 0051](../../../adr/0051-syntax-highlighting-across-the-app.md)). The text stays exactly the file's: only its
+([ADR 0052](../../../adr/0052-syntax-highlighting-across-the-app.md)). The text stays exactly the file's: only its
 colours change, and a text over the highlighter's bounds or in a language it does not hold stays plain.
 
 - **AC-596.5.21** Given a skill's Raw view, when it is shown, then the raw text is coloured as Markdown.

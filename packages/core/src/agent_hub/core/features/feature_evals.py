@@ -2,9 +2,10 @@
 
 Each evaluation is its own file, ``brain/features/<slug>/evals/<delivery>.md``, whose frontmatter
 holds its scope: ``type: eval``, ``delivery``, ``verdict``, ``tickets``, ``acs`` (ids or ``all``),
-``prs``, ``commit`` and ``evaluated_at``. A legacy ``eval.md`` is one delivery, ``legacy``, whose
-verdict is its ``Final verdict`` line (an addendum that reverses the first verdict says so at the
-top), else its first ``Verdict`` line, and whose scope is its frontmatter, when it has one.
+``prs``, ``commit`` (or ``commits``, ``<repo>@<commit>`` each, for several repos) and
+``evaluated_at``. A legacy ``eval.md`` is one delivery, ``legacy``, whose verdict is its ``Final
+verdict`` line (an addendum that reverses the first verdict says so at the top), else its first
+``Verdict`` line, and whose scope is its frontmatter, when it has one.
 
 For each AC the latest eval whose scope names it decides (S7): it is covered when that verdict is
 SHIP or SHIP-WITH-OWNER-STEPS. "Latest" is a partial order. Two evals that both have a usable
@@ -66,6 +67,8 @@ ISO_TIME: Final = re.compile(
 )
 _TICKET: Final = re.compile(KEY_PATTERN)
 _PR: Final = re.compile(r"[A-Za-z0-9._/#:-]{1,200}")
+# One repo's commit of a delivery that changes several repos: ``<repo>@<commit>``.
+_REPO_COMMIT: Final = re.compile(r"[A-Za-z0-9._-]{1,64}@[0-9a-f]{7,40}")
 _SHIPPED: Final = ("SHIP", "SHIP-WITH-OWNER-STEPS")
 # When the latest evals of an AC disagree, the first of these among them decides.
 _CONSERVATIVE: Final[tuple[Verdict, ...]] = ("NO-SHIP", "SHIP-WITH-OWNER-STEPS", "SHIP")
@@ -360,6 +363,7 @@ def _parsed(stem: str, path: str, fields: dict[str, FrontmatterValue]) -> EvalRe
         legacy=False,
         problem=None,
         provenance=_provenance(fields),
+        commits=_items(fields, "commits", _REPO_COMMIT),
     )
 
 
@@ -440,6 +444,14 @@ def _verdict(fields: dict[str, FrontmatterValue]) -> Verdict:
     if verdict not in _VERDICTS:
         raise RecordFieldError(f"verdict must be one of {', '.join(_VERDICTS)}")
     return cast("Verdict", verdict)
+
+
+def text_items(
+    fields: dict[str, FrontmatterValue], name: str, pattern: re.Pattern[str]
+) -> tuple[str, ...]:
+    """The field ``name`` as a list (one value reads as a list of one), each item matching
+    ``pattern``, repeats dropped; () when absent or empty."""
+    return _items(fields, name, pattern)
 
 
 def _items(

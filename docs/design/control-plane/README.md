@@ -119,7 +119,7 @@ changes the owner validated for the whole app:
 - **Code in colour everywhere.** Code and files the app shows are coloured by their language through one component,
   `HighlightedCode` (the language of a file from its extension), on the `syntax-*` tokens: a `CodeBlock` with the `$`
   prompt reads as shell, and one with no prompt stays plain
-  ([ADR 0051](../../adr/0051-syntax-highlighting-across-the-app.md), which widens ADR 0034).
+  ([ADR 0052](../../adr/0052-syntax-highlighting-across-the-app.md), which widens ADR 0034).
 
 ## Design system
 

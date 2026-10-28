@@ -371,7 +371,9 @@ always answers 200 with a `FeatureTickets`:
   503 for every other kind (no answer, not connected).
 - `tickets`: one row per ticket (the plan's `tickets` and the record's `linear` ids), each with its `ref` (the tracker
   id, else the plan key), `key`, `id`, `title`, `state` (`name`, `type`), `assignee`, `url` (only under
-  `https://linear.app/`), `priority`, `estimate`, `repo`, `order`, the `acs` it covers, `blocked_by` edges tagged
+  `https://linear.app/`), `priority`, `estimate`, `repo` (the plan's one repo, else `null`), `repos` (every repo the
+  ticket owns, in contract and merge order), `pr_url` and `prs` (each pull request of its review record, `{repo,
+  url}`, in merge order; `pr_url` is the first), `order`, the `acs` it covers, `blocked_by` edges tagged
   `plan`, `linear` or `both`, `blocks`, `readiness` (`can_start`, `waiting`, `done`, `canceled`, `in_cycle`,
   `unknown`), `waiting_on` and `reviewed`. Without Linear the statuses are `null`. Each row but an epic carries its
   `flow` (two-level-flows AC-1.8): `steps`, the seven ticket steps `context`, `preflight`, `implement`, `review`,

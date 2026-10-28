@@ -9,6 +9,7 @@ import pytest
 
 from agent_hub.core.features.feature_record import RecordAc
 from agent_hub.core.features.feature_status import RecordHead
+from agent_hub.core.features.output_models import PreflightRecordV2
 from agent_hub.core.features.plan_version import plan_version
 from agent_hub.core.features.ticket_records import (
     MAX_OUTCOME_BYTES,
@@ -270,6 +271,46 @@ class TestPreflight:
         assert [canonical(entry) for entry in after[:-1]] == [canonical(e) for e in before]
         assert after[-1]["drift"] == "local"
 
+    def test_writes_the_per_repo_schema_when_a_run_names_a_commit_per_repo(self) -> None:
+        # AGH-591: a ticket that owns several repos checks main in each of them.
+        commits = [
+            {"repo": "demo-api", "commit": "4e1a9c2"},
+            {"repo": "demo-web", "commit": "7b2c3d4"},
+        ]
+
+        written, count = appended_preflight(None, a_run(commits=commits), folder="DEM-8")
+
+        document = json.loads(written)
+        assert (count, document["schema"]) == (1, "agent-hub/preflight/2")
+        assert document["runs"][0]["commits"] == commits
+        record = preflight_record(written, folder="DEM-8")
+        assert isinstance(record, PreflightRecordV2)
+        assert record.runs[0].commits is not None
+
+    def test_carries_earlier_runs_into_the_per_repo_schema_when_a_run_names_a_commit_per_repo(
+        self,
+    ) -> None:
+        first, _ = appended_preflight(None, a_run(), folder="DEM-8")
+        commits = [{"repo": "demo-api", "commit": "4e1a9c2"}, {"repo": "web", "commit": "7b2c3d4"}]
+
+        written, count = appended_preflight(first, a_run(commits=commits), folder="DEM-8")
+
+        before, after = json.loads(first)["runs"], json.loads(written)["runs"]
+        assert (count, json.loads(written)["schema"]) == (2, "agent-hub/preflight/2")
+        # The earlier run keeps every fact; it read one repo, so it names no commit per repo.
+        assert after[0] == before[0] | {"commits": None}
+        assert after[1]["commits"] == commits
+
+    def test_keeps_the_per_repo_schema_when_a_later_run_names_one_commit(self) -> None:
+        commits = [{"repo": "demo-api", "commit": "4e1a9c2"}, {"repo": "web", "commit": "7b2c3d4"}]
+        first, _ = appended_preflight(None, a_run(commits=commits), folder="DEM-8")
+
+        written, _ = appended_preflight(first, a_run(), folder="DEM-8")
+
+        document = json.loads(written)
+        assert document["schema"] == "agent-hub/preflight/2"
+        assert document["runs"][1]["commits"] is None
+
     @pytest.mark.parametrize(
         ("run", "message"),
         [
@@ -512,7 +553,7 @@ def an_outcome_text(built: str = "The reader.", pr: str = "demo-api#4") -> Ticke
     return TicketOutcomeText(
         ticket="DEM-7",
         merged_at=datetime(2026, 10, 22, 8, 0, tzinfo=UTC),
-        pr=pr,
+        prs=(pr,),
         dependents=("DEM-8",),
         built=built,
         changes="None.",

@@ -74,7 +74,7 @@ hub validate-output review|eval|preflight FILE   # checks one agent JSON output:
 hub setup [--yes]   # onboards this machine: clones or fetches the repos, writes hub.local.json after confirmation, lists what is missing
 hub env list|show|add|set|remove|service … [--local] [--json]   # the declared environments and services: list, show, or change hub.json (--local: hub.local.json), no prompt
 hub repo list [--json] | add DIR … | set DIR … | remove DIR   # the hub's repos: list, or change hub.json, checked before the write, no prompt
-hub worktree NAME [--only REPO] [--remove] [--no-fetch] [--base BRANCH | --stack-on PR_URL]   # isolated worktrees for one task (--remove removes them; --no-fetch starts from the already-fetched base; --base starts every repo from origin/BRANCH; --stack-on starts the open pull request's repo from its head branch, read with gh, and the other repos from their default branch: a blocker still in review)
+hub worktree NAME [--only REPO]... [--remove] [--no-fetch] [--base BRANCH | --stack-on PR_URL]   # isolated worktrees for one task (--only once per repo to touch; --remove removes them; --no-fetch starts from the already-fetched base; --base starts every repo from origin/BRANCH; --stack-on starts the open pull request's repo from its head branch, read with gh, and the other repos from their default branch: a blocker still in review)
 hub start ISSUE [--repo DIR]… [--no-agent]   # issue to worktrees, In Progress and a claude session (resumes)
 hub brief [--no-network]   # session brief: now, journal, repo/PR/CI state
 hub agent [ARGS…]   # claude with every repo attached (./agent)
@@ -221,6 +221,14 @@ exiting 1 with the problems. The records name `session-<ticket>` as their run (`
 decides an open request at once; `change-request` takes its evidence, proposal and affected tickets from `--findings`
 when not given. The session runs `hub worktree`, the push and `gh` as bare calls, which the sandbox excludes. The
 `implement` workflow itself is unchanged, for hub web's Workflow runs and the CLI.
+
+A ticket can own several repos (AGH-585, [ADR 0051](adr/0051-a-ticket-owns-one-or-more-repos.md)): its
+`features.json` entry names `repos`, each repo with the plan slices that are its part, in contract order, instead of
+one `repo`. The ticket keeps one brief, one preflight (over every checkout), one ticket plan and one eval (a base and
+a commit per repo); each repo gets its own worktree, gates, review rounds (`reviews/<ticket>/<repo>/`) and pull
+request, opened and merged in the list's order and recorded as `prs`. A ticket with one repo keeps every record,
+schema and command it has today. The `implement` workflow refuses a ticket with several repos and names
+`/implement`, which conducts it (full engine support is AGH-594). Delivered in slices AGH-586 to AGH-595.
 
 `hub step config` prints the `hub.json` values the built-in packs' scripts need, read through the CLI's own loader with
 the developer's `hub.local.json` first (AGH-480): the project's `default_branch`, the `branch_prefix` (null when no
@@ -666,7 +674,7 @@ replaces Live sessions and the separate list of driven sessions (design in
   of about a dozen languages is coloured by `lowlight` (MIT; highlight.js grammars, BSD-3-Clause) from a lazy chunk,
   rendered as React nodes by our own walker (no `innerHTML`), with design-token colours in both themes. A block still
   streaming, an unknown language and a block over 2,000 lines or 64 KiB stay plain.
-  [ADR 0051](adr/0051-syntax-highlighting-across-the-app.md) (AGH-596, proposed) colours every other code and file the
+  [ADR 0052](adr/0052-syntax-highlighting-across-the-app.md) (AGH-596, proposed) colours every other code and file the
   app shows the same way, through one `HighlightedCode` component, a file's language by its extension.
 - **Credit.** Open WebUI (github.com/open-webui/open-webui, Open WebUI License, a BSD-3 variant with a branding
   clause) was read as design study material at commit `6a18585` (v0.12.2) for chat and list interaction patterns.

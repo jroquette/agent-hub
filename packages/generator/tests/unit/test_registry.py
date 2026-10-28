@@ -23,6 +23,7 @@ OUTPUT_SCHEMA_PACKAGE = "agent_hub.core.features"
 CORE_SOURCES: dict[str, tuple[str, str]] = {
     "hub.schema.json": (SCHEMA_PACKAGE, SCHEMA_FILE),
     "plugin/hub-workflow/schemas/eval.v1.json": (OUTPUT_SCHEMA_PACKAGE, "eval.v1.json"),
+    "plugin/hub-workflow/schemas/eval.v2.json": (OUTPUT_SCHEMA_PACKAGE, "eval.v2.json"),
     "plugin/hub-workflow/schemas/review.v1.json": (OUTPUT_SCHEMA_PACKAGE, "review.v1.json"),
 }
 # AGH-227: the built-in workflow packs, core's package data, seeded into `workflows/` as they are.
@@ -180,6 +181,7 @@ SEEDED_PACK_FILES = (
     "sdlc/fixtures/implement-plan-moved.yaml",
     "sdlc/fixtures/implement-pr-failure.yaml",
     "sdlc/fixtures/implement-rounds-exhausted.yaml",
+    "sdlc/fixtures/implement-several-repos.yaml",
     "sdlc/fixtures/implement-superseded-in-last-pass.yaml",
     "sdlc/fixtures/implement-superseded-then-discoveries.yaml",
     "sdlc/fixtures/preflight-already-read.yaml",
@@ -335,6 +337,7 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "plugin/hub-workflow/hooks/stop_gate.py": (Kind.GENERIC, Ownership.MANAGED, None),
     # AGH-139 D5, S8: the agent output JSON schemas, core's package data copied verbatim.
     "plugin/hub-workflow/schemas/eval.v1.json": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/schemas/eval.v2.json": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/schemas/review.v1.json": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/adr/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/context-audit/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),

@@ -21,9 +21,11 @@ The folder's own ``ux-*.md`` designs are read the same way, at most ``MAX_UX_FIL
 first ``UX_HEAD_BYTES`` (``ux_skipped`` counts the rest). In ``reviews/``, the first
 ``MAX_ROUND_TICKETS`` ticket folders by name (not hidden, UTF-8 names, never a link) are opened
 the same way and read only until their first review round: a regular file named as the review
-check names one (``<reviewer>-r<N>.json``), never read; ``MAX_ROUND_ENTRIES`` entries at most in
-all. ``review_round_tickets`` names the folders holding one; only ``read_feature_folder`` (one
-feature, as the tickets view reads it) looks for them, so the listing leaves it empty.
+check names one (``<reviewer>-r<N>.json``), never read, in the folder or, for a ticket that owns
+several repos, in one of its repo folders (one level, the same way); ``MAX_ROUND_ENTRIES`` entries
+at most in all. ``review_round_tickets`` names the folders holding one; only
+``read_feature_folder`` (one feature, as the tickets view reads it) looks for them, so the listing
+leaves it empty.
 ``change-requests/`` is read as ``evals/`` is, at most ``MAX_CHANGE_REQUEST_FILES`` heads of
 ``CHANGE_REQUEST_HEAD_BYTES`` (requests and their decisions; ``change_requests_skipped`` counts the
 rest), by the listing too: the golden path's Plan signal and ``waiting_on_owner`` need them.
@@ -381,24 +383,33 @@ def _ticket_folders(entries: Iterable[os.DirEntry[str]]) -> Iterator[str]:
             yield entry.name
 
 
-def _has_round(reviews: int, ticket: str, left: list[int]) -> bool:
-    """Whether ``reviews/<ticket>`` holds a regular file named as a review round; each entry read
-    takes one from ``left[0]``, and reading stops when it is spent."""
+def _has_round(reviews: int, ticket: str, left: list[int], *, repos: bool = True) -> bool:
+    """Whether ``reviews/<ticket>`` holds a regular file named as a review round, or, with
+    ``repos``, one of its repo folders does (``reviews/<ticket>/<repo>/``, a ticket that owns
+    several repos, AGH-589); each entry read takes one from ``left[0]``, and reading stops when it
+    is spent."""
     try:
         folder = os.open(ticket, _FOLDER_FLAGS, dir_fd=reviews)
     except OSError:
         return False
     try:
+        repo_folders: list[str] = []
         with os.scandir(folder) as entries:
             for entry in entries:
                 left[0] -= 1
-                if is_review_round(entry.name) and entry.is_file(follow_symlinks=False):
-                    return True
+                if is_review_round(entry.name):
+                    if entry.is_file(follow_symlinks=False):
+                        return True
+                elif repos and next(_ticket_folders((entry,)), None) is not None:
+                    repo_folders.append(entry.name)
                 if left[0] <= 0:
                     return False
+        return any(
+            left[0] > 0 and _has_round(folder, repo, left, repos=False)
+            for repo in sorted(repo_folders)
+        )
     finally:
         os.close(folder)
-    return False
 
 
 def _is_utf8(name: str) -> bool:

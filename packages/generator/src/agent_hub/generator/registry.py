@@ -366,7 +366,7 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
             f"{_BASE_PLUGIN}/schemas/{OUTPUT_SCHEMA_FILES[kind]}",
             TemplateSource(OUTPUT_SCHEMA_PACKAGE, OUTPUT_SCHEMA_FILES[kind]),
         )
-        for kind in ("eval", "review")
+        for kind in ("eval", "eval-2", "review")
     ),
     # `render_entries` links each skill folder into `.claude/skills/`.
     *(

@@ -64,8 +64,12 @@ def worktree(
     ],
     *,
     only: Annotated[
-        str | None,
-        typer.Option("--only", metavar="REPO", help="Touch only this repo (its dir in hub.json)."),
+        list[str] | None,
+        typer.Option(
+            "--only",
+            metavar="REPO",
+            help="Touch only this repo (its dir in hub.json); give it again for each repo.",
+        ),
     ] = None,
     remove: Annotated[
         bool,
@@ -120,7 +124,7 @@ def worktree(
             config,
             name=name,
             branch_prefix=prefix,
-            only=only,
+            only=tuple(only) if only else None,
             hub=hub,
             git=git,
             env=env,
@@ -200,8 +204,7 @@ def _main_checkout_or_exit(root: Path, *, git: str) -> Path:
 
 def _summary(task: WorktreeTask) -> list[str]:
     remove = f"./hub {COMMAND} --remove {task.name}"
-    if task.only is not None:
-        remove += f" --only {task.only}"
+    remove += "".join(f" --only {repo}" for repo in task.only)
     branches = set(task.branches.values())
     if len(branches) == 1:
         (branch,) = branches

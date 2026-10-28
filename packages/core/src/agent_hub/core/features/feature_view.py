@@ -68,6 +68,8 @@ class EvalRecord(ViewModel):
     ``evaluated_at`` is the frontmatter's text (an ISO date or time). ``provenance`` says who ran
     it (e.g. ``agent``, ``agent-evaluator``, ``owner``), None when the note does not say.
     ``problem`` says why the file could not be read or parsed; its other fields are then empty.
+    ``commits`` holds, for a delivery that changes several repos, each ``<repo>@<commit>``
+    evaluated (``commit`` is then None).
     """
 
     delivery: str
@@ -81,6 +83,7 @@ class EvalRecord(ViewModel):
     legacy: bool
     problem: str | None
     provenance: str | None = None
+    commits: tuple[str, ...] = ()
 
 
 class AcCounts(ViewModel):

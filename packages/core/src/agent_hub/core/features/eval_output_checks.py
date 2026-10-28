@@ -2,18 +2,21 @@
 S6, E10, E11): pure.
 
 Each check runs only when the fields it reads pass their model's own rule (S2). Order (P7): the
-``SHIP`` rules (every result and gate passes, then neither list is empty), the
-``SHIP-WITH-OWNER-STEPS`` rule, each run's exit code against its status (results, then gates),
-repeated ``tickets`` and ``acs`` items, the file stem against ``delivery``, then the sibling
-``evals/<stem>.md`` (missing, malformed, or per field: ``verdict``, ``tickets``, ``acs``,
-``commit``). ``NO-SHIP`` is free, and ``red_on_parent`` gates no verdict (D11). The sibling is
-read as ``feature_evals`` reads every eval record, from its first ``EVAL_HEAD_BYTES``; its
-``delivery`` is its file stem by that rule, so the stem check covers it. A malformed sibling's
-problem, which may echo a value, is relayed cut to ``ECHO_LIMIT``.
+``SHIP`` rules (every result and gate passes, then neither list is empty), the ``SHIP-WITH-OWNER-
+STEPS`` rule, each run's exit code against its status (results, then gates), repeated ``tickets``
+and ``acs`` items, the file stem against ``delivery``, then the sibling ``evals/<stem>.md``
+(missing, malformed, or per field: ``verdict``, ``tickets``, ``acs``, ``commit``). Schema 2 (a
+ticket that owns several repos, AGH-590) adds, after the repeated items, a repo named twice in
+``commits`` and each result's and gate's repo outside ``commits``, and holds its ``commits``
+(``<repo>@<commit>`` each) to the sibling's instead of ``commit``. ``NO-SHIP`` is free, and
+``red_on_parent`` gates no verdict (D11). The sibling is read as ``feature_evals`` reads every eval
+record, from its first ``EVAL_HEAD_BYTES``; its ``delivery`` is its file stem by that rule, so the
+stem check covers it. A malformed sibling's problem, which may echo a value, is relayed cut to
+``ECHO_LIMIT``.
 """
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any, Final, NamedTuple
 
 from pydantic import BaseModel, TypeAdapter
@@ -29,11 +32,14 @@ from agent_hub.core.features.feature_record import TicketKey
 from agent_hub.core.features.feature_status import RecordHead
 from agent_hub.core.features.feature_view import EvalRecord
 from agent_hub.core.features.output_models import (
+    EVAL_V2_SCHEMA_ID,
     AcId,
     AcResult,
     EvalOutput,
+    EvalOutputV2,
     GateResult,
     OutputProblem,
+    RepoCommit,
 )
 from agent_hub.core.features.output_shape import echo, field_adapter, output_path, well_formed
 from agent_hub.core.hub_config.problems import ROOT_PATH
@@ -48,7 +54,13 @@ _DELIVERY: Final = field_adapter(EvalOutput, "delivery")
 _SIBLING_FIELDS: Final = tuple(
     (name, field_adapter(EvalOutput, name)) for name in ("verdict", "tickets", "acs", "commit")
 )
-_LISTS: Final = frozenset({"tickets", "acs"})
+_V2_SIBLING_FIELDS: Final = tuple(
+    (name, field_adapter(EvalOutputV2, name)) for name in ("verdict", "tickets", "acs")
+)
+_COMMITS: Final = field_adapter(EvalOutputV2, "commits")
+_REPO: Final = field_adapter(RepoCommit, "repo")
+_LISTS: Final = frozenset({"tickets", "acs", "commits"})
+_HEADS: Final[TypeAdapter[Any]] = TypeAdapter(list[str])
 # The lists whose items must not repeat: key, the noun of an item, and an item's rule.
 _UNIQUE: Final[tuple[tuple[str, str, TypeAdapter[Any]], ...]] = (
     ("tickets", "ticket", TypeAdapter(TicketKey)),
@@ -90,6 +102,9 @@ def eval_cross_problems(
         yield from _exit_code_problems(runs, document.get(runs.key))
     for key, noun, rule in _UNIQUE:
         yield from _repeat_problems(document.get(key), key=key, noun=noun, rule=rule)
+    v2 = document.get("schema") == EVAL_V2_SCHEMA_ID
+    if v2:
+        yield from _repo_problems(document)
     stem = _stem(file_name)
     if stem is None:
         yield OutputProblem(ROOT_PATH, f"the file name {echo(file_name)} is not {_STEM_FORM}")
@@ -98,7 +113,29 @@ def eval_cross_problems(
     if well_formed(_DELIVERY, delivery) and delivery != stem:
         message = f"the delivery is {delivery} but the file name says {stem}"
         yield OutputProblem("delivery", message)
-    yield from _sibling_problems(document, stem, sibling_head)
+    yield from _sibling_problems(document, stem, sibling_head, v2=v2)
+
+
+def _repo_problems(document: dict[str, object]) -> Iterator[OutputProblem]:
+    """Schema 2: each repo once in ``commits``, and every result and gate in one of them."""
+    commits = document.get("commits")
+    repos = [item.get("repo") if isinstance(item, dict) else None for item in _list(commits)]
+    yield from _repeat_problems(
+        repos, key="commits", noun="repo", rule=_REPO, at=lambda index: ("commits", index, "repo")
+    )
+    if not well_formed(_COMMITS, commits):
+        return
+    named = tuple(dict.fromkeys(str(repo) for repo in repos))
+    for key in ("results", "gates"):
+        for index, item in enumerate(_list(document.get(key))):
+            repo = item.get("repo") if isinstance(item, dict) else None
+            if well_formed(_REPO, repo) and repo not in named:
+                message = f"the repo {echo(str(repo))} is not one of commits ({', '.join(named)})"
+                yield OutputProblem(output_path((key, index, "repo")), message)
+
+
+def _list(items: object) -> list[object]:
+    return items if isinstance(items, list) else []
 
 
 def _ship_problems(document: dict[str, object]) -> Iterator[OutputProblem]:
@@ -136,17 +173,24 @@ def _exit_code_problems(runs: _Runs, items: object) -> Iterator[OutputProblem]:
 
 
 def _repeat_problems(
-    items: object, *, key: str, noun: str, rule: TypeAdapter[Any]
+    items: object,
+    *,
+    key: str,
+    noun: str,
+    rule: TypeAdapter[Any],
+    at: Callable[[int], tuple[str | int, ...]] | None = None,
 ) -> Iterator[OutputProblem]:
-    """A problem at each valid item of the list ``items`` that an earlier item already is."""
+    """A problem at each valid item of the list ``items`` that an earlier item already is;
+    ``at`` gives an item's path (by default ``<key>[<index>]``)."""
+    where = at or (lambda index: (key, index))
     first: dict[str, int] = {}
     for index, item in enumerate(items if isinstance(items, list) else ()):
         if not isinstance(item, str) or not well_formed(rule, item):
             continue
         if item in first:
-            earlier = output_path((key, first[item]))
+            earlier = output_path(where(first[item]))
             message = f"the {noun} {echo(item)} repeats {earlier}"
-            yield OutputProblem(output_path((key, index)), message)
+            yield OutputProblem(output_path(where(index)), message)
         else:
             first[item] = index
 
@@ -164,7 +208,7 @@ def _stem(file_name: str) -> str | None:
 
 
 def _sibling_problems(
-    document: dict[str, object], stem: str, sibling_head: bytes | None
+    document: dict[str, object], stem: str, sibling_head: bytes | None, *, v2: bool
 ) -> Iterator[OutputProblem]:
     """D4: the sibling exists, parses as an eval record, and holds the document's scope."""
     name = f"{EVALS_FOLDER}/{stem}{NOTE_SUFFIX}"
@@ -178,8 +222,16 @@ def _sibling_problems(
     if sibling.problem is not None:
         yield OutputProblem(ROOT_PATH, f"{name}: {echo(sibling.problem)}")
         return
-    for key, rule in _SIBLING_FIELDS:
+    for key, rule in _V2_SIBLING_FIELDS if v2 else _SIBLING_FIELDS:
         yield from _field_problems(document.get(key), key=key, rule=rule, sibling=(name, sibling))
+    commits = document.get("commits")
+    if v2 and well_formed(_COMMITS, commits):
+        heads = [
+            f"{item.get('repo')}@{item.get('commit')}"
+            for item in _list(commits)
+            if isinstance(item, dict)
+        ]
+        yield from _field_problems(heads, key="commits", rule=_HEADS, sibling=(name, sibling))
 
 
 def _field_problems(

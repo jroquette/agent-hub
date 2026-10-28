@@ -1,12 +1,12 @@
 """The JSON documents agents hand to ``/feature`` (AGH-139 D6, S3): models and bounds, pure.
 
-A review output is what one reviewer reports for one round of one task; an eval output is what
-the evaluator found for one delivery, beside its ``evals/<delivery>.md``; a preflight record is
-every preflight run of one ticket, ``tickets/<ticket>/preflight.json`` (two-level-flows AC-2.3),
-one entry appended per run. The models are the
-single source of truth: the validator checks a document against them and the shipped JSON
-Schemas are exported from them, so a class docstring here becomes a schema ``description`` and
-names no project.
+A review output is what one reviewer reports for one round of one task; an eval output is what the
+evaluator found for one delivery, beside its ``evals/<delivery>.md`` (schema 2 for a ticket that
+owns several repos: a base and a commit per repo, and each result's repo); a preflight record is
+every preflight run of one ticket, ``tickets/<ticket>/preflight.json`` (two-level-flows AC-2.3), one
+entry appended per run. The models are the single source of truth: the validator checks a document
+against them and the shipped JSON Schemas are exported from them, so a class docstring here becomes
+a schema ``description`` and names no project.
 """
 
 from typing import Annotated, Final, Literal, NamedTuple
@@ -25,12 +25,14 @@ from pydantic import (
 )
 
 from agent_hub.core.features.feature_evals import DELIVERY_PATTERN
-from agent_hub.core.features.feature_record import TicketKey
+from agent_hub.core.features.feature_record import MAX_TICKET_REPOS, TicketKey
 from agent_hub.core.features.feature_view import Verdict
 from agent_hub.core.features.scope_rules import AC_ID_PATTERN, COMMIT_PATTERN
 
 REVIEW_SCHEMA_ID: Final = "agent-hub/review/1"
 EVAL_SCHEMA_ID: Final = "agent-hub/eval/1"
+EVAL_V2_SCHEMA_ID: Final = "agent-hub/eval/2"
+PREFLIGHT_V2_SCHEMA_ID: Final = "agent-hub/preflight/2"
 # An output over this size is refused before it is parsed.
 MAX_OUTPUT_BYTES: Final = 524_288
 MAX_FINDINGS: Final = 100
@@ -151,6 +153,30 @@ class GateResult(BaseModel):
     status: RunStatus
 
 
+class RepoAcResult(BaseModel):
+    """The run of one acceptance criterion's check in one repo: the repo, its command, exit code,
+    status and summary."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    repo: GateText
+    ac: AcId
+    command: CommandText
+    exit_code: ExitCode | None
+    status: RunStatus
+    summary: OneLine1000
+
+
+class RepoCommit(BaseModel):
+    """One repo of the delivery: the commit its change starts from and the commit evaluated."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    repo: GateText
+    base: Commit
+    commit: Commit
+
+
 class RedOnParent(BaseModel):
     """A new test, and whether it failed on the base commit (null when not checked)."""
 
@@ -175,6 +201,27 @@ class EvalOutput(BaseModel):
     tickets: Annotated[tuple[TicketKey, ...], Field(max_length=MAX_EVAL_TICKETS)]
     acs: EvalAcs
     results: Annotated[tuple[AcResult, ...], Field(max_length=MAX_RESULTS)]
+    gates: Annotated[tuple[GateResult, ...], Field(max_length=MAX_GATES)]
+    red_on_parent: Annotated[tuple[RedOnParent, ...], Field(max_length=MAX_RED_ON_PARENT)]
+    owner_steps: Annotated[tuple[OneLine1000, ...], Field(max_length=MAX_OWNER_STEPS)]
+
+
+class EvalOutputV2(BaseModel):
+    """The evaluator's report for one delivery that changes several repos: its verdict, scope,
+    each repo's base and commit, results (each in a repo) and gates.
+
+    ``acs`` is ``"all"`` or a list of AC ids; an empty list scopes the eval by ``tickets``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_id: Literal["agent-hub/eval/2"] = Field(alias="schema")
+    delivery: Delivery
+    verdict: Verdict
+    commits: Annotated[tuple[RepoCommit, ...], Field(min_length=1, max_length=MAX_TICKET_REPOS)]
+    tickets: Annotated[tuple[TicketKey, ...], Field(max_length=MAX_EVAL_TICKETS)]
+    acs: EvalAcs
+    results: Annotated[tuple[RepoAcResult, ...], Field(max_length=MAX_RESULTS)]
     gates: Annotated[tuple[GateResult, ...], Field(max_length=MAX_GATES)]
     red_on_parent: Annotated[tuple[RedOnParent, ...], Field(max_length=MAX_RED_ON_PARENT)]
     owner_steps: Annotated[tuple[OneLine1000, ...], Field(max_length=MAX_OWNER_STEPS)]
@@ -225,3 +272,34 @@ class PreflightRecord(BaseModel):
     schema_id: Literal["agent-hub/preflight/1"] = Field(alias="schema")
     ticket: TicketKey
     runs: Annotated[tuple[PreflightRun, ...], Field(max_length=MAX_PREFLIGHT_RUNS)]
+
+
+class RepoMainCommit(BaseModel):
+    """One repo of a ticket that owns several: main's commit there that a preflight run read."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    repo: GateText
+    commit: Commit
+
+
+class PreflightRunV2(PreflightRun):
+    """One preflight run of a ticket, as schema 1's, with main's commit in each repo the ticket
+    owns when it owns several (``commits``, in contract order, the first repo's also ``commit``),
+    else null."""
+
+    commits: (
+        Annotated[tuple[RepoMainCommit, ...], Field(min_length=1, max_length=MAX_TICKET_REPOS)]
+        | None
+    )
+
+
+class PreflightRecordV2(BaseModel):
+    """Every preflight run of one ticket that owns several repos, oldest first; runs are only
+    ever appended, a run before the ticket owned several naming no ``commits``."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_id: Literal["agent-hub/preflight/2"] = Field(alias="schema")
+    ticket: TicketKey
+    runs: Annotated[tuple[PreflightRunV2, ...], Field(max_length=MAX_PREFLIGHT_RUNS)]
