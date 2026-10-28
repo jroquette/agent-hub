@@ -184,3 +184,22 @@ def test_seeds_the_owner_budget_when_shipped(kind: str, path: str, expected: Bud
     assert len(OWNER_TABLE) == 24
 
     assert load_budgets(SHIPPED).get((kind, path)) == expected
+
+
+def test_names_only_probed_paths_when_the_shipped_budgets_are_read() -> None:
+    # Imported here so the budget tests above do not depend on the probe modules.
+    from scripts.perf.process_probes import CLI_PATHS, HOOK_PATHS
+    from scripts.perf.web_probes import RESTART_PATHS, ROUTE_PATHS
+
+    probed = {
+        *(("cli", path) for path in CLI_PATHS),
+        *(("hook", path) for path in HOOK_PATHS),
+        *(("route", path) for path in ROUTE_PATHS),
+        *(("restart", path) for path in RESTART_PATHS),
+        *(("page", path) for path in PAGES),
+    }
+    keys = [(row["kind"], row["path"]) for row in json.loads(SHIPPED.read_text("utf-8"))["rows"]]
+    assert len(keys) > 0
+    assert len(probed) == 24
+
+    assert sorted(set(keys) - probed) == []
