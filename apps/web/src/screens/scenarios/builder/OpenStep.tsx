@@ -6,6 +6,7 @@ import type { ScenarioAction } from "../queries";
 import { pace } from "../story";
 import { ValueToken, tokenOf } from "./CardParts";
 import { looksLikeJson, parseLoose, stringifyLoose } from "./looseJson";
+import { ServiceField, type ServiceOption } from "./ServicePicker";
 import { conditionWords, shown, text, type BuilderNode, type Json } from "./model";
 
 /* A selected step, open in place: part of the row, not a card inside it. It reads in the order
@@ -21,6 +22,8 @@ export interface StepSources {
   inputs: readonly string[];
   /** The values earlier steps keep, with the step that keeps each. */
   kept: readonly { name: string; number: string }[];
+  /** The services declared in the environment, for a `service` input's picker. */
+  services?: readonly ServiceOption[];
 }
 
 export interface OpenStepProps {
@@ -33,6 +36,8 @@ export interface OpenStepProps {
   editor: (field: string) => ReactNode;
   /** Starts editing a field (null: nothing is edited here). */
   onEdit: ((field: string) => void) | null;
+  /** Sets one value of the step (a service picked from the list). */
+  onSet?: ((name: string, value: Json) => void) | null;
 }
 
 const REFERENCE = /\$(?:INPUTS|CTX)\.[A-Za-z0-9_]+|\$[a-z0-9_-]+\.output(?:\.[A-Za-z0-9_.]+)?/gi;
@@ -121,7 +126,15 @@ function JsonText({ source }: { source: string }) {
   return <>{parts}</>;
 }
 
-export function OpenStep({ node, action, sources, values, editor, onEdit }: OpenStepProps) {
+export function OpenStep({
+  node,
+  action,
+  sources,
+  values,
+  editor,
+  onEdit,
+  onSet = null,
+}: OpenStepProps) {
   const params = values.filter(([, value]) => !isBody(value));
   const bodies = values.filter(([, value]) => isBody(value));
   const env = sources?.environment ?? null;
@@ -157,7 +170,27 @@ export function OpenStep({ node, action, sources, values, editor, onEdit }: Open
       <span>{label}</span>
     );
 
+  // A service input is picked from the declared services, never typed; one the step does not
+  // set yet is listed too, so a place to send to is chosen right here.
+  const serviceInputs = (action?.inputs ?? []).filter((input) => input.type === "service");
+  const unsetServices = serviceInputs.filter(
+    (input) => !values.some(([name]) => name === input.name),
+  );
+  const serviceField = (name: string, value: string): ReactNode => (
+    <ServiceField
+      label={name}
+      value={value}
+      options={sources?.services ?? []}
+      environment={env?.name ?? null}
+      onPick={(picked) => {
+        onSet?.(name, picked);
+      }}
+    />
+  );
+
   const valueOf = (name: string, value: Json): ReactNode => {
+    if (onSet && serviceInputs.some((input) => input.name === name) && typeof value === "string")
+      return serviceField(name, value);
     const field = `with:${name}`;
     const editing = editor(field);
     if (editing) return editing;
@@ -248,8 +281,17 @@ export function OpenStep({ node, action, sources, values, editor, onEdit }: Open
         )}
       </Group>
 
-      {params.length > 0 && (
+      {(params.length > 0 || (onSet && unsetServices.length > 0)) && (
         <Group title="Set in this step">
+          {onSet &&
+            unsetServices.map((input) => (
+              <Row
+                key={input.name}
+                label={<span className="st-open-mono">{input.name}</span>}
+                note={`${input.required ? "Required · " : ""}${input.description ?? "A service of this environment"}`}
+                value={serviceField(input.name, "")}
+              />
+            ))}
           {params.map(([name, value]) => {
             const spec = specOf(name);
             return (

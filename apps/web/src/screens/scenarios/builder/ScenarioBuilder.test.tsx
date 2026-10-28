@@ -2592,4 +2592,62 @@ describe("ScenarioBuilder (scenario builder)", () => {
       "name: send-queue-message",
     );
   });
+
+  it("scenario builder picks where a step sends from the environment's services, by search", async () => {
+    const user = userEvent.setup();
+    const send = aScenarioAction({
+      ref: "orders/send-queue-message",
+      name: "send-queue-message",
+      effect: "write",
+      inputs: [
+        { name: "target", type: "service", required: true, description: "Where it is sent." },
+      ],
+    });
+    const service = (name: string, kind: string, resource: string) => ({
+      repo: "",
+      name,
+      kind,
+      description: null,
+      endpoints: [{ environment: "personal", source: "hub.local.json", endpoint: { resource } }],
+    });
+    renderBuilder({
+      "/api/v1/projects/demo/actions": {
+        ...library,
+        items: [{ ...library.items[0], action: send }, library.items[1]],
+      },
+      "/api/v1/projects/demo/config": {
+        project: "demo",
+        local_file: null,
+        repos: [],
+        environments: {
+          environments: [],
+          services: [
+            service("orders-queue", "sqs", "orders-queue-personal"),
+            service("payments-queue", "sqs", "payments-queue-personal"),
+            service("orders-db", "database", "db:5432/orders"),
+          ],
+          blocked_words: [],
+          blocked_files: [],
+          blocked_env: [],
+        },
+      },
+    });
+    const tree = await screen.findByRole("tree", { name: "Steps of order-lifecycle" });
+    const fetch = within(tree).getByRole("treeitem", { name: FETCH });
+    await user.click(fetch);
+
+    // Never free text: a field opens the services of the environment, grouped by kind.
+    await user.click(within(fetch).getByRole("button", { name: "target: choose a service" }));
+    const picker = screen.getByRole("dialog", { name: "Choose target" });
+    expect(within(picker).getByText("Queues (SQS)")).toBeInTheDocument();
+    expect(within(picker).getByText("Databases")).toBeInTheDocument();
+    await user.type(within(picker).getByRole("combobox"), "payments");
+    expect(within(picker).getAllByRole("option")).toHaveLength(1);
+    await user.keyboard("{Enter}");
+
+    expect(screen.queryByRole("dialog", { name: "Choose target" })).not.toBeInTheDocument();
+    const field = within(fetch).getByRole("button", { name: "target: payments-queue" });
+    expect(field).toHaveTextContent("payments-queue-personal");
+    expect(screen.getByText("Unsaved")).toBeInTheDocument();
+  });
 });

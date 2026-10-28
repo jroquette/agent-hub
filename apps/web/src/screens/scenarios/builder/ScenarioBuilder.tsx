@@ -25,7 +25,9 @@ import {
   Toast,
 } from "../../../components";
 import { readStored, writeStored } from "../../../lib/storage";
-import { environmentsPage } from "../../hub-config/environments";
+import { endpointText, environmentsPage } from "../../hub-config/environments";
+import { useApi } from "../../../lib/api";
+import type { ServiceOption } from "./ServicePicker";
 import { DiscussButton, useDiscuss } from "../../../shell/discuss";
 import { DebugBar } from "../DebugBar";
 import { isRunControlOff } from "../Investigation";
@@ -341,6 +343,23 @@ export function ScenarioBuilder({
   };
   // Where values come from, in the chosen environment.
   const environmentInfo = scenario.environments.find((item) => item.name === environment) ?? null;
+  // The services the hub declares, with their address in this environment: a service input
+  // picks one of them.
+  const hubConfig = useApi("/api/v1/projects/{project}/config", {
+    path: { project: scenario.project },
+  });
+  const serviceOptions: ServiceOption[] = (hubConfig.data?.environments.services ?? []).map(
+    (service) => {
+      const here = service.endpoints.find((endpoint) => endpoint.environment === environment);
+      return {
+        name: service.name,
+        repo: service.repo === "" ? null : service.repo,
+        kind: service.kind,
+        description: service.description,
+        address: here ? endpointText(here) || null : null,
+      };
+    },
+  );
   const environmentValues: Record<string, string> | null = environmentInfo
     ? (environmentInfo.values ?? {})
     : null;
@@ -2222,6 +2241,7 @@ export function ScenarioBuilder({
                   : null,
                 inputs: declaredInputs.map(([name]) => name),
                 kept: keptValues.map((item) => ({ name: item.name, number: item.number })),
+                services: serviceOptions,
               }}
               current={shownRun.current}
               breakpoints={
