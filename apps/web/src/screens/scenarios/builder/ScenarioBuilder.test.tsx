@@ -3347,9 +3347,13 @@ describe("ScenarioBuilder (scenario builder)", () => {
         .getAllByRole("option")
         .map((option) => option.textContent),
     ).toEqual(["Any kind", "Database", "Queue (SQS)"]);
-    // A kind chosen filters the list.
+    // A kind chosen filters the list. Another kind than the picked service's empties the field
+    // (that service no longer fits) and opens the list on that kind.
     await user.selectOptions(kind, "database");
-    await user.click(within(fetch).getByRole("button", { name: "target: payments-queue" }));
+    expect(
+      within(fetch).getByRole("button", { name: "target: choose a service" }),
+    ).toBeInTheDocument();
+    expect(kind.closest(".st-g-row")).toHaveTextContent("Choose a database in personal");
     const filtered = screen.getByRole("dialog", { name: "Choose target" });
     expect(
       within(filtered)
@@ -3361,7 +3365,14 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.keyboard("{Escape}");
     // AC-596.4.6: Esc closes the list and changes nothing.
     expect(screen.queryByRole("dialog", { name: "Choose target" })).not.toBeInTheDocument();
+    expect(within(fetch).getByRole("button", { name: "target: choose a service" })).toBeVisible();
+    // The emptied field is one edit of the draft: Undo brings the service back.
+    await user.click(screen.getByRole("button", { name: "Undo (⌘Z)" }));
     expect(within(fetch).getByRole("button", { name: "target: payments-queue" })).toBeVisible();
+    // Back with a queue, the kind is the queue's again: the select never disagrees with the pick.
+    expect(within(fetch).getByRole("combobox", { name: "Kind of service for target" })).toHaveValue(
+      "sqs",
+    );
     // The side panel picks it the same way: a field, never a text box.
     const panel = screen.getByRole("region", { name: /^Inspector: / });
     expect(
