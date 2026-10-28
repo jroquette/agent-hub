@@ -8,6 +8,7 @@ from pydantic import TypeAdapter, ValidationError
 from agent_hub.api.dependencies import HubReadModelsDep
 from agent_hub.api.environment_writes import EnvironmentEdit, write_environment_edit
 from agent_hub.api.local_settings import LocalSettings, write_local_settings
+from agent_hub.api.repo_writes import RepoEdit, write_repo_edit
 from agent_hub.api.rfc9457 import InvalidParameterError
 from agent_hub.api.schemas import MAX_QUERY_TEXT, PROBLEM_RESPONSES
 from agent_hub.core.brain.brain_note import BrainNote, BrainTree
@@ -80,6 +81,18 @@ def post_project_environment_edit(
     """Add, change or remove an environment or a service endpoint, in ``hub.json`` (the team's,
     left uncommitted) or ``hub.local.json`` (this developer's), as ``hub env`` does."""
     write_environment_edit(models.hub_config(project).hub_path, edit)
+    return models.hub_config(project)
+
+
+@router.post("/projects/{project}/config/repos")
+def post_project_repo_edit(
+    project: ProjectPath,
+    edit: Annotated[RepoEdit, Body()],
+    models: HubReadModelsDep,
+) -> HubConfigView:
+    """Add, change or remove a repo in ``hub.json`` (the team's, left uncommitted), as
+    ``hub repo`` does; ``./hub sync`` is left to the owner."""
+    write_repo_edit(models.hub_config(project).hub_path, edit)
     return models.hub_config(project)
 
 

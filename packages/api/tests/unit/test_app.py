@@ -90,6 +90,7 @@ BODIES: dict[tuple[str, str], object] = {
         "scope": "local",
         "name": "staging",
     },
+    ("post", "/api/v1/projects/{project}/config/repos"): {"op": "remove_repo", "dir": "api"},
     ("post", "/api/v1/projects/{project}/environment-discoveries"): {"repos": ["api"]},
 }
 OWN_ORIGIN = {"Origin": "http://127.0.0.1:7420"}

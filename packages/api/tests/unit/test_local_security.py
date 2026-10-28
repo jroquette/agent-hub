@@ -530,6 +530,8 @@ PLAYGROUND_HUB_WRITES = (
     ("PUT", "/api/v1/projects/demo/config/local"),
     # AC-416.10: the environment edits are a hub registry write.
     ("POST", "/api/v1/projects/demo/config/environments"),
+    # AGH-578 AC-6: the repo edits rewrite hub.json, as the environment edits do.
+    ("POST", "/api/v1/projects/demo/config/repos"),
 )
 CHECK_RUN = "/api/v1/features/demo/demo-feature/acs/AC-7.1/check-runs"
 

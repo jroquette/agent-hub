@@ -1179,6 +1179,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/projects/{project}/config/repos": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Post Project Repo Edit
+     * @description Add, change or remove a repo in ``hub.json`` (the team's, left uncommitted), as
+     *     ``hub repo`` does; ``./hub sync`` is left to the owner.
+     */
+    post: operations["post_project_repo_edit_api_v1_projects__project__config_repos_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/projects/{project}/env-file-keys": {
     parameters: {
       query?: never;
@@ -2560,6 +2581,31 @@ export interface components {
       values?: {
         [key: string]: string;
       };
+    };
+    /**
+     * AddRepo
+     * @description A new repo, last in ``repos``; a key left out is not written.
+     */
+    AddRepo: {
+      /** Check */
+      check: string;
+      /** Check Fast */
+      check_fast?: string | null;
+      /** Check Fast Timeout */
+      check_fast_timeout?: number | null;
+      /** Default Branch */
+      default_branch?: string | null;
+      /** Dir */
+      dir: string;
+      /** Github */
+      github: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "add_repo";
+      /** Role */
+      role?: string | null;
     };
     /**
      * AddService
@@ -5958,6 +6004,19 @@ export interface components {
       scope: components["schemas"]["Scope"];
     };
     /**
+     * RemoveRepo
+     * @description A repo no other key names any more; its folder and worktrees stay.
+     */
+    RemoveRepo: {
+      /** Dir */
+      dir: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "remove_repo";
+    };
+    /**
      * RenameEnvironment
      * @description A new name for an environment; its endpoints in the same file follow it.
      */
@@ -6075,6 +6134,10 @@ export interface components {
       /** Role */
       role: string;
     };
+    RepoEdit:
+      | components["schemas"]["AddRepo"]
+      | components["schemas"]["SetRepo"]
+      | components["schemas"]["RemoveRepo"];
     /**
      * RepoFileChange
      * @description A file that differs from the base: committed on the branch, staged, unstaged or
@@ -7187,6 +7250,38 @@ export interface components {
       values?: {
         [key: string]: string;
       } | null;
+    };
+    /**
+     * SetRepo
+     * @description A change to a repo: a key left out stays, a key present keeps its place, a new one goes
+     *     last; ``unset`` removes ``role``, ``check_fast``, ``check_fast_timeout`` or
+     *     ``default_branch``.
+     */
+    SetRepo: {
+      /** Check */
+      check?: string | null;
+      /** Check Fast */
+      check_fast?: string | null;
+      /** Check Fast Timeout */
+      check_fast_timeout?: number | null;
+      /** Default Branch */
+      default_branch?: string | null;
+      /** Dir */
+      dir: string;
+      /** Github */
+      github?: string | null;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "set_repo";
+      /** Role */
+      role?: string | null;
+      /**
+       * Unset
+       * @default []
+       */
+      unset: string[];
     };
     /**
      * SetService
@@ -11094,6 +11189,50 @@ export interface operations {
     requestBody: {
       content: {
         "application/json": components["schemas"]["LocalSettings"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HubConfigView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  post_project_repo_edit_api_v1_projects__project__config_repos_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RepoEdit"];
       };
     };
     responses: {

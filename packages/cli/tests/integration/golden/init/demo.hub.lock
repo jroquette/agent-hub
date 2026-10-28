@@ -181,7 +181,7 @@
     "AGENTS.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "7a46265ccde380e2a177a570db0bf5b40841ad6c5df9476dc25a5ecf12bd1ed5"
+      "sha256": "9e552c7db5ea79b207bb05b1041a9d3878be76bbeaf13fb26d1e431ac1bdacb0"
     },
     "AGENTS.project.md": {
       "ownership": "seeded"
@@ -346,7 +346,7 @@
     "plugin/hub-workflow/hooks/guard.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "976c1983eeade1db4cb5fec7d4db43434fe7d30469db886d599ef774d71bf3c1"
+      "sha256": "9107f02d8623b4eea3f3b09be9e8bc0b040657e11ac316362674749dd02b2cf6"
     },
     "plugin/hub-workflow/hooks/hooks.json": {
       "executable": false,

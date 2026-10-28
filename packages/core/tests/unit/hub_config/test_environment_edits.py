@@ -404,3 +404,10 @@ def test_refuses_set_service_when_name_taken_or_service_absent() -> None:
     assert change("api", "_x") == EditRefusal(
         "_x: a name starting with _ is a comment key; choose another name"
     )
+
+
+def test_refusal_names_root_path_when_no_path_given() -> None:
+    refusal = EditRefusal("no environment qa in hub.json")
+
+    assert refusal.path == "$"
+    assert EditRefusal("x", "repos[0].dir").path == "repos[0].dir"
