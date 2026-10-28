@@ -261,6 +261,49 @@ dev dependency of the workspace.
   allowed (React's and React Router's error-text doc links, XML namespace ids, React Router's `http://localhost`
   parsing base); any other URL, such as an external font, script or API, fails.
 
+## Performance (`make perf`)
+
+`make perf` (`$R python -m scripts.perf.run_suite`, code in `scripts/perf/`) measures how long the interactive paths
+take on a synthetic 400,000-event database spread over 90 days. It builds or reuses the fixture, copies it into a fresh
+temp root, renders a synthetic hub there (`hub init`, `git init` and one commit), then measures, one at a time:
+
+- `cli`: `hub --version`, `./hub --version (local uvx stand-in)`, `hub brief --no-network`;
+- `hook`: the eight rendered hooks, each fed a synthetic hook input (`guard (PreToolUse Bash)`,
+  `session_start (local uvx stand-in)`, ...);
+- `route`: seven `hub web` routes (`/api/v1/sessions`, `/api/v1/features`, `/api/v1/search?q=make`, ...);
+- `page`: four pages in Playwright's Chromium (`apps/web/e2e/perf.spec.ts`), ready when no `/api/v1/` request is in
+  flight for 500 ms after `load`, with the number of API calls;
+- `restart`: `hub web start → GET /` and `hub web start → /api/v1/sessions`, with peak RSS (Linux only, else `null`).
+
+These names are the canonical paths: the table, `perf.json` and the budgets all use the same strings. The child
+processes get an environment built from scratch, with `HOME` under the temp root, so nothing reads the real database,
+`~/.claude` or the network.
+
+Knobs, all optional: `PERF_EVENTS` (400000), `PERF_RUNS` (10), `PERF_RESTART_RUNS` (3), `PERF_STRICT` (off),
+`PERF_REBUILD` (off: rebuild the cached fixture), `PERF_OUT` (`perf.json`), `PERF_BUDGETS`
+(`scripts/perf/budgets.json`), `PERF_CACHE` (`.perf/`), and `AGENT_HUB_CHROMIUM` (else the headless shell under
+`PLAYWRIGHT_BROWSERS_PATH`). The fixture is cached in `.perf/` by event count, seed and Alembic head, so a rerun skips
+the build. A first run takes about 10-12 minutes, a cached one about 7.
+
+It prints one table and writes `perf.json`: a list of rows, each with `kind`, `path`, `runs`, `median_ms`, `p95_ms`,
+`budget`, `status` (`pass`, `over`, `no budget` or `skipped`, with a `reason`), `api_calls` (pages), `rss_mb`
+(restarts) and the run's `events`, `seed`, `commit` and `machine`. The budgets are data in `scripts/perf/budgets.json`,
+one entry per `(kind, path)` with `p95_ms`, `api_calls` or `rss_mb`; every entry's `source` is "AGH-601 proposed" until
+the ADR that sets them is accepted. A path with no entry shows `no budget`. Without npm, Chromium or
+`apps/web/node_modules`, the page rows are `skipped`. Exit code: 0, also when a row is over; 1 when `PERF_STRICT=1`
+and a row is `over`; 2 when the suite itself fails (a bad budgets file, `hub web` not starting, a route not answering
+200).
+
+Known gaps:
+
+- The live set is empty: `/api/v1/live-sessions` and the `/` page measure no live session, because the fixture is 90
+  days old and live tiles are judged against the server clock.
+- `./hub --version` and `session_start` run through a local `uvx` stand-in that runs the worktree's `hub`: no release
+  is fetched, so uvx's own resolve time is not counted (the path names say so).
+
+`make perf` is in no gate: `make check-fast`, `make check` and CI never run it, and it never runs in their parallel
+lanes. Run it by hand on a quiet machine, with output to a file: `make perf > perf.log 2>&1; echo $?`.
+
 ## Coverage
 
 Floors, counting lines and branches together (`(covered_lines + covered_branches) / (num_statements + num_branches)`)
