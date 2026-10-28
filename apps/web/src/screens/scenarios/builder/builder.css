@@ -198,7 +198,7 @@
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+  box-shadow: var(--shadow-sm);
   animation: sb-in 160ms ease-out;
   transition:
     box-shadow 120ms ease,
@@ -371,7 +371,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface-overlay, var(--surface));
-  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+  box-shadow: var(--shadow-popover);
   z-index: 5;
 }
 .sb-add-menu button {
@@ -718,7 +718,7 @@ button.sb-check:hover {
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
   background: var(--surface);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 14%);
+  box-shadow: var(--shadow-overlay);
 }
 .sb-start-grid {
   display: grid;
@@ -822,7 +822,7 @@ textarea.sb-script {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface-overlay, var(--surface));
-  box-shadow: var(--shadow-popover, 0 8px 24px rgb(0 0 0 / 18%));
+  box-shadow: var(--shadow-popover);
   font-size: 13px;
   color: var(--text-muted);
 }

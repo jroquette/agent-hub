@@ -274,7 +274,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     });
     expect(fetch).toHaveTextContent("send-queue-message");
     expect(check).toHaveTextContent("Reads only");
-    expect(await screen.findByText("Loads")).toBeInTheDocument();
+    expect(await screen.findByText("No problems")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save scenario" })).toBeDisabled();
   });
 
@@ -310,7 +310,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
       screen.queryByRole("region", { name: "Steps not in the order" }),
     ).not.toBeInTheDocument();
     // The check reads the very document the server parsed: opening rewrites nothing.
-    expect(await screen.findByText("Loads")).toBeInTheDocument();
+    expect(await screen.findByText("No problems")).toBeInTheDocument();
     const checked = requests.find((request) => request.url.endsWith("/scenarios/validate"));
     expect(((await checked?.clone().json()) as { document: unknown }).document).toStrictEqual(
       aTreeDocument(REFERENCE),
@@ -1820,7 +1820,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
       }),
     });
 
-    await screen.findByText("Loads");
+    await screen.findByText("No problems");
     // external_ref has no value anywhere: the plan asks for it first.
     await user.click(screen.getByRole("button", { name: "Plan in personal" }));
     const form = screen.getByRole("form", { name: "Values to plan with" });
@@ -1955,7 +1955,8 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const user = userEvent.setup();
     const { requests } = renderBuilder({ [SAVE]: () => SAVED });
 
-    await user.click(await screen.findByRole("button", { name: "Add a step after step 1" }));
+    // The "+" is the pointer's way: hidden from the tree, which holds only its items.
+    await user.click(await screen.findByTitle("Add a step after step 1"));
     const menu = screen.getByRole("dialog", { name: "Add a step after step 1" });
     await user.type(within(menu).getByLabelText(/Find an action or a step type/), "pause");
     await user.keyboard("{Enter}");
@@ -2450,9 +2451,81 @@ describe("ScenarioBuilder (scenario builder)", () => {
       }),
     });
 
-    await screen.findByText("Loads");
+    await screen.findByText("No problems");
     await user.click(screen.getByRole("button", { name: "YAML" }));
 
     expect(screen.getByLabelText("Generated YAML")).toHaveTextContent("kind: scenario");
+  });
+
+  it("scenario builder renames a step in place with F2, and Esc leaves it as it was", async () => {
+    const user = userEvent.setup();
+    renderBuilder();
+    const tree = await screen.findByRole("tree", { name: "Steps of order-lifecycle" });
+    const fetch = within(tree).getByRole("treeitem", { name: FETCH });
+
+    fetch.focus();
+    await user.keyboard("{F2}");
+    const field = screen.getByRole("textbox", { name: "What 1 does" });
+    expect(field).toHaveFocus();
+    await user.clear(field);
+    await user.type(field, "Send the order message{Enter}");
+
+    expect(
+      within(tree).getByRole("treeitem", { name: /Run an action: Send the order message/ }),
+    ).toHaveFocus();
+    expect(screen.getByText("Unsaved")).toBeInTheDocument();
+
+    await user.keyboard("{F2}");
+    await user.type(screen.getByRole("textbox", { name: "What 1 does" }), " twice{Escape}");
+    expect(
+      within(tree).getByRole("treeitem", { name: /Run an action: Send the order message\./ }),
+    ).toBeInTheDocument();
+  });
+
+  it("scenario builder edits a step's timing on the step itself", async () => {
+    const user = userEvent.setup();
+    renderBuilder();
+    const tree = await screen.findByRole("tree", { name: "Steps of order-lifecycle" });
+    await user.click(within(tree).getByRole("treeitem", { name: CHECK }));
+
+    await user.click(within(tree).getByRole("button", { name: "every 10 s, up to 5 min" }));
+    const field = screen.getByRole("textbox", { name: "How often 2 checks" });
+    await user.clear(field);
+    await user.type(field, "30s{Enter}");
+
+    expect(within(tree).getByRole("treeitem", { name: CHECK })).toHaveTextContent(
+      "every 30 s, up to 5 min",
+    );
+  });
+
+  it("scenario builder duplicates and deletes a step from its quick actions", async () => {
+    const user = userEvent.setup();
+    renderBuilder();
+    const tree = await screen.findByRole("tree", { name: "Steps of order-lifecycle" });
+
+    await user.click(within(tree).getByRole("button", { name: "Duplicate step 1 (⌘D)" }));
+    expect(within(tree).getAllByRole("treeitem", { name: /Run an action/ })).toHaveLength(2);
+
+    await user.click(within(tree).getByRole("button", { name: "Delete step 1 (Delete)" }));
+    expect(within(tree).getAllByRole("treeitem", { name: /Run an action/ })).toHaveLength(1);
+    expect(screen.getByText(/^Deleted step /)).toBeInTheDocument();
+  });
+
+  it("scenario builder keeps the run panel beside the steps while no step is open", async () => {
+    const user = userEvent.setup();
+    renderBuilder();
+    const panel = await screen.findByRole("complementary", {
+      name: "Scenario runs of order-lifecycle",
+    });
+    expect(within(panel).getByRole("region", { name: "Scenario runs" })).toBeInTheDocument();
+    expect(screen.getByRole("form", { name: "Run order-lifecycle" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start scenario run" })).toBeDisabled();
+
+    // Opening a step in the editor covers the run panel; the run bar stays.
+    await user.click(screen.getByRole("treeitem", { name: FETCH }));
+    expect(
+      screen.queryByRole("complementary", { name: "Scenario runs of order-lifecycle" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("form", { name: "Run order-lifecycle" })).toBeInTheDocument();
   });
 });

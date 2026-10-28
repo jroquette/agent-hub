@@ -82,7 +82,7 @@ function firstLine(value: string): string {
 }
 
 /** The first sentence of a text (an action's description). */
-function firstSentence(value: string): string {
+export function firstSentence(value: string): string {
   const line = firstLine(value).trim();
   const cut = /^(.+?[.!?])(\s|$)/.exec(line);
   return cut?.[1] ?? line;
