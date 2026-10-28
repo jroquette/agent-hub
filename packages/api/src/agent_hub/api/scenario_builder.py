@@ -345,8 +345,10 @@ class ScenarioBuilder:
             problems=(),
         )
 
-    def delete(self, project: str, name: str) -> str:
-        """Remove scenario ``name``'s file and its proposal; the file's path below the hub."""
+    def delete(self, project: str, name: str) -> None:
+        """Remove scenario ``name``'s file and its proposal, or neither: both paths are checked
+        for a link before either is removed. A paused run (a gate or an investigation waiting
+        for you) folds as ``running``, so the in-progress refusal covers it."""
         hub_text, _plan, found = self.catalog.scenario_source(project, name)
         last = self.catalog.last_run(project, name)
         if last is not None and last.status == "running":
@@ -354,21 +356,34 @@ class ScenarioBuilder:
             raise RunConflictError(code="scenario_run_in_progress", reason=reason)
         hub = Path(hub_text)
         relative = found.path.relative_to(hub)
+        # Discovery reads only scenarios/ and never through a link: a file elsewhere means its
+        # path was not the one discovery walked, refused as a link would be.
         if not relative.parts or relative.parts[0] != HUB_SCENARIOS:
-            raise RunConflictError(
-                code="link_in_path", reason="the scenario file is not in the scenarios folder"
-            )
-        _unlink_no_link(hub, relative, what="the scenario path")
-        _unlink_no_link(hub, proposal_path(found.pack, name), what="the proposal path")
-        return relative.as_posix()
+            reason = f"the scenario file is not below the hub's {HUB_SCENARIOS}/ folder"
+            raise RunConflictError(code="link_in_path", reason=reason)
+        proposal = proposal_path(found.pack, name)
+        _refuse_link(hub, relative, what="the scenario path")
+        _refuse_link(hub, proposal, what="the proposal path")
+        _unlink(hub, relative)
+        _unlink(hub, proposal)
 
 
 def _unlink_no_link(hub: Path, relative: Path, *, what: str) -> None:
-    """Remove ``hub / relative`` (none is fine), refusing a link anywhere on its path: unlink
+    """Remove ``hub / relative`` (none is fine), refusing a link anywhere on its path."""
+    _refuse_link(hub, relative, what=what)
+    _unlink(hub, relative)
+
+
+def _refuse_link(hub: Path, relative: Path, *, what: str) -> None:
+    """409 ``link_in_path`` when ``hub / relative`` or a folder on its way is a link: unlink
     would follow a linked folder."""
     below = (relative, *(parent for parent in relative.parents if parent != Path()))
     if any((hub / part).is_symlink() for part in below):
         raise RunConflictError(code="link_in_path", reason=f"{what} holds a link")
+
+
+def _unlink(hub: Path, relative: Path) -> None:
+    """Remove ``hub / relative``; none is fine."""
     with contextlib.suppress(FileNotFoundError):
         (hub / relative).unlink()
 

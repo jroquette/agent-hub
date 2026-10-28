@@ -2232,6 +2232,28 @@ def test_refuses_when_scenario_deleted_while_its_run_in_progress(scenarios: Any)
 
     assert refused.status_code == 409, refused.text
     assert "walk-1" in refused.json()["detail"]
+    # AC-596.1.2: the refusal names its code.
+    assert refused.json()["code"] == "scenario_run_in_progress"
+    assert (scenarios.hub / "scenarios" / "demo" / "order-walk.yaml").exists()
+
+
+def test_refuses_when_scenario_deleted_while_its_run_waits_for_you(scenarios: Any) -> None:
+    # AC-596.1.2: a run paused at an investigation has no end, so it folds as running.
+    write_records(scenarios.hub, a_paused_walk(scenarios.hub))
+    scenarios.events.runs.append(
+        read_model_builders.a_run(
+            id=WALK_RUN, workflow="scenario:order-walk", status="running", issue=None
+        )
+    )
+
+    waiting = scenarios.client.get(f"/api/v1/scenario-runs/{WALK_RUN}").json()
+    refused = scenarios.client.delete(
+        "/api/v1/scenarios/demo/order-walk", headers=_origin(scenarios)
+    )
+
+    assert waiting["open_investigation"] == 1
+    assert (refused.status_code, refused.json()["code"]) == (409, "scenario_run_in_progress")
+    assert WALK_RUN in refused.json()["detail"]
     assert (scenarios.hub / "scenarios" / "demo" / "order-walk.yaml").exists()
 
 
@@ -2248,6 +2270,81 @@ def test_refuses_link_when_scenario_deleted(scenarios: Any, tmp_path: Path) -> N
 
     assert refused.status_code in (404, 409), refused.text
     assert outside.exists()
+
+
+def _a_proposal(hub: Path) -> Path:
+    proposal = hub / ".agent-runs" / "proposals" / "scenarios" / "demo" / "order-walk.yaml"
+    proposal.parent.mkdir(parents=True, exist_ok=True)
+    proposal.write_text(WALK)
+    return proposal
+
+
+def test_refuses_link_and_removes_nothing_when_scenario_deleted_with_linked_proposal_folder(
+    scenarios: Any, tmp_path: Path
+) -> None:
+    # AC-596.1.3: the proposal path is checked before the scenario file goes.
+    target = scenarios.hub / "scenarios" / "demo" / "order-walk.yaml"
+    outside = tmp_path / "outside-proposals"
+    outside.mkdir()
+    (outside / "order-walk.yaml").write_text(WALK)
+    linked = scenarios.hub / ".agent-runs" / "proposals" / "scenarios" / "demo"
+    linked.parent.mkdir(parents=True)
+    linked.symlink_to(outside, target_is_directory=True)
+
+    refused = scenarios.client.delete(
+        "/api/v1/scenarios/demo/order-walk", headers=_origin(scenarios)
+    )
+
+    assert (refused.status_code, refused.json()["code"]) == (409, "link_in_path"), refused.text
+    assert "proposal path" in refused.json()["detail"]
+    assert (target.exists(), (outside / "order-walk.yaml").exists()) == (True, True)
+
+
+def test_refuses_link_and_removes_nothing_when_scenario_deleted_with_linked_pack_folder(
+    scenarios: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # AC-596.1.3: a pack folder swapped for a link after the scenario was read is refused.
+    pack = scenarios.hub / "scenarios" / "demo"
+    proposal = _a_proposal(scenarios.hub)
+    outside = tmp_path / "outside-pack"
+    read = scenarios.catalog.scenario_source
+
+    def read_then_link(project: str, name: str) -> Any:
+        found = read(project, name)
+        shutil.move(pack, outside)
+        pack.symlink_to(outside, target_is_directory=True)
+        return found
+
+    monkeypatch.setattr(scenarios.catalog, "scenario_source", read_then_link)
+
+    refused = scenarios.client.delete(
+        "/api/v1/scenarios/demo/order-walk", headers=_origin(scenarios)
+    )
+
+    assert (refused.status_code, refused.json()["code"]) == (409, "link_in_path"), refused.text
+    assert "scenario path" in refused.json()["detail"]
+    assert ((outside / "order-walk.yaml").exists(), proposal.exists()) == (True, True)
+
+
+def test_keeps_recorded_runs_readable_when_scenario_deleted(scenarios: Any) -> None:
+    # AC-596.1.4: the delete removes the scenario's file, never its scenario runs.
+    write_records(scenarios.hub, a_paused_walk(scenarios.hub))
+    append_records(scenarios.hub, {"event": "end", "status": "done"})
+    scenarios.events.runs.append(
+        read_model_builders.a_run(
+            id=WALK_RUN, workflow="scenario:order-walk", status="done", issue=None
+        )
+    )
+
+    deleted = scenarios.client.delete(
+        "/api/v1/scenarios/demo/order-walk", headers=_origin(scenarios)
+    )
+    shown = scenarios.client.get(f"/api/v1/scenario-runs/{WALK_RUN}")
+
+    assert deleted.status_code == 204, deleted.text
+    assert shown.status_code == 200, shown.text
+    assert (shown.json()["scenario"], shown.json()["status"]) == ("order-walk", "done")
+    assert (scenarios.hub / WALK_RECORDS).exists()
 
 
 def test_needs_origin_when_scenario_deleted(scenarios: Any) -> None:

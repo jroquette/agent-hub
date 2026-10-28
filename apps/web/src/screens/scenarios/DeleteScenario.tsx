@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState, type RefObject } from "react";
 
 import {
   ConfirmDialog,
@@ -10,6 +10,7 @@ import {
   Popover,
   Toast,
 } from "../../components";
+import { usePanelDismiss } from "../../components/usePanelDismiss";
 import { useDeleteScenario, type ScenarioRef } from "./queries";
 
 /* Delete scenario: the "⋯" menu of a list row and of the scenario's header, the confirm that
@@ -49,23 +50,6 @@ export function ScenarioMenu({
 }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    const onPointer = (event: PointerEvent) => {
-      if (!wrap.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const onEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setOpen(false);
-      wrap.current?.querySelector<HTMLButtonElement>("button")?.focus();
-    };
-    document.addEventListener("pointerdown", onPointer);
-    document.addEventListener("keydown", onEscape);
-    return () => {
-      document.removeEventListener("pointerdown", onPointer);
-      document.removeEventListener("keydown", onEscape);
-    };
-  }, [open]);
   const label = openHref === undefined ? "Scenario actions" : `Actions for ${name}`;
   return (
     // The menu keeps its clicks and keys: the list row around it opens the scenario.
@@ -77,7 +61,8 @@ export function ScenarioMenu({
         event.stopPropagation();
       }}
       onKeyDown={(event) => {
-        event.stopPropagation();
+        // Escape goes on to the document, where the open menu's dismiss closes it.
+        if (event.key !== "Escape") event.stopPropagation();
       }}
     >
       <IconButton
@@ -90,37 +75,73 @@ export function ScenarioMenu({
           setOpen(!open);
         }}
       />
-      <Popover open={open} label={label} style={{ top: 30, right: 0, minWidth: 260 }}>
-        {openHref !== undefined && (
-          <>
-            <MenuItem icon="clipboard-list" href={openHref}>
-              Open scenario
-            </MenuItem>
-            <div className="ah-menu-sep" role="separator" />
-          </>
-        )}
-        {inProgress ? (
-          <div className="sc-menu-off">
-            <span className="ah-row" style={{ gap: 8 }}>
-              <Icon name="trash" />
-              Delete scenario…
-            </span>
-            <span className="ah-small ah-subtle">{IN_PROGRESS}</span>
-          </div>
-        ) : (
-          <MenuItem
-            icon="trash"
-            danger
-            onClick={() => {
-              setOpen(false);
-              onDelete();
-            }}
-          >
-            Delete scenario…
-          </MenuItem>
-        )}
-      </Popover>
+      {open && (
+        <MenuPanel
+          wrap={wrap}
+          label={label}
+          openHref={openHref}
+          inProgress={inProgress}
+          onClose={() => {
+            setOpen(false);
+          }}
+          onDelete={onDelete}
+        />
+      )}
     </span>
+  );
+}
+
+/** The open menu: Escape or a press outside closes it, and focus goes back to its "⋯" button. */
+function MenuPanel({
+  wrap,
+  label,
+  openHref,
+  inProgress,
+  onClose,
+  onDelete,
+}: {
+  wrap: RefObject<HTMLSpanElement>;
+  label: string;
+  openHref: string | undefined;
+  inProgress: boolean;
+  onClose: () => void;
+  onDelete: () => void;
+}) {
+  usePanelDismiss(wrap, onClose, {
+    outsidePointer: true,
+    opener: () => wrap.current?.querySelector<HTMLButtonElement>("button") ?? null,
+  });
+  return (
+    <Popover open label={label} style={{ top: 30, right: 0, minWidth: 260 }}>
+      {openHref !== undefined && (
+        <>
+          <MenuItem icon="clipboard-list" href={openHref}>
+            Open scenario
+          </MenuItem>
+          <div className="ah-menu-sep" role="separator" />
+        </>
+      )}
+      {inProgress ? (
+        <div className="sc-menu-off">
+          <span className="ah-row" style={{ gap: 8 }}>
+            <Icon name="trash" />
+            Delete scenario…
+          </span>
+          <span className="ah-small ah-subtle">{IN_PROGRESS}</span>
+        </div>
+      ) : (
+        <MenuItem
+          icon="trash"
+          danger
+          onClick={() => {
+            onClose();
+            onDelete();
+          }}
+        >
+          Delete scenario…
+        </MenuItem>
+      )}
+    </Popover>
   );
 }
 

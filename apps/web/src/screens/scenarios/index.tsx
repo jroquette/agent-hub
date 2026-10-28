@@ -1,6 +1,6 @@
 import "../features/features.css";
 
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 
 import {
@@ -9,8 +9,8 @@ import {
   DataTable,
   EmptyState,
   Icon,
-  Kbd,
   ProblemError,
+  SearchField,
   Skeleton,
   STATUS,
   Time,
@@ -20,7 +20,6 @@ import {
 } from "../../components";
 import { useScope } from "../../lib/scope";
 import { useRowKeys } from "../../lib/useRowKeys";
-import { typingIn } from "../../shell/goSequence";
 import { StaleStamp } from "../portfolio/StaleStamp";
 import {
   DeletedToast,
@@ -354,43 +353,6 @@ function Loading() {
   );
 }
 
-function SearchField({
-  inputRef,
-  value,
-  onChange,
-}: {
-  inputRef: RefObject<HTMLInputElement>;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div className="ah-search ft-search">
-      <Icon name="search" size="sm" />
-      <input
-        ref={inputRef}
-        className="ah-input"
-        type="search"
-        aria-label="Filter scenarios by name or description"
-        placeholder="Filter scenarios by name or description"
-        value={value}
-        onChange={(event) => {
-          onChange(event.target.value);
-        }}
-        onKeyDown={(event) => {
-          if (event.key !== "Escape") return;
-          if (value) onChange("");
-          else event.currentTarget.blur();
-        }}
-      />
-      {!value && (
-        <span className="ft-search-kbd" aria-hidden="true">
-          <Kbd>/</Kbd>
-        </span>
-      )}
-    </div>
-  );
-}
-
 /** What the scenario's page hands the list after it deleted the scenario. */
 interface ListState {
   deleted?: DeletedNotice;
@@ -412,7 +374,6 @@ export function ScenariosScreen() {
   const heading = useRef<HTMLHeadingElement>(null);
   const list = useRef<HTMLDivElement>(null);
   useRowKeys(list);
-  useSlash(filter);
 
   const [deleting, setDeleting] = useState<DeleteTarget | null>(null);
   const [notice, setNotice] = useState<DeletedNotice | null>(
@@ -537,7 +498,15 @@ export function ScenariosScreen() {
         ) : (
           <>
             <div className="ft-toolbar" role="group" aria-label="Filters">
-              <SearchField inputRef={filter} value={query} onChange={setQuery} />
+              <SearchField
+                value={query}
+                onChange={setQuery}
+                label="Filter scenarios by name or description"
+                placeholder="Filter scenarios by name or description"
+                className="ft-search"
+                kbdClassName="ft-search-kbd"
+                inputRef={filter}
+              />
             </div>
             <div ref={list}>
               <ScenarioList
@@ -597,20 +566,4 @@ export function ScenariosScreen() {
       <DeletedToast notice={notice} />
     </Page>
   );
-}
-
-/** `/` focuses the filter (spec 01 keyboard map). */
-function useSlash(target: RefObject<HTMLInputElement | null>) {
-  useEffect(() => {
-    const onSlash = (event: KeyboardEvent) => {
-      if (event.key !== "/" || event.defaultPrevented || typingIn(event.target)) return;
-      if (target.current === null) return;
-      event.preventDefault();
-      target.current.focus();
-    };
-    document.addEventListener("keydown", onSlash);
-    return () => {
-      document.removeEventListener("keydown", onSlash);
-    };
-  }, [target]);
 }

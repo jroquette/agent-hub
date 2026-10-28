@@ -23145,7 +23145,37 @@
         ],
         "responses": {
           "204": {
-            "description": "Successful Response"
+            "description": "The scenario's file and Claude's proposal for it are gone"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "No launch cookie (open hub web's address)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "No such scenario (already gone counts too)"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Delete refused and nothing removed, with a code: scenario_run_in_progress, link_in_path or hub_read_only"
           },
           "4XX": {
             "content": {
