@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+
 from scripts.perf.environment import child_env, create_hub, make_tool_bin, web_argv
 from scripts.perf.fixture import BRANCH_PREFIX, FEATURE_SLUG, PAGE_SESSION
 
