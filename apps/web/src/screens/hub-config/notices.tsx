@@ -19,6 +19,8 @@ export function useSaveNotices() {
   const handed = location.state as SavedState | null;
   const [saved, setSaved] = useState<string | null>(handed?.saved ?? null);
   const [teamChanged, setTeamChanged] = useState(handed?.team ?? false);
+  // The next steps of each write since the notice last opened (a repo added or removed).
+  const [lines, setLines] = useState<readonly string[]>([]);
 
   useEffect(() => {
     if (handed)
@@ -37,13 +39,17 @@ export function useSaveNotices() {
   return {
     saved,
     teamChanged,
-    /** A write's words, and whether it changed hub.json. */
-    onSaved: (message: string, team = false) => {
+    /** The notice's next-step lines, one set per write that has some. */
+    lines,
+    /** A write's words, whether it changed hub.json, and its next steps for the notice. */
+    onSaved: (message: string, team = false, next: readonly string[] = []) => {
       setSaved(message);
       if (team) setTeamChanged(true);
+      if (next.length > 0) setLines((current) => [...current, ...next]);
     },
     dismissTeamChanged: () => {
       setTeamChanged(false);
+      setLines([]);
     },
   };
 }
@@ -62,10 +68,13 @@ export function SavedToast({ message }: { message: string | null }) {
 export function UncommittedNotice({
   blocked,
   onDismiss,
+  lines = [],
 }: {
   /** Why Claude cannot be asked here, else null. */
   blocked: string | null;
   onDismiss: () => void;
+  /** What else to run after the writes, under the sync sentence. */
+  lines?: readonly string[] | undefined;
 }) {
   const { setOpen, addReference } = useDiscuss();
   return (
@@ -85,7 +94,7 @@ export function UncommittedNotice({
                 label: "Uncommitted hub.json",
                 source: "hub.json",
                 quote:
-                  "hub.json has environment changes made from hub web that are not committed. Run ./hub sync, show me the diff, and open a hub PR after I agree.",
+                  "hub.json has changes made from hub web that are not committed. Run ./hub sync, show me the diff, and open a hub PR after I agree.",
               });
               setOpen(true);
             }}
@@ -95,8 +104,15 @@ export function UncommittedNotice({
         </span>
       }
     >
-      hub.json has changes that are not committed. Run ./hub sync to update AGENTS.md, then review
-      the diff and open a hub PR.
+      hub.json has changes that are not committed. Run ./hub sync to update AGENTS.md and
+      .claude/settings.json, then review the diff and open a hub PR.
+      {lines.length > 0 && (
+        <ul className="ah-config-notice-lines">
+          {lines.map((line, index) => (
+            <li key={index}>{line}</li>
+          ))}
+        </ul>
+      )}
     </Banner>
   );
 }

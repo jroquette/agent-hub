@@ -829,6 +829,88 @@
         "title": "AddEnvironment",
         "type": "object"
       },
+      "AddRepo": {
+        "additionalProperties": false,
+        "description": "A new repo, last in ``repos``; a key left out is not written.",
+        "properties": {
+          "check": {
+            "maxLength": 200,
+            "title": "Check",
+            "type": "string"
+          },
+          "check_fast": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Check Fast"
+          },
+          "check_fast_timeout": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Check Fast Timeout"
+          },
+          "default_branch": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Branch"
+          },
+          "dir": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Dir",
+            "type": "string"
+          },
+          "github": {
+            "maxLength": 200,
+            "title": "Github",
+            "type": "string"
+          },
+          "op": {
+            "const": "add_repo",
+            "title": "Op",
+            "type": "string"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          }
+        },
+        "required": [
+          "dir",
+          "op",
+          "github",
+          "check"
+        ],
+        "title": "AddRepo",
+        "type": "object"
+      },
       "AddService": {
         "additionalProperties": false,
         "description": "A new service of a repo with its address in one or more environments, in one step.\n\nEach address goes to the file of its environment: a team environment's to ``hub.json``, the\ndeveloper's own to ``hub.local.json``; both files are checked before either is written.",
@@ -10222,6 +10304,29 @@
         "title": "RemoveEnvironment",
         "type": "object"
       },
+      "RemoveRepo": {
+        "additionalProperties": false,
+        "description": "A repo no other key names any more; its folder and worktrees stay.",
+        "properties": {
+          "dir": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Dir",
+            "type": "string"
+          },
+          "op": {
+            "const": "remove_repo",
+            "title": "Op",
+            "type": "string"
+          }
+        },
+        "required": [
+          "dir",
+          "op"
+        ],
+        "title": "RemoveRepo",
+        "type": "object"
+      },
       "RenameEnvironment": {
         "additionalProperties": false,
         "description": "A new name for an environment; its endpoints in the same file follow it.",
@@ -10495,6 +10600,27 @@
         ],
         "title": "RepoConfigView",
         "type": "object"
+      },
+      "RepoEdit": {
+        "discriminator": {
+          "mapping": {
+            "add_repo": "#/components/schemas/AddRepo",
+            "remove_repo": "#/components/schemas/RemoveRepo",
+            "set_repo": "#/components/schemas/SetRepo"
+          },
+          "propertyName": "op"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/AddRepo"
+          },
+          {
+            "$ref": "#/components/schemas/SetRepo"
+          },
+          {
+            "$ref": "#/components/schemas/RemoveRepo"
+          }
+        ]
       },
       "RepoFileChange": {
         "additionalProperties": false,
@@ -13682,6 +13808,110 @@
           "name"
         ],
         "title": "SetEnvironment",
+        "type": "object"
+      },
+      "SetRepo": {
+        "additionalProperties": false,
+        "description": "A change to a repo: a key left out stays, a key present keeps its place, a new one goes\nlast; ``unset`` removes ``role``, ``check_fast``, ``check_fast_timeout`` or\n``default_branch``.",
+        "properties": {
+          "check": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Check"
+          },
+          "check_fast": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Check Fast"
+          },
+          "check_fast_timeout": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Check Fast Timeout"
+          },
+          "default_branch": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Branch"
+          },
+          "dir": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Dir",
+            "type": "string"
+          },
+          "github": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Github"
+          },
+          "op": {
+            "const": "set_repo",
+            "title": "Op",
+            "type": "string"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          },
+          "unset": {
+            "default": [],
+            "items": {
+              "maxLength": 200,
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Unset",
+            "type": "array"
+          }
+        },
+        "required": [
+          "dir",
+          "op"
+        ],
+        "title": "SetRepo",
         "type": "object"
       },
       "SetService": {
@@ -21251,6 +21481,71 @@
           }
         },
         "summary": "Put Project Local Config",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/config/repos": {
+      "post": {
+        "description": "Add, change or remove a repo in ``hub.json`` (the team's, left uncommitted), as\n``hub repo`` does; ``./hub sync`` is left to the owner.",
+        "operationId": "post_project_repo_edit_api_v1_projects__project__config_repos_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepoEdit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubConfigView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Post Project Repo Edit",
         "tags": [
           "projects"
         ]

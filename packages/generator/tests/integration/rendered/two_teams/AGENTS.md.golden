@@ -1,8 +1,8 @@
 # AGENTS.md — demo hub
 
 Hub for the demo workspace. Project values (repos, tracker team, branch prefix, checks, guard paths) live
-only in `hub.json`; read it instead of assuming names. Each repo has its own `AGENTS.md`; read the one for the repo you
-change. This project's own rules are in `AGENTS.project.md`.
+only in `hub.json`; read it instead of assuming names, and change `repos` with `./hub repo`. Each repo has its own
+`AGENTS.md`; read the one for the repo you change. This project's own rules are in `AGENTS.project.md`.
 
 **Day 0 rule:** every change to a repo goes through this hub and the workflow below. If the hub gets in the way, that
 is a hub bug: log it in `brain/_inbox/`.

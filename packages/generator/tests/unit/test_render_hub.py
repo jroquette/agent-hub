@@ -3176,9 +3176,10 @@ def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubCon
 # were shortened.
 # AGH-392: re-pinned when the managed-file list gained `.mcp.json`.
 # Re-pinned when rule 6 named code comments as text for people.
-DEMO_AGENTS_SHA256 = "c35b1c5a01d89aa69e99c7a747f88b1931f166eceb09c81d59dfe9e8ae4bc8b8"
+# AGH-578: re-pinned when line 3 named ./hub repo.
+DEMO_AGENTS_SHA256 = "06ddf5984300fe495ebf036b461794b288550039688b89a85bae060e84e3b8d7"
 ALL_MODULES_SHA256 = {
-    "AGENTS.md": "8c79692a617d78e36de487bf51174e7b7aa500205888548eced23b5721e444a3",
+    "AGENTS.md": "c7b2bb09a2f7fe4219864ed40d596ea3d9ebcb5d5ed17677edb4fd3c1e1dec92",
     ".claude-plugin/marketplace.json": (
         "f7324911e70a0f3255274721636821a9b65a5716f04c5f6e3e470e74dc7b8ac7"
     ),

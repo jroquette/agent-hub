@@ -1,4 +1,4 @@
-import { createContext, useContext } from "react";
+import { createContext, useContext, useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 
 import type { components } from "../../api/schema";
@@ -146,10 +146,21 @@ export interface SectionProps {
   purpose: string;
   icon: IconName;
   onAsk?: (() => void) | undefined;
+  /** More buttons after the Ask button, such as Add repo. */
+  actions?: ReactNode;
   children: ReactNode;
 }
 
-export function Section({ id, title, askName, purpose, icon, onAsk, children }: SectionProps) {
+export function Section({
+  id,
+  title,
+  askName,
+  purpose,
+  icon,
+  onAsk,
+  actions,
+  children,
+}: SectionProps) {
   const blocked = useContext(AskBlocked);
   return (
     <section className="ah-card ah-config-section" aria-labelledby={`${id}-title`} id={id}>
@@ -160,16 +171,131 @@ export function Section({ id, title, askName, purpose, icon, onAsk, children }: 
           </h2>
           <p className="ah-small ah-muted">{purpose}</p>
         </div>
-        {onAsk && (
-          <Tooltip label={blocked ?? undefined}>
-            <Button size="sm" icon="message-square" disabled={blocked !== null} onClick={onAsk}>
-              Ask Claude to change {askName}
-            </Button>
-          </Tooltip>
+        {(onAsk !== undefined || actions !== undefined) && (
+          <div className="ah-config-section-actions">
+            {onAsk && (
+              <Tooltip label={blocked ?? undefined}>
+                <Button size="sm" icon="message-square" disabled={blocked !== null} onClick={onAsk}>
+                  Ask Claude to change {askName}
+                </Button>
+              </Tooltip>
+            )}
+            {actions}
+          </div>
         )}
       </header>
       {children}
     </section>
+  );
+}
+
+/** Whether a dialog or side panel sits above a form: Esc is theirs. */
+function layerAbove(): boolean {
+  return document.querySelector("[data-ah-dialog], .ah-side-panel") !== null;
+}
+
+export interface SectionFormProps {
+  children: ReactNode;
+  /** The save verb ("Save access", "Add repo"). */
+  saveLabel: string;
+  /** What Save says while the write is pending. */
+  pendingLabel?: string | undefined;
+  pending: boolean;
+  /** The refusal as the form shows it, above the actions; null or false for none. */
+  refusal?: ReactNode;
+  canSave?: boolean | undefined;
+  /** Why Save is off, beside the actions and announced politely; undefined: no such line. */
+  reason?: ReactNode;
+  className?: string | undefined;
+  /** The id of the heading that names the form. */
+  labelledBy?: string | undefined;
+  onCancel: () => void;
+  onSave: () => void;
+}
+
+/**
+ * A section form's frame (the Environment page's sections, the Hub config's repo form): the
+ * fields, a refusal above the actions, then Cancel and the save verb. `Esc` cancels when it is
+ * pressed inside the form, unless a save is pending or a dialog or side panel is above it.
+ * While pending, Cancel is off and Save is marked off but keeps focus; a refusal leaves focus
+ * where it was, or puts it on Save if the page lost it meanwhile.
+ */
+export function SectionForm({
+  children,
+  saveLabel,
+  pendingLabel = "Saving…",
+  pending,
+  refusal,
+  canSave = true,
+  reason,
+  className,
+  labelledBy,
+  onCancel,
+  onSave,
+}: SectionFormProps) {
+  const formRef = useRef<HTMLFormElement>(null);
+  const latest = useRef({ onCancel, pending });
+  useEffect(() => {
+    latest.current = { onCancel, pending };
+  });
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || latest.current.pending) return;
+      if (!(event.target instanceof Node) || !formRef.current?.contains(event.target)) return;
+      if (layerAbove()) return;
+      latest.current.onCancel();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
+  const refused = refusal !== null && refusal !== undefined && refusal !== false;
+  const wasPending = useRef(pending);
+  useEffect(() => {
+    const ended = wasPending.current && !pending;
+    wasPending.current = pending;
+    if (!ended || !refused) return;
+    const active = document.activeElement;
+    if (active === null || active === document.body)
+      formRef.current?.querySelector<HTMLButtonElement>("button[type=submit]")?.focus();
+  }, [pending, refused]);
+
+  return (
+    <form
+      ref={formRef}
+      className={["ah-stack ah-env-section-form", className].filter(Boolean).join(" ")}
+      style={{ gap: 16 }}
+      aria-labelledby={labelledBy}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (canSave && !pending) onSave();
+      }}
+    >
+      {children}
+      {refusal}
+      <div className="ah-env-section-actions">
+        {reason !== undefined && (
+          <span className="ah-small ah-muted ah-section-form-reason" aria-live="polite">
+            {reason}
+          </span>
+        )}
+        <Button variant="ghost" disabled={pending} onClick={onCancel}>
+          Cancel
+        </Button>
+        {/* Off while pending through aria-disabled, not disabled: a disabled button drops
+            focus, and a refusal must leave it on Save. */}
+        <Button
+          type="submit"
+          variant="primary"
+          disabled={!canSave}
+          aria-disabled={pending || undefined}
+        >
+          {pending ? pendingLabel : saveLabel}
+        </Button>
+      </div>
+    </form>
   );
 }
 

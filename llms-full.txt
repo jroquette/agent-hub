@@ -1007,6 +1007,9 @@ Hooks are small scripts Claude Code runs on its own at fixed moments; you never 
   add'`). Not seen: the module form (`python -m agent_hub.cli env …`), a verb fed through stdin or a launcher in a
   variable (`h=./hub; $h env add`), and shell writes to `hub.local.json` through `python -c`, `dd`, `install` or
   `rsync`, as for `hub.json`;
+- a `hub repo` that changes `hub.json`'s repos, and so the checks the Stop hook runs (`add`, `set`, `remove`, quoted or
+  escaped too, with or without a `--` before the subcommand); `list` passes. As for `hub env`, text that only mentions
+  one asks as well (`grep 'hub repo add'`), and the module form (`python -m agent_hub.cli repo …`) is not seen;
 - removing assertions from a test, or adding skip, xfail, quarantine or fixme markers;
 - deleting or `sed`-editing test files from the shell;
 - writing in `brain/` outside `now.md`, `journal/`, `_inbox/`, `auto/` and `features/`;
@@ -1373,7 +1376,7 @@ Contract: [docs/design/developer-identity.md](docs/design/developer-identity.md)
 | `AGENT_HUB_IN_CONTAINER` | no | | Set to `1` by the agent-hub image only: lets `hub web --host` bind outside loopback inside the container |
 | `AGENT_HUB_WEB_URL` | no | `http://127.0.0.1:7420` | Where a hub's event sensor sends events (loopback URLs only) |
 | `AGENT_HUB_HUBS_ROOT`, `AGENT_HUB_PORT` | no | the folder holding this clone, `7420` | `make up`: the hubs folder mounted read-only, the host port (on 127.0.0.1) |
-| `AGENT_HUB_ROOT` | no | the current folder | The hub folder for `hub setup`, `hub worktree`, `hub brief`, `hub env`, `hub agent`, `hub start`, `hub next`, `hub run` and `hub bench` (`hub sync` and `hub doctor` use the current folder); the `./hub` shim sets it for you |
+| `AGENT_HUB_ROOT` | no | the current folder | The hub folder for `hub setup`, `hub worktree`, `hub brief`, `hub env`, `hub repo`, `hub agent`, `hub start`, `hub next`, `hub run` and `hub bench` (`hub sync` and `hub doctor` use the current folder); the `./hub` shim sets it for you |
 | `BENCH_EFFORT` | no | `medium` | Module `bench`: the `effortLevel` of `hub bench`'s sessions, `low`, `medium` or `high` |
 
 ## 🧱 Technical reference
@@ -1474,6 +1477,7 @@ reached only from `hub web` and `mcp_server` only from `hub mcp`. import-linter 
 | `hub worktree NAME [--only REPO]... [--remove] [--no-fetch] [--base BRANCH \| --stack-on PR_URL]` | Create (or remove) one task's worktrees in the hub's repos, or in each `--only` repo; `--no-fetch` starts from the already-fetched base; `--base` starts every repo from `origin/BRANCH`; `--stack-on` starts the open pull request's repo from its head branch and the other repos from their default branch (a blocker still in review) |
 | `hub brief [--no-network]` | Print the session brief: `now.md`, recent journal, repo/PR/CI state |
 | `hub env list\|show NAME [--json]`, `hub env add\|set\|remove NAME … [--local]`, `hub env service add\|remove REPO SERVICE … [--local]` | List, show and change the declared environments and services (`environments`, `repos[].services`); writes `hub.json`, or `hub.local.json` with `--local` (where an access on a `hub.json` environment may only get stricter), without a prompt, checked before the write; exit 0, 1 when refused or invalid (the file unchanged), 2 on a usage error ([environments.md](docs/design/environments.md)) |
+| `hub repo list [--json]`, `hub repo add DIR --github OWNER/NAME --check C …`, `hub repo set DIR … [--unset KEY]…`, `hub repo remove DIR` | List the hub's repos (one line each: `dir (github, role, branch B): check_fast=X, check=Y`, from `hub.json` only) and add, change or remove one in `hub.json`, without a prompt, checked before the write; a remove is refused while a guard path, an event, `contract-sync` or your `hub.local.json` still names the repo, and leaves `../DIR` in place; each change names what to run next (`./hub sync`, and after an add `./hub setup` and `/onboard`) and runs nothing itself; exit 0, 1 when refused or invalid (the files unchanged), 2 on a usage error ([project-config.md](docs/design/project-config.md)) |
 | `hub action list [--json]`, `hub action plan\|run NAME --env ENV [--input NAME=VALUE]…` | List the hub's actions (`actions/<pack>/`) with their draft state; plan one call (its endpoints, content hash, plan-mode summary and policy decision, no credential) or run it: a deny exits 1 before any prompt, without a terminal only `read` actions run, an `ask` prompts `y/N`; the environment's env file and credentials reach the action's process alone ([scenarios.md](docs/design/scenarios.md)) |
 | `hub scenario list`, `hub scenario plan NAME --env ENV [--input NAME=VALUE]… [--json]` | List the hub's scenarios (`scenarios/<pack>/`, `kind: scenario`; `hub workflow list` never shows them); plan one: per step its action, effect, args (a run-time value as `<$CTX.<name> from <node>>`), endpoints, content hash, draft state, plan-mode summary (only when its args are known; no credential, no env file) and policy decision; nothing runs and no event is written; a deny, an undeclared environment or two unordered gates exit 1 ([scenarios.md](docs/design/scenarios.md)) |
 | `hub scenario run NAME --env ENV [--input NAME=VALUE]… [--mode interactive\|regression] [--run-id RUN] [--break ADDR]…` | Run a scenario once its plan holds no problem or deny (else exit 1, no scenario run): its snapshot pins each action's files and hash, a policy `ask` is an approval `<step>__ask` (answer with `hub workflow approve\|reject RUN`, which resumes it), each action is decided again when it runs and gets its environment's credentials alone; a write or destroy that started and never ended (the hub died) asks again on resume, and a loop group that may run such a write again asks before each of its writes until it ends. With `--mode regression` no agent runs and a divergence fails the scenario run with `step <id>: <reason>`; `interactive` (the default) pauses it at an investigation gate `<step>__investigation` and prints the link to its page in `hub web`, where a read-only session investigates and you pick an option, retry or stop (or `hub workflow respond RUN --node <step>__investigation --choice pick\|retry\|stop [--text OPTION]`). No flag removes a gate. `--break` (a scenario written as blocks, never on production) pauses the run before each block named ([scenarios.md](docs/design/scenarios.md)) |
@@ -1844,6 +1848,62 @@ Linear MCP server ([ADR 0015](../adr/0015-linear-mcp-tracker-transport.md)). Bot
 next` calls `list_ready` once per team, in order; `hub start` calls `get_issue`, then `move_state` (`only_if_unstarted`
 on a resume; [hub-start.md](hub-start.md)).
 
+### `hub repo`
+
+`list [--json]`, `add DIR --github OWNER/NAME --check C [--check-fast F] [--check-fast-timeout N] [--role R]
+[--default-branch B]`, `set DIR` (the same options but `DIR`, at least one, and `--unset KEY`…, repeatable, for `role`,
+`check_fast`, `check_fast_timeout` or `default_branch`; `github` and `check` cannot be unset, and a key both set and
+unset is refused), `remove DIR`. The hub is `AGENT_HUB_ROOT` or the current folder. None prompts; none runs `git`,
+`gh`, `hub sync` or a clone.
+
+- **`list`** reads `hub.json` only (a broken `hub.local.json` does not stop it) and prints one line per repo,
+  `<dir> (<github>, <role>, branch <B>): check_fast=<X>, check=<Y>`, where `B` is the repo's `default_branch`, else
+  `project.default_branch`, and `X` is `-` when the repo has no `check_fast`. `--json` prints one object
+  `{"repos": [...]}`, each with `dir`, `github`, `role`, `check_fast` (`null` when absent), `check` and the effective
+  `default_branch`.
+- **The dir match.** `add` refuses a `DIR` equal to an existing one ignoring case, naming it (`repos[<i>]`). `set` and
+  `remove` find the repo by its exact `dir`; one that differs only in case is refused with `did you mean <dir>?`.
+- **`add`** appends the entry last, keys in the model's order (`dir, github, role, check_fast, check_fast_timeout,
+  check, default_branch`), the ones not given left out. **`set`** changes a present key in place and puts a new one
+  after the entry's last key; `services`, `conventions` and `ui_paths` are untouched.
+- **`remove`** refuses, one line per place and all at once, while the repo is still named: a `guard.ask_before_edit`
+  path whose first segment is `DIR` exactly (as the model checks it), a `guard.deny_paths` path whose first segment is
+  `DIR` ignoring case (as the guard matches it), `events[<i>].repo`, `modules.contract-sync.source` or `.target`, and
+  the developer's `hub.local.json` `repos[<i>].dir`. It also refuses the only repo (`hub.json` needs one). The entry
+  goes with its `services`; `../<dir>` and its worktrees stay.
+- **Output.** A success prints `hub.json: added repo <dir>` (or `updated`, `removed`), then what to run next: after
+  `add`, `run ./hub sync to update AGENTS.md and .claude/settings.json`, `run ./hub setup to clone ../<dir>` and
+  `run /onboard to set <dir>'s gates and project rules`; after `set`, the sync line; after `remove`, the sync line,
+  `../<dir> and its worktrees are left in place` and the teammates line below. A refusal is `hub.json: not changed:
+  <reason>`; a model rule (a bad `github`, a blank `check`, an unsafe `dir`, a timeout outside 1..160) gives the
+  reader's `hub.json: repos[<i>].<key>: <message>`. Exit 0 on success, 1 on a refused change or an invalid file (both
+  files unchanged), 2 on a usage error (`add` without `--github` or `--check`, `set` with no option).
+- **The writer** is `hub env`'s ([environments.md](environments.md)): the result is checked as a read checks
+  `hub.json`, then the rules across it and `hub.local.json`, before anything is written; every key and its order is
+  kept in indent 2 (another indent is normalised once, and the output says `hub.json: rewritten with indent 2`); a file
+  changed since it was read and a symlinked file are refused (exit 1); the file is replaced through a temporary one in
+  the same folder.
+
+**Known limits.** A remove is checked against this developer's `hub.local.json` only: a teammate whose
+`hub.local.json` still names the removed repo in `repos` gets exit 1 from the CLI until they drop that entry, which the
+remove output says. The guard asks before `add`, `set` and `remove` (`list` passes), with or without a `--` before the
+subcommand; like `hub env`, a text that only mentions one (`grep 'hub repo add'`, a commit message) asks too, an
+accepted false ask. It does not see the module form (`python -m agent_hub.cli repo …`), as for `hub env`.
+
+#### From hub web
+
+The Hub config screen's Repositories section adds, changes and removes a repo as `hub repo add|set|remove` does
+([24-hub-config-repos.md](control-plane/specs/24-hub-config-repos.md)), through
+`POST /api/v1/projects/{project}/config/repos` with one `op`: `add_repo` (`dir`, `github`, `check`, and any of
+`check_fast`, `check_fast_timeout`, `role`, `default_branch`), `set_repo` (`dir` names the repo and never changes; the
+keys to change, and `unset` for `role`, `check_fast`, `check_fast_timeout` or `default_branch`; a body with neither is
+refused before any read, as the CLI refuses a bare `set`) or `remove_repo` (`dir`). Core's `repo_edits` makes the
+change, so the API accepts and refuses what the CLI does: a refusal is a 422 "This change was not saved" whose
+`errors[]` hold one line each, its JSON path as `pointer` (`$` when it has none) and the CLI's text without the
+`hub.json: not changed: ` lead, and nothing is written. An accepted change is written to `hub.json` in the CLI's bytes
+and left uncommitted ([ADR 0040](../adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md)). hub
+web runs no `./hub sync`, `./hub setup` or `/onboard` and deletes no folder; the screen names those next steps.
+
 ### Example (synthetic project)
 
 ```json
@@ -1856,7 +1916,7 @@ on a resume; [hub-start.md](hub-start.md)).
 ## Invariants
 
 - `hub.json` is the only committed file of project values; no template or command hard-codes one; no field is a secret.
-  It stays readable by Python 3.9's `json`, only `hub init` and `hub env` write it ([ADR 0038](../adr/0038-declared-environments-and-blocked-words.md)), and a hook never fails because of it.
+  It stays readable by Python 3.9's `json`, only `hub init`, `hub env` and `hub repo` (and their `hub web` routes) write it ([ADR 0038](../adr/0038-declared-environments-and-blocked-words.md)), and a hook never fails because of it.
 - The CLI and `hub doctor` validate with the same model; the exported schema never drifts from it.
 
 ## Decisions
