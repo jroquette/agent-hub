@@ -60,6 +60,8 @@ Decision drivers:
 
 ### (d) The reference machine
 
+The options keep the E labels of the options note the owner decided on.
+
 - **E1. The CI runner.** It enforces, but it is shared and noisy, and its size depends on the plan.
 - **E2. A developer laptop.** It is what the owner feels, but it cannot be reproduced or enforced.
 - **E3. A reference machine class**, the audit's: CI is held to it with a margin. If the CI runner is smaller, the
@@ -85,20 +87,22 @@ row yet. A row with `—` in all three limit columns has no budget.
 | `./hub` through `uvx` | cli | `./hub --version (local uvx stand-in)` | Its own row: no budget until AGH-606, then the `hub` row plus 300 ms | — | — | — |
 | One hook script | hook | every | Wall time from spawn to exit of each hook script, fed a synthetic input (the Stop gate with no change included) | 80 | — | — |
 | A session ready, Claude aside | hook | `session_start (local uvx stand-in)` | Wall time of the SessionStart hook | 1500 | — | — |
-| All hooks on one tool call | — | — | Sum of the hook scripts that run on one tool call (guard and event sensor on a PreToolUse Bash call) | 150 | — | — |
+| All hooks on one tool call | — | — | Sum of the hook scripts that run on one tool call (guard and event sensor on a PreToolUse Bash call); measured today by adding the p95 of the `make perf` rows `guard (PreToolUse Bash)` and `event_sensor (PreToolUse, sensor closed)` | 150 | — | — |
 | An API route | route | every | Warm (after the first request), sequential requests, on the 400,000-event fixture | 150 | — | — |
 | A page ready | page | every | Cold load on a warm server with an empty browser cache; ready when no `/api/v1/` request is in flight for 500 ms after `load`; API calls counted during the load | 800 | 5 | — |
 | `hub web` restart, first HTML | restart | `hub web start → GET /` | Start of `hub web` to the first HTML answer, 400,000 events | 1000 | — | 300 |
 | `hub web` restart, first data | restart | `hub web start → /api/v1/sessions` | Start of `hub web` to the first `/api/v1/sessions` answer, 400,000 events | 1000 | — | 300 |
-| `hub web` restart at 1M events | — | — | Both restart rows with `PERF_EVENTS=1000000`: measured now, enforced from milestone 4 | 1000 | — | 300 |
-| Stop gate, code changed | — | — | Wall time of the repo's own `check_fast` run by the gate | 30000 | — | — |
+| `hub web` restart at 1M events | — | — | Both restart rows of `make perf` run by hand with `PERF_EVENTS=1000000`: measured now, enforced from milestone 4 | 1000 | — | 300 |
+| Stop gate, code changed | — | — | Wall time of the repo's own `check_fast` run by the gate; not a `make perf` row: measured by timing that command by hand (`make check-fast` here) | 30000 | — | — |
 
 Rules for every row:
 
-- **p95** is the 95th percentile of wall time over warm runs (`PERF_RUNS`, 10 by default): the uv cache is filled
-  and `.pyc` files are compiled. The first run after an install or an upgrade is not judged.
+- **p95** is the 95th percentile of wall time over warm runs (`PERF_RUNS`, 10 by default; the restart rows use
+  `PERF_RESTART_RUNS`, 3 by default, so there the p95 is in effect the slowest run): the uv cache is filled and `.pyc`
+  files are compiled. The first run after an install or an upgrade is not judged.
 - **A hook** must meet both its script row (80 ms) and the per-tool-call sum (150 ms).
 - **API routes:** from milestone 2, parallel requests must be no slower than sequential ones, as a new row.
+- **Pages:** from milestone 3, the API calls a page makes while its tab is idle become a new row.
 - **The Stop gate:** the 150 s default and 160 s maximum of `check_fast_timeout` stay as kill limits, not budgets.
 
 ### Measuring and the budgets file
