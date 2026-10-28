@@ -87,6 +87,8 @@ export interface StepListProps {
   onEditNode?: ((id: string, node: BuilderNode) => void) | undefined;
   onDuplicate?: ((id: string) => void) | undefined;
   onDelete?: ((id: string) => void) | undefined;
+  /** The run bar's mode: what a Wait until that never holds does in it. */
+  mode?: "interactive" | "regression" | undefined;
   /** Where a step's values come from (environment, scenario variables, kept values). */
   sources?: StepSources | null | undefined;
   /** Edits one value of a step in the side panel (its body, a value taken from elsewhere). */
@@ -257,6 +259,7 @@ export function StepList(props: StepListProps) {
     onDelete,
     sources = null,
     onEditField,
+    mode = "interactive",
   } = props;
   const nodeOfRow = (id: string): BuilderNode | null => {
     const find = (list: readonly Item[]): BuilderNode | null => {
@@ -749,6 +752,13 @@ export function StepList(props: StepListProps) {
           every: typed.trim() || every,
         }));
       }
+      if (name === "timeout") {
+        const timeout = text(node.timeout);
+        return field("timeout", `When ${number} gives up`, timeout, (typed) => ({
+          ...node,
+          timeout: typed.trim() || timeout,
+        }));
+      }
       const key = name.slice("with:".length);
       const value = given[key];
       if (value === undefined) return null;
@@ -761,6 +771,7 @@ export function StepList(props: StepListProps) {
       <OpenStep
         node={node}
         action={action}
+        mode={mode}
         sources={sources}
         values={values}
         editor={editor}

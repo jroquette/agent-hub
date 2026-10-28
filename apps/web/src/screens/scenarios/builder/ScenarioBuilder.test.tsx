@@ -2311,7 +2311,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.clear(field);
     await user.type(field, "10m");
     expect(within(editor).getByText("Checks at most 60 times.")).toBeInTheDocument();
-    expect(screen.getByRole("treeitem", { name: CHECK })).toHaveTextContent("up to 10 min");
+    expect(screen.getByRole("treeitem", { name: CHECK })).toHaveTextContent("Gives up after10 min");
 
     await save(user);
     const nodes = await savedNodes(requests);
@@ -3137,18 +3137,12 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const tree = await screen.findByRole("tree", { name: "Steps of order-lifecycle" });
     await user.click(within(tree).getByRole("treeitem", { name: CHECK }));
 
-    await user.click(
-      within(tree).getByRole("button", {
-        name: "Edit how often it checks: every 10 s, up to 5 min",
-      }),
-    );
+    await user.click(within(tree).getByRole("button", { name: "Edit how often it checks: 10 s" }));
     const field = screen.getByRole("textbox", { name: "How often 2 checks" });
     await user.clear(field);
     await user.type(field, "30s{Enter}");
 
-    expect(within(tree).getByRole("treeitem", { name: CHECK })).toHaveTextContent(
-      "every 30 s, up to 5 min",
-    );
+    expect(within(tree).getByRole("treeitem", { name: CHECK })).toHaveTextContent("Every30 s");
   });
 
   it("scenario builder duplicates and deletes a step from its quick actions", async () => {
@@ -3747,9 +3741,12 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const check = await screen.findByRole("treeitem", { name: CHECK });
     await user.click(check);
     const open = within(check).getByRole("group", { name: "Step 2 settings" });
-    const does = within(open).getByRole("region", { name: "What it does" });
-    expect(does).toHaveTextContent("Checksevery 10 s, up to 5 min");
-    expect(does).toHaveTextContent("Untilstatus is ON_HOLD");
+    // A check reads by its poll: Done when (each condition a row), then How it checks.
+    const does = within(open).getByRole("region", { name: "How it checks" });
+    expect(does).toHaveTextContent("Every10 sGives up after5 min");
+    expect(within(open).getByRole("region", { name: "Done when" })).toHaveTextContent(
+      "statusisON_HOLD",
+    );
     const keeps = within(open).getByRole("region", { name: "Keeps for later steps" });
     expect(within(keeps).getByTitle("Kept value order_status")).toHaveTextContent("order_status");
     expect(keeps).toHaveTextContent("from");
@@ -4494,5 +4491,61 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.click(within(fetch).getByText("Show the code it runs"));
     expect(within(fetch).getByText("Draft: needs acceptance")).toBeVisible();
     expect(await seriousViolations(globalThis.document.body)).toEqual([]);
+  });
+
+  it("scenario builder's open check reads as a poll: its conditions, how it checks, what if it never holds", async () => {
+    const user = userEvent.setup();
+    renderBuilder({
+      [DETAIL]: detailWith({
+        nodes: [
+          document.nodes[0],
+          {
+            ...document.nodes[1],
+            with: { external_ref: "$INPUTS.external_ref" },
+            until_when: "$self.output.status == 'ON_HOLD' && $self.output.cover == 'PENDING'",
+            capture: { order_id: "$self.output.order_id" },
+          },
+        ],
+      }),
+    });
+    // Two conditions: the row's title names the first and how many more.
+    const check = await screen.findByRole("treeitem", {
+      name: /Wait until: Wait until status is ON_HOLD and 1 more/,
+    });
+    await user.click(check);
+    const open = within(check).getByRole("group", { name: "Step 2 settings" });
+
+    // Each condition is a row, the second after an "and".
+    const done = within(open).getByRole("region", { name: "Done when" });
+    expect(done).toHaveTextContent("statusisON_HOLD");
+    // (a token's hidden words, "Output of this step", sit before its name)
+    expect(done).toHaveTextContent(/and(Output of this step)?coverisPENDING/);
+    // How it checks: what it reads with, and both timings edit in place.
+    const how = within(open).getByRole("region", { name: "How it checks" });
+    expect(within(how).getByTitle("Scenario input external_ref")).toBeInTheDocument();
+    expect(how).toHaveTextContent("At most 30 checks");
+    await user.click(within(how).getByRole("button", { name: "Edit when it gives up: 5 min" }));
+    const field = screen.getByRole("textbox", { name: "When 2 gives up" });
+    await user.clear(field);
+    await user.type(field, "20m{Enter}");
+    expect(within(open).getByRole("region", { name: "How it checks" })).toHaveTextContent(
+      "Gives up after20 min",
+    );
+    // What happens when it never holds, by the run bar's mode.
+    expect(within(open).getByRole("region", { name: "If it never holds" })).toHaveTextContent(
+      "After 20 min the scenario run pauses and a read-only agent investigates with you.",
+    );
+    await user.click(
+      within(screen.getByRole("group", { name: "Scenario run mode" })).getByRole("button", {
+        name: "Regression",
+      }),
+    );
+    expect(within(open).getByRole("region", { name: "If it never holds" })).toHaveTextContent(
+      "After 20 min the scenario run fails here.",
+    );
+    // What it keeps, from its own answer.
+    expect(within(open).getByRole("region", { name: "Keeps for later steps" })).toHaveTextContent(
+      "from its output",
+    );
   });
 });

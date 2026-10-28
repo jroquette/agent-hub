@@ -4,13 +4,14 @@ import { CopyButton, Icon } from "../../../components";
 import { ActionFiles } from "../ActionPanel";
 import { DraftLine } from "../parts";
 import type { ScenarioAction } from "../queries";
-import { pace } from "../story";
+import { maxChecks, pace } from "../story";
 import { TokenText, ValueToken, tokenOf } from "./CardParts";
 import { looksLikeJson, parseLoose, stringifyLoose } from "./looseJson";
 import { useServiceField, type ServiceOption } from "./ServicePicker";
 import { resolveInputs } from "./StepScript";
 import {
-  conditionWords,
+  OPERATORS,
+  parseCondition,
   record,
   shown,
   text,
@@ -56,6 +57,8 @@ export interface OpenStepProps {
   onEditInPanel?: ((name: string) => void) | null;
   /** Selects the step that keeps a value, by its id. */
   onGoToStep?: ((step: string) => void) | null;
+  /** The run bar's mode: what a check that never holds does in it. */
+  mode?: "interactive" | "regression";
 }
 
 function written(value: Json): string {
@@ -137,6 +140,7 @@ export function OpenStep({
   onSet = null,
   onEditInPanel = null,
   onGoToStep = null,
+  mode = "interactive",
 }: OpenStepProps) {
   const params = values.filter(([, value]) => !isBody(value));
   const bodies = values.filter(([, value]) => isBody(value));
@@ -151,6 +155,26 @@ export function OpenStep({
     sources ? upstreamOf(sources.document, node.id).map((step) => step.id) : [],
   );
   const keptBefore = (sources?.kept ?? []).filter((item) => before.has(item.node));
+
+  // A check (Wait until): what it waits for, row by row, and how many times it can read.
+  const check = node.type === "expect";
+  const conditions = check ? parseCondition(text(node.until_when)) : [];
+  const checks =
+    check && text(node.every) && text(node.timeout)
+      ? maxChecks(text(node.every), text(node.timeout))
+      : null;
+  // The scenario values it reads with (the same name, so not its "own" values): listed once.
+  const readsWith = check
+    ? Object.values(record(node.with))
+        .map((value) => written(value))
+        .filter((value) => /^\$INPUTS\.[A-Za-z0-9_]+$/.test(value))
+    : [];
+  const needsCondition = (
+    <span className="st-g-missing">
+      <Icon name="circle-alert" size="sm" />
+      Needs a condition
+    </span>
+  );
 
   // The references the step's values use, each once.
   const uses = new Map<string, string>();
@@ -264,9 +288,63 @@ export function OpenStep({
     >
       {action?.description && <p className="st-open-about">{action.description}</p>}
 
-      <Group title="What it does">
+      {check && (
+        <Group title="Done when">
+          {conditions === null ? (
+            <Row
+              label="Condition"
+              value={<span className="st-open-mono">{text(node.until_when)}</span>}
+              note="Shown as written: the builder cannot put it in words."
+            />
+          ) : conditions.length === 0 ? (
+            <Row label="Condition" value={needsCondition} />
+          ) : (
+            conditions.flatMap((group, at) => [
+              ...(at > 0 ? [<Row key={`or-${String(at)}`} label="" value={<b>or</b>} />] : []),
+              ...group.map((row, index) => (
+                <Row
+                  key={`${String(at)}-${String(index)}`}
+                  label={
+                    <span className="st-open-value-ref">
+                      {index > 0 && <span className="st-open-quiet">and</span>}
+                      <ValueToken value={row.field} />
+                    </span>
+                  }
+                  value={
+                    <span className="st-open-value-ref">
+                      <span className="st-open-quiet">
+                        {row.value === "" && row.op === "!="
+                          ? "is set"
+                          : row.value === "" && row.op === "=="
+                            ? "is empty"
+                            : (OPERATORS.find((item) => item.op === row.op)?.words ?? row.op)}
+                      </span>
+                      {row.value !== "" && <span className="st-open-mono">{row.value}</span>}
+                    </span>
+                  }
+                />
+              )),
+            ])
+          )}
+          {onEditInPanel && (
+            <li className="st-g-row st-g-more">
+              <button
+                type="button"
+                className="st-g-link"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onEditInPanel("Until");
+                }}
+              >
+                <Icon name="pencil" size="sm" /> Edit the condition in the panel
+              </button>
+            </li>
+          )}
+        </Group>
+      )}
+
+      <Group title={check ? "How it checks" : "What it does"}>
         <Row
-          label="Action"
           value={
             <>
               <span className="st-open-mono st-open-strong">
@@ -277,6 +355,7 @@ export function OpenStep({
               )}
             </>
           }
+          label={check ? "Reads" : "Action"}
           note={
             draft ? (
               <DraftLine
@@ -285,26 +364,44 @@ export function OpenStep({
                 commands={action.accept_command ? [action.accept_command] : []}
                 action={action.name}
               >
-                It plans now; a scenario run starts once it is committed in the hub checkout.
+                You can plan with it now; a scenario run needs it committed first.
               </DraftLine>
             ) : undefined
           }
         />
-        {node.type === "expect" && every && timeout && (
-          <Row
-            label="Checks"
-            value={
-              editor("timing") ??
-              editChip(
-                "timing",
-                `every ${pace(every)}, up to ${pace(timeout)}`,
-                "Edit how often it checks",
-              )
-            }
-          />
+        {check && every && timeout && (
+          <>
+            <Row
+              label="Every"
+              value={
+                editor("timing") ?? editChip("timing", pace(every), "Edit how often it checks")
+              }
+            />
+            <Row
+              label="Gives up after"
+              value={
+                editor("timeout") ?? editChip("timeout", pace(timeout), "Edit when it gives up")
+              }
+              note={
+                checks === null
+                  ? undefined
+                  : `At most ${String(checks)} checks (worked out: ${pace(timeout)} ÷ ${pace(every)})`
+              }
+            />
+          </>
         )}
-        {node.type === "expect" && text(node.until_when) && (
-          <Row label="Until" value={conditionWords(text(node.until_when))} />
+        {check && readsWith.length > 0 && (
+          <Row
+            label="Reads with"
+            value={
+              <span className="st-open-value-ref">
+                {readsWith.map((ref) => (
+                  <ValueToken key={ref} value={ref} />
+                ))}
+              </span>
+            }
+            note="Values from the scenario run, the same in every check."
+          />
         )}
         {action && (action.script_text != null || action.document_text != null) && (
           <li className="st-g-row st-g-more">
@@ -322,6 +419,25 @@ export function OpenStep({
           </li>
         )}
       </Group>
+
+      {check && timeout && (
+        <Group title="If it never holds">
+          <Row
+            label={
+              <span className="st-open-value-ref">
+                <Icon name={mode === "interactive" ? "text-search" : "circle-x"} size="sm" />
+                {mode === "interactive" ? "Interactive" : "Regression"}
+              </span>
+            }
+            value={
+              mode === "interactive"
+                ? `After ${pace(timeout)} the scenario run pauses and a read-only agent investigates with you.`
+                : `After ${pace(timeout)} the scenario run fails here.`
+            }
+            note="Set by the scenario run's mode in the bar above."
+          />
+        </Group>
+      )}
 
       {(params.length > 0 ||
         bodies.length > 0 ||
@@ -468,7 +584,9 @@ export function OpenStep({
               label={<ValueToken value={`$CTX.${name}`} />}
               value={
                 <span className="st-open-quiet">
-                  from <TokenText value={written(from)} />
+                  {written(from).startsWith("$self.output.") ? "from its output " : "from "}
+                  <TokenText value={written(from)} />
+                  {check ? ", when the wait ends" : ""}
                 </span>
               }
             />

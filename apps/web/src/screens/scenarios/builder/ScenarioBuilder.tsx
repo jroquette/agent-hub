@@ -2424,6 +2424,7 @@ export function ScenarioBuilder({
                     }
                   : null
               }
+              mode={mode}
               onEditNode={reviewProgram ? undefined : editNode}
               onEditField={
                 reviewProgram
