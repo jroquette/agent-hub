@@ -29,6 +29,7 @@ import { apiKey } from "../../lib/api";
 import { servedCheckout } from "../../lib/devCheckout";
 import { GLOBAL_STREAM, GlobalStreamProvider } from "../../shell/GlobalStream";
 import { SessionsListScreen } from "./index";
+import { codeText } from "../../testing/text";
 
 vi.mock("../../lib/devCheckout", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../lib/devCheckout")>();
@@ -278,7 +279,7 @@ describe("SessionsListScreen", () => {
         /Each Claude Code session in a registered hub is listed here after its first event\./,
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText("cd ~/agent-hub-hub && claude")).toBeInTheDocument();
+    expect(screen.getByText(codeText("cd ~/agent-hub-hub && claude"))).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Show all time" })).not.toBeInTheDocument();
     // New session stays in the header.
     expect(

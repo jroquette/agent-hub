@@ -24,6 +24,7 @@ import {
 } from "../../testing/builders";
 import { ScenarioRunScreen } from ".";
 import { DEBUG_LOCKED } from "./parts";
+import { codeText } from "../../testing/text";
 
 const PATH = `/scenarios/demo/order-lifecycle/runs/${SCENARIO_RUN}`;
 const RUN = `/api/v1/scenario-runs/${SCENARIO_RUN}`;
@@ -1729,7 +1730,7 @@ describe("ScenarioRunScreen (scenarios run debugging)", () => {
       "Breakpoints cannot be set from the agent-hub container. Set them from a terminal:",
     );
     expect(
-      within(blocks).getByText(`./hub scenario break ${SCENARIO_RUN} --set 2.1 2.2`),
+      within(blocks).getByText(codeText(`./hub scenario break ${SCENARIO_RUN} --set 2.1 2.2`)),
     ).toBeInTheDocument();
     // Nothing was written: the toggle shows the set the run holds.
     expect(toggle).toHaveAttribute("aria-pressed", "false");

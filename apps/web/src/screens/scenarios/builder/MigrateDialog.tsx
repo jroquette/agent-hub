@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 
-import { Banner, Button, Dialog } from "../../../components";
+import { Banner, Button, Dialog, HighlightedCode } from "../../../components";
 import { apiQuery } from "../../../lib/api";
 import { useMigrateScenario } from "../queries";
 
@@ -157,7 +157,7 @@ export function MigrateDialog({
             </span>
             {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- a scrollable region */}
             <pre className="ah-json sb-yaml-text" tabIndex={0} aria-label="The scenario as blocks">
-              {checked.yaml}
+              <HighlightedCode text={checked.yaml ?? ""} lang="yaml" />
             </pre>
           </>
         )}

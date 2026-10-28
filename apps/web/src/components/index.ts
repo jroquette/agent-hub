@@ -8,6 +8,7 @@ export * from "./data";
 export * from "./Dialog";
 export * from "./domain";
 export * from "./feedback";
+export * from "./HighlightedCode";
 export * from "./Icon";
 export * from "./Markdown";
 export * from "./OptionRow";
