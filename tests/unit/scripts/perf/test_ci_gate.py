@@ -3,7 +3,7 @@ a Markdown table to stdout and to ``$GITHUB_STEP_SUMMARY``, warns on an over row
 enforced, and fails only when an enforced row is over its budget plus the file's margin."""
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -108,6 +108,7 @@ OVER_THE_MARGIN = [
 ]
 
 
+# AGH-602 (AC-2): an enforced budget over the margin fails the job and names the path.
 @pytest.mark.parametrize("case", OVER_THE_MARGIN)
 def test_fails_naming_the_path_when_an_enforced_row_is_over_the_margin(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], case: OverCase
@@ -133,17 +134,19 @@ class MarginCase:
     top: Mapping[str, object]
     p95_ms: float
     expected: int
+    warns: bool
 
 
+# AGH-602 (AC-2): the margin widens only the comparison; within it, the row warns, not fails.
 @pytest.mark.parametrize(
     "case",
     [
         # Default margin 0.2: 150 * 1.2 = 180, so 175 is within it.
-        pytest.param(MarginCase({}, 175.0, 0), id="default-margin-within"),
+        pytest.param(MarginCase({}, 175.0, 0, warns=True), id="default-margin-within"),
         # File margin 0.5: 150 * 1.5 = 225, so 200 passes (it would fail the default 180).
-        pytest.param(MarginCase({"margin": 0.5}, 200.0, 0), id="file-margin-within"),
+        pytest.param(MarginCase({"margin": 0.5}, 200.0, 0, warns=True), id="file-margin-within"),
         # File margin 0: the limit is the budget itself, so 151 fails.
-        pytest.param(MarginCase({"margin": 0}, 151.0, 1), id="file-margin-zero"),
+        pytest.param(MarginCase({"margin": 0}, 151.0, 1, warns=False), id="file-margin-zero"),
     ],
 )
 def test_judges_against_the_budget_plus_the_margin_when_an_enforced_row_is_over(
@@ -155,11 +158,20 @@ def test_judges_against_the_budget_plus_the_margin_when_an_enforced_row_is_over(
 
     code = main(_argv(perf, budgets), {})
 
-    errors = _lines(capsys.readouterr().out, "::error")
+    out = capsys.readouterr().out
+    errors = _lines(out, "::error")
+    warnings = _lines(out, "::warning")
     assert code == case.expected
     assert len(errors) == case.expected
+    if case.warns:
+        assert len(warnings) == 1
+        assert SESSIONS in warnings[0]
+        assert "within the margin" in warnings[0]
+    else:
+        assert warnings == []
 
 
+# AGH-602 (AC-3): a budget not enforced only warns, however far over it is.
 def test_passes_with_one_warning_naming_the_path_when_a_row_not_enforced_is_over(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -185,6 +197,7 @@ def test_passes_with_one_warning_naming_the_path_when_a_row_not_enforced_is_over
     assert SESSIONS in warnings[0]
 
 
+# AGH-602 (AC-2, AC-3): skipped and no-budget rows neither fail nor warn.
 def test_never_fails_when_rows_are_skipped_or_have_no_budget(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -224,6 +237,7 @@ def _table_budgets(tmp_path: Path) -> Path:
     )
 
 
+# AGH-602 (AC-1): the table the job posts has one line per perf.json row.
 def test_prints_one_markdown_line_per_row_when_the_gate_runs(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -246,6 +260,7 @@ def test_prints_one_markdown_line_per_row_when_the_gate_runs(
     assert "180" in sessions_line
 
 
+# AGH-602 (AC-1): the table goes to the job summary.
 def test_appends_the_table_to_the_step_summary_when_the_variable_is_set(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -263,3 +278,74 @@ def test_appends_the_table_to_the_step_summary_when_the_variable_is_set(
     assert text.startswith("## earlier step\n")
     assert len(table) == 2 + len(rows)
     assert table == _lines(capsys.readouterr().out, "|")
+
+
+def _bad_perf_not_json(tmp_path: Path) -> Path:
+    path = tmp_path / "perf.json"
+    path.write_text("{not json", "utf-8")
+    return path
+
+
+def _bad_perf_not_a_list(tmp_path: Path) -> Path:
+    path = tmp_path / "perf.json"
+    path.write_text(json.dumps({"rows": []}), "utf-8")
+    return path
+
+
+def _bad_perf_unknown_field(tmp_path: Path) -> Path:
+    path = _perf(tmp_path, [_row("route", SESSIONS, p95_ms=120.0, status="pass")])
+    items = json.loads(path.read_text("utf-8"))
+    items[0]["surprise"] = 1
+    path.write_text(json.dumps(items), "utf-8")
+    return path
+
+
+def _bad_perf_missing(tmp_path: Path) -> Path:
+    return tmp_path / "absent.json"
+
+
+@pytest.mark.parametrize(
+    "make_perf",
+    [
+        pytest.param(_bad_perf_not_json, id="not-json"),
+        pytest.param(_bad_perf_not_a_list, id="not-a-list"),
+        pytest.param(_bad_perf_unknown_field, id="unknown-field"),
+        pytest.param(_bad_perf_missing, id="missing"),
+    ],
+)
+def test_exits_two_with_one_error_line_when_perf_json_is_bad(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], make_perf: Callable[[Path], Path]
+) -> None:
+    perf = make_perf(tmp_path)
+    budgets = _budgets(tmp_path, [_entry("route", SESSIONS, enforced=True, p95_ms=150)])
+
+    code = main(_argv(perf, budgets), {})
+
+    errors = _lines(capsys.readouterr().out, "::error")
+    assert code == 2
+    assert len(errors) == 1
+    assert errors[0].startswith("::error::perf gate:")
+    assert str(perf) in errors[0]
+
+
+@pytest.mark.parametrize(
+    "top",
+    [
+        pytest.param({"margin": -0.1}, id="negative-margin"),
+        pytest.param({"margin": True}, id="bool-margin"),
+        pytest.param({"margin": "20%"}, id="text-margin"),
+    ],
+)
+def test_exits_two_with_one_error_line_when_the_budgets_file_is_bad(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], top: Mapping[str, object]
+) -> None:
+    perf = _perf(tmp_path, [_row("route", SESSIONS, p95_ms=120.0, status="pass")])
+    budgets = _budgets(tmp_path, [_entry("route", SESSIONS, enforced=True, p95_ms=150)], **top)
+
+    code = main(_argv(perf, budgets), {})
+
+    errors = _lines(capsys.readouterr().out, "::error")
+    assert code == 2
+    assert len(errors) == 1
+    assert errors[0].startswith("::error::perf gate:")
+    assert "margin" in errors[0]
