@@ -36,11 +36,12 @@ _REASON_CHARS: Final = 200
 _URL_CREDENTIALS: Final = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^/\s@]+@")
 
 
-def lookup_release(*, cwd: str, timeout: float = SYNC_LOOKUP_TIMEOUT) -> ReleaseLookup:
-    """The ``ReleaseLookup`` ``hub sync`` injects: git runs in ``cwd`` (the hub)."""
+def lookup_release(*, cwd: str) -> ReleaseLookup:
+    """The ``ReleaseLookup`` ``hub sync`` injects: git runs in ``cwd`` (the hub), within
+    ``SYNC_LOOKUP_TIMEOUT`` seconds."""
 
     def lookup(repository: str, version: str) -> ReleaseCommit | LookupFailure:
-        found = tag_commit(repository, version, cwd=cwd, timeout=timeout)
+        found = tag_commit(repository, version, cwd=cwd, timeout=SYNC_LOOKUP_TIMEOUT)
         if isinstance(found, LookupFailure):
             return found
         if found is None:

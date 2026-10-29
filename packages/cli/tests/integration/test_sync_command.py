@@ -757,6 +757,7 @@ class TestCheck:
         tree_digest: TreeDigest,
         adapter_calls: list[tuple[str, str]],
         make: PendingMaker,
+        lookup_warning: Callable[[str], bool],
     ) -> None:
         expected = make_pending(demo_hub, make)
         before = tree_digest(demo_hub)
@@ -771,7 +772,8 @@ class TestCheck:
         # The real run prints the same lines without ``would``, applies them, and exits 0.
         applied = run_sync(demo_hub)
         assert applied.exit_code == 0, applied.output
-        assert lookup_warnings(applied.stderr, pin_changed=make is _header)
+        # ``_header`` is a pin change: its commit lookup fails offline (AGH-603 Q3).
+        assert lookup_warning(applied.stderr) if make is _header else applied.stderr == ""
         assert applied.stdout.splitlines() == expected
         assert adapter_calls != []
         assert run_sync(demo_hub, "--check").stdout == "up to date\n"
@@ -996,6 +998,7 @@ class TestPendingChanges:
         run_sync: SyncRunner,
         *,
         tree_digest: TreeDigest,
+        lookup_warning: Callable[[str], bool],
     ) -> None:
         for make in [_restored_link, _created, _updated, _deleted, _header, _restored_hook]:
             make_pending(demo_hub, make)
@@ -1004,7 +1007,7 @@ class TestPendingChanges:
 
         assert result.exit_code == 0, result.output
         # ``_header`` is a pin change: its commit lookup fails offline (AGH-603 Q3).
-        assert lookup_warnings(result.stderr, pin_changed=True)
+        assert lookup_warning(result.stderr)
         # A delete is applied first and a link last, but the lines go by path.
         assert result.stdout.splitlines() == [
             "restored .claude/skills/feature",
@@ -1889,8 +1892,6 @@ RELEASE_OWNER = "jroquette"
 RELEASE_TAG = f"v{VERSION}"
 OLDER_VERSION = "0.0.1"
 COMMIT_FIELDS = ("platform_commit", "platform_repository")
-# Q3's way back: restore hub.lock from git, then hub sync with network.
-WAY_BACK_WORDS = ("restore", "hub.lock", "hub sync")
 
 
 class ReleaseOrigin(NamedTuple):
@@ -1961,21 +1962,6 @@ def lock_release(hub: Path) -> tuple[str, str | None, str | None]:
     """``hub.lock``'s version, commit and repository (``None`` when a field is absent)."""
     lock = json.loads((hub / "hub.lock").read_bytes())
     return (lock["platform_version"], lock.get("platform_commit"), lock.get("platform_repository"))
-
-
-def is_lookup_warning(line: str) -> bool:
-    """Whether ``line`` is Q3's warning: the lock was written without a commit, and the way back."""
-    return all(word in line for word in WAY_BACK_WORDS)
-
-
-def lookup_warnings(stderr: str, *, pin_changed: bool) -> bool:
-    """Whether a real run's ``stderr`` is what an offline sync prints: Q3's one warning line when
-    the lock's version differs from the pin (its commit lookup fails under the root conftest's
-    guard, ``GIT_ALLOW_PROTOCOL=file``), else nothing."""
-    if not pin_changed:
-        return stderr == ""
-    lines = stderr.splitlines()
-    return len(lines) == 1 and is_lookup_warning(lines[0])
 
 
 def assert_records_tag_commit(
@@ -2092,6 +2078,27 @@ def test_looks_up_nothing_when_lock_without_commit_matches_pin(
     assert ls_remote_calls(traced_git) == []
 
 
+def test_looks_up_nothing_when_pin_change_sync_has_conflicts(
+    release_workspace: Any,
+    traced_git: Any,
+    run_sync: SyncRunner,
+    *,
+    tree_digest: TreeDigest,
+) -> None:
+    """A sync that ends in conflicts (exit 3) writes no lock, so it never asks for the tag."""
+    origin = release_origin(release_workspace, annotated=True)
+    hub = release_workspace.hub
+    set_lock_release(hub, version=OLDER_VERSION, commit=origin.older_commit)
+    (hub / "Makefile").write_bytes(b"# edited by hand\n")
+    before = tree_digest(hub)
+
+    result = run_sync(hub)
+
+    assert (result.exit_code, result.stdout) == (3, ""), result.output
+    assert ls_remote_calls(traced_git) == []
+    assert tree_digest(hub) == before
+
+
 @pytest.mark.parametrize("cause", ["missing-path", "transport-refused"])
 def test_warns_and_keeps_lock_without_commit_when_lookup_fails(
     release_workspace: Any,
@@ -2100,6 +2107,7 @@ def test_warns_and_keeps_lock_without_commit_when_lookup_fails(
     *,
     monkeypatch: pytest.MonkeyPatch,
     cause: str,
+    lookup_warning: Callable[[str], bool],
 ) -> None:
     """Q3: a pin change whose tag cannot be read (offline, the sandbox) writes the lock without a
     commit, warns once with the way back, and exits 0."""
@@ -2116,9 +2124,7 @@ def test_warns_and_keeps_lock_without_commit_when_lookup_fails(
     result = run_sync(hub)
 
     assert (result.exit_code, result.stdout) == (0, "updated hub.lock\n"), result.output
-    lines = result.stderr.splitlines()
-    assert len(lines) == 1, result.stderr
-    assert is_lookup_warning(lines[0]), lines
+    assert lookup_warning(result.stderr), result.stderr
     assert lock_release(hub) == (VERSION, None, None)
     assert len(ls_remote_calls(traced_git)) == 1
 

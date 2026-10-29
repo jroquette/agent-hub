@@ -102,21 +102,30 @@ def _sync(*, check: bool) -> None:
         fail(ADOPT_POINTER)
     lock, lock_content = read
     tree, extensions, rendered = rendering_or_exit(root, config=config, lock_files=lock.files)
+
+    def planned_with(release: ReleaseCommit | None) -> SyncPlan:
+        planned = plan_sync(
+            rendered=rendered,
+            config=config,
+            lock=lock,
+            lock_content=lock_content,
+            tree=tree,
+            extensions=extensions,
+            release=release,
+        )
+        if isinstance(planned, SyncConflicts):
+            # Nothing on stdout: the report, then exit 3.
+            for line in conflict_lines(planned):
+                typer.echo(line, err=True)
+            raise typer.Exit(CONFLICT)
+        return planned
+
+    kept = kept_release(lock, config)
+    planned = planned_with(kept)
+    # Only once nothing conflicts: a sync that exits 3 writes no lock, so it looks nothing up.
     release = _release(lock, config, check=check, lookup=lookup_release(cwd=str(root)))
-    planned = plan_sync(
-        rendered=rendered,
-        config=config,
-        lock=lock,
-        lock_content=lock_content,
-        tree=tree,
-        extensions=extensions,
-        release=release if isinstance(release, ReleaseCommit) else None,
-    )
-    if isinstance(planned, SyncConflicts):
-        # Nothing on stdout: the report, then exit 3.
-        for line in conflict_lines(planned):
-            typer.echo(line, err=True)
-        raise typer.Exit(CONFLICT)
+    if kept is None and isinstance(release, ReleaseCommit):
+        planned = planned_with(release)
     # An empty plan never reaches the adapter: nothing is opened, made or replaced (E4).
     if planned.pending and not check:
         apply_or_exit(root, planned)

@@ -2365,9 +2365,10 @@ and the project-entry links; `--adopt`: [hub-adopt.md](hub-adopt.md). Rendering,
 and `files` by path: a managed file (SHA-256 of the LF bytes written, executable bit), a managed link (relative target)
 or seeded (no hash). "Equal": same bytes and executable bit, or same link target. It never lists itself or `.git`, and
 `hub.json` is always recorded seeded: it is the project's, never compared, written or deleted. The lock is a function of
-the render and `hub.json` only, never `hub.local.json` (`build_hub_lock`), written by `init` and `sync`, last.
+the render, `hub.json` and the release commit below only, never `hub.local.json` (`build_hub_lock`), written by `init`
+and `sync`, last.
 
-A fourth input ([ADR 0054](../adr/0054-pin-the-platform-release-by-commit.md)): the lock can record
+The release commit ([ADR 0054](../adr/0054-pin-the-platform-release-by-commit.md)): the lock can record
 `platform_commit`, the commit tag `v<platform_version>` names, and `platform_repository`, the repository it was read
 from (`platform.repository`, else the default). Both fields or neither; a lock without them (written by v0.27.1 or
 older, or by `hub init`) keeps its bytes. `hub sync` keeps the lock's commit while its version and repository match

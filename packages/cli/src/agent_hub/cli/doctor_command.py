@@ -131,9 +131,11 @@ def doctor(
         context.fail(f"unknown rule in --only: {shown_path(unknown[0])}")
     root = root_or_exit(None)
     _hub_or_exit(root)
-    run = check_hub(root, only=wanted, probe_release=True)
+    # One probe per run: the check after --fix reuses its answer (a fix never touches the lock).
+    prober = _probed_once(_release_prober(root))
+    run = check_hub(root, only=wanted, release_prober=prober)
     if fix and isinstance(run, DoctorRun) and _fix_all(root, run):
-        run = check_hub(root, only=wanted, probe_release=True)
+        run = check_hub(root, only=wanted, release_prober=prober)
     if isinstance(run, UsageProblem):
         context.fail(run.message)
     for note in run.notes:
@@ -156,15 +158,15 @@ class DoctorRun(NamedTuple):
 
 
 def check_hub(
-    root: str, *, only: Sequence[str] = (), probe_release: bool = False
+    root: str, *, only: Sequence[str] = (), release_prober: ReleaseProber | None = None
 ) -> DoctorRun | UsageProblem:
     """The check of ``hub doctor`` on the hub at ``root``: same reads, same order, no output.
 
     ``root`` must be the hub's real absolute path, taken once (as ``root_or_exit`` gives it):
     the repo checkouts are found at ``root/../<dir>`` and the findings name paths relative to
     it. ``only`` holds known rule ids; a selection the config refuses is the ``UsageProblem``.
-    ``probe_release`` lets ``lock.drift`` read the pinned release's tag over the network (ADR
-    0054): ``hub doctor`` sets it, ``hub setup`` does not.
+    ``release_prober`` lets ``lock.drift`` read the pinned release's tag over the network (ADR
+    0054): ``hub doctor`` passes one, ``hub setup`` does not.
     """
     running = version(DISTRIBUTION)
     config = config_state(read_hub_bytes(Path(root, FILE_LABEL)), running_version=running)
@@ -192,7 +194,7 @@ def check_hub(
             local=local,
             branch_prefix=_prefix_reader(config, local=local, home=home),
             remote_probes=_remote_prober(root, config),
-            release_probe=_release_prober(root) if probe_release else None,
+            release_probe=release_prober,
         )
     return DoctorRun(
         findings=run_rules(selection, snapshot),
@@ -211,6 +213,19 @@ def _release_prober(root: str) -> ReleaseProber:
         return ReleaseTagMissing() if found is None else ReleaseFound(commit=found)
 
     return probe
+
+
+def _probed_once(probe: ReleaseProber) -> ReleaseProber:
+    """``probe``, asked at most once per repository and version; later calls get its answer."""
+    answers: dict[tuple[str, str], ReleaseProbe] = {}
+
+    def once(repository: str, version: str) -> ReleaseProbe:
+        key = (repository, version)
+        if key not in answers:
+            answers[key] = probe(repository, version)
+        return answers[key]
+
+    return once
 
 
 def _release_notes(probe: ReleaseProbe | None) -> tuple[str, ...]:

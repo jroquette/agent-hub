@@ -2394,3 +2394,52 @@ def test_reports_nothing_when_lock_has_no_commit(
 
     assert lines == [CLEAN]
     assert release_probes(traced_git) == []
+
+
+def test_reports_lock_drift_when_pinned_tag_is_gone(
+    demo_workspace: Workspace,
+    release_origin: ReleaseOrigin,
+    run_doctor: DoctorRunner,
+    *,
+    traced_git: Any,
+) -> None:
+    """AC-2: a remote that answers without the pinned tag is an error, not the offline note."""
+    record_release(demo_workspace.hub, release_origin.commit)
+    demo_workspace.git(release_origin.path, "tag", "-d", RELEASE_TAG)
+
+    result = run_doctor(demo_workspace.hub, "--only", "lock.drift")
+
+    assert (result.exit_code, result.stderr) == (1, ""), result.output
+    lines = result.stdout.splitlines()
+    assert len(lines) == 2, lines
+    finding, totals = lines
+    assert finding.startswith("error lock.drift "), finding
+    assert release_origin.commit in finding
+    assert f"has no tag {RELEASE_TAG}" in finding
+    assert finding.endswith(" Fix: run hub sync"), finding
+    assert totals == ONE_ERROR
+    assert len(release_probes(traced_git)) == 1
+
+
+def test_probes_release_once_when_fix_checks_again(
+    demo_workspace: Workspace,
+    release_origin: ReleaseOrigin,
+    run_doctor: DoctorRunner,
+    *,
+    traced_git: Any,
+) -> None:
+    """The check after ``--fix`` reuses the first probe's answer: one ``git ls-remote`` a run."""
+    record_release(demo_workspace.hub, release_origin.other_commit)
+    note = demo_workspace.hub / "brain/note.md"
+    note.write_text(f"# Note\n\n{OWN_LINES}\n{BRAIN_LINE}\n", encoding="utf-8")
+    (demo_workspace.ws / "demo-api" / "LEAK.md").write_text(f"{BRAIN_LINE}\n", encoding="utf-8")
+
+    result = run_doctor(demo_workspace.hub, "--fix", "--only", "brain.leak", "--only", "lock.drift")
+
+    assert result.exit_code == 1, result.output
+    assert (
+        note.read_text(encoding="utf-8") == f"# Note\n\n{OWN_LINES}\n[in ../demo-api/LEAK.md:1]\n"
+    )
+    # The re-check still reports the wrong commit, from the first probe's answer.
+    assert [line for line in result.stdout.splitlines() if line.startswith("error lock.drift ")]
+    assert len(release_probes(traced_git)) == 1

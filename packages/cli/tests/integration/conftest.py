@@ -43,6 +43,7 @@ from typer.testing import CliRunner, Result
 
 from agent_hub.cli.hub_root import HUB_ROOT_VARIABLE
 from agent_hub.cli.main import app
+from agent_hub.cli.sync_command import NO_COMMIT_WAY_BACK
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
 from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
@@ -528,6 +529,25 @@ def run_sync(monkeypatch: pytest.MonkeyPatch) -> SyncRunner:
         return CliRunner().invoke(app, ["sync", *args])
 
     return run
+
+
+# AGH-603 Q3: the one warning of a sync whose release lookup failed, its reason, then the way back.
+_LOOKUP_WARNING = re.compile(
+    r"warning: hub\.lock written without the release commit \(.+\);"
+    rf" {re.escape(NO_COMMIT_WAY_BACK)}"
+)
+
+
+def is_lookup_warning(stderr: str) -> bool:
+    """Whether ``stderr`` is exactly Q3's one warning line, the real prefix and way back whole."""
+    lines = stderr.splitlines()
+    return len(lines) == 1 and _LOOKUP_WARNING.fullmatch(lines[0]) is not None
+
+
+@pytest.fixture
+def lookup_warning() -> Callable[[str], bool]:
+    """``lookup_warning(stderr)``: whether a sync's stderr is exactly Q3's one warning line."""
+    return is_lookup_warning
 
 
 type DoctorRunner = Callable[..., Result]
