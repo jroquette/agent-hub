@@ -243,9 +243,9 @@ def test_names_repo_branch_when_ci_failed() -> None:
 
 
 def test_prints_ci_unknown_when_ci_timed_out() -> None:
-    state = a_repo(prs="#1 Add login\n")
+    state = a_repo(prs="#1 Add login\n", ci="lint\n", ci_timed_out=True)
 
-    assert repo_line(state, network=True, ci_timed_out=True) == (
+    assert repo_line(state, network=True) == (
         "- api: trunk, 2 changed file(s), 1 behind origin/trunk\n"
         "  open PRs: #1 Add login\n"
         "  CI: unknown (timeout)"

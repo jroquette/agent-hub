@@ -3,12 +3,13 @@ the environments of ``hub.json`` and ``hub.local.json`` when they declare any).
 
 The hub is ``AGENT_HUB_ROOT`` or the cwd, and its repos are ``../<dir>``. Git runs in each
 checkout with ``GIT_OPTIONAL_LOCKS=0`` and git's location variables dropped, so the brief writes
-nothing; ``gh`` runs in the hub. The git and gh calls run at once in one pool (at most
-``MAX_WORKERS``, spec Q-4 and Q8), and the output keeps the order of ``hub.json``. Every call
-has a timeout within the brief's one deadline (a ``gh run list`` it ends shows
-``CI: unknown (timeout)``), and stays in the caller's process group, so the SessionStart
-hook's kill reaches it; a failed, slow or missing tool only leaves its value out, as the old
-script did. The text itself is ``agent_hub.core.workspace.brief_text``.
+nothing; ``gh`` runs in the hub. The git and gh calls run at once, in a git pool and a gh
+pool of ``MAX_WORKERS`` each (spec Q-4 and Q8), so a hung gh never holds back a git call; the
+output keeps the order of ``hub.json``. Every call has a timeout within the brief's one
+deadline (a ``gh run list`` it ends shows ``CI: unknown (timeout)``), and stays in the caller's
+process group, so the SessionStart hook's kill reaches it; a failed, slow or missing tool only
+leaves its value out, as the old script did. The text itself is
+``agent_hub.core.workspace.brief_text``.
 """
 
 import datetime
@@ -19,7 +20,7 @@ import shutil
 import stat
 import time
 from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Annotated, Final, NamedTuple
 
@@ -153,34 +154,38 @@ def _repos(root: Path, config: HubConfig, *, network: bool) -> tuple[RepoState, 
     states = [RepoState(name=checkout.name, checkout=False) for checkout in checkouts]
     indexes = [index for index, checkout in enumerate(checkouts) if _is_checkout(checkout.path)]
     shown = [checkouts[index] for index in indexes]
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+    with (
+        ThreadPoolExecutor(max_workers=MAX_WORKERS) as git_pool,
+        ThreadPoolExecutor(max_workers=MAX_WORKERS) as gh_pool,
+    ):
         # Spec Q8: each repo's git branch and gh pr list start at once; status, rev-list and
-        # gh run list start when that repo's branch is known.
-        branches = [pool.submit(_branch, git, checkout.path, deadline) for checkout in shown]
+        # gh run list start as soon as that repo's own branch is known.
+        branches = {
+            git_pool.submit(_branch, git, checkout.path, deadline): position
+            for position, checkout in enumerate(shown)
+        }
         prs = [
-            pool.submit(_gh_output, gh, root, _pr_arguments(checkout), deadline=deadline)
+            gh_pool.submit(_gh_output, gh, root, _pr_arguments(checkout), deadline=deadline)
             for checkout in shown
         ]
-        later = []
-        for checkout, branch in zip(shown, branches, strict=True):
-            branch.result()
-            later.append(
-                (
-                    pool.submit(_git_output, git, checkout.path, _STATUS, deadline=deadline),
-                    pool.submit(
-                        _git_output,
-                        git,
-                        checkout.path,
-                        ("rev-list", "--count", f"HEAD..origin/{checkout.branch}"),
-                        deadline=deadline,
-                    ),
-                    pool.submit(_gh_output, gh, root, _run_arguments(checkout), deadline=deadline),
-                )
+        later: dict[int, tuple[Future[str], Future[str], Future[GhAnswer]]] = {}
+        for branch in as_completed(branches):
+            checkout = shown[branches[branch]]
+            later[branches[branch]] = (
+                git_pool.submit(_git_output, git, checkout.path, _STATUS, deadline=deadline),
+                git_pool.submit(
+                    _git_output,
+                    git,
+                    checkout.path,
+                    ("rev-list", "--count", f"HEAD..origin/{checkout.branch}"),
+                    deadline=deadline,
+                ),
+                gh_pool.submit(_gh_output, gh, root, _run_arguments(checkout), deadline=deadline),
             )
-        for index, checkout, branch, pr, (status, behind, run) in zip(
-            indexes, shown, branches, prs, later, strict=True
-        ):
-            states[index] = RepoState(
+        for (branch, position), pr in zip(branches.items(), prs, strict=True):
+            checkout = shown[position]
+            status, behind, run = later[position]
+            states[indexes[position]] = RepoState(
                 name=checkout.name,
                 checkout=True,
                 branch=branch.result(),

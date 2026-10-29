@@ -94,9 +94,9 @@ def journal_day(path: str) -> str:
     return "-".join(path.split("/")[-3:]).removesuffix(".md")
 
 
-def repo_line(state: RepoState, *, network: bool, ci_timed_out: bool = False) -> str:
+def repo_line(state: RepoState, *, network: bool) -> str:
     """One repo's line, with its open PRs and failing runs under it when the network is on;
-    with ``ci_timed_out``, ``CI: unknown (timeout)`` takes the failing runs' place."""
+    with ``state.ci_timed_out``, ``CI: unknown (timeout)`` takes the failing runs' place."""
     if not state.checkout:
         return f"- {state.name}: not found"
     behind = state.behind or "?"
@@ -109,7 +109,7 @@ def repo_line(state: RepoState, *, network: bool, ci_timed_out: bool = False) ->
     if state.prs:
         prs = " | ".join(pr[:PR_CAP] for pr in state.prs.splitlines()[:PR_LINES])
         line += f"\n  open PRs: {prs}"
-    if ci_timed_out:
+    if state.ci_timed_out:
         line += "\n  CI: unknown (timeout)"
     elif state.ci:
         failing = ", ".join(sorted(set(state.ci.splitlines())))
@@ -127,7 +127,7 @@ def brief_text(inputs: BriefInputs) -> str:
     journal = [_journal_line(path, text) for path, text in inputs.journal]
     parts += ["", f"## Journal (last {JOURNAL_MAX_AGE} days)"]
     parts += journal or ["- (no entry in the last week)"]
-    parts += ["", "## Repos", *_repo_lines(inputs)]
+    parts += ["", "## Repos", *(repo_line(repo, network=inputs.network) for repo in inputs.repos)]
     if inputs.environments:
         head = "\n".join(parts)
         tail = "\n" + "\n".join(("", *inputs.environments, *_FOOTER))
@@ -139,13 +139,6 @@ def brief_text(inputs: BriefInputs) -> str:
     if len(text) > MAX_CHARS:
         text = text[: MAX_CHARS - _TRUNCATED_ROOM] + _TRUNCATED
     return text
-
-
-def _repo_lines(inputs: BriefInputs) -> list[str]:
-    return [
-        repo_line(repo, network=inputs.network, ci_timed_out=repo.ci_timed_out)
-        for repo in inputs.repos
-    ]
 
 
 def _now_lines(inputs: BriefInputs) -> list[str]:
