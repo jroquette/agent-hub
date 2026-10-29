@@ -16,6 +16,18 @@ or seeded (no hash). "Equal": same bytes and executable bit, or same link target
 `hub.json` is always recorded seeded: it is the project's, never compared, written or deleted. The lock is a function of
 the render and `hub.json` only, never `hub.local.json` (`build_hub_lock`), written by `init` and `sync`, last.
 
+A fourth input ([ADR 0054](../adr/0054-pin-the-platform-release-by-commit.md)): the lock can record
+`platform_commit`, the commit tag `v<platform_version>` names, and `platform_repository`, the repository it was read
+from (`platform.repository`, else the default). Both fields or neither; a lock without them (written by v0.27.1 or
+older, or by `hub init`) keeps its bytes. `hub sync` keeps the lock's commit while its version and repository match
+`hub.json`; it looks the tag up only when the pin changed since the lock (Q7: a lock without a commit at the pinned
+version asks for none, so init and an unchanged hub stay offline): one `git ls-remote <url> refs/tags/vX.Y.Z
+refs/tags/vX.Y.Z^{}` in the hub, no terminal prompt, 20 s timeout, the last 64 KiB of output read, the peeled `^{}`
+line winning over the tag's own (a lightweight tag has only that one). When the lookup fails (offline, the sandbox,
+no credential, no tag, timeout), sync still writes the lock, without a commit, and prints one warning on stderr:
+`warning: hub.lock written without the release commit (<reason>); to record it, restore hub.lock from git, then run
+hub sync with network` (Q3). `--check` never looks up (Q4): it compares against the lock built with the kept commit.
+
 ### hub sync
 
 1. **Root:** the real path of the cwd, taken once; no `--dir`, no walk-up (a worktree syncs itself).
@@ -136,12 +148,16 @@ sibling but links no entry: an unlinkable name exits 1, others are unknown (`hub
   `build_hub_lock` of the render, and a second sync prints `up to date` (then its production lines) and writes
   nothing, not even `hub.lock`.
 - The planner is pure core code; reads and writes go through the generator's adapter from the held root.
+- The only network call is the release lookup above, at a pin change and never with `--check`; the planner gets its
+  answer as an input (core's `ReleaseLookup` port, filled by the CLI).
 
 ## Decisions
 
 - [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md): ownership, lock, sync, adopt; no 3-way merge or marker blocks.
 - [ADR 0011](../adr/0011-templates-as-package-data.md): the planner in core, the file adapter in the generator, no port.
 - [ADR 0013](../adr/0013-release-by-git-tags.md): a CLI other than the pin refuses sync and prints the pinned command.
+- [ADR 0054](../adr/0054-pin-the-platform-release-by-commit.md): the lock records the release commit (partly
+  supersedes ADR 0009's "three inputs only" and ADR 0013's tag-only resolution).
 
 ## Open questions
 

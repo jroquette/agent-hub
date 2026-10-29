@@ -158,6 +158,10 @@ The folder decides the level; nobody writes level markers by hand.
   the last `tests` segment, and its `pytest_collection_modifyitems` hook adds that marker (`unit`, `contract`,
   `integration` or `e2e`) to every collected test. Unit and contract tests also get pytest-socket's `disable_socket`
   marker, so opening a socket raises `SocketBlockedError`.
+- Every test but e2e also runs with `GIT_ALLOW_PROTOCOL=file` (an autouse fixture in the root `conftest.py`), so a git
+  call can reach only local repos: a test of the release lookup serves the tag from a local bare repo through
+  `url.<bare>.insteadOf`, and any lookup that escapes fails fast instead of reaching GitHub. Fixtures that build a git
+  environment from scratch keep the variable.
 - The markers are registered in `pytest.ini`, which sets `strict = true` (pytest 9: strict config, strict markers,
   strict parametrization ids, strict xfail). An unregistered marker fails collection.
 - `pytest.ini` also sets `--import-mode=importlib` (test basenames repeat across packages and there are no
