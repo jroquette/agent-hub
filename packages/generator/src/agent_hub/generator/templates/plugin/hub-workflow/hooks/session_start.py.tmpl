@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """SessionStart: inject the session brief. After a compaction, also re-inject the pre-compact snapshot.
 
-The brief is the pinned release's `hub brief`, resolved as the hub's ./hub shim resolves it: first
-`uvx --from <platform source>@v<version> hub --version`, then the same source's `hub brief`, the
+The brief is the pinned release's `hub brief`, resolved as the hub's ./hub shim resolves it, the
 version read from hub.json (platform.version) and the source from platform.repository (absent: the
-platform's own). Both calls run from the hub with AGENT_HUB_ROOT set
+platform's own). When hub.lock records the release commit for that version and repository (ADR
+0054), one call: `uvx --from <platform source>@<commit> hub brief`. Otherwise first
+`uvx --from <platform source>@v<version> hub --version`, then the same source's `hub brief`. The
+calls run from the hub with AGENT_HUB_ROOT set
 to it, within one 10 s deadline inside the hook's 20 s; the brief is capped at 8000 characters.
 When it cannot run, the mini brief stands in: one header line naming the fallback and its cause
 (no version, bad platform.repository (never echoed), no uv, resolve failed, failed (exit N), failed (no output), failed (cannot start),
@@ -27,7 +29,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     from hubhooks import Config, emit, load_config, read_input, run_hook
-    from stdlib_reader import PlatformSection, secret_shaped
+    from stdlib_reader import PlatformSection, read_lock_source, secret_shaped
 except Exception as error:  # a partial install: skip, never error the session
     print(f"[hub {os.path.splitext(os.path.basename(sys.argv[0] or 'hook'))[0]}] skipped: {type(error).__name__}", file=sys.stderr)
     sys.exit(0)
@@ -62,14 +64,18 @@ def pinned_brief(hub: Path, platform: PlatformSection) -> tuple[str, str]:
     uvx = shutil.which("uvx")
     if uvx is None:
         return "", "no uv"
-    release = [uvx, "--from", release_source(platform.repository, version), "hub"]
     env = dict(os.environ, AGENT_HUB_ROOT=str(hub))
     deadline = time.monotonic() + BRIEF_TIMEOUT
-    code, _, cause = run_call(release + ["--version"], hub, env, deadline)
-    if cause:
-        return "", cause
-    if code != 0:
-        return "", "resolve failed"
+    commit_source = read_lock_source(hub, platform, SOURCE.split("@v", 1)[0])
+    if commit_source is not None:  # the lock's commit: no resolve step
+        release = [uvx, "--from", commit_source, "hub"]
+    else:
+        release = [uvx, "--from", release_source(platform.repository, version), "hub"]
+        code, _, cause = run_call(release + ["--version"], hub, env, deadline)
+        if cause:
+            return "", cause
+        if code != 0:
+            return "", "resolve failed"
     code, out, cause = run_call(release + ["brief"], hub, env, deadline)
     if cause:
         return "", cause

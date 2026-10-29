@@ -1,12 +1,16 @@
 #!/bin/sh
 # The hub command of the release pinned in hub.json (platform.version), from platform.repository
-# (absent: the platform's own), both read at every run: the resolve step (hub --version), then
-# the real call, which keeps the caller's folder and gets AGENT_HUB_ROOT = this folder. No python3
-# or no uv: exit 127. A bad pin or repository (never echoed), or a release that cannot be resolved:
-# exit 1, the real call never made, and the reason tells a uv folder the sandbox keeps from being
-# written from an access failure. Otherwise the exit code is the real call's. Run it by its real
-# path: its folder is the hub, so a symlink to it elsewhere (on PATH) would read the link's folder.
-# Managed by hub sync.
+# (absent: the platform's own), both read at every run. The real call keeps the caller's folder
+# and gets AGENT_HUB_ROOT = this folder. No python3 or no uv: exit 127. A bad pin or repository
+# (never echoed): exit 1. Commit path (ADR 0054): when hub.lock (a regular file, not a link, of at
+# most 1 MiB) records platform_commit (40 lowercase hex) for this platform_version and
+# platform_repository, one call: exec uvx --from <repository>@<commit>, whose exit code and error
+# text are the shim's; only a uv folder that cannot be written is found before it (exit 1, no
+# call). Tag path (any other lock, or none): the resolve step (hub --version), then the real call;
+# a release that cannot be resolved is exit 1, the real call never made, and the reason tells a
+# uv folder the sandbox keeps from being written from an access failure. Otherwise the exit code
+# is the real call's. Run it by its real path: its folder is the hub, so a symlink to it elsewhere
+# (on PATH) would read the link's folder. Managed by hub sync.
 case $0 in
   */*) hub_dir=${0%/*} ;;
   *) hub_dir=. ;;
@@ -17,7 +21,7 @@ command -v python3 >/dev/null 2>&1 || {
   exit 127
 }
 release=$(python3 -I -S -c '
-import json, re, sys
+import json, os, re, stat, sys
 try:
     with open(sys.argv[1], encoding="utf-8") as stream:
         document = json.load(stream)
@@ -37,9 +41,39 @@ if "repository" in platform:
     ):
         sys.exit("hub: platform.repository in hub.json must be @@{platform_repository_form}")
     prefix = repository + "@v"
-print(prefix + version)
-' "$hub_dir/hub.json" '@@{platform_repository}@v') || exit 1
-# A valid repository holds no "@", so the last "@v" starts the version.
+release = prefix + version
+# The commit hub.lock records for this pin and repository (ADR 0054): read only from a regular
+# file that is not a link (a FIFO would block), at most 1 MiB; anything else keeps the tag.
+lock = None
+try:
+    if stat.S_ISREG(os.lstat(sys.argv[3]).st_mode):
+        flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+        with open(os.open(sys.argv[3], flags), "rb") as stream:
+            if stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                content = stream.read(1048577)
+                if len(content) <= 1048576:
+                    lock = json.loads(content.decode("utf-8"))
+except (OSError, ValueError, RecursionError):
+    lock = None
+commit = lock.get("platform_commit") if isinstance(lock, dict) else None
+if (
+    isinstance(commit, str)
+    and re.fullmatch("[0-9a-f]{40}", commit)
+    and lock.get("platform_version") == version
+    and lock.get("platform_repository") == prefix[:-2]
+):
+    release += " " + commit
+print(release)
+' "$hub_dir/hub.json" '@@{platform_repository}@v' "$hub_dir/hub.lock") || exit 1
+# "<repository>@v<version>", then " <commit>" on the commit path. A valid repository holds no "@"
+# and no space, so the last "@v" starts the version.
+commit=
+case $release in
+  *" "*)
+    commit=${release#* }
+    release=${release%% *}
+    ;;
+esac
 version=${release##*@v}
 command -v uvx >/dev/null 2>&1 || {
   echo "hub: uv is not installed; see https://docs.astral.sh/uv/getting-started/installation/" >&2
@@ -48,7 +82,7 @@ command -v uvx >/dev/null 2>&1 || {
 # Inside the Claude Code sandbox, writes outside the workspace are denied, so uv cannot use its
 # own cache and tool folders: then (only then) they move to <hub>/.hub-uv, which ignores itself,
 # and uv never downloads a Python there (the sandbox denies its host). The probe writes a
-# temporary file in each folder, as uv would; with neither folder writable nothing changes.
+# temporary file in each folder, as uv would; with neither folder writable nothing changes (exit 3).
 uv_own=$(python3 -I -S -c '
 import os, sys, tempfile
 def folder(variable, xdg, default, *tail):
@@ -72,15 +106,29 @@ try:
     with open(os.path.join(own, ".gitignore"), "w", encoding="utf-8") as stream:
         stream.write("# uv folders of ./hub inside the Claude Code sandbox; never committed.\n*\n")
 except OSError:
-    sys.exit(0)
+    sys.exit(3)
 print(own)
-' "$hub_dir") || uv_own=
+' "$hub_dir")
+probe=$?
+[ "$probe" -eq 0 ] || uv_own=
 if [ -n "$uv_own" ]; then
   UV_CACHE_DIR=$uv_own/cache
   UV_TOOL_DIR=$uv_own/tools
   UV_TOOL_BIN_DIR=$uv_own/bin
   UV_PYTHON_DOWNLOADS=${UV_PYTHON_DOWNLOADS:-never}
   export UV_CACHE_DIR UV_TOOL_DIR UV_TOOL_BIN_DIR UV_PYTHON_DOWNLOADS
+fi
+write_hint="hub: cannot run agent-hub $version: uv could not write its cache or tool folder, which is not a repository access problem; inside a Claude Code sandbox only the workspace and \$TMPDIR are writable: set UV_CACHE_DIR and UV_TOOL_DIR to a folder there, or run ./hub outside the sandbox"
+if [ -n "$commit" ]; then
+  # Commit path: one call, exec'd (signals, stdin and the exit code are uvx's); uv's own error
+  # text is the cause, apart from a uv folder the probe found nothing could write.
+  if [ "$probe" -eq 3 ]; then
+    printf '%s\n' "$write_hint" >&2
+    exit 1
+  fi
+  AGENT_HUB_ROOT=$hub_dir
+  export AGENT_HUB_ROOT
+  exec uvx --from "${release%@v*}@$commit#subdirectory=packages/agent-hub" hub "$@"
 fi
 source="$release#subdirectory=packages/agent-hub"
 # uv's reason is kept and shown first, then the shim's line, which tells a folder uv could not
@@ -89,7 +137,7 @@ resolve_errors=$(uvx --from "$source" hub --version 2>&1 </dev/null >/dev/null) 
   [ -z "$resolve_errors" ] || printf '%s\n' "$resolve_errors" >&2
   case $resolve_errors in
     *"os error 1)"*|*"os error 13)"*|*"os error 30)"*|*"Operation not permitted"*|*"Read-only file system"*|*"Failed to initialize cache"*|*"Could not create temporary file"*)
-      echo "hub: cannot run agent-hub $version: uv could not write its cache or tool folder, which is not a repository access problem; inside a Claude Code sandbox only the workspace and \$TMPDIR are writable: set UV_CACHE_DIR and UV_TOOL_DIR to a folder there, or run ./hub outside the sandbox" >&2 ;;
+      printf '%s\n' "$write_hint" >&2 ;;
     *"No interpreter found"*)
       echo "hub: cannot run agent-hub $version: uv found no Python it may use and downloads none here (UV_PYTHON_DOWNLOADS=${UV_PYTHON_DOWNLOADS:-unset}); run uv python install 3.14 outside the Claude Code sandbox, then retry" >&2 ;;
     *)

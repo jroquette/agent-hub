@@ -68,6 +68,13 @@ this reader falls back instead.
   that exists but is not a regular file of at most ``LOCAL_FILE_MAX_BYTES`` holding a JSON object
   sets ``file_problem``; an absent one sets nothing.
 
+- ``read_lock_source`` gives the source ``<repository>@<commit>#subdirectory=packages/agent-hub``
+  of the release commit ``hub.lock`` records (ADR 0054), only when the lock is a regular file
+  (not a link) of at most ``LOCK_FILE_MAX_BYTES`` holding a JSON object whose
+  ``platform_commit`` is 40 lowercase hex, whose ``platform_version`` is ``platform.version`` and
+  whose ``platform_repository`` is the repository in use (``platform.repository``, else the
+  caller's ``default_repository``, the platform's own); else ``None``, and the caller uses the tag.
+
 A hook that loads this file by path must register the module before running it, or the frozen
 dataclasses fail to build (``AttributeError`` on ``NoneType.__dict__``)::
 
@@ -99,6 +106,10 @@ RELEASE_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 # The model's ``PlatformRepository`` pattern, for ``fullmatch``, rendered from agent-hub's core.
 PLATFORM_REPOSITORY = re.compile(r"@@{platform_repository_pattern}")
 PLATFORM_REPOSITORY_MAX_CHARS = 200
+LOCK_FILE = "hub.lock"
+LOCK_FILE_MAX_BYTES = 1_048_576
+RELEASE_COMMIT = re.compile(r"[0-9a-f]{40}")
+RELEASE_SUBDIRECTORY = "#subdirectory=packages/agent-hub"
 # The model's bounds for ``repos[].check_fast_timeout``.
 CHECK_FAST_TIMEOUT_MIN = 1
 CHECK_FAST_TIMEOUT_MAX = 160
@@ -509,17 +520,23 @@ def _read_document(
 
 
 def _read_object(
-    path: str | os.PathLike[str], max_bytes: int | None = None
+    path: str | os.PathLike[str], max_bytes: int | None = None, *, follow_links: bool = True
 ) -> dict[str, object] | None:
-    """The file's top-level object; ``None`` when it cannot be read, is larger than ``max_bytes``
-    or is not a JSON object."""
-    # Only a regular file (a symlink to one included): opening a FIFO blocks and a device such as
-    # /dev/zero never ends, so a hook would hang. The check by path skips the open; what was
-    # opened (without blocking) is checked again, so a FIFO swapped in after it is not read.
+    """The file's top-level object; ``None`` when it cannot be read, is larger than ``max_bytes``,
+    is not a JSON object, or (``follow_links`` false) is a link."""
+    # Only a regular file (a symlink to one included, unless ``follow_links`` is false): opening a
+    # FIFO blocks and a device such as /dev/zero never ends, so a hook would hang. The check by
+    # path skips the open; what was opened (without blocking) is checked again, so a FIFO swapped
+    # in after it is not read.
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+    if not follow_links:
+        if os.path.islink(path):
+            return None
+        flags |= getattr(os, "O_NOFOLLOW", 0)
     if not os.path.isfile(path):
         return None
     try:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        descriptor = os.open(path, flags)
         with open(descriptor, "rb") as file:
             if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
                 return None
@@ -823,6 +840,29 @@ def _platform(platform: dict[str, object]) -> PlatformSection:
     ):
         return PlatformSection(version=version, repository=value)
     return PlatformSection(version=version, has_bad_repository=True)
+
+
+def read_lock_source(
+    hub: str | os.PathLike[str], platform: PlatformSection, default_repository: str
+) -> str | None:
+    """The source of the release commit ``hub.lock`` records for ``platform``, else ``None``
+    (see the module docstring); never raises."""
+    if platform.version is None or platform.has_bad_repository:
+        return None
+    repository = platform.repository or default_repository
+    lock = _read_object(
+        os.path.join(hub, LOCK_FILE), max_bytes=LOCK_FILE_MAX_BYTES, follow_links=False
+    )
+    if lock is None:
+        return None
+    commit = lock.get("platform_commit")
+    if not (isinstance(commit, str) and RELEASE_COMMIT.fullmatch(commit)):
+        return None
+    if lock.get("platform_version") != platform.version:
+        return None
+    if lock.get("platform_repository") != repository:
+        return None
+    return repository + "@" + commit + RELEASE_SUBDIRECTORY
 
 
 def _version(platform: dict[str, object]) -> str | None:
