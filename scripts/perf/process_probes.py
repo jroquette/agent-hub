@@ -21,7 +21,15 @@ HOOK = "hook"
 HUB_VERSION = "hub --version"
 LOCAL_HUB_VERSION = "./hub --version (local uvx stand-in)"
 HUB_BRIEF = "hub brief --no-network"
-CLI_PATHS = (HUB_VERSION, LOCAL_HUB_VERSION, HUB_BRIEF)
+# The list commands, run in the temp hub (AGH-604): each row's path is its command line.
+LIST_COMMANDS = (
+    "hub repo list",
+    "hub env list",
+    "hub action list",
+    "hub scenario list",
+    "hub workflow list",
+)
+CLI_PATHS = (HUB_VERSION, LOCAL_HUB_VERSION, HUB_BRIEF, *LIST_COMMANDS)
 # (path, hook script, hook event); post_edit's input is an Edit of a hub file.
 _HOOKS = (
     ("guard (PreToolUse Bash)", "guard", "PreToolUse"),
@@ -70,6 +78,7 @@ def cli_probes(hub_bin: Path, hub_dir: Path) -> list[Probe]:
         Probe(CLI, HUB_VERSION, (str(hub_bin), "--version"), None),
         Probe(CLI, LOCAL_HUB_VERSION, (str(hub_dir / "hub"), "--version"), None),
         Probe(CLI, HUB_BRIEF, (str(hub_bin), "brief", "--no-network"), None),
+        *(Probe(CLI, path, (str(hub_bin), *path.split()[1:]), None) for path in LIST_COMMANDS),
     ]
 
 

@@ -267,7 +267,8 @@ dev dependency of the workspace.
 take on a synthetic 400,000-event database spread over 90 days. It builds or reuses the fixture, copies it into a fresh
 temp root, renders a synthetic hub there (`hub init`, `git init` and one commit), then measures, one at a time:
 
-- `cli`: `hub --version`, `./hub --version (local uvx stand-in)`, `hub brief --no-network`;
+- `cli`: `hub --version`, `./hub --version (local uvx stand-in)`, `hub brief --no-network`, and the list commands
+  `hub repo list`, `hub env list`, `hub action list`, `hub scenario list`, `hub workflow list`, run in the temp hub;
 - `hook`: the eight rendered hooks, each fed a synthetic hook input (`guard (PreToolUse Bash)`,
   `session_start (local uvx stand-in)`, ...);
 - `route`: seven `hub web` routes (`/api/v1/sessions`, `/api/v1/features`, `/api/v1/search?q=make`, ...);
