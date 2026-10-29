@@ -79,7 +79,9 @@ replace them, and `readable_env_files` is the hook root's only; for
 `guard.infra`, the mode and `allow` are the hook root's only and `$HUB_CONFIG`'s `prod_markers` and unusable-value
 problem are added (in the plugin cache, the found file's `guard.infra` as is); the extension, `@hub/` anchors and
 guard-file asks stay pinned to the hook root. Only SessionStart calls the CLI, from the hub with `AGENT_HUB_ROOT` set:
-the shim's resolve step (`uvx … hub --version`), then `uvx … hub brief`, both within one 10 s deadline; else a mini
+when `hub.lock` records the release commit for the pin (`platform_commit`, read by the stdlib reader's
+`read_lock_source`, [ADR 0054](../adr/0054-pin-the-platform-release-by-commit.md)), one `uvx --from <repository>@<commit>…
+hub brief`; else the shim's resolve step (`uvx … hub --version`), then `uvx … hub brief`; all within one 10 s deadline; else a mini
 brief naming the cause (`no version`, `no uv`, `resolve failed`, `failed (exit N)`, `(no output)` or `(cannot start)`,
 `timed out`). Guard extension: the seeded `plugin/<project>/hooks/project_guard.py` of the hook root (never from
 `CLAUDE_PROJECT_DIR`, the cwd or tool input). Unless the base verdict is `deny` (final), it runs in a child `python3` in
@@ -182,16 +184,22 @@ report instead of block for up to 12 h. Proof: integration tests, characterizati
 | `agent`, `make agent` | `./agent`: `exec ./hub agent "$@"` | `--add-dir` per repo dir; the repos' `AGENTS.md` in `brain/auto/agent-context.md` (rewritten per launch, gitignored); auto memory in `brain/auto/workspace/` (personal, gitignored); then `exec claude` |
 | `bench.py`, `make bench`, `make bench-validate` | `hub bench [--validate] [options]`, module `bench` | cases stay in the brain: `brain/workflow/bench/tasks.json` (absent or `[]`: nothing to do; bounds: the `bench.tasks` row of [hub-doctor.md](hub-doctor.md)); without `bench` selected, exit 2 `module bench is not selected`. `--validate` (no run option) grades each case not excluded at its merge's parent (must fail) and at its merge (must pass), never runs `claude`. A run (`--runs` 3, `--arms with,without`, `--cases` all, `--budget` 15, `--per-run` 2, `--parallel` 3, `--label` `bench-%Y%m%d-%H%M`, `--trace`; `BENCH_EFFORT` low/medium/high) lays `origin/main`'s agent config over each case's merge parent in a detached worktree under `<ws>/_bench/wt` (`<ws>`: the folder of the hub's main checkout), runs one `claude -p` per job (the `with` arm enables `hub-workflow@<project>`), then grades it; a wave starts only while it fits the budget (else `STOP:`), and a failed session without a cost counts at `--per-run`. Records go to `<ws>/_bench/results/<label>.jsonl` (traces in `results/traces/`, files 0600), then the summary. Children run without `LINEAR_API_KEY`, `GH_TOKEN`, `GITHUB_TOKEN`; sessions use `--setting-sources user`, so the user's own hooks and plugins load in both arms (AGH-77 checks whether project instruction files are read). `<ws>/_bench/bench.lock` allows one bench per workspace; a left-behind lock exits 1 for the user to delete. Each job's `git worktree add` and its removal (`remove`, `prune`) run under one in-process lock, one at a time (AGH-120). Exits: 0 done, 1 bad cases, wrong grade, failed step or lock, 2 usage |
 | `agent_config_lint.py`, `features_check.py`; `hubconfig.py` | doctor rules ([hub-doctor.md](hub-doctor.md)); `hubconfig.py` dropped (the CLI reads `HubConfig`) | skills run `hub doctor --only features.tracker` |
-| `cloud-setup.sh` | stays a hub file, module `cloud` | sets the git identity from `hub.json`'s author (global and repo-local), else from `HUB_AUTHOR_NAME`/`HUB_AUTHOR_EMAIL` repo-local only, else a WARN ([developer-identity.md](developer-identity.md)); checks access to the pinned tag, warms the uv cache, then fetches the repos; no access: exit 1 naming it; it cannot need the CLI |
+| `cloud-setup.sh` | stays a hub file, module `cloud` | sets the git identity from `hub.json`'s author (global and repo-local), else from `HUB_AUTHOR_NAME`/`HUB_AUTHOR_EMAIL` repo-local only, else a WARN ([developer-identity.md](developer-identity.md)); checks access to the pinned tag (`git ls-remote`), warms the uv cache (from the commit `hub.lock` records for the pin, else the tag; ADR 0054), then fetches the repos; no access: exit 1 naming it; it cannot need the CLI |
 | `mine_transcripts.py`, `recall_transcripts.py`, `retro_metrics.py`, `make mine`, `make retro`; `guard.py`, `hubhooks.py`, `hooks.json`, `post_edit.py`, `stop_gate.py`, `session_start.py`, `session_end.py`, `pre_compact.py`, `event_sensor.py`, `readonly_gate.py` | stay hub files, managed | scripts: AGH-5 R12, Phase 2 redesigns them; hooks: the hooks exception, AGH-5 D9 ([ADR 0012](../adr/0012-cli-subsumes-hub-scripts.md)) |
 | `make usage`, `make check`, `make help` | stay targets; `check` runs `hub doctor`, `hub workflow test` (the packs' fixtures) and the hub's own tests | `usage` wraps an external cost tool until the Phase 2 cost view; hook tests move to agent-hub |
 
 Every caller (Makefile `HUB`: `$(CURDIR)/hub` single-quoted; pre-commit `./hub doctor`; skills; `./agent`) goes through
 the managed POSIX `sh` shim `./hub`, run by its real path (a symlink elsewhere reads the link's folder): it reads
 `platform.version` and `platform.repository` from its own folder's `hub.json` at run time (stdlib `python3`; no
-`python3` or no uv: exit 127; a bad pin or repository, never echoed: exit 1), runs the resolve step `uvx --from <pinned
-source> hub --version` (fails: exit 1 naming the source and the missing access, no real call), then `exec`s the real
-call, which keeps the caller's cwd, gets `AGENT_HUB_ROOT` = the shim's folder, and passes its exit code through. Windows
+`python3` or no uv: exit 127; a bad pin or repository, never echoed: exit 1), then takes one of two paths
+([ADR 0054](../adr/0054-pin-the-platform-release-by-commit.md)). Commit path: `hub.lock` beside it is a regular file (not
+a link or FIFO) of at most 1 MiB whose `platform_commit` is 40 lowercase hex and whose `platform_version` and
+`platform_repository` match `hub.json`; the shim makes one call, `exec uvx --from <repository>@<commit>#subdirectory=packages/agent-hub
+hub …` (signals, stdin and the exit code are uvx's, and uv's own error text is the cause), and only a uv folder that
+nothing can write is found before it (exit 1, no call). Tag path (any other lock, or none): two calls, the resolve step
+`uvx --from <pinned source> hub --version` (fails: exit 1 naming the source and the missing access, no real call), then
+the `exec`'d real call. Either way the real call keeps the caller's cwd, gets `AGENT_HUB_ROOT` = the shim's folder, and
+passes its exit code through. Windows
 is not supported. A script is deleted when its command lands, after characterization tests (brief, bench, retro, lint,
 cloud setup). Order: `worktree`, `brief`, `doctor`, `agent`, `next`/`run`, `bench`, `setup`, `start`.
 
@@ -201,12 +209,15 @@ Releases are annotated semver tags `vX.Y.Z` (`git tag -a`) on agent-hub `main`, 
 (ADR 0047) or pushed by hand; `release.yml` checks their form, that they are annotated and on `main`, and the
 meta-package version `agent-hub-cli` shares in lockstep
 (`make lockstep`); no PyPI. A shim runs the pinned release with no install (`hub init` takes the same source):
-`uvx --from <platform.repository>@v<platform.version>#subdirectory=packages/agent-hub hub …`, the repository read from
-`hub.json` at run time (default `git+https://github.com/jroquette/agent-hub`, public: no credential). A private mirror
+`uvx --from <platform.repository>@v<platform.version>#subdirectory=packages/agent-hub hub …` (tag path: the resolve
+step, then the real call), or, when `hub.lock` records the tag's commit for that version and repository, one `exec`'d
+`uvx --from <platform.repository>@<platform_commit>#subdirectory=packages/agent-hub hub …` (commit path, ADR 0054); the
+repository is read from `hub.json` at run time (default `git+https://github.com/jroquette/agent-hub`, public: no credential). A private mirror
 ([project-config.md](project-config.md)) reads through `AGENT_HUB_READ_TOKEN` in hub CI, or the repo attached or
 `GH_TOKEN` in cloud sessions (`cloud` setup checks access), on `https://github.com/` only, via a credential helper or
 `GIT_CONFIG_*` `insteadOf`, never the URL, `hub.json` or `hub.lock`. A direct `hub` other than `platform.version`: `hub
-sync` exits 1, `hub doctor` errors. Upgrade: edit `platform.version`, sync.
+sync` exits 1, `hub doctor` errors. Upgrade: edit `platform.version`, sync (sync records the new tag's commit in
+`hub.lock` when it can reach the repository, so the shim, SessionStart and cloud setup's warm-up run that commit in one call; until then they use the tag).
 
 ### Acceptance
 
