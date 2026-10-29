@@ -1,10 +1,11 @@
 """``hub brief``: the session brief, against the hub's brief characterization (AC-15.5, AC-15.6).
 
-The ten goldens in ``golden/brief/`` are hub ``tests/characterization/golden/brief/*.golden`` at
-hub commit ``8eaebae``, byte for byte, but for one divergence (AGH-46): a failing CI line names
-the repo's branch, so six of them read ``failing on trunk`` where the hub's read ``failing on
-main``, their stdout byte count one higher. ``brief_workspace`` rebuilds that commit's synthetic
-workspace (nothing is copied from the hub's brain).
+Ten of the eleven goldens in ``golden/brief/`` are hub
+``tests/characterization/golden/brief/*.golden`` at hub commit ``8eaebae``, byte for byte, but for
+one divergence (AGH-46): a failing CI line names the repo's branch, so six of them read ``failing
+on trunk`` where the hub's read ``failing on main``, their stdout byte count one higher. The
+eleventh, ``ci_timeout``, is AGH-605's own case, from no hub characterization. ``brief_workspace``
+rebuilds that commit's synthetic workspace (nothing is copied from the hub's brain).
 """
 
 import datetime
@@ -44,6 +45,9 @@ BRIEF_RULES: list[dict[str, Any]] = [
 # brief's deadline to BARRIER_DEADLINE, so only the barrier, not a loaded runner, can fail them.
 BARRIER_WAIT = 4.0
 BARRIER_DEADLINE = 10.0
+# The hung-gh tests check what the brief prints, not the 2 s value: they raise the deadline to
+# HUNG_GH_DEADLINE so every call that answers does so in time on a loaded runner.
+HUNG_GH_DEADLINE = 5.0
 # api's gh run list never answers within the deadline; its other calls answer as in BRIEF_RULES.
 CI_TIMEOUT_RULES: list[dict[str, Any]] = [
     BRIEF_RULES[0],
@@ -102,7 +106,7 @@ CASES: dict[str, dict[str, Any]] = {
     },
     "truncated": {"changes": {"brain/now.md": LONG_NOW}},
     "gh_failing": {"answers": [{"stderr": "HTTP 503\n", "rc": 1}]},
-    "ci_timeout": {"answers": CI_TIMEOUT_RULES},
+    "ci_timeout": {"answers": CI_TIMEOUT_RULES, "deadline": HUNG_GH_DEADLINE},
     "journal_week_edge": {
         "changes": {
             f"{JOURNAL}14.md": None,
@@ -154,6 +158,8 @@ def test_matches_golden_when_case_runs(
         brief_workspace.commit_hub(setup["changes"])
     if "answers" in setup:
         brief_workspace.answer(setup["answers"])
+    if "deadline" in setup:
+        monkeypatch.setattr(brief_command, "BRIEF_DEADLINE", setup["deadline"])
     golden = golden_of(case, golden_sections)
 
     result = run_brief(brief_workspace, *setup.get("argv", ()))
@@ -508,10 +514,14 @@ def test_ignores_git_dir_when_caller_sets_it(
     assert result.stdout_bytes == golden_of("no_network", golden_sections)["stdout"]
 
 
+@pytest.mark.serial
 def test_prints_git_state_when_gh_hangs(
-    brief_workspace: Workspace, golden_sections: Callable[[Path], dict[str, bytes]]
+    brief_workspace: Workspace,
+    golden_sections: Callable[[Path], dict[str, bytes]],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Every gh call hangs far past the deadline: the git state stays, each CI is unknown.
+    monkeypatch.setattr(brief_command, "BRIEF_DEADLINE", HUNG_GH_DEADLINE)
     brief_workspace.answer([{"stdout": "#1 never shown\n", "delay": 120}])
     started = time.monotonic()
 
@@ -531,6 +541,7 @@ def test_prints_git_state_when_hung_gh_fills_workers(
 ) -> None:
     # Two workers and three hung gh pr list calls: a git call queued behind gh would get no time.
     monkeypatch.setattr(brief_command, "MAX_WORKERS", 2)
+    monkeypatch.setattr(brief_command, "BRIEF_DEADLINE", HUNG_GH_DEADLINE)
     brief_workspace.answer([{"stdout": "#1 never shown\n", "delay": 120}])
 
     result = run_brief(brief_workspace)
