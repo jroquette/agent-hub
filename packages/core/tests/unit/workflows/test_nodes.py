@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+from agent_hub.core.workflows import nodes as nodes_module
 from agent_hub.core.workflows.nodes import (
     AgentNode,
     ApprovalNode,
@@ -282,3 +283,21 @@ def test_refuses_the_wait_when_its_condition_is_missing_or_malformed(
     keys: dict[str, object],
 ) -> None:
     assert errors_of({"id": "nap", "type": "wait"} | keys)
+
+
+def test_keeps_schema_and_errors_when_models_are_built(characterization: Any) -> None:
+    valid = {
+        "id": "plan",
+        "type": "agent",
+        "prompt": "Plan $INPUTS.issue",
+        "retry": {"max_attempts": 2},
+    }
+    invalid = {"id": "Bad Id", "type": "shell", "command": [" "], "colour": "red"}
+
+    characterization.check(
+        characterization.snapshot(
+            nodes_module,
+            {"valid node": (NODE, valid), "invalid node": (NODE, invalid)},
+            extra_schemas={"Node": NODE},
+        )
+    )

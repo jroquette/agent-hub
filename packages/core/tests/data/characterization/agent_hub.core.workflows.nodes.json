@@ -1,0 +1,5208 @@
+{
+  "module": "agent_hub.core.workflows.nodes",
+  "outcomes": {
+    "invalid node": {
+      "errors": [
+        {
+          "loc": [
+            "shell",
+            "id"
+          ],
+          "msg": "String should match pattern '^[a-z][a-z0-9_-]*$'",
+          "type": "string_pattern_mismatch"
+        },
+        {
+          "loc": [
+            "shell",
+            "command",
+            0
+          ],
+          "msg": "Value error, must not be empty or blank",
+          "type": "value_error"
+        },
+        {
+          "loc": [
+            "shell",
+            "command"
+          ],
+          "msg": "Tuple should have at least 1 item after validation, not 0",
+          "type": "too_short"
+        },
+        {
+          "loc": [
+            "shell",
+            "colour"
+          ],
+          "msg": "Extra inputs are not permitted",
+          "type": "extra_forbidden"
+        }
+      ]
+    },
+    "valid node": {
+      "valid": {
+        "always_run": false,
+        "context": "fresh",
+        "cwd": null,
+        "depends_on": [],
+        "description": null,
+        "id": "plan",
+        "limits": {
+          "max_cost_usd": 3.0,
+          "max_turns": 40
+        },
+        "model": "medium",
+        "mutates_checkout": true,
+        "output_format": null,
+        "prompt": "Plan $INPUTS.issue",
+        "prompt_file": null,
+        "retry": {
+          "delay": "2s",
+          "max_attempts": 2,
+          "on_error": "transient"
+        },
+        "timeout": null,
+        "trigger_rule": "all_success",
+        "type": "agent",
+        "when": null,
+        "with_": {}
+      }
+    }
+  },
+  "schemas": {
+    "ActionNode": {
+      "$defs": {
+        "JsonValue": {},
+        "Retry": {
+          "additionalProperties": false,
+          "description": "``max_attempts`` retries after the first attempt, the delay doubling each time.",
+          "properties": {
+            "delay": {
+              "default": "2s",
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Delay",
+              "type": "string"
+            },
+            "max_attempts": {
+              "default": 1,
+              "maximum": 5,
+              "minimum": 0,
+              "title": "Max Attempts",
+              "type": "integer"
+            },
+            "on_error": {
+              "default": "transient",
+              "enum": [
+                "transient",
+                "all"
+              ],
+              "title": "On Error",
+              "type": "string"
+            }
+          },
+          "title": "Retry",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Runs one action once, through the engine's runner.",
+      "properties": {
+        "action": {
+          "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*/)?[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "title": "Action",
+          "type": "string"
+        },
+        "capture": {
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "type": "string"
+            }
+          },
+          "title": "Capture",
+          "type": "object"
+        },
+        "depends_on": {
+          "default": [],
+          "items": {
+            "pattern": "^[a-z][a-z0-9_-]*$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "retry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Retry"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeout"
+        },
+        "trigger_rule": {
+          "default": "all_success",
+          "enum": [
+            "all_success",
+            "one_success",
+            "none_failed_min_one_success",
+            "all_done"
+          ],
+          "title": "Trigger Rule",
+          "type": "string"
+        },
+        "type": {
+          "const": "action",
+          "title": "Type",
+          "type": "string"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "When"
+        },
+        "with": {
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "$ref": "#/$defs/JsonValue"
+            }
+          },
+          "title": "With",
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "action",
+        "type"
+      ],
+      "title": "ActionNode",
+      "type": "object"
+    },
+    "AgentNode": {
+      "$defs": {
+        "FromBinding": {
+          "additionalProperties": false,
+          "description": "A ``with`` value read from an upstream output, ``if_skipped`` when that node skipped.",
+          "properties": {
+            "from": {
+              "title": "From",
+              "type": "string"
+            },
+            "if_skipped": {
+              "$ref": "#/$defs/JsonValue",
+              "default": null
+            }
+          },
+          "required": [
+            "from"
+          ],
+          "title": "FromBinding",
+          "type": "object"
+        },
+        "JsonValue": {},
+        "Limits": {
+          "additionalProperties": false,
+          "properties": {
+            "max_cost_usd": {
+              "default": 3.0,
+              "title": "Max Cost Usd",
+              "type": "number"
+            },
+            "max_turns": {
+              "default": 40,
+              "minimum": 1,
+              "title": "Max Turns",
+              "type": "integer"
+            }
+          },
+          "title": "Limits",
+          "type": "object"
+        },
+        "ResumeContext": {
+          "additionalProperties": false,
+          "description": "Resume an upstream agent node's session instead of starting fresh.",
+          "properties": {
+            "resume": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Resume",
+              "type": "string"
+            }
+          },
+          "required": [
+            "resume"
+          ],
+          "title": "ResumeContext",
+          "type": "object"
+        },
+        "Retry": {
+          "additionalProperties": false,
+          "description": "``max_attempts`` retries after the first attempt, the delay doubling each time.",
+          "properties": {
+            "delay": {
+              "default": "2s",
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Delay",
+              "type": "string"
+            },
+            "max_attempts": {
+              "default": 1,
+              "maximum": 5,
+              "minimum": 0,
+              "title": "Max Attempts",
+              "type": "integer"
+            },
+            "on_error": {
+              "default": "transient",
+              "enum": [
+                "transient",
+                "all"
+              ],
+              "title": "On Error",
+              "type": "string"
+            }
+          },
+          "title": "Retry",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "always_run": {
+          "default": false,
+          "title": "Always Run",
+          "type": "boolean"
+        },
+        "context": {
+          "default": "fresh",
+          "oneOf": [
+            {
+              "const": "fresh",
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/ResumeContext"
+            }
+          ],
+          "title": "Context"
+        },
+        "cwd": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cwd"
+        },
+        "depends_on": {
+          "default": [],
+          "items": {
+            "pattern": "^[a-z][a-z0-9_-]*$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "limits": {
+          "$ref": "#/$defs/Limits"
+        },
+        "model": {
+          "default": "medium",
+          "enum": [
+            "small",
+            "medium",
+            "large"
+          ],
+          "title": "Model",
+          "type": "string"
+        },
+        "mutates_checkout": {
+          "default": true,
+          "title": "Mutates Checkout",
+          "type": "boolean"
+        },
+        "output_format": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Format"
+        },
+        "prompt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt"
+        },
+        "prompt_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt File"
+        },
+        "retry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Retry"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeout"
+        },
+        "trigger_rule": {
+          "default": "all_success",
+          "enum": [
+            "all_success",
+            "one_success",
+            "none_failed_min_one_success",
+            "all_done"
+          ],
+          "title": "Trigger Rule",
+          "type": "string"
+        },
+        "type": {
+          "const": "agent",
+          "title": "Type",
+          "type": "string"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "When"
+        },
+        "with": {
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/FromBinding"
+                },
+                {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              ]
+            }
+          },
+          "title": "With",
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "AgentNode",
+      "type": "object"
+    },
+    "ApprovalNode": {
+      "$defs": {
+        "Decision": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "label": {
+              "title": "Label",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "label"
+          ],
+          "title": "Decision",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "capture_response": {
+          "default": false,
+          "title": "Capture Response",
+          "type": "boolean"
+        },
+        "decisions": {
+          "default": [
+            {
+              "id": "approve",
+              "label": "Approve"
+            },
+            {
+              "id": "reject",
+              "label": "Reject"
+            }
+          ],
+          "items": {
+            "$ref": "#/$defs/Decision"
+          },
+          "minItems": 1,
+          "title": "Decisions",
+          "type": "array"
+        },
+        "depends_on": {
+          "default": [],
+          "items": {
+            "pattern": "^[a-z][a-z0-9_-]*$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "trigger_rule": {
+          "default": "all_success",
+          "enum": [
+            "all_success",
+            "one_success",
+            "none_failed_min_one_success",
+            "all_done"
+          ],
+          "title": "Trigger Rule",
+          "type": "string"
+        },
+        "type": {
+          "const": "approval",
+          "title": "Type",
+          "type": "string"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "When"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "message"
+      ],
+      "title": "ApprovalNode",
+      "type": "object"
+    },
+    "Decision": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "title": "Decision",
+      "type": "object"
+    },
+    "ExpectNode": {
+      "$defs": {
+        "JsonValue": {},
+        "Retry": {
+          "additionalProperties": false,
+          "description": "``max_attempts`` retries after the first attempt, the delay doubling each time.",
+          "properties": {
+            "delay": {
+              "default": "2s",
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Delay",
+              "type": "string"
+            },
+            "max_attempts": {
+              "default": 1,
+              "maximum": 5,
+              "minimum": 0,
+              "title": "Max Attempts",
+              "type": "integer"
+            },
+            "on_error": {
+              "default": "transient",
+              "enum": [
+                "transient",
+                "all"
+              ],
+              "title": "On Error",
+              "type": "string"
+            }
+          },
+          "title": "Retry",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Runs a read action every ``every`` until ``until_when`` holds over its output\n(``$self.output``), or fails ``timeout`` once ``timeout`` has passed.",
+      "properties": {
+        "action": {
+          "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*/)?[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "title": "Action",
+          "type": "string"
+        },
+        "capture": {
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "type": "string"
+            }
+          },
+          "title": "Capture",
+          "type": "object"
+        },
+        "depends_on": {
+          "default": [],
+          "items": {
+            "pattern": "^[a-z][a-z0-9_-]*$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "every": {
+          "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+          "title": "Every",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "retry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Retry"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "timeout": {
+          "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+          "title": "Timeout",
+          "type": "string"
+        },
+        "trigger_rule": {
+          "default": "all_success",
+          "enum": [
+            "all_success",
+            "one_success",
+            "none_failed_min_one_success",
+            "all_done"
+          ],
+          "title": "Trigger Rule",
+          "type": "string"
+        },
+        "type": {
+          "const": "expect",
+          "title": "Type",
+          "type": "string"
+        },
+        "until_when": {
+          "title": "Until When",
+          "type": "string"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "When"
+        },
+        "with": {
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "$ref": "#/$defs/JsonValue"
+            }
+          },
+          "title": "With",
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "action",
+        "type",
+        "every",
+        "timeout",
+        "until_when"
+      ],
+      "title": "ExpectNode",
+      "type": "object"
+    },
+    "FromBinding": {
+      "$defs": {
+        "JsonValue": {}
+      },
+      "additionalProperties": false,
+      "description": "A ``with`` value read from an upstream output, ``if_skipped`` when that node skipped.",
+      "properties": {
+        "from": {
+          "title": "From",
+          "type": "string"
+        },
+        "if_skipped": {
+          "$ref": "#/$defs/JsonValue",
+          "default": null
+        }
+      },
+      "required": [
+        "from"
+      ],
+      "title": "FromBinding",
+      "type": "object"
+    },
+    "HaltNode": {
+      "additionalProperties": false,
+      "properties": {
+        "depends_on": {
+          "default": [],
+          "items": {
+            "pattern": "^[a-z][a-z0-9_-]*$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "trigger_rule": {
+          "default": "all_success",
+          "enum": [
+            "all_success",
+            "one_success",
+            "none_failed_min_one_success",
+            "all_done"
+          ],
+          "title": "Trigger Rule",
+          "type": "string"
+        },
+        "type": {
+          "const": "halt",
+          "title": "Type",
+          "type": "string"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "When"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "reason"
+      ],
+      "title": "HaltNode",
+      "type": "object"
+    },
+    "IncludeNode": {
+      "$defs": {
+        "JsonValue": {}
+      },
+      "additionalProperties": false,
+      "description": "Replaced at load by the workflow ``include`` names; ``with`` fills that one's ``inputs``.\n\nIts ``depends_on``, ``when`` and ``trigger_rule`` go to the block's roots; a root keeps its\nown ``trigger_rule`` when it sets one.",
+      "properties": {
+        "depends_on": {
+          "default": [],
+          "items": {
+            "pattern": "^[a-z][a-z0-9_-]*$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "include": {
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "title": "Include",
+          "type": "string"
+        },
+        "trigger_rule": {
+          "default": "all_success",
+          "enum": [
+            "all_success",
+            "one_success",
+            "none_failed_min_one_success",
+            "all_done"
+          ],
+          "title": "Trigger Rule",
+          "type": "string"
+        },
+        "type": {
+          "const": "include",
+          "title": "Type",
+          "type": "string"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "When"
+        },
+        "with": {
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "$ref": "#/$defs/JsonValue"
+            }
+          },
+          "title": "With",
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "include"
+      ],
+      "title": "IncludeNode",
+      "type": "object"
+    },
+    "Limits": {
+      "additionalProperties": false,
+      "properties": {
+        "max_cost_usd": {
+          "default": 3.0,
+          "title": "Max Cost Usd",
+          "type": "number"
+        },
+        "max_turns": {
+          "default": 40,
+          "minimum": 1,
+          "title": "Max Turns",
+          "type": "integer"
+        }
+      },
+      "title": "Limits",
+      "type": "object"
+    },
+    "LoopGroupNode": {
+      "$defs": {
+        "ActionNode": {
+          "additionalProperties": false,
+          "description": "Runs one action once, through the engine's runner.",
+          "properties": {
+            "action": {
+              "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*/)?[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "title": "Action",
+              "type": "string"
+            },
+            "capture": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "type": "string"
+                }
+              },
+              "title": "Capture",
+              "type": "object"
+            },
+            "depends_on": {
+              "default": [],
+              "items": {
+                "pattern": "^[a-z][a-z0-9_-]*$",
+                "type": "string"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Timeout"
+            },
+            "trigger_rule": {
+              "default": "all_success",
+              "enum": [
+                "all_success",
+                "one_success",
+                "none_failed_min_one_success",
+                "all_done"
+              ],
+              "title": "Trigger Rule",
+              "type": "string"
+            },
+            "type": {
+              "const": "action",
+              "title": "Type",
+              "type": "string"
+            },
+            "when": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "When"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "id",
+            "action",
+            "type"
+          ],
+          "title": "ActionNode",
+          "type": "object"
+        },
+        "AgentNode": {
+          "additionalProperties": false,
+          "properties": {
+            "always_run": {
+              "default": false,
+              "title": "Always Run",
+              "type": "boolean"
+            },
+            "context": {
+              "default": "fresh",
+              "oneOf": [
+                {
+                  "const": "fresh",
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/$defs/ResumeContext"
+                }
+              ],
+              "title": "Context"
+            },
+            "cwd": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cwd"
+            },
+            "depends_on": {
+              "default": [],
+              "items": {
+                "pattern": "^[a-z][a-z0-9_-]*$",
+                "type": "string"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "limits": {
+              "$ref": "#/$defs/Limits"
+            },
+            "model": {
+              "default": "medium",
+              "enum": [
+                "small",
+                "medium",
+                "large"
+              ],
+              "title": "Model",
+              "type": "string"
+            },
+            "mutates_checkout": {
+              "default": true,
+              "title": "Mutates Checkout",
+              "type": "boolean"
+            },
+            "output_format": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "$ref": "#/$defs/JsonValue"
+                  },
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Output Format"
+            },
+            "prompt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Prompt"
+            },
+            "prompt_file": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Prompt File"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Timeout"
+            },
+            "trigger_rule": {
+              "default": "all_success",
+              "enum": [
+                "all_success",
+                "one_success",
+                "none_failed_min_one_success",
+                "all_done"
+              ],
+              "title": "Trigger Rule",
+              "type": "string"
+            },
+            "type": {
+              "const": "agent",
+              "title": "Type",
+              "type": "string"
+            },
+            "when": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "When"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/FromBinding"
+                    },
+                    {
+                      "$ref": "#/$defs/JsonValue"
+                    }
+                  ]
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "id",
+            "type"
+          ],
+          "title": "AgentNode",
+          "type": "object"
+        },
+        "ApprovalNode": {
+          "additionalProperties": false,
+          "properties": {
+            "capture_response": {
+              "default": false,
+              "title": "Capture Response",
+              "type": "boolean"
+            },
+            "decisions": {
+              "default": [
+                {
+                  "id": "approve",
+                  "label": "Approve"
+                },
+                {
+                  "id": "reject",
+                  "label": "Reject"
+                }
+              ],
+              "items": {
+                "$ref": "#/$defs/Decision"
+              },
+              "minItems": 1,
+              "title": "Decisions",
+              "type": "array"
+            },
+            "depends_on": {
+              "default": [],
+              "items": {
+                "pattern": "^[a-z][a-z0-9_-]*$",
+                "type": "string"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "message": {
+              "title": "Message",
+              "type": "string"
+            },
+            "trigger_rule": {
+              "default": "all_success",
+              "enum": [
+                "all_success",
+                "one_success",
+                "none_failed_min_one_success",
+                "all_done"
+              ],
+              "title": "Trigger Rule",
+              "type": "string"
+            },
+            "type": {
+              "const": "approval",
+              "title": "Type",
+              "type": "string"
+            },
+            "when": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "When"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "message"
+          ],
+          "title": "ApprovalNode",
+          "type": "object"
+        },
+        "Decision": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "label": {
+              "title": "Label",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "label"
+          ],
+          "title": "Decision",
+          "type": "object"
+        },
+        "ExpectNode": {
+          "additionalProperties": false,
+          "description": "Runs a read action every ``every`` until ``until_when`` holds over its output\n(``$self.output``), or fails ``timeout`` once ``timeout`` has passed.",
+          "properties": {
+            "action": {
+              "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*/)?[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "title": "Action",
+              "type": "string"
+            },
+            "capture": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "type": "string"
+                }
+              },
+              "title": "Capture",
+              "type": "object"
+            },
+            "depends_on": {
+              "default": [],
+              "items": {
+                "pattern": "^[a-z][a-z0-9_-]*$",
+                "type": "string"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "every": {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Every",
+              "type": "string"
+            },
+            "id": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout": {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Timeout",
+              "type": "string"
+            },
+            "trigger_rule": {
+              "default": "all_success",
+              "enum": [
+                "all_success",
+                "one_success",
+                "none_failed_min_one_success",
+                "all_done"
+              ],
+              "title": "Trigger Rule",
+              "type": "string"
+            },
+            "type": {
+              "const": "expect",
+              "title": "Type",
+              "type": "string"
+            },
+            "until_when": {
+              "title": "Until When",
+              "type": "string"
+            },
+            "when": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "When"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "id",
+            "action",
+            "type",
+            "every",
+            "timeout",
+            "until_when"
+          ],
+          "title": "ExpectNode",
+          "type": "object"
+        },
+        "FromBinding": {
+          "additionalProperties": false,
+          "description": "A ``with`` value read from an upstream output, ``if_skipped`` when that node skipped.",
+          "properties": {
+            "from": {
+              "title": "From",
+              "type": "string"
+            },
+            "if_skipped": {
+              "$ref": "#/$defs/JsonValue",
+              "default": null
+            }
+          },
+          "required": [
+            "from"
+          ],
+          "title": "FromBinding",
+          "type": "object"
+        },
+        "HaltNode": {
+          "additionalProperties": false,
+          "properties": {
+            "depends_on": {
+              "default": [],
+              "items": {
+                "pattern": "^[a-z][a-z0-9_-]*$",
+                "type": "string"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "reason": {
+              "title": "Reason",
+              "type": "string"
+            },
+            "trigger_rule": {
+              "default": "all_success",
+              "enum": [
+                "all_success",
+                "one_success",
+                "none_failed_min_one_success",
+                "all_done"
+              ],
+              "title": "Trigger Rule",
+              "type": "string"
+            },
+            "type": {
+              "const": "halt",
+              "title": "Type",
+              "type": "string"
+            },
+            "when": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "When"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "reason"
+          ],
+          "title": "HaltNode",
+          "type": "object"
+        },
+        "JsonValue": {},
+        "Limits": {
+          "additionalProperties": false,
+          "properties": {
+            "max_cost_usd": {
+              "default": 3.0,
+              "title": "Max Cost Usd",
+              "type": "number"
+            },
+            "max_turns": {
+              "default": 40,
+              "minimum": 1,
+              "title": "Max Turns",
+              "type": "integer"
+            }
+          },
+          "title": "Limits",
+          "type": "object"
+        },
+        "LoopNode": {
+          "additionalProperties": false,
+          "properties": {
+            "always_run": {
+              "default": false,
+              "title": "Always Run",
+              "type": "boolean"
+            },
+            "context": {
+              "default": "fresh",
+              "oneOf": [
+                {
+                  "const": "fresh",
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/$defs/ResumeContext"
+                }
+              ],
+              "title": "Context"
+            },
+            "cwd": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cwd"
+            },
+            "depends_on": {
+              "default": [],
+              "items": {
+                "pattern": "^[a-z][a-z0-9_-]*$",
+                "type": "string"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "fresh_context": {
+              "default": false,
+              "title": "Fresh Context",
+              "type": "boolean"
+            },
+            "id": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "limits": {
+              "$ref": "#/$defs/Limits"
+            },
+            "max_iterations": {
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Max Iterations",
+              "type": "integer"
+            },
+            "model": {
+              "default": "medium",
+              "enum": [
+                "small",
+                "medium",
+                "large"
+              ],
+              "title": "Model",
+              "type": "string"
+            },
+            "mutates_checkout": {
+              "default": true,
+              "title": "Mutates Checkout",
+              "type": "boolean"
+            },
+            "output_format": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "$ref": "#/$defs/JsonValue"
+                  },
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Output Format"
+            },
+            "prompt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Prompt"
+            },
+            "prompt_file": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Prompt File"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Timeout"
+            },
+            "trigger_rule": {
+              "default": "all_success",
+              "enum": [
+                "all_success",
+                "one_success",
+                "none_failed_min_one_success",
+                "all_done"
+              ],
+              "title": "Trigger Rule",
+              "type": "string"
+            },
+            "type": {
+              "const": "loop",
+              "title": "Type",
+              "type": "string"
+            },
+            "until": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Until"
+            },
+            "until_bash": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Until Bash"
+            },
+            "until_field": {
+              "anyOf": [
+                {
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Until Field"
+            },
+            "when": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "When"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/FromBinding"
+                    },
+                    {
+                      "$ref": "#/$defs/JsonValue"
+                    }
+                  ]
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "max_iterations"
+          ],
+          "title": "LoopNode",
+          "type": "object"
+        },
+        "ResumeContext": {
+          "additionalProperties": false,
+          "description": "Resume an upstream agent node's session instead of starting fresh.",
+          "properties": {
+            "resume": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Resume",
+              "type": "string"
+            }
+          },
+          "required": [
+            "resume"
+          ],
+          "title": "ResumeContext",
+          "type": "object"
+        },
+        "Retry": {
+          "additionalProperties": false,
+          "description": "``max_attempts`` retries after the first attempt, the delay doubling each time.",
+          "properties": {
+            "delay": {
+              "default": "2s",
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Delay",
+              "type": "string"
+            },
+            "max_attempts": {
+              "default": 1,
+              "maximum": 5,
+              "minimum": 0,
+              "title": "Max Attempts",
+              "type": "integer"
+            },
+            "on_error": {
+              "default": "transient",
+              "enum": [
+                "transient",
+                "all"
+              ],
+              "title": "On Error",
+              "type": "string"
+            }
+          },
+          "title": "Retry",
+          "type": "object"
+        },
+        "ScriptNode": {
+          "additionalProperties": false,
+          "properties": {
+            "always_run": {
+              "default": false,
+              "title": "Always Run",
+              "type": "boolean"
+            },
+            "args": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "title": "Args",
+              "type": "array"
+            },
+            "cwd": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cwd"
+            },
+            "depends_on": {
+              "default": [],
+              "items": {
+                "pattern": "^[a-z][a-z0-9_-]*$",
+                "type": "string"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "effect": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "read",
+                    "write",
+                    "destroy"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Effect"
+            },
+            "env": {
+              "patternProperties": {
+                "^[A-Za-z_][A-Za-z0-9_]*$": {
+                  "type": "string"
+                }
+              },
+              "title": "Env",
+              "type": "object"
+            },
+            "id": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "mutates_checkout": {
+              "default": true,
+              "title": "Mutates Checkout",
+              "type": "boolean"
+            },
+            "output_format": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "$ref": "#/$defs/JsonValue"
+                  },
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Output Format"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "runtime": {
+              "enum": [
+                "sh",
+                "python"
+              ],
+              "title": "Runtime",
+              "type": "string"
+            },
+            "script": {
+              "title": "Script",
+              "type": "string"
+            },
+            "stdin": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Stdin"
+            },
+            "timeout": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Timeout"
+            },
+            "trigger_rule": {
+              "default": "all_success",
+              "enum": [
+                "all_success",
+                "one_success",
+                "none_failed_min_one_success",
+                "all_done"
+              ],
+              "title": "Trigger Rule",
+              "type": "string"
+            },
+            "type": {
+              "const": "script",
+              "title": "Type",
+              "type": "string"
+            },
+            "when": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "When"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "runtime",
+            "script"
+          ],
+          "title": "ScriptNode",
+          "type": "object"
+        },
+        "ShellNode": {
+          "additionalProperties": false,
+          "properties": {
+            "always_run": {
+              "default": false,
+              "title": "Always Run",
+              "type": "boolean"
+            },
+            "command": {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "title": "Command",
+              "type": "array"
+            },
+            "cwd": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cwd"
+            },
+            "depends_on": {
+              "default": [],
+              "items": {
+                "pattern": "^[a-z][a-z0-9_-]*$",
+                "type": "string"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "effect": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "read",
+                    "write",
+                    "destroy"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Effect"
+            },
+            "env": {
+              "patternProperties": {
+                "^[A-Za-z_][A-Za-z0-9_]*$": {
+                  "type": "string"
+                }
+              },
+              "title": "Env",
+              "type": "object"
+            },
+            "id": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "mutates_checkout": {
+              "default": true,
+              "title": "Mutates Checkout",
+              "type": "boolean"
+            },
+            "output_format": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "$ref": "#/$defs/JsonValue"
+                  },
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Output Format"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "stdin": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Stdin"
+            },
+            "timeout": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Timeout"
+            },
+            "trigger_rule": {
+              "default": "all_success",
+              "enum": [
+                "all_success",
+                "one_success",
+                "none_failed_min_one_success",
+                "all_done"
+              ],
+              "title": "Trigger Rule",
+              "type": "string"
+            },
+            "type": {
+              "const": "shell",
+              "title": "Type",
+              "type": "string"
+            },
+            "when": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "When"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "command"
+          ],
+          "title": "ShellNode",
+          "type": "object"
+        },
+        "WaitNode": {
+          "additionalProperties": false,
+          "description": "Waits ``duration``, until an instant, or for a person's ``attention`` (text, or one of\n``options``).",
+          "properties": {
+            "attention": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Attention"
+            },
+            "depends_on": {
+              "default": [],
+              "items": {
+                "pattern": "^[a-z][a-z0-9_-]*$",
+                "type": "string"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "duration": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Duration"
+            },
+            "id": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "options": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Decision"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Options"
+            },
+            "trigger_rule": {
+              "default": "all_success",
+              "enum": [
+                "all_success",
+                "one_success",
+                "none_failed_min_one_success",
+                "all_done"
+              ],
+              "title": "Trigger Rule",
+              "type": "string"
+            },
+            "type": {
+              "const": "wait",
+              "title": "Type",
+              "type": "string"
+            },
+            "until": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Until"
+            },
+            "when": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "When"
+            }
+          },
+          "required": [
+            "id",
+            "type"
+          ],
+          "title": "WaitNode",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "A body sub-graph run once per iteration until ``until_when`` holds or ``until_bash``\nexits 0, at most ``max_iterations`` times. Body ids are recorded as ``<group>__<id>``.",
+      "properties": {
+        "depends_on": {
+          "default": [],
+          "items": {
+            "pattern": "^[a-z][a-z0-9_-]*$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "fresh_context": {
+          "default": false,
+          "title": "Fresh Context",
+          "type": "boolean"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "max_iterations": {
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Max Iterations",
+          "type": "integer"
+        },
+        "nodes": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "action": "#/$defs/ActionNode",
+                "agent": "#/$defs/AgentNode",
+                "approval": "#/$defs/ApprovalNode",
+                "expect": "#/$defs/ExpectNode",
+                "halt": "#/$defs/HaltNode",
+                "loop": "#/$defs/LoopNode",
+                "script": "#/$defs/ScriptNode",
+                "shell": "#/$defs/ShellNode",
+                "wait": "#/$defs/WaitNode"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/AgentNode"
+              },
+              {
+                "$ref": "#/$defs/ShellNode"
+              },
+              {
+                "$ref": "#/$defs/ScriptNode"
+              },
+              {
+                "$ref": "#/$defs/LoopNode"
+              },
+              {
+                "$ref": "#/$defs/ApprovalNode"
+              },
+              {
+                "$ref": "#/$defs/HaltNode"
+              },
+              {
+                "$ref": "#/$defs/WaitNode"
+              },
+              {
+                "$ref": "#/$defs/ActionNode"
+              },
+              {
+                "$ref": "#/$defs/ExpectNode"
+              }
+            ]
+          },
+          "minItems": 1,
+          "title": "Nodes",
+          "type": "array"
+        },
+        "trigger_rule": {
+          "default": "all_success",
+          "enum": [
+            "all_success",
+            "one_success",
+            "none_failed_min_one_success",
+            "all_done"
+          ],
+          "title": "Trigger Rule",
+          "type": "string"
+        },
+        "type": {
+          "const": "loop_group",
+          "title": "Type",
+          "type": "string"
+        },
+        "until_bash": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Until Bash"
+        },
+        "until_when": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Until When"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "When"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "nodes",
+        "max_iterations"
+      ],
+      "title": "LoopGroupNode",
+      "type": "object"
+    },
+    "LoopNode": {
+      "$defs": {
+        "FromBinding": {
+          "additionalProperties": false,
+          "description": "A ``with`` value read from an upstream output, ``if_skipped`` when that node skipped.",
+          "properties": {
+            "from": {
+              "title": "From",
+              "type": "string"
+            },
+            "if_skipped": {
+              "$ref": "#/$defs/JsonValue",
+              "default": null
+            }
+          },
+          "required": [
+            "from"
+          ],
+          "title": "FromBinding",
+          "type": "object"
+        },
+        "JsonValue": {},
+        "Limits": {
+          "additionalProperties": false,
+          "properties": {
+            "max_cost_usd": {
+              "default": 3.0,
+              "title": "Max Cost Usd",
+              "type": "number"
+            },
+            "max_turns": {
+              "default": 40,
+              "minimum": 1,
+              "title": "Max Turns",
+              "type": "integer"
+            }
+          },
+          "title": "Limits",
+          "type": "object"
+        },
+        "ResumeContext": {
+          "additionalProperties": false,
+          "description": "Resume an upstream agent node's session instead of starting fresh.",
+          "properties": {
+            "resume": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Resume",
+              "type": "string"
+            }
+          },
+          "required": [
+            "resume"
+          ],
+          "title": "ResumeContext",
+          "type": "object"
+        },
+        "Retry": {
+          "additionalProperties": false,
+          "description": "``max_attempts`` retries after the first attempt, the delay doubling each time.",
+          "properties": {
+            "delay": {
+              "default": "2s",
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Delay",
+              "type": "string"
+            },
+            "max_attempts": {
+              "default": 1,
+              "maximum": 5,
+              "minimum": 0,
+              "title": "Max Attempts",
+              "type": "integer"
+            },
+            "on_error": {
+              "default": "transient",
+              "enum": [
+                "transient",
+                "all"
+              ],
+              "title": "On Error",
+              "type": "string"
+            }
+          },
+          "title": "Retry",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "always_run": {
+          "default": false,
+          "title": "Always Run",
+          "type": "boolean"
+        },
+        "context": {
+          "default": "fresh",
+          "oneOf": [
+            {
+              "const": "fresh",
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/ResumeContext"
+            }
+          ],
+          "title": "Context"
+        },
+        "cwd": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cwd"
+        },
+        "depends_on": {
+          "default": [],
+          "items": {
+            "pattern": "^[a-z][a-z0-9_-]*$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "fresh_context": {
+          "default": false,
+          "title": "Fresh Context",
+          "type": "boolean"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "limits": {
+          "$ref": "#/$defs/Limits"
+        },
+        "max_iterations": {
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Max Iterations",
+          "type": "integer"
+        },
+        "model": {
+          "default": "medium",
+          "enum": [
+            "small",
+            "medium",
+            "large"
+          ],
+          "title": "Model",
+          "type": "string"
+        },
+        "mutates_checkout": {
+          "default": true,
+          "title": "Mutates Checkout",
+          "type": "boolean"
+        },
+        "output_format": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Format"
+        },
+        "prompt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt"
+        },
+        "prompt_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt File"
+        },
+        "retry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Retry"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeout"
+        },
+        "trigger_rule": {
+          "default": "all_success",
+          "enum": [
+            "all_success",
+            "one_success",
+            "none_failed_min_one_success",
+            "all_done"
+          ],
+          "title": "Trigger Rule",
+          "type": "string"
+        },
+        "type": {
+          "const": "loop",
+          "title": "Type",
+          "type": "string"
+        },
+        "until": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Until"
+        },
+        "until_bash": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Until Bash"
+        },
+        "until_field": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Until Field"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "When"
+        },
+        "with": {
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/FromBinding"
+                },
+                {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              ]
+            }
+          },
+          "title": "With",
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "max_iterations"
+      ],
+      "title": "LoopNode",
+      "type": "object"
+    },
+    "Node": {
+      "$defs": {
+        "ActionNode": {
+          "additionalProperties": false,
+          "description": "Runs one action once, through the engine's runner.",
+          "properties": {
+            "action": {
+              "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*/)?[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "title": "Action",
+              "type": "string"
+            },
+            "capture": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "type": "string"
+                }
+              },
+              "title": "Capture",
+              "type": "object"
+            },
+            "depends_on": {
+              "default": [],
+              "items": {
+                "pattern": "^[a-z][a-z0-9_-]*$",
+                "type": "string"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Timeout"
+            },
+            "trigger_rule": {
+              "default": "all_success",
+              "enum": [
+                "all_success",
+                "one_success",
+                "none_failed_min_one_success",
+                "all_done"
+              ],
+              "title": "Trigger Rule",
+              "type": "string"
+            },
+            "type": {
+              "const": "action",
+              "title": "Type",
+              "type": "string"
+            },
+            "when": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "When"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "id",
+            "action",
+            "type"
+          ],
+          "title": "ActionNode",
+          "type": "object"
+        },
+        "AgentNode": {
+          "additionalProperties": false,
+          "properties": {
+            "always_run": {
+              "default": false,
+              "title": "Always Run",
+              "type": "boolean"
+            },
+            "context": {
+              "default": "fresh",
+              "oneOf": [
+                {
+                  "const": "fresh",
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/$defs/ResumeContext"
+                }
+              ],
+              "title": "Context"
+            },
+            "cwd": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cwd"
+            },
+            "depends_on": {
+              "default": [],
+              "items": {
+                "pattern": "^[a-z][a-z0-9_-]*$",
+                "type": "string"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "limits": {
+              "$ref": "#/$defs/Limits"
+            },
+            "model": {
+              "default": "medium",
+              "enum": [
+                "small",
+                "medium",
+                "large"
+              ],
+              "title": "Model",
+              "type": "string"
+            },
+            "mutates_checkout": {
+              "default": true,
+              "title": "Mutates Checkout",
+              "type": "boolean"
+            },
+            "output_format": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "$ref": "#/$defs/JsonValue"
+                  },
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Output Format"
+            },
+            "prompt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Prompt"
+            },
+            "prompt_file": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Prompt File"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Timeout"
+            },
+            "trigger_rule": {
+              "default": "all_success",
+              "enum": [
+                "all_success",
+                "one_success",
+                "none_failed_min_one_success",
+                "all_done"
+              ],
+              "title": "Trigger Rule",
+              "type": "string"
+            },
+            "type": {
+              "const": "agent",
+              "title": "Type",
+              "type": "string"
+            },
+            "when": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "When"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/FromBinding"
+                    },
+                    {
+                      "$ref": "#/$defs/JsonValue"
+                    }
+                  ]
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "id",
+            "type"
+          ],
+          "title": "AgentNode",
+          "type": "object"
+        },
+        "ApprovalNode": {
+          "additionalProperties": false,
+          "properties": {
+            "capture_response": {
+              "default": false,
+              "title": "Capture Response",
+              "type": "boolean"
+            },
+            "decisions": {
+              "default": [
+                {
+                  "id": "approve",
+                  "label": "Approve"
+                },
+                {
+                  "id": "reject",
+                  "label": "Reject"
+                }
+              ],
+              "items": {
+                "$ref": "#/$defs/Decision"
+              },
+              "minItems": 1,
+              "title": "Decisions",
+              "type": "array"
+            },
+            "depends_on": {
+              "default": [],
+              "items": {
+                "pattern": "^[a-z][a-z0-9_-]*$",
+                "type": "string"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "message": {
+              "title": "Message",
+              "type": "string"
+            },
+            "trigger_rule": {
+              "default": "all_success",
+              "enum": [
+                "all_success",
+                "one_success",
+                "none_failed_min_one_success",
+                "all_done"
+              ],
+              "title": "Trigger Rule",
+              "type": "string"
+            },
+            "type": {
+              "const": "approval",
+              "title": "Type",
+              "type": "string"
+            },
+            "when": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "When"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "message"
+          ],
+          "title": "ApprovalNode",
+          "type": "object"
+        },
+        "Decision": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "label": {
+              "title": "Label",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "label"
+          ],
+          "title": "Decision",
+          "type": "object"
+        },
+        "ExpectNode": {
+          "additionalProperties": false,
+          "description": "Runs a read action every ``every`` until ``until_when`` holds over its output\n(``$self.output``), or fails ``timeout`` once ``timeout`` has passed.",
+          "properties": {
+            "action": {
+              "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*/)?[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "title": "Action",
+              "type": "string"
+            },
+            "capture": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "type": "string"
+                }
+              },
+              "title": "Capture",
+              "type": "object"
+            },
+            "depends_on": {
+              "default": [],
+              "items": {
+                "pattern": "^[a-z][a-z0-9_-]*$",
+                "type": "string"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "every": {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Every",
+              "type": "string"
+            },
+            "id": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout": {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Timeout",
+              "type": "string"
+            },
+            "trigger_rule": {
+              "default": "all_success",
+              "enum": [
+                "all_success",
+                "one_success",
+                "none_failed_min_one_success",
+                "all_done"
+              ],
+              "title": "Trigger Rule",
+              "type": "string"
+            },
+            "type": {
+              "const": "expect",
+              "title": "Type",
+              "type": "string"
+            },
+            "until_when": {
+              "title": "Until When",
+              "type": "string"
+            },
+            "when": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "When"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "id",
+            "action",
+            "type",
+            "every",
+            "timeout",
+            "until_when"
+          ],
+          "title": "ExpectNode",
+          "type": "object"
+        },
+        "FromBinding": {
+          "additionalProperties": false,
+          "description": "A ``with`` value read from an upstream output, ``if_skipped`` when that node skipped.",
+          "properties": {
+            "from": {
+              "title": "From",
+              "type": "string"
+            },
+            "if_skipped": {
+              "$ref": "#/$defs/JsonValue",
+              "default": null
+            }
+          },
+          "required": [
+            "from"
+          ],
+          "title": "FromBinding",
+          "type": "object"
+        },
+        "HaltNode": {
+          "additionalProperties": false,
+          "properties": {
+            "depends_on": {
+              "default": [],
+              "items": {
+                "pattern": "^[a-z][a-z0-9_-]*$",
+                "type": "string"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "reason": {
+              "title": "Reason",
+              "type": "string"
+            },
+            "trigger_rule": {
+              "default": "all_success",
+              "enum": [
+                "all_success",
+                "one_success",
+                "none_failed_min_one_success",
+                "all_done"
+              ],
+              "title": "Trigger Rule",
+              "type": "string"
+            },
+            "type": {
+              "const": "halt",
+              "title": "Type",
+              "type": "string"
+            },
+            "when": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "When"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "reason"
+          ],
+          "title": "HaltNode",
+          "type": "object"
+        },
+        "IncludeNode": {
+          "additionalProperties": false,
+          "description": "Replaced at load by the workflow ``include`` names; ``with`` fills that one's ``inputs``.\n\nIts ``depends_on``, ``when`` and ``trigger_rule`` go to the block's roots; a root keeps its\nown ``trigger_rule`` when it sets one.",
+          "properties": {
+            "depends_on": {
+              "default": [],
+              "items": {
+                "pattern": "^[a-z][a-z0-9_-]*$",
+                "type": "string"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "include": {
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Include",
+              "type": "string"
+            },
+            "trigger_rule": {
+              "default": "all_success",
+              "enum": [
+                "all_success",
+                "one_success",
+                "none_failed_min_one_success",
+                "all_done"
+              ],
+              "title": "Trigger Rule",
+              "type": "string"
+            },
+            "type": {
+              "const": "include",
+              "title": "Type",
+              "type": "string"
+            },
+            "when": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "When"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "include"
+          ],
+          "title": "IncludeNode",
+          "type": "object"
+        },
+        "JsonValue": {},
+        "Limits": {
+          "additionalProperties": false,
+          "properties": {
+            "max_cost_usd": {
+              "default": 3.0,
+              "title": "Max Cost Usd",
+              "type": "number"
+            },
+            "max_turns": {
+              "default": 40,
+              "minimum": 1,
+              "title": "Max Turns",
+              "type": "integer"
+            }
+          },
+          "title": "Limits",
+          "type": "object"
+        },
+        "LoopGroupNode": {
+          "additionalProperties": false,
+          "description": "A body sub-graph run once per iteration until ``until_when`` holds or ``until_bash``\nexits 0, at most ``max_iterations`` times. Body ids are recorded as ``<group>__<id>``.",
+          "properties": {
+            "depends_on": {
+              "default": [],
+              "items": {
+                "pattern": "^[a-z][a-z0-9_-]*$",
+                "type": "string"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "fresh_context": {
+              "default": false,
+              "title": "Fresh Context",
+              "type": "boolean"
+            },
+            "id": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "max_iterations": {
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Max Iterations",
+              "type": "integer"
+            },
+            "nodes": {
+              "items": {
+                "discriminator": {
+                  "mapping": {
+                    "action": "#/$defs/ActionNode",
+                    "agent": "#/$defs/AgentNode",
+                    "approval": "#/$defs/ApprovalNode",
+                    "expect": "#/$defs/ExpectNode",
+                    "halt": "#/$defs/HaltNode",
+                    "loop": "#/$defs/LoopNode",
+                    "script": "#/$defs/ScriptNode",
+                    "shell": "#/$defs/ShellNode",
+                    "wait": "#/$defs/WaitNode"
+                  },
+                  "propertyName": "type"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/AgentNode"
+                  },
+                  {
+                    "$ref": "#/$defs/ShellNode"
+                  },
+                  {
+                    "$ref": "#/$defs/ScriptNode"
+                  },
+                  {
+                    "$ref": "#/$defs/LoopNode"
+                  },
+                  {
+                    "$ref": "#/$defs/ApprovalNode"
+                  },
+                  {
+                    "$ref": "#/$defs/HaltNode"
+                  },
+                  {
+                    "$ref": "#/$defs/WaitNode"
+                  },
+                  {
+                    "$ref": "#/$defs/ActionNode"
+                  },
+                  {
+                    "$ref": "#/$defs/ExpectNode"
+                  }
+                ]
+              },
+              "minItems": 1,
+              "title": "Nodes",
+              "type": "array"
+            },
+            "trigger_rule": {
+              "default": "all_success",
+              "enum": [
+                "all_success",
+                "one_success",
+                "none_failed_min_one_success",
+                "all_done"
+              ],
+              "title": "Trigger Rule",
+              "type": "string"
+            },
+            "type": {
+              "const": "loop_group",
+              "title": "Type",
+              "type": "string"
+            },
+            "until_bash": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Until Bash"
+            },
+            "until_when": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Until When"
+            },
+            "when": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "When"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "nodes",
+            "max_iterations"
+          ],
+          "title": "LoopGroupNode",
+          "type": "object"
+        },
+        "LoopNode": {
+          "additionalProperties": false,
+          "properties": {
+            "always_run": {
+              "default": false,
+              "title": "Always Run",
+              "type": "boolean"
+            },
+            "context": {
+              "default": "fresh",
+              "oneOf": [
+                {
+                  "const": "fresh",
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/$defs/ResumeContext"
+                }
+              ],
+              "title": "Context"
+            },
+            "cwd": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cwd"
+            },
+            "depends_on": {
+              "default": [],
+              "items": {
+                "pattern": "^[a-z][a-z0-9_-]*$",
+                "type": "string"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "fresh_context": {
+              "default": false,
+              "title": "Fresh Context",
+              "type": "boolean"
+            },
+            "id": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "limits": {
+              "$ref": "#/$defs/Limits"
+            },
+            "max_iterations": {
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Max Iterations",
+              "type": "integer"
+            },
+            "model": {
+              "default": "medium",
+              "enum": [
+                "small",
+                "medium",
+                "large"
+              ],
+              "title": "Model",
+              "type": "string"
+            },
+            "mutates_checkout": {
+              "default": true,
+              "title": "Mutates Checkout",
+              "type": "boolean"
+            },
+            "output_format": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "$ref": "#/$defs/JsonValue"
+                  },
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Output Format"
+            },
+            "prompt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Prompt"
+            },
+            "prompt_file": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Prompt File"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Timeout"
+            },
+            "trigger_rule": {
+              "default": "all_success",
+              "enum": [
+                "all_success",
+                "one_success",
+                "none_failed_min_one_success",
+                "all_done"
+              ],
+              "title": "Trigger Rule",
+              "type": "string"
+            },
+            "type": {
+              "const": "loop",
+              "title": "Type",
+              "type": "string"
+            },
+            "until": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Until"
+            },
+            "until_bash": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Until Bash"
+            },
+            "until_field": {
+              "anyOf": [
+                {
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Until Field"
+            },
+            "when": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "When"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/FromBinding"
+                    },
+                    {
+                      "$ref": "#/$defs/JsonValue"
+                    }
+                  ]
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "max_iterations"
+          ],
+          "title": "LoopNode",
+          "type": "object"
+        },
+        "ResumeContext": {
+          "additionalProperties": false,
+          "description": "Resume an upstream agent node's session instead of starting fresh.",
+          "properties": {
+            "resume": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Resume",
+              "type": "string"
+            }
+          },
+          "required": [
+            "resume"
+          ],
+          "title": "ResumeContext",
+          "type": "object"
+        },
+        "Retry": {
+          "additionalProperties": false,
+          "description": "``max_attempts`` retries after the first attempt, the delay doubling each time.",
+          "properties": {
+            "delay": {
+              "default": "2s",
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Delay",
+              "type": "string"
+            },
+            "max_attempts": {
+              "default": 1,
+              "maximum": 5,
+              "minimum": 0,
+              "title": "Max Attempts",
+              "type": "integer"
+            },
+            "on_error": {
+              "default": "transient",
+              "enum": [
+                "transient",
+                "all"
+              ],
+              "title": "On Error",
+              "type": "string"
+            }
+          },
+          "title": "Retry",
+          "type": "object"
+        },
+        "ScriptNode": {
+          "additionalProperties": false,
+          "properties": {
+            "always_run": {
+              "default": false,
+              "title": "Always Run",
+              "type": "boolean"
+            },
+            "args": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "title": "Args",
+              "type": "array"
+            },
+            "cwd": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cwd"
+            },
+            "depends_on": {
+              "default": [],
+              "items": {
+                "pattern": "^[a-z][a-z0-9_-]*$",
+                "type": "string"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "effect": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "read",
+                    "write",
+                    "destroy"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Effect"
+            },
+            "env": {
+              "patternProperties": {
+                "^[A-Za-z_][A-Za-z0-9_]*$": {
+                  "type": "string"
+                }
+              },
+              "title": "Env",
+              "type": "object"
+            },
+            "id": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "mutates_checkout": {
+              "default": true,
+              "title": "Mutates Checkout",
+              "type": "boolean"
+            },
+            "output_format": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "$ref": "#/$defs/JsonValue"
+                  },
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Output Format"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "runtime": {
+              "enum": [
+                "sh",
+                "python"
+              ],
+              "title": "Runtime",
+              "type": "string"
+            },
+            "script": {
+              "title": "Script",
+              "type": "string"
+            },
+            "stdin": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Stdin"
+            },
+            "timeout": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Timeout"
+            },
+            "trigger_rule": {
+              "default": "all_success",
+              "enum": [
+                "all_success",
+                "one_success",
+                "none_failed_min_one_success",
+                "all_done"
+              ],
+              "title": "Trigger Rule",
+              "type": "string"
+            },
+            "type": {
+              "const": "script",
+              "title": "Type",
+              "type": "string"
+            },
+            "when": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "When"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "runtime",
+            "script"
+          ],
+          "title": "ScriptNode",
+          "type": "object"
+        },
+        "ShellNode": {
+          "additionalProperties": false,
+          "properties": {
+            "always_run": {
+              "default": false,
+              "title": "Always Run",
+              "type": "boolean"
+            },
+            "command": {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "title": "Command",
+              "type": "array"
+            },
+            "cwd": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cwd"
+            },
+            "depends_on": {
+              "default": [],
+              "items": {
+                "pattern": "^[a-z][a-z0-9_-]*$",
+                "type": "string"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "effect": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "read",
+                    "write",
+                    "destroy"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Effect"
+            },
+            "env": {
+              "patternProperties": {
+                "^[A-Za-z_][A-Za-z0-9_]*$": {
+                  "type": "string"
+                }
+              },
+              "title": "Env",
+              "type": "object"
+            },
+            "id": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "mutates_checkout": {
+              "default": true,
+              "title": "Mutates Checkout",
+              "type": "boolean"
+            },
+            "output_format": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "$ref": "#/$defs/JsonValue"
+                  },
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Output Format"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "stdin": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Stdin"
+            },
+            "timeout": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Timeout"
+            },
+            "trigger_rule": {
+              "default": "all_success",
+              "enum": [
+                "all_success",
+                "one_success",
+                "none_failed_min_one_success",
+                "all_done"
+              ],
+              "title": "Trigger Rule",
+              "type": "string"
+            },
+            "type": {
+              "const": "shell",
+              "title": "Type",
+              "type": "string"
+            },
+            "when": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "When"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "command"
+          ],
+          "title": "ShellNode",
+          "type": "object"
+        },
+        "WaitNode": {
+          "additionalProperties": false,
+          "description": "Waits ``duration``, until an instant, or for a person's ``attention`` (text, or one of\n``options``).",
+          "properties": {
+            "attention": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Attention"
+            },
+            "depends_on": {
+              "default": [],
+              "items": {
+                "pattern": "^[a-z][a-z0-9_-]*$",
+                "type": "string"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "duration": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Duration"
+            },
+            "id": {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "options": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Decision"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Options"
+            },
+            "trigger_rule": {
+              "default": "all_success",
+              "enum": [
+                "all_success",
+                "one_success",
+                "none_failed_min_one_success",
+                "all_done"
+              ],
+              "title": "Trigger Rule",
+              "type": "string"
+            },
+            "type": {
+              "const": "wait",
+              "title": "Type",
+              "type": "string"
+            },
+            "until": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Until"
+            },
+            "when": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "When"
+            }
+          },
+          "required": [
+            "id",
+            "type"
+          ],
+          "title": "WaitNode",
+          "type": "object"
+        }
+      },
+      "discriminator": {
+        "mapping": {
+          "action": "#/$defs/ActionNode",
+          "agent": "#/$defs/AgentNode",
+          "approval": "#/$defs/ApprovalNode",
+          "expect": "#/$defs/ExpectNode",
+          "halt": "#/$defs/HaltNode",
+          "include": "#/$defs/IncludeNode",
+          "loop": "#/$defs/LoopNode",
+          "loop_group": "#/$defs/LoopGroupNode",
+          "script": "#/$defs/ScriptNode",
+          "shell": "#/$defs/ShellNode",
+          "wait": "#/$defs/WaitNode"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/AgentNode"
+        },
+        {
+          "$ref": "#/$defs/ShellNode"
+        },
+        {
+          "$ref": "#/$defs/ScriptNode"
+        },
+        {
+          "$ref": "#/$defs/LoopNode"
+        },
+        {
+          "$ref": "#/$defs/ApprovalNode"
+        },
+        {
+          "$ref": "#/$defs/HaltNode"
+        },
+        {
+          "$ref": "#/$defs/WaitNode"
+        },
+        {
+          "$ref": "#/$defs/IncludeNode"
+        },
+        {
+          "$ref": "#/$defs/LoopGroupNode"
+        },
+        {
+          "$ref": "#/$defs/ActionNode"
+        },
+        {
+          "$ref": "#/$defs/ExpectNode"
+        }
+      ]
+    },
+    "ResumeContext": {
+      "additionalProperties": false,
+      "description": "Resume an upstream agent node's session instead of starting fresh.",
+      "properties": {
+        "resume": {
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Resume",
+          "type": "string"
+        }
+      },
+      "required": [
+        "resume"
+      ],
+      "title": "ResumeContext",
+      "type": "object"
+    },
+    "Retry": {
+      "additionalProperties": false,
+      "description": "``max_attempts`` retries after the first attempt, the delay doubling each time.",
+      "properties": {
+        "delay": {
+          "default": "2s",
+          "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+          "title": "Delay",
+          "type": "string"
+        },
+        "max_attempts": {
+          "default": 1,
+          "maximum": 5,
+          "minimum": 0,
+          "title": "Max Attempts",
+          "type": "integer"
+        },
+        "on_error": {
+          "default": "transient",
+          "enum": [
+            "transient",
+            "all"
+          ],
+          "title": "On Error",
+          "type": "string"
+        }
+      },
+      "title": "Retry",
+      "type": "object"
+    },
+    "ScriptNode": {
+      "$defs": {
+        "JsonValue": {},
+        "Retry": {
+          "additionalProperties": false,
+          "description": "``max_attempts`` retries after the first attempt, the delay doubling each time.",
+          "properties": {
+            "delay": {
+              "default": "2s",
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Delay",
+              "type": "string"
+            },
+            "max_attempts": {
+              "default": 1,
+              "maximum": 5,
+              "minimum": 0,
+              "title": "Max Attempts",
+              "type": "integer"
+            },
+            "on_error": {
+              "default": "transient",
+              "enum": [
+                "transient",
+                "all"
+              ],
+              "title": "On Error",
+              "type": "string"
+            }
+          },
+          "title": "Retry",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "always_run": {
+          "default": false,
+          "title": "Always Run",
+          "type": "boolean"
+        },
+        "args": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Args",
+          "type": "array"
+        },
+        "cwd": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cwd"
+        },
+        "depends_on": {
+          "default": [],
+          "items": {
+            "pattern": "^[a-z][a-z0-9_-]*$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "effect": {
+          "anyOf": [
+            {
+              "enum": [
+                "read",
+                "write",
+                "destroy"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Effect"
+        },
+        "env": {
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_]*$": {
+              "type": "string"
+            }
+          },
+          "title": "Env",
+          "type": "object"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "mutates_checkout": {
+          "default": true,
+          "title": "Mutates Checkout",
+          "type": "boolean"
+        },
+        "output_format": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Format"
+        },
+        "retry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Retry"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "runtime": {
+          "enum": [
+            "sh",
+            "python"
+          ],
+          "title": "Runtime",
+          "type": "string"
+        },
+        "script": {
+          "title": "Script",
+          "type": "string"
+        },
+        "stdin": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stdin"
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeout"
+        },
+        "trigger_rule": {
+          "default": "all_success",
+          "enum": [
+            "all_success",
+            "one_success",
+            "none_failed_min_one_success",
+            "all_done"
+          ],
+          "title": "Trigger Rule",
+          "type": "string"
+        },
+        "type": {
+          "const": "script",
+          "title": "Type",
+          "type": "string"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "When"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "runtime",
+        "script"
+      ],
+      "title": "ScriptNode",
+      "type": "object"
+    },
+    "ShellNode": {
+      "$defs": {
+        "JsonValue": {},
+        "Retry": {
+          "additionalProperties": false,
+          "description": "``max_attempts`` retries after the first attempt, the delay doubling each time.",
+          "properties": {
+            "delay": {
+              "default": "2s",
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Delay",
+              "type": "string"
+            },
+            "max_attempts": {
+              "default": 1,
+              "maximum": 5,
+              "minimum": 0,
+              "title": "Max Attempts",
+              "type": "integer"
+            },
+            "on_error": {
+              "default": "transient",
+              "enum": [
+                "transient",
+                "all"
+              ],
+              "title": "On Error",
+              "type": "string"
+            }
+          },
+          "title": "Retry",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "always_run": {
+          "default": false,
+          "title": "Always Run",
+          "type": "boolean"
+        },
+        "command": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Command",
+          "type": "array"
+        },
+        "cwd": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cwd"
+        },
+        "depends_on": {
+          "default": [],
+          "items": {
+            "pattern": "^[a-z][a-z0-9_-]*$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "effect": {
+          "anyOf": [
+            {
+              "enum": [
+                "read",
+                "write",
+                "destroy"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Effect"
+        },
+        "env": {
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_]*$": {
+              "type": "string"
+            }
+          },
+          "title": "Env",
+          "type": "object"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "mutates_checkout": {
+          "default": true,
+          "title": "Mutates Checkout",
+          "type": "boolean"
+        },
+        "output_format": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Format"
+        },
+        "retry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Retry"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "stdin": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stdin"
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeout"
+        },
+        "trigger_rule": {
+          "default": "all_success",
+          "enum": [
+            "all_success",
+            "one_success",
+            "none_failed_min_one_success",
+            "all_done"
+          ],
+          "title": "Trigger Rule",
+          "type": "string"
+        },
+        "type": {
+          "const": "shell",
+          "title": "Type",
+          "type": "string"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "When"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "command"
+      ],
+      "title": "ShellNode",
+      "type": "object"
+    },
+    "WaitNode": {
+      "$defs": {
+        "Decision": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "label": {
+              "title": "Label",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "label"
+          ],
+          "title": "Decision",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Waits ``duration``, until an instant, or for a person's ``attention`` (text, or one of\n``options``).",
+      "properties": {
+        "attention": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attention"
+        },
+        "depends_on": {
+          "default": [],
+          "items": {
+            "pattern": "^[a-z][a-z0-9_-]*$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "duration": {
+          "anyOf": [
+            {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "options": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Decision"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Options"
+        },
+        "trigger_rule": {
+          "default": "all_success",
+          "enum": [
+            "all_success",
+            "one_success",
+            "none_failed_min_one_success",
+            "all_done"
+          ],
+          "title": "Trigger Rule",
+          "type": "string"
+        },
+        "type": {
+          "const": "wait",
+          "title": "Type",
+          "type": "string"
+        },
+        "until": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Until"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "When"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "WaitNode",
+      "type": "object"
+    },
+    "WorkflowObject": {
+      "additionalProperties": false,
+      "description": "A frozen object of a workflow document: an unknown key is a load error.",
+      "properties": {},
+      "title": "WorkflowObject",
+      "type": "object"
+    }
+  }
+}

@@ -9,8 +9,9 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from jsonschema import Draft202012Validator
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
+from agent_hub.core.features import output_models
 from agent_hub.core.features.agent_outputs import (
     OUTPUT_SCHEMA_FILES,
     OUTPUT_SCHEMA_PACKAGE,
@@ -1769,3 +1770,15 @@ def test_holds_commits_to_the_tickets_repos_when_eval_v2_has_record(
     )
 
     assert found == problems
+
+
+def test_keeps_schema_and_errors_when_models_are_built(characterization: Any) -> None:
+    review: TypeAdapter[Any] = TypeAdapter(ReviewOutput)
+    invalid = a_review_document(verdict="MAYBE", findings=[a_finding(line=0, colour="red")])
+
+    characterization.check(
+        characterization.snapshot(
+            output_models,
+            {"valid review": (review, a_review_document()), "invalid review": (review, invalid)},
+        )
+    )
