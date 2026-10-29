@@ -14,6 +14,7 @@ from agent_hub.core.hub_files.hub_lock import (
     HUB_JSON_PATH,
     HUB_LOCK_PATH,
     LOCK_VERSION,
+    RELEASE_PAIR,
     HubLock,
     ManagedFileEntry,
     build_hub_lock,
@@ -607,6 +608,7 @@ def test_refuses_lock_when_only_one_commit_field_is_set(header: dict[str, str]) 
 
     assert isinstance(problems, tuple)
     assert len(problems) == 1, problems
+    assert RELEASE_PAIR in problems[0].message
 
 
 @pytest.mark.parametrize(

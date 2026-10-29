@@ -3,6 +3,8 @@
 - Status: proposed (accepted at merge)
 - Date: 2026-10-29
 - Deciders: José Henrique Roquette
+- Partially supersedes: [ADR 0009](0009-hub-sync-by-file-ownership.md) (the release commit is a fourth input to the
+  lock) and [ADR 0013](0013-release-by-git-tags.md) (the shim's source and resolve step). Both stay unedited.
 
 ## Context and Problem Statement
 
