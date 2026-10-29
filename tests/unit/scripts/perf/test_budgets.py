@@ -19,7 +19,7 @@ SHIPPED = Path(__file__).resolve().parents[4] / "scripts" / "perf" / "budgets.js
 PROPOSED = "AGH-601 proposed"
 # The source of an entry added after the seed, at a value ADR 0053 sets.
 ADR_SOURCE = "ADR 0053"
-# The list-command rows, whose budget comes from the ADR rather than AGH-601's proposal.
+# The list-command rows, at ADR 0053's `every` cli ceiling of 300 ms rather than AGH-601's proposal.
 LIST_COMMAND_PATHS = (
     "hub repo list",
     "hub env list",
@@ -263,14 +263,6 @@ ROUTES = (
     "/api/v1/live-sessions",
 )
 PAGES = ("/", "/features", f"/features/perf/{FEATURE_SLUG}", f"/sessions/{PAGE_SESSION}")
-# The list commands' rows: ADR 0053's `every` cli ceiling of 300 ms.
-LIST_COMMANDS = (
-    "hub repo list",
-    "hub env list",
-    "hub action list",
-    "hub scenario list",
-    "hub workflow list",
-)
 # The seeded budgets, one (kind, path, budget) per suite row; None where a row has no budget.
 OWNER_TABLE: list[tuple[str, str, Budget | None]] = [
     ("cli", "hub --version", Budget(p95_ms=150, api_calls=None, rss_mb=None, source=PROPOSED)),
@@ -282,7 +274,7 @@ OWNER_TABLE: list[tuple[str, str, Budget | None]] = [
     ("cli", "./hub --version (local uvx stand-in)", None),
     *[
         ("cli", command, Budget(p95_ms=300, api_calls=None, rss_mb=None, source=ADR_SOURCE))
-        for command in LIST_COMMANDS
+        for command in LIST_COMMAND_PATHS
     ],
     *[
         ("hook", hook, Budget(p95_ms=80, api_calls=None, rss_mb=None, source=PROPOSED))
