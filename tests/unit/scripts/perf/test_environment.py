@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_hub.core.hub_config.platform_repository import DEFAULT_PLATFORM_REPOSITORY
 from scripts.perf.environment import child_env, create_hub, make_tool_bin, web_argv
 from scripts.perf.fixture import BRANCH_PREFIX, FEATURE_SLUG, PAGE_SESSION
 
@@ -49,6 +50,17 @@ HUB_NAME = "perf"
 FEATURE_ISSUE_LINE = "linear: [AGH-7]"
 # Claude Code's folder name for the fixture's cwd ``/work/perf-api``.
 TRANSCRIPT_FOLDER = "-work-perf-api"
+# What the recording runner's ``hub init`` writes, as the real init would: a pin and a lock
+# without a release commit (the temp hub never syncs).
+INIT_VERSION = "9.8.7"
+INIT_LOCK = {
+    "files": {"AGENTS.md": {"ownership": "managed", "sha256": "0" * 64}},
+    "lock_version": 1,
+    "modules": [],
+    "platform_version": INIT_VERSION,
+    "schema_version": 1,
+}
+COMMIT_HEX = re.compile(r"[0-9a-f]{40}")
 ABSOLUTE_PATH = re.compile(r"(?<![\w.])/[\w.+-]+(?:/[\w.+-]+)*")
 
 
@@ -85,7 +97,8 @@ class Call:
 
 class RecordingRunner:
     """A stand-in for the process runner: records each call, makes the ``--dir`` folder for
-    ``hub init`` (as the real init would), and notes which feature files exist at each call."""
+    ``hub init`` with its ``hub.json`` and ``hub.lock`` (as the real init would), and notes which
+    feature files exist at each call."""
 
     def __init__(self) -> None:
         self.calls: list[Call] = []
@@ -104,6 +117,9 @@ class RecordingRunner:
             if target.is_absolute():
                 self.hub_dir = target
                 target.mkdir(parents=True, exist_ok=True)
+                pin = {"platform": {"version": INIT_VERSION}}
+                (target / "hub.json").write_text(json.dumps(pin) + "\n", "utf-8")
+                (target / "hub.lock").write_text(json.dumps(INIT_LOCK) + "\n", "utf-8")
         self.calls.append(
             Call(
                 argv=args,
@@ -310,3 +326,17 @@ def test_writes_a_synthetic_transcript_under_the_root_when_creating_the_hub(
     assert transcript.is_relative_to(root)
     assert len(lines) >= 1
     assert all(isinstance(json.loads(line), dict) for line in lines)
+
+
+def test_writes_release_commit_when_hub_is_created(tmp_path: Path) -> None:
+    _root_, _env_, runner = _created_hub(tmp_path)
+    assert runner.hub_dir is not None
+
+    lock = json.loads((runner.hub_dir / "hub.lock").read_text("utf-8"))
+
+    assert COMMIT_HEX.fullmatch(lock["platform_commit"]) is not None
+    assert lock["platform_repository"] == DEFAULT_PLATFORM_REPOSITORY
+    assert {k: v for k, v in lock.items() if not k.startswith("platform_")} == {
+        k: v for k, v in INIT_LOCK.items() if not k.startswith("platform_")
+    }
+    assert lock["platform_version"] == INIT_VERSION

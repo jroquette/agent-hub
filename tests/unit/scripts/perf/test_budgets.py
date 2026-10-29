@@ -28,6 +28,9 @@ LIST_COMMAND_PATHS = (
     "hub workflow list",
 )
 RESTART_API = "hub web start → /api/v1/sessions"
+# The shim row, budgeted once AGH-606 runs it in one uvx call: ADR 0053's `hub` row plus 300 ms.
+SHIM_PATH = "./hub --version (local uvx stand-in)"
+ADR_PATHS = (*LIST_COMMAND_PATHS, SHIM_PATH)
 
 
 def _write(path: Path, rows: list[dict[str, object]], **top: object) -> Path:
@@ -221,7 +224,7 @@ def test_raises_budget_file_error_when_enforced_is_not_a_boolean(
 
 def test_enforces_nothing_with_the_default_margin_when_shipped() -> None:
     budgets = load_budgets(SHIPPED)
-    assert len(budgets) == 28
+    assert len(budgets) == 29
 
     assert [key for key, budget in budgets.items() if budget.enforced] == []
     assert budgets_module.load_margin(SHIPPED) == pytest.approx(0.2)
@@ -230,7 +233,7 @@ def test_enforces_nothing_with_the_default_margin_when_shipped() -> None:
 def test_marks_every_seeded_entry_proposed_when_shipped() -> None:
     rows = json.loads(SHIPPED.read_text("utf-8"))["rows"]
     keys = [(row["kind"], row["path"]) for row in rows]
-    seeded = [row for row in rows if row["path"] not in LIST_COMMAND_PATHS]
+    seeded = [row for row in rows if row["path"] not in ADR_PATHS]
 
     assert len(seeded) == 23
     assert [row["source"] for row in seeded if row["source"] != PROPOSED] == []
@@ -271,7 +274,7 @@ OWNER_TABLE: list[tuple[str, str, Budget | None]] = [
         "hub brief --no-network",
         Budget(p95_ms=300, api_calls=None, rss_mb=None, source=PROPOSED),
     ),
-    ("cli", "./hub --version (local uvx stand-in)", None),
+    ("cli", SHIM_PATH, Budget(p95_ms=450, api_calls=None, rss_mb=None, source=ADR_SOURCE)),
     *[
         ("cli", command, Budget(p95_ms=300, api_calls=None, rss_mb=None, source=ADR_SOURCE))
         for command in LIST_COMMAND_PATHS
