@@ -57,6 +57,9 @@ class Read(StrEnum):
     ENV_FILES = "env_files"
     # The hub's scenarios, through core's ``WorkflowSource`` over ``scenarios/<pack>/``.
     SCENARIOS = "scenarios"
+    # The commit of the pinned release's tag, probed with ``git ls-remote`` when the lock records
+    # one (ADR 0054, AGH-603).
+    RELEASE_COMMIT = "release_commit"
 
 
 # The reads the hub listing serves: the listing itself, and the file sets that come from it.

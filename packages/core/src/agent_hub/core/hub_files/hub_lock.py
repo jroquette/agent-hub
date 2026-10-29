@@ -1,26 +1,37 @@
 """``hub.lock`` v1: what init or sync last wrote, by path (docs/design/hub-sync.md § hub.lock).
 
 A managed file is recorded by the SHA-256 of its bytes and its executable bit, a managed link by
-its relative target, and a seeded path (``hub.json`` included) by its ownership only. The lock
-depends only on the render and the config, so the same inputs always give the same bytes. The
-builder does no I/O, and neither does ``read_hub_lock``, which turns the bytes ``hub sync`` read
-back into the lock or into one problem per line.
+its relative target, and a seeded path (``hub.json`` included) by its ownership only. The header
+may also record the commit of the pinned release and the repository it was read from (ADR 0054):
+both or neither, and a lock with neither keeps the bytes an older release wrote. The lock depends
+only on the render, the config and that release commit, so the same inputs always give the same
+bytes. The builder does no I/O, and neither does ``read_hub_lock``, which turns the bytes
+``hub sync`` read back into the lock or into one problem per line.
 """
 
 import hashlib
 import re
 from collections.abc import Iterator
-from typing import Annotated, Final, Literal, Self
+from typing import TYPE_CHECKING, Annotated, Final, Literal, Self
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, model_validator
 
 from agent_hub.core.hub_config.document_check import KEY_MARKER, Location
-from agent_hub.core.hub_config.model import MODULE_IDS, HubConfig, ReleaseVersion, exact_int
+from agent_hub.core.hub_config.model import (
+    MODULE_IDS,
+    HubConfig,
+    PlatformRepository,
+    ReleaseVersion,
+    exact_int,
+)
 from agent_hub.core.hub_config.problems import ROOT_PATH, ConfigProblem, json_path, one_line
 from agent_hub.core.hub_files.rendered_file import Ownership, RelativePosixPath
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.hub_files.rendered_link import link_target_problem
 from agent_hub.core.json_form import InvalidJsonError, JsonValue, dump_json, load_json_bytes
+
+if TYPE_CHECKING:
+    from agent_hub.core.hub_files.release_commit import ReleaseCommit
 
 LOCK_VERSION: Final = 1
 HUB_JSON_PATH: Final = "hub.json"
@@ -37,6 +48,11 @@ HUB_JSON_NOT_SEEDED: Final = f"must be seeded: {HUB_JSON_PATH} is the project's"
 LONE_SURROGATE: Final = "not UTF-8 text: holds a lone surrogate"
 
 Sha256Hex = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+# A full git commit id (SHA-1), as ``git ls-remote`` prints it: never abbreviated.
+CommitHex = Annotated[str, Field(pattern=r"^[0-9a-f]{40}$")]
+# The header fields a lock holds only with a release commit, left out of the bytes otherwise.
+RELEASE_FIELDS: Final = frozenset({"platform_commit", "platform_repository"})
+RELEASE_PAIR: Final = "platform_commit and platform_repository must be set together"
 
 
 def _tuple_from_json_array(value: object) -> object:
@@ -92,6 +108,15 @@ class HubLock(BaseModel):
     schema_version: Annotated[Literal[1], BeforeValidator(exact_int)]
     modules: Annotated[tuple[str, ...], BeforeValidator(_tuple_from_json_array)]
     files: dict[RelativePosixPath, LockEntry]
+    # The commit tag ``v<platform_version>`` named in ``platform_repository`` (ADR 0054).
+    platform_commit: CommitHex | None = None
+    platform_repository: PlatformRepository | None = None
+
+    @model_validator(mode="after")
+    def _release_pair(self) -> Self:
+        if (self.platform_commit is None) != (self.platform_repository is None):
+            raise ValueError(RELEASE_PAIR)
+        return self
 
     @model_validator(mode="after")
     def _modules_and_paths_allowed(self) -> Self:
@@ -134,8 +159,14 @@ def _sha256(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
-def build_hub_lock(*, rendered: RenderedHub, config: HubConfig) -> HubLock:
-    """The lock of ``rendered`` for ``config``: every file and link, plus ``hub.json`` as seeded."""
+def build_hub_lock(
+    *, rendered: RenderedHub, config: HubConfig, release: ReleaseCommit | None = None
+) -> HubLock:
+    """The lock of ``rendered`` for ``config``: every file and link, plus ``hub.json`` as seeded.
+
+    ``release`` is the pinned release's commit and its repository, recorded in the header; with
+    ``None`` the lock records no commit.
+    """
     files: dict[str, LockEntry] = {}
     for file in rendered.files:
         if file.ownership is Ownership.MANAGED:
@@ -157,12 +188,19 @@ def build_hub_lock(*, rendered: RenderedHub, config: HubConfig) -> HubLock:
         # Dumped by alias (``ConfigObject``), so the ids are the JSON spelling: ``contract-sync``.
         modules=tuple(sorted(config.modules.model_dump(exclude_none=True))),
         files=dict(sorted(files.items())),
+        platform_commit=None if release is None else release.commit,
+        platform_repository=None if release is None else release.repository,
     )
 
 
 def lock_bytes(lock: HubLock) -> bytes:
-    """``lock`` in the one JSON form: sorted keys, two-space indent, UTF-8, final newline."""
-    return dump_json(lock.model_dump(mode="json"))
+    """``lock`` in the one JSON form: sorted keys, two-space indent, UTF-8, final newline.
+
+    The release fields are left out when unset, so a lock without a commit keeps the bytes an
+    older release wrote (spec Q1).
+    """
+    unset = {name for name in RELEASE_FIELDS if getattr(lock, name) is None}
+    return dump_json(lock.model_dump(mode="json", exclude=unset))
 
 
 def read_hub_lock(content: bytes) -> HubLock | tuple[ConfigProblem, ...]:
