@@ -194,7 +194,8 @@ def empty[Key, Value]() -> Mapping[Key, Value]:
 class WorkflowObject(BaseModel):
     """A frozen object of a workflow document: an unknown key is a load error."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    # Built on first use, not at import: a command that loads no workflow skips it.
+    model_config = ConfigDict(frozen=True, extra="forbid", defer_build=True)
 
 
 class Retry(WorkflowObject):
@@ -218,6 +219,10 @@ class ResumeContext(WorkflowObject):
 
 class FromBinding(WorkflowObject):
     """A ``with`` value read from an upstream output, ``if_skipped`` when that node skipped."""
+
+    # Built at import: a read-only mapping dumps its values with their own serializer, which
+    # must not be the placeholder a deferred model holds until its first use.
+    model_config = ConfigDict(defer_build=False)
 
     from_: OutputRef = Field(alias="from")
     if_skipped: JsonValue = None

@@ -18,7 +18,6 @@ from typing import Annotated, ClassVar, Final, Literal
 
 from pydantic import (
     AfterValidator,
-    BaseModel,
     Discriminator,
     Field,
     JsonValue,
@@ -285,18 +284,6 @@ class TogetherStep(_Block):
         return f"{len(self.together)} paths"
 
 
-_STEP_CLASSES: Final[tuple[type[_Block], ...]] = (
-    DoStep,
-    WaitUntilStep,
-    YouStep,
-    WaitStep,
-    IncludeStep,
-    RepeatStep,
-    IfStep,
-    TogetherStep,
-)
-
-
 def _step_kind(value: object) -> str | None:
     """The tag of the step ``value`` holds: its one kind key's (a model's, once validated)."""
     if isinstance(value, _Block):
@@ -344,14 +331,6 @@ class TreeDocument(WorkflowObject):
         default_factory=empty
     )
     stages: Annotated[tuple[Stage, ...], AfterValidator(_stage_count)]
-
-
-def _rebuild(models: tuple[type[BaseModel], ...]) -> None:
-    for model in models:
-        model.model_rebuild()
-
-
-_rebuild((*_STEP_CLASSES, RepeatSpec, Stage, TreeDocument))
 
 
 def parse_tree(content: object) -> TreeDocument:

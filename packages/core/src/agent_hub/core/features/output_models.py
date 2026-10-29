@@ -91,7 +91,7 @@ type FindingKind = Literal[
 class ReviewFinding(BaseModel):
     """One finding of a review: where it is, how serious, what is wrong and what is expected."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", defer_build=True)
 
     id: FindingId
     kind: FindingKind
@@ -106,7 +106,7 @@ class ReviewFinding(BaseModel):
 class ReviewOutput(BaseModel):
     """A reviewer's report for one review round of one task: PASS iff no blocking finding."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", defer_build=True)
 
     schema_id: Literal["agent-hub/review/1"] = Field(alias="schema")
     reviewer: Literal["spec", "quality", "ux", "overengineering"]
@@ -133,7 +133,7 @@ type EvalAcs = Annotated[
 class AcResult(BaseModel):
     """The run of one acceptance criterion's check: its command, exit code, status and summary."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", defer_build=True)
 
     ac: AcId
     command: CommandText
@@ -145,7 +145,7 @@ class AcResult(BaseModel):
 class GateResult(BaseModel):
     """The run of one repo gate: the repo, the gate's name, its exit code and status."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", defer_build=True)
 
     repo: GateText
     name: GateText
@@ -157,7 +157,7 @@ class RepoAcResult(BaseModel):
     """The run of one acceptance criterion's check in one repo: the repo, its command, exit code,
     status and summary."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", defer_build=True)
 
     repo: GateText
     ac: AcId
@@ -170,7 +170,7 @@ class RepoAcResult(BaseModel):
 class RepoCommit(BaseModel):
     """One repo of the delivery: the commit its change starts from and the commit evaluated."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", defer_build=True)
 
     repo: GateText
     base: Commit
@@ -180,7 +180,7 @@ class RepoCommit(BaseModel):
 class RedOnParent(BaseModel):
     """A new test, and whether it failed on the base commit (null when not checked)."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", defer_build=True)
 
     test: PathText
     failed_on_base: StrictBool | None
@@ -192,7 +192,7 @@ class EvalOutput(BaseModel):
     ``acs`` is ``"all"`` or a list of AC ids; an empty list scopes the eval by ``tickets``.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", defer_build=True)
 
     schema_id: Literal["agent-hub/eval/1"] = Field(alias="schema")
     delivery: Delivery
@@ -213,7 +213,7 @@ class EvalOutputV2(BaseModel):
     ``acs`` is ``"all"`` or a list of AC ids; an empty list scopes the eval by ``tickets``.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", defer_build=True)
 
     schema_id: Literal["agent-hub/eval/2"] = Field(alias="schema")
     delivery: Delivery
@@ -236,7 +236,7 @@ class PreflightRun(BaseModel):
     note: a superseded approval's re-check, A24) and the workflow
     run it belongs to."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", defer_build=True)
 
     ran_at: AwareDatetime
     plan_version: Annotated[StrictInt, Field(ge=1)]
@@ -267,7 +267,7 @@ class PreflightRun(BaseModel):
 class PreflightRecord(BaseModel):
     """Every preflight run of one ticket, oldest first; runs are only ever appended."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", defer_build=True)
 
     schema_id: Literal["agent-hub/preflight/1"] = Field(alias="schema")
     ticket: TicketKey
@@ -277,7 +277,7 @@ class PreflightRecord(BaseModel):
 class RepoMainCommit(BaseModel):
     """One repo of a ticket that owns several: main's commit there that a preflight run read."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", defer_build=True)
 
     repo: GateText
     commit: Commit
@@ -298,7 +298,7 @@ class PreflightRecordV2(BaseModel):
     """Every preflight run of one ticket that owns several repos, oldest first; runs are only
     ever appended, a run before the ticket owned several naming no ``commits``."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", defer_build=True)
 
     schema_id: Literal["agent-hub/preflight/2"] = Field(alias="schema")
     ticket: TicketKey

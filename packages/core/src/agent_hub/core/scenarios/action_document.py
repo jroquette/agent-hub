@@ -10,7 +10,15 @@ import math
 from collections.abc import Mapping
 from typing import Annotated, Final, Literal, Self
 
-from pydantic import AfterValidator, Field, JsonValue, StrictBool, ValidationError, model_validator
+from pydantic import (
+    AfterValidator,
+    ConfigDict,
+    Field,
+    JsonValue,
+    StrictBool,
+    ValidationError,
+    model_validator,
+)
 
 from agent_hub.core.scenarios.access_policy import Effect
 from agent_hub.core.workflows.document import load_error
@@ -52,6 +60,10 @@ ScriptPath = Annotated[PackPath, AfterValidator(_in_scripts_folder)]
 
 class ActionInput(WorkflowObject):
     """A typed input; a value that does not fit its type is refused before the script runs."""
+
+    # Built at import: a read-only mapping dumps its values with their own serializer, which
+    # must not be the placeholder a deferred model holds until its first use.
+    model_config = ConfigDict(defer_build=False)
 
     type: ActionInputType = "string"
     required: StrictBool = False

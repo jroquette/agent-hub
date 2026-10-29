@@ -18,6 +18,7 @@ from typing import Annotated, Final, Literal, NamedTuple, Protocol, Self
 
 from pydantic import (
     AfterValidator,
+    ConfigDict,
     Field,
     JsonValue,
     PrivateAttr,
@@ -110,6 +111,10 @@ class WorkflowLoadError(AgentHubError):
 
 
 class WorkflowInput(WorkflowObject):
+    # Built at import: a read-only mapping dumps its values with their own serializer, which
+    # must not be the placeholder a deferred model holds until its first use.
+    model_config = ConfigDict(defer_build=False)
+
     type: Literal["string", "integer", "number", "boolean"] = "string"
     required: StrictBool = False
     # Any JSON value, checked against ``type`` below: one message whatever the mismatch.

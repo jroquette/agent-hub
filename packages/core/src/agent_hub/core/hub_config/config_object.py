@@ -49,6 +49,8 @@ class ConfigObject(BaseModel):
         # The ``$schema`` key is an alias; dumping by name would write a key the model rejects.
         serialize_by_alias=True,
         json_schema_extra=COMMENT_KEYS_SCHEMA,
+        # Built on first use, not at import: a command that never validates a config skips it.
+        defer_build=True,
     )
 
     # Keys that are never valid here, each with the message that says why; a subclass sets them.
