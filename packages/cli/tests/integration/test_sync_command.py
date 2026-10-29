@@ -770,7 +770,8 @@ class TestCheck:
         assert tree_digest(demo_hub) == before
         # The real run prints the same lines without ``would``, applies them, and exits 0.
         applied = run_sync(demo_hub)
-        assert (applied.exit_code, applied.stderr) == (0, ""), applied.output
+        assert applied.exit_code == 0, applied.output
+        assert lookup_warnings(applied.stderr, pin_changed=make is _header)
         assert applied.stdout.splitlines() == expected
         assert adapter_calls != []
         assert run_sync(demo_hub, "--check").stdout == "up to date\n"
@@ -1001,7 +1002,9 @@ class TestPendingChanges:
 
         result = run_sync(demo_hub)
 
-        assert (result.exit_code, result.stderr) == (0, ""), result.output
+        assert result.exit_code == 0, result.output
+        # ``_header`` is a pin change: its commit lookup fails offline (AGH-603 Q3).
+        assert lookup_warnings(result.stderr, pin_changed=True)
         # A delete is applied first and a link last, but the lines go by path.
         assert result.stdout.splitlines() == [
             "restored .claude/skills/feature",
@@ -1876,3 +1879,260 @@ def test_adds_nothing_when_scenario_seed_sync_existing_hub(
     assert not (demo_hub / "actions").exists()
     assert not (demo_hub / "scenarios").exists()
     assert tree_digest(demo_hub) == before
+
+
+# ADR 0054 (AGH-603): the commit of the pinned release's tag, looked up only at a pin change.
+# The release repository is the default one (docs/design/project-config.md); the DEMO workspace's
+# git rewrites its owner's GitHub URLs to ``origins``, where ``release_origin`` puts the tags.
+RELEASE_REPOSITORY = "git+https://github.com/jroquette/agent-hub"
+RELEASE_OWNER = "jroquette"
+RELEASE_TAG = f"v{VERSION}"
+OLDER_VERSION = "0.0.1"
+COMMIT_FIELDS = ("platform_commit", "platform_repository")
+# Q3's way back: restore hub.lock from git, then hub sync with network.
+WAY_BACK_WORDS = ("restore", "hub.lock", "hub sync")
+
+
+class ReleaseOrigin(NamedTuple):
+    """The local release repository: its path, the commit tagged ``v0.0.1`` and the pinned tag's."""
+
+    path: Path
+    older_commit: str
+    commit: str
+
+
+def release_origin(workspace: Any, *, annotated: bool) -> ReleaseOrigin:
+    """A bare ``agent-hub`` repository in the workspace's origins with two tagged commits:
+    ``v0.0.1`` (annotated) and ``v<cli version>`` (annotated or lightweight)."""
+    seed = workspace.base / "release-seed"
+    seed.mkdir()
+    workspace.git(seed, "-c", "init.defaultBranch=main", "init", "-q")
+    workspace.git(seed, "commit", "-q", "--allow-empty", "-m", "older release")
+    workspace.git(seed, "tag", "-a", f"v{OLDER_VERSION}", "-m", "older release")
+    workspace.git(seed, "commit", "-q", "--allow-empty", "-m", "pinned release")
+    if annotated:
+        workspace.git(seed, "tag", "-a", RELEASE_TAG, "-m", "pinned release")
+    else:
+        workspace.git(seed, "tag", RELEASE_TAG)
+    path = workspace.origins / "agent-hub.git"
+    workspace.git(workspace.base, "clone", "-q", "--bare", str(seed), str(path))
+    shutil.rmtree(seed)
+    origin = ReleaseOrigin(
+        path=path,
+        older_commit=workspace.git(path, "rev-parse", f"v{OLDER_VERSION}^{{commit}}"),
+        commit=workspace.git(path, "rev-parse", f"{RELEASE_TAG}^{{commit}}"),
+    )
+    tag_object = workspace.git(path, "rev-parse", RELEASE_TAG)
+    # The arrange holds: an annotated tag is an object of its own, a lightweight one is the commit.
+    assert (tag_object != origin.commit) is annotated
+    assert origin.older_commit != origin.commit
+    return origin
+
+
+@pytest.fixture
+def release_workspace(demo_workspace: Any, traced_git: Any) -> Any:
+    """The DEMO workspace whose git reaches the release repository's tags at ``origins``."""
+    demo_workspace.rewrite_github(RELEASE_OWNER)
+    return demo_workspace
+
+
+def ls_remote_calls(traced: Any) -> list[str]:
+    """The arguments of each ``git ls-remote`` the conftest's ``traced_git`` logged."""
+    calls: list[tuple[str, str]] = traced.calls()
+    return [arguments for _cwd, arguments in calls if "ls-remote" in arguments.split()]
+
+
+def set_lock_release(hub: Path, *, version: str, commit: str | None) -> bytes:
+    """Give ``hub.lock`` this ``platform_version`` and release commit (none: no commit fields,
+    as a lock written by v0.27.1); its new bytes."""
+    lock: dict[str, Any] = json.loads((hub / "hub.lock").read_bytes())
+    lock["platform_version"] = version
+    for field in COMMIT_FIELDS:
+        lock.pop(field, None)
+    if commit is not None:
+        lock["platform_commit"] = commit
+        lock["platform_repository"] = RELEASE_REPOSITORY
+    content = dump_json(lock)
+    (hub / "hub.lock").write_bytes(content)
+    return content
+
+
+def lock_release(hub: Path) -> tuple[str, str | None, str | None]:
+    """``hub.lock``'s version, commit and repository (``None`` when a field is absent)."""
+    lock = json.loads((hub / "hub.lock").read_bytes())
+    return (lock["platform_version"], lock.get("platform_commit"), lock.get("platform_repository"))
+
+
+def is_lookup_warning(line: str) -> bool:
+    """Whether ``line`` is Q3's warning: the lock was written without a commit, and the way back."""
+    return all(word in line for word in WAY_BACK_WORDS)
+
+
+def lookup_warnings(stderr: str, *, pin_changed: bool) -> bool:
+    """Whether a real run's ``stderr`` is what an offline sync prints: Q3's one warning line when
+    the lock's version differs from the pin (its commit lookup fails under the root conftest's
+    guard, ``GIT_ALLOW_PROTOCOL=file``), else nothing."""
+    if not pin_changed:
+        return stderr == ""
+    lines = stderr.splitlines()
+    return len(lines) == 1 and is_lookup_warning(lines[0])
+
+
+@pytest.mark.parametrize("annotated", [True, False], ids=["annotated", "lightweight"])
+def test_records_tag_commit_when_sync_follows_pin_change(
+    release_workspace: Any, traced_git: Any, run_sync: SyncRunner, *, annotated: bool
+) -> None:
+    """AC-1: the peeled commit of an annotated tag, the tag's own of a lightweight one."""
+    origin = release_origin(release_workspace, annotated=annotated)
+    hub = release_workspace.hub
+    # The lock records the older release's commit: the pin moved from 0.0.1 to this release.
+    set_lock_release(hub, version=OLDER_VERSION, commit=origin.older_commit)
+
+    result = run_sync(hub)
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "updated hub.lock\n", "")
+    assert lock_release(hub) == (VERSION, origin.commit, RELEASE_REPOSITORY)
+    assert len(ls_remote_calls(traced_git)) == 1
+
+
+@pytest.mark.disable_socket
+def test_keeps_lock_commit_without_lookup_when_offline_and_pin_unchanged(
+    release_workspace: Any, traced_git: Any, run_sync: SyncRunner
+) -> None:
+    """AC-3: the commit for the pinned version and repository is kept byte for byte, offline."""
+    origin = release_origin(release_workspace, annotated=True)
+    hub = release_workspace.hub
+    kept = set_lock_release(hub, version=VERSION, commit=origin.commit)
+    # No network: the rewritten platform URL now names a missing path.
+    shutil.rmtree(origin.path)
+
+    result = run_sync(hub)
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "up to date\n", "")
+    assert (hub / "hub.lock").read_bytes() == kept
+    assert ls_remote_calls(traced_git) == []
+
+
+@pytest.mark.disable_socket
+def test_writes_nothing_when_second_sync_runs_offline(
+    release_workspace: Any,
+    traced_git: Any,
+    run_sync: SyncRunner,
+    *,
+    tree_digest: TreeDigest,
+) -> None:
+    """AC-3: once a sync wrote the commit, an offline sync writes nothing and looks nothing up."""
+    origin = release_origin(release_workspace, annotated=True)
+    hub = release_workspace.hub
+    set_lock_release(hub, version=OLDER_VERSION, commit=None)
+    first = run_sync(hub)
+    assert first.exit_code == 0, first.output
+    assert lock_release(hub) == (VERSION, origin.commit, RELEASE_REPOSITORY)
+    written = (hub / "hub.lock").read_bytes()
+    before = tree_digest(hub)
+    shutil.rmtree(origin.path)
+    looked_up = len(ls_remote_calls(traced_git))
+
+    second = run_sync(hub)
+
+    assert (second.exit_code, second.stdout, second.stderr) == (0, "up to date\n", "")
+    assert (hub / "hub.lock").read_bytes() == written
+    assert tree_digest(hub) == before
+    assert len(ls_remote_calls(traced_git)) == looked_up
+
+
+def test_looks_up_nothing_when_lock_without_commit_matches_pin(
+    release_workspace: Any, traced_git: Any, run_sync: SyncRunner
+) -> None:
+    """Q7: a fresh hub (init writes no commit) stays offline at sync, with the tag reachable."""
+    release_origin(release_workspace, annotated=True)
+    hub = release_workspace.hub
+    fresh = (hub / "hub.lock").read_bytes()
+    assert lock_release(hub) == (VERSION, None, None)
+
+    result = run_sync(hub)
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "up to date\n", "")
+    assert (hub / "hub.lock").read_bytes() == fresh
+    assert ls_remote_calls(traced_git) == []
+
+
+@pytest.mark.parametrize("cause", ["missing-path", "transport-refused"])
+def test_warns_and_keeps_lock_without_commit_when_lookup_fails(
+    release_workspace: Any,
+    traced_git: Any,
+    run_sync: SyncRunner,
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    cause: str,
+) -> None:
+    """Q3: a pin change whose tag cannot be read (offline, the sandbox) writes the lock without a
+    commit, warns once with the way back, and exits 0."""
+    origin = release_origin(release_workspace, annotated=True)
+    hub = release_workspace.hub
+    set_lock_release(hub, version=OLDER_VERSION, commit=origin.older_commit)
+    if cause == "missing-path":
+        shutil.rmtree(origin.path)
+    else:
+        # No rewrite: the real https URL, which the root conftest's guard refuses.
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+        assert os.environ["GIT_ALLOW_PROTOCOL"] == "file"
+
+    result = run_sync(hub)
+
+    assert (result.exit_code, result.stdout) == (0, "updated hub.lock\n"), result.output
+    lines = result.stderr.splitlines()
+    assert len(lines) == 1, result.stderr
+    assert is_lookup_warning(lines[0]), lines
+    assert lock_release(hub) == (VERSION, None, None)
+    assert len(ls_remote_calls(traced_git)) == 1
+
+
+def test_adds_commit_when_lock_was_written_by_older_release(
+    release_workspace: Any, traced_git: Any, run_sync: SyncRunner
+) -> None:
+    """AC-22: a v0.27.1-shaped lock (no commit fields, an older version) gets the commit."""
+    origin = release_origin(release_workspace, annotated=True)
+    hub = release_workspace.hub
+    older = set_lock_release(hub, version=OLDER_VERSION, commit=None)
+    assert not [field for field in COMMIT_FIELDS if field.encode() in older]
+
+    result = run_sync(hub)
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "updated hub.lock\n", "")
+    assert lock_release(hub) == (VERSION, origin.commit, RELEASE_REPOSITORY)
+
+
+def test_calls_no_network_when_sync_check_runs(
+    release_workspace: Any,
+    traced_git: Any,
+    run_sync: SyncRunner,
+    *,
+    tree_digest: TreeDigest,
+) -> None:
+    """Q4: ``--check`` never looks the commit up, even at a pin change with the tag reachable."""
+    origin = release_origin(release_workspace, annotated=True)
+    hub = release_workspace.hub
+    set_lock_release(hub, version=OLDER_VERSION, commit=origin.older_commit)
+    before = tree_digest(hub)
+
+    result = run_sync(hub, "--check")
+
+    assert (result.exit_code, result.stdout, result.stderr) == (4, "would update hub.lock\n", "")
+    assert ls_remote_calls(traced_git) == []
+    assert tree_digest(hub) == before
+
+
+def test_reports_up_to_date_when_check_runs_on_lock_with_commit(
+    release_workspace: Any, traced_git: Any, run_sync: SyncRunner
+) -> None:
+    """Q4, AC-3: a lock holding the commit of a synced hub is no pending change for ``--check``."""
+    origin = release_origin(release_workspace, annotated=True)
+    hub = release_workspace.hub
+    kept = set_lock_release(hub, version=VERSION, commit=origin.commit)
+
+    result = run_sync(hub, "--check")
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "up to date\n", "")
+    assert (hub / "hub.lock").read_bytes() == kept
+    assert ls_remote_calls(traced_git) == []

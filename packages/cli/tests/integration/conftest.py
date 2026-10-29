@@ -78,6 +78,10 @@ NOT_A_REPO = 128
 # Set by the caller (a git hook, a worktree script, a cloud session's config), a variable with
 # this prefix would change which repo git reads or how it reads it.
 GIT_VARIABLE_PREFIX = "GIT_"
+# The root conftest's guard, kept by every environment built here: git may reach only ``file``
+# remotes, so no command's git reaches the network.
+GIT_PROTOCOL_VARIABLE = "GIT_ALLOW_PROTOCOL"
+LOCAL_GIT_PROTOCOL = "file"
 
 
 @pytest.fixture(autouse=True)
@@ -89,6 +93,9 @@ def no_git_location(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     for variable in [name for name in os.environ if name.startswith(GIT_VARIABLE_PREFIX)]:
         monkeypatch.delenv(variable)
+    # Except the root conftest's guard: git reaches local bare repositories only (ADR 0054's
+    # release lookup must never read the real tag).
+    monkeypatch.setenv(GIT_PROTOCOL_VARIABLE, LOCAL_GIT_PROTOCOL)
     monkeypatch.delenv(HUB_ROOT_VARIABLE, raising=False)
     # Set when the suite runs from a Claude Code session; hub doctor would probe the remotes then
     # (AGH-134). A test that wants a session sets it.
@@ -273,6 +280,7 @@ def demo_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CheckoutFa
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_CEILING_DIRECTORIES": str(tmp_path),
+        GIT_PROTOCOL_VARIABLE: LOCAL_GIT_PROTOCOL,
     }
     for name, value in env.items():
         monkeypatch.setenv(name, value)
@@ -997,6 +1005,7 @@ def _workspace_git_env(home: Path) -> dict[str, str]:
         "HOME": str(home),
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_GLOBAL": os.devnull,
+        GIT_PROTOCOL_VARIABLE: LOCAL_GIT_PROTOCOL,
     }
 
 
@@ -1489,7 +1498,7 @@ def brief_env(root: Path) -> dict[str, str]:
         "GIT_COMMITTER_NAME": name,
         "GIT_COMMITTER_EMAIL": email,
         "GIT_COMMITTER_DATE": brief_at(),
-        "GIT_ALLOW_PROTOCOL": "file",
+        GIT_PROTOCOL_VARIABLE: LOCAL_GIT_PROTOCOL,
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_CEILING_DIRECTORIES": str(root),
         "GIT_CONFIG_COUNT": str(len(_NO_MAINTENANCE)),
@@ -2464,6 +2473,7 @@ def _bench_git_env(home: Path, *, days_before: int = 0, hhmm: str = "10:30") -> 
         "GIT_CONFIG_GLOBAL": str(home / ".gitconfig"),
         "GIT_AUTHOR_DATE": date,
         "GIT_COMMITTER_DATE": date,
+        GIT_PROTOCOL_VARIABLE: LOCAL_GIT_PROTOCOL,
     }
 
 

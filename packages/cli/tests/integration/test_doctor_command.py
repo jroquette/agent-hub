@@ -2265,3 +2265,130 @@ def test_finds_nothing_for_seeded_tree_scenario_when_doctor_runs(
     lines = lines_of(run_doctor(demo_hub, "--only", "scenarios.graph_format"), exit_code=0)
 
     assert lines == ["0 errors, 0 warnings, 0 infos"]
+
+
+# ADR 0054 (AGH-603): lock.drift checks the lock's release commit against the pinned tag, from
+# the CLI, only when the lock records a commit. The release repository is the default one
+# (docs/design/project-config.md); the workspace's git rewrites its owner's URLs to ``origins``.
+RELEASE_REPOSITORY = "git+https://github.com/jroquette/agent-hub"
+RELEASE_TAG = f"v{VERSION}"
+
+
+class ReleaseOrigin(NamedTuple):
+    """The local release repository, the commit its pinned tag names and another commit."""
+
+    path: Path
+    commit: str
+    other_commit: str
+
+
+@pytest.fixture
+def release_origin(demo_workspace: Workspace, traced_git: Any) -> ReleaseOrigin:
+    """A bare ``agent-hub`` in the workspace's origins, annotated tag ``v<cli version>`` on its
+    second commit, reached through the workspace git's rewrite of the release URL."""
+    demo_workspace.rewrite_github("jroquette")
+    seed = demo_workspace.base / "release-seed"
+    seed.mkdir()
+    demo_workspace.git(seed, "-c", "init.defaultBranch=main", "init", "-q")
+    demo_workspace.git(seed, "commit", "-q", "--allow-empty", "-m", "earlier")
+    other_commit = demo_workspace.git(seed, "rev-parse", "HEAD")
+    demo_workspace.git(seed, "commit", "-q", "--allow-empty", "-m", "release")
+    demo_workspace.git(seed, "tag", "-a", RELEASE_TAG, "-m", "release")
+    path = demo_workspace.origins / "agent-hub.git"
+    demo_workspace.git(demo_workspace.base, "clone", "-q", "--bare", str(seed), str(path))
+    shutil.rmtree(seed)
+    commit = demo_workspace.git(path, "rev-parse", f"{RELEASE_TAG}^{{commit}}")
+    assert commit != other_commit
+    return ReleaseOrigin(path=path, commit=commit, other_commit=other_commit)
+
+
+def record_release(hub: Path, commit: str | None) -> None:
+    """Make ``hub.lock`` record ``commit`` of the default repository (``None``: no commit)."""
+    lock: dict[str, Any] = json.loads((hub / "hub.lock").read_bytes())
+    lock.pop("platform_commit", None)
+    lock.pop("platform_repository", None)
+    if commit is not None:
+        lock["platform_commit"] = commit
+        lock["platform_repository"] = RELEASE_REPOSITORY
+    (hub / "hub.lock").write_bytes(dump_json(lock))
+
+
+def release_probes(traced_git: Any) -> list[str]:
+    """The arguments of each ``git ls-remote`` a run made."""
+    calls: list[tuple[str, str]] = traced_git.calls()
+    return [arguments for _cwd, arguments in calls if "ls-remote" in arguments.split()]
+
+
+def test_reports_lock_drift_when_lock_commit_differs_from_tag(
+    demo_workspace: Workspace,
+    release_origin: ReleaseOrigin,
+    run_doctor: DoctorRunner,
+    *,
+    traced_git: Any,
+) -> None:
+    """AC-2: an error naming both commits, fixed by ``hub sync``; exit 1."""
+    record_release(demo_workspace.hub, release_origin.other_commit)
+
+    lines = lines_of(run_doctor(demo_workspace.hub, "--only", "lock.drift"), exit_code=1)
+
+    assert len(lines) == 2, lines
+    finding, totals = lines
+    assert finding.startswith("error lock.drift "), finding
+    assert release_origin.other_commit in finding
+    assert release_origin.commit in finding
+    assert finding.endswith(" Fix: run hub sync"), finding
+    assert totals == ONE_ERROR
+    assert len(release_probes(traced_git)) == 1
+
+
+def test_notes_unchecked_commit_when_remote_unreachable(
+    demo_workspace: Workspace,
+    release_origin: ReleaseOrigin,
+    run_doctor: DoctorRunner,
+    *,
+    traced_git: Any,
+) -> None:
+    """Q5: offline, the commit is not checked: one stderr note, no finding, exit 0."""
+    record_release(demo_workspace.hub, release_origin.commit)
+    # The rewritten release URL now names a missing path.
+    shutil.rmtree(release_origin.path)
+
+    result = run_doctor(demo_workspace.hub, "--only", "lock.drift")
+
+    assert (result.exit_code, result.stdout) == (0, f"{CLEAN}\n"), result.output
+    assert len(result.stderr.splitlines()) == 1, result.stderr
+    assert len(release_probes(traced_git)) == 1
+
+
+def test_probes_no_release_when_only_other_rules_run(
+    demo_workspace: Workspace,
+    release_origin: ReleaseOrigin,
+    run_doctor: DoctorRunner,
+    *,
+    traced_git: Any,
+) -> None:
+    """Q5: the tag is probed only when lock.drift runs (``--only features.tracker`` probes none)."""
+    # A wrong commit: had the tag been probed, lock.drift would report it.
+    record_release(demo_workspace.hub, release_origin.other_commit)
+
+    lines = lines_of(run_doctor(demo_workspace.hub, "--only", "features.tracker"), exit_code=0)
+
+    assert lines == [CLEAN]
+    assert release_probes(traced_git) == []
+
+
+def test_reports_nothing_when_lock_has_no_commit(
+    demo_workspace: Workspace,
+    release_origin: ReleaseOrigin,
+    run_doctor: DoctorRunner,
+    *,
+    traced_git: Any,
+) -> None:
+    """Q21, AC-22: a lock with no commit (``hub init``'s, v0.27.1's): no finding, no probe."""
+    record_release(demo_workspace.hub, None)
+    assert b"platform_commit" not in (demo_workspace.hub / "hub.lock").read_bytes()
+
+    lines = lines_of(run_doctor(demo_workspace.hub, "--only", "lock.drift"), exit_code=0)
+
+    assert lines == [CLEAN]
+    assert release_probes(traced_git) == []
