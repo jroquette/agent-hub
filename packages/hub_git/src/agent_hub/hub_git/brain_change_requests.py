@@ -45,6 +45,7 @@ from agent_hub.core.brain.brain_path import (
 from agent_hub.core.brain.frontmatter import FrontmatterError, with_body, with_frontmatter
 from agent_hub.core.learnings.brain_change_requests import (
     BrainChange,
+    BrainChangeBatch,
     BrainProposal,
     ChangeRequestConflictError,
     ChangeRequestError,
@@ -146,6 +147,23 @@ class GitBrainChangeRequests:
         """Push a branch that archives the note with the reason and open its PR."""
         return self._open(change)
 
+    def decide_batch(self, batch: BrainChangeBatch) -> ChangeRequestResult:
+        """Push a new branch ``<prefix>learning-triage-<slug>`` whose one commit applies every
+        change of the batch, and open its PR. A branch already on ``origin`` is refused."""
+        for change in batch.changes:
+            _check_destination(change, _checked_note(change))
+        prefix = batch.branch_prefix
+        push_argv(batch.branch, default_branch=batch.default_branch, prefix=prefix)
+        hub = Path(batch.hub_path)
+        session = self._runner.start()
+        url = self._checked_origin(hub, batch.hub_repo, session)
+        work = Path(tempfile.mkdtemp(prefix="hub-learning-", dir=self._temp_root))
+        try:
+            action = _Batch(self._runner, session, change=batch, work=work, prefix=prefix)
+            return action.run(url=url, hub=hub)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+
     def propose(self, proposal: BrainProposal) -> ChangeRequestResult:
         """Push a new branch ``<prefix>learning-propose-<slug>`` that adds the inbox note, and
         open its PR. A branch already on ``origin`` is refused, never adopted."""
@@ -212,9 +230,10 @@ class GitBrainChangeRequests:
             shutil.rmtree(work, ignore_errors=True)
 
 
-class _Workspace[R: BrainChange | BrainProposal]:
+class _Workspace[R: BrainChange | BrainChangeBatch | BrainProposal]:
     """One action in the temporary folder ``work`` (the clone is ``work/clone``): the steps
-    accept, reject and propose share (clone, read the base, push, open and clean up the PR)."""
+    accept, reject, a batch and propose share (clone, read the base, read a note, push, open and
+    clean up the PR)."""
 
     def __init__(
         self,
@@ -330,6 +349,61 @@ class _Workspace[R: BrainChange | BrainProposal]:
             raise ChangeRequestFailedError(step="pr")
         return pr_url
 
+    def _read_note(self, base: str, change: BrainChange) -> tuple[str, str]:
+        """``(mode, text)`` of the change's inbox note on ``base``, else from the hub checkout."""
+        shown = f"brain/{change.note}"
+        entry = self._entry(base, change.note)
+        if entry is None:
+            return _NEW_FILE_MODE, self._checkout_note(change, shown)
+        mode, kind, blob = entry
+        if kind != "blob" or mode not in _REGULAR_MODES:
+            raise _conflict(f"Note is not a regular file: {shown}")
+        if int(_text(self._git(["cat-file", "-s", blob], step="read"))) > MAX_NOTE_BYTES:
+            raise _conflict(f"Note too large: {shown}")
+        raw = self._git(["cat-file", "blob", blob], step="read")
+        try:
+            return mode, raw.decode("utf-8")
+        except UnicodeDecodeError:
+            raise _conflict(f"Note is not UTF-8 text: {shown}") from None
+
+    def _checkout_note(self, change: BrainChange, shown: str) -> str:
+        """The note as it sits in the hub checkout, for a note ``/learn`` wrote there and nobody
+        pushed yet: it is only read (never through a link), and the branch then adds it."""
+        default = change.default_branch
+        missing = f"Note not on origin/{default} nor in the hub checkout: {shown}"
+        path = Path(change.hub_path) / BRAIN_FOLDER / change.note
+        try:
+            found = path.lstat()
+        except OSError:
+            raise _conflict(missing) from None
+        if not stat.S_ISREG(found.st_mode):
+            raise _conflict(f"Note is not a regular file: {shown}")
+        if found.st_size > MAX_NOTE_BYTES:
+            raise _conflict(f"Note too large: {shown}")
+        try:
+            return path.read_bytes().decode("utf-8")
+        except OSError:
+            raise _conflict(missing) from None
+        except UnicodeDecodeError:
+            raise _conflict(f"Note is not UTF-8 text: {shown}") from None
+
+    def _moved_blob(self, change: BrainChange, text: str) -> str:
+        """The object id of the note as the change leaves it: the edited body, if any, and the
+        frontmatter set."""
+        try:
+            edited = text if change.note_body is None else with_body(text, change.note_body)
+            moved = with_frontmatter(edited, change.frontmatter)
+        except FrontmatterError:
+            raise _conflict(f"Note frontmatter is not closed: brain/{change.note}") from None
+        note_file = self._work / "note.md"
+        note_file.write_bytes(moved.encode("utf-8"))
+        hashed = ["hash-object", "-w", "--no-filters", "--", str(note_file)]
+        return _text(self._git(hashed, step="commit"))
+
+    def _refuse_taken(self, base: str, change: BrainChange) -> None:
+        if self._entry(base, change.destination) is not None:
+            raise _conflict(f"Destination exists: brain/{change.destination}")
+
     def _delete_branch(self, *, only_at: str | None = None) -> None:
         """Delete the change's branch on ``origin`` (best effort, on a budget of its own); with
         ``only_at``, only when ``origin``'s branch points at that commit."""
@@ -362,8 +436,8 @@ class _Action(_Workspace[BrainChange]):
             if adopted is not None:
                 return ChangeRequestResult(pr_url=adopted, branch=change.branch)
             self._push(delete=True)
-        self._refuse_taken(base)
-        mode, text = self._note(base)
+        self._refuse_taken(base, change)
+        mode, text = self._read_note(base, change)
         return self._publish(self._commit(base, mode, text))
 
     def _open_pull_request_of_branch(self) -> str | None:
@@ -387,66 +461,40 @@ class _Action(_Workspace[BrainChange]):
         except UnexpectedOutputError:
             raise ChangeRequestFailedError(step="pr") from None
 
-    def _refuse_taken(self, base: str) -> None:
-        change = self._change
-        if self._entry(base, change.destination) is not None:
-            raise _conflict(f"Destination exists: brain/{change.destination}")
-
-    def _note(self, base: str) -> tuple[str, str]:
-        change = self._change
-        shown = f"brain/{change.note}"
-        entry = self._entry(base, change.note)
-        if entry is None:
-            return _NEW_FILE_MODE, self._checkout_note(shown)
-        mode, kind, blob = entry
-        if kind != "blob" or mode not in _REGULAR_MODES:
-            raise _conflict(f"Note is not a regular file: {shown}")
-        if int(_text(self._git(["cat-file", "-s", blob], step="read"))) > MAX_NOTE_BYTES:
-            raise _conflict(f"Note too large: {shown}")
-        raw = self._git(["cat-file", "blob", blob], step="read")
-        try:
-            return mode, raw.decode("utf-8")
-        except UnicodeDecodeError:
-            raise _conflict(f"Note is not UTF-8 text: {shown}") from None
-
-    def _checkout_note(self, shown: str) -> str:
-        """The note as it sits in the hub checkout, for a note ``/learn`` wrote there and nobody
-        pushed yet: it is only read (never through a link), and the branch then adds it."""
-        change = self._change
-        missing = f"Note not on origin/{change.default_branch} nor in the hub checkout: {shown}"
-        path = Path(change.hub_path) / BRAIN_FOLDER / change.note
-        try:
-            found = path.lstat()
-        except OSError:
-            raise _conflict(missing) from None
-        if not stat.S_ISREG(found.st_mode):
-            raise _conflict(f"Note is not a regular file: {shown}")
-        if found.st_size > MAX_NOTE_BYTES:
-            raise _conflict(f"Note too large: {shown}")
-        try:
-            return path.read_bytes().decode("utf-8")
-        except OSError:
-            raise _conflict(missing) from None
-        except UnicodeDecodeError:
-            raise _conflict(f"Note is not UTF-8 text: {shown}") from None
-
     def _commit(self, base: str, mode: str, text: str) -> str:
         change = self._change
-        try:
-            edited = text if change.note_body is None else with_body(text, change.note_body)
-            moved = with_frontmatter(edited, change.frontmatter)
-        except FrontmatterError:
-            raise _conflict(f"Note frontmatter is not closed: brain/{change.note}") from None
-        note_file = self._work / "note.md"
-        note_file.write_bytes(moved.encode("utf-8"))
-        hashed = ["hash-object", "-w", "--no-filters", "--", str(note_file)]
-        blob = _text(self._git(hashed, step="commit"))
+        blob = self._moved_blob(change, text)
         self._git(["read-tree", base], step="commit")
         self._git(["update-index", "--force-remove", "--", f"brain/{change.note}"], step="commit")
         cacheinfo = f"{mode},{blob},brain/{change.destination}"
         self._git(["update-index", "--add", "--cacheinfo", cacheinfo], step="commit")
         tree = _text(self._git(["write-tree"], step="commit"))
         return self._commit_tree(tree, base)
+
+
+class _Batch(_Workspace[BrainChangeBatch]):
+    """Several accepts and rejects in one commit: refuses a branch already on ``origin`` (never
+    adopts it), and refuses the whole batch when any note or destination is refused."""
+
+    def run(self, *, url: str, hub: Path) -> ChangeRequestResult:
+        batch = self._change
+        self._clone_origin(url, hub)
+        base = self._base()
+        if self._branch_on_origin():
+            raise _conflict(f"branch exists: {batch.branch}")
+        moves: list[tuple[BrainChange, str, str]] = []
+        for change in batch.changes:
+            self._refuse_taken(base, change)
+            mode, text = self._read_note(base, change)
+            moves.append((change, mode, self._moved_blob(change, text)))
+        self._git(["read-tree", base], step="commit")
+        for change, mode, blob in moves:
+            remove = ["update-index", "--force-remove", "--", f"brain/{change.note}"]
+            self._git(remove, step="commit")
+            cacheinfo = f"{mode},{blob},brain/{change.destination}"
+            self._git(["update-index", "--add", "--cacheinfo", cacheinfo], step="commit")
+        tree = _text(self._git(["write-tree"], step="commit"))
+        return self._publish(self._commit_tree(tree, base))
 
 
 class _Proposal(_Workspace[BrainProposal]):

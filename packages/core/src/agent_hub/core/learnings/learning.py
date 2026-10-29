@@ -93,3 +93,29 @@ class LearningActionResult(ViewModel):
     state: LearningState
     pr_url: str
     branch: str
+
+
+class LearningDecision(ViewModel):
+    """One decision of a triage batch: accept to ``target`` (with the edited ``note_body`` when
+    there is one) or reject with ``reason``."""
+
+    learning_id: str = Field(min_length=1)
+    action: Literal["accept", "reject"]
+    target: str = ""
+    reason: str = ""
+    note_body: str | None = None
+
+
+class DecidedLearning(ViewModel):
+    """Where one learning of a triage batch now is."""
+
+    learning_id: str
+    state: LearningState
+
+
+class LearningBatchResult(ViewModel):
+    """What a triage batch did: the one pull request it opened, its branch, and each learning."""
+
+    pr_url: str
+    branch: str
+    decided: tuple[DecidedLearning, ...]

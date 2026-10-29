@@ -851,6 +851,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/learnings/decisions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Decide Learnings
+     * @description Open one hub PR that applies every decision (accepts and rejects of one project) in one
+     *     commit; refused as a whole when any decision is. Nothing changes until it is merged.
+     */
+    post: operations["decide_learnings_api_v1_learnings_decisions_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/learnings/{learning_id}": {
     parameters: {
       query?: never;
@@ -3454,6 +3475,15 @@ export interface components {
       /** Reason */
       reason: string;
     };
+    /**
+     * DecidedLearning
+     * @description Where one learning of a triage batch now is.
+     */
+    DecidedLearning: {
+      /** Learning Id */
+      learning_id: string;
+      state: components["schemas"]["LearningState"];
+    };
     /** DecisionEntry */
     DecisionEntry: {
       /** Approver */
@@ -4795,6 +4825,52 @@ export interface components {
       /** Pr Url */
       pr_url: string;
       state: components["schemas"]["LearningState"];
+    };
+    /**
+     * LearningBatchResult
+     * @description What a triage batch did: the one pull request it opened, its branch, and each learning.
+     */
+    LearningBatchResult: {
+      /** Branch */
+      branch: string;
+      /** Decided */
+      decided: components["schemas"]["DecidedLearning"][];
+      /** Pr Url */
+      pr_url: string;
+    };
+    /**
+     * LearningDecisionItem
+     * @description One decision of ``POST /learnings/decisions``: an accept with its ``target`` (and the
+     *     optional edited ``note_body``) or a reject with its ``reason``.
+     */
+    LearningDecisionItem: {
+      /**
+       * Action
+       * @enum {string}
+       */
+      action: "accept" | "reject";
+      /** Learning Id */
+      learning_id: string;
+      /** Note Body */
+      note_body?: string | null;
+      /**
+       * Reason
+       * @default
+       */
+      reason: string;
+      /**
+       * Target
+       * @default
+       */
+      target: string;
+    };
+    /**
+     * LearningDecisionsBody
+     * @description ``POST /learnings/decisions``: 1 to 50 decisions of one project, sent as one hub PR.
+     */
+    LearningDecisionsBody: {
+      /** Decisions */
+      decisions: components["schemas"]["LearningDecisionItem"][];
     };
     /**
      * LearningDetail
@@ -10688,6 +10764,84 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["Page_Learning_"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  decide_learnings_api_v1_learnings_decisions_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["LearningDecisionsBody"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LearningBatchResult"];
+        };
+      };
+      /** @description Already decided, target refused, note not on the default branch, or actions unavailable for this hub */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description The body is not application/json */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Could not open the pull request */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description The action passed its 60 s deadline */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

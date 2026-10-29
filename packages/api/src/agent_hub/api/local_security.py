@@ -73,7 +73,7 @@ READ_METHODS = frozenset({"GET", "HEAD"})
 # A control character (C0, DEL, C1) in a request's path, as the server decoded it.
 CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 STRICT_WRITES = re.compile(
-    rf"^{re.escape(API_PREFIX)}/learnings/[^/]+/(accept|reject)$|{RUN_WRITES.pattern}"
+    rf"^{re.escape(API_PREFIX)}/learnings/([^/]+/(accept|reject)|decisions)$|{RUN_WRITES.pattern}"
     rf"|{ITEM_WRITES.pattern}"
 )
 # The hub registry writes (A11): this server's exact ``Origin`` is required, a missing one too.

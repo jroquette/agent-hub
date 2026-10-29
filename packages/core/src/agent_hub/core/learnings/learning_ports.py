@@ -5,13 +5,20 @@
 ``BrainChangeRequests`` and stores one ``control_plane`` event.
 """
 
+from collections.abc import Sequence
 from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict
 
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.learnings.brain_change_requests import CommitAuthor
-from agent_hub.core.learnings.learning import Learning, LearningActionResult, LearningDetail
+from agent_hub.core.learnings.learning import (
+    Learning,
+    LearningActionResult,
+    LearningBatchResult,
+    LearningDecision,
+    LearningDetail,
+)
 from agent_hub.core.readmodels.filters import LearningFilter
 from agent_hub.core.readmodels.page import Page
 
@@ -63,7 +70,7 @@ class LearningReads(Protocol):
 
 
 class LearningDecisions(Protocol):
-    """Accept or reject a learning through a hub pull request."""
+    """Accept or reject a learning, or a batch of them, through a hub pull request."""
 
     def accept(
         self, learning_id: str, *, target: str, note_body: str | None = None
@@ -74,4 +81,8 @@ class LearningDecisions(Protocol):
 
     def reject(self, learning_id: str, *, reason: str) -> LearningActionResult:
         """Open a PR that archives the note with ``reason``."""
+        ...
+
+    def decide_batch(self, decisions: Sequence[LearningDecision]) -> LearningBatchResult:
+        """Open one PR that applies every decision (all of one project), in one commit."""
         ...
