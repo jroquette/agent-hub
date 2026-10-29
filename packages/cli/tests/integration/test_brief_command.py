@@ -40,8 +40,16 @@ BRIEF_RULES: list[dict[str, Any]] = [
     {"argv_has": ["run", "acme/api"], "stdout": "lint\nbuild\nlint\n"},
     {"argv_has": ["acme/web"], "stdout": ""},
 ]
-# How long each fake gh call waits at the barrier for the others (inside the gh phase budget).
-BARRIER_WAIT = 4.0
+# How long each fake call waits at the barrier for the others (inside the brief's deadline).
+BARRIER_WAIT = 1.5
+# The brief's one deadline for all its git and gh calls, in seconds (spec Q8, amendment A6).
+BRIEF_DEADLINE = 2
+# api's gh run list never answers within the deadline; its other calls answer as in BRIEF_RULES.
+CI_TIMEOUT_RULES: list[dict[str, Any]] = [
+    BRIEF_RULES[0],
+    {"argv_has": ["run", "acme/api"], "stdout": "never shown\n", "delay": 120},
+    BRIEF_RULES[2],
+]
 
 
 def test_rebuilds_hub_workspace_when_brief_fixture_built(brief_workspace: Workspace) -> None:
@@ -94,6 +102,7 @@ CASES: dict[str, dict[str, Any]] = {
     },
     "truncated": {"changes": {"brain/now.md": LONG_NOW}},
     "gh_failing": {"answers": [{"stderr": "HTTP 503\n", "rc": 1}]},
+    "ci_timeout": {"answers": CI_TIMEOUT_RULES},
     "journal_week_edge": {
         "changes": {
             f"{JOURNAL}14.md": None,
@@ -321,6 +330,73 @@ def test_runs_gh_concurrently_when_network_on(
     assert len(list(folder.iterdir())) == 6
 
 
+def test_runs_git_and_gh_together_when_network_on(
+    brief_workspace: Workspace, golden_sections: Callable[[Path], dict[str, bytes]]
+) -> None:
+    # Each repo's git branch and gh pr list need nothing else: all six wait at one barrier, so
+    # a git phase before the gh phase (or one call after another) leaves them short of six.
+    folder = brief_workspace.root / "elsewhere" / "barrier"
+    folder.mkdir()
+    barrier = {"dir": str(folder), "count": 6, "wait": BARRIER_WAIT}
+    brief_workspace.install_git([{"argv_has": ["branch", "--show-current"], "barrier": barrier}])
+    brief_workspace.answer(
+        [
+            {"argv_has": ["pr", "acme/demo-hub"], "rc": 1, "barrier": barrier},
+            {**BRIEF_RULES[0], "barrier": barrier},
+            BRIEF_RULES[1],
+            {"argv_has": ["pr", "acme/web"], "stdout": "", "barrier": barrier},
+            BRIEF_RULES[2],
+        ]
+    )
+    assert list(folder.iterdir()) == []
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout_bytes == golden_of("fresh_network", golden_sections)["stdout"]
+    assert len(list(folder.iterdir())) == 6
+
+
+@pytest.mark.serial
+def test_shows_ci_unknown_when_gh_run_list_times_out(brief_workspace: Workspace) -> None:
+    brief_workspace.answer(CI_TIMEOUT_RULES)
+    started = time.monotonic()
+
+    result = run_brief(brief_workspace)
+
+    elapsed = time.monotonic() - started
+    assert result.exit_code == 0, result.output
+    assert elapsed < BRIEF_DEADLINE + 1, elapsed
+    lines = result.stdout.splitlines()
+    api = lines.index("- api: trunk, 2 changed file(s), 1 behind origin/trunk")
+    assert lines[api + 2] == "  CI: unknown (timeout)"
+
+
+def test_kills_gh_child_when_gh_run_list_times_out(brief_workspace: Workspace) -> None:
+    pid_file = brief_workspace.root / "elsewhere" / "gh-pid"
+    brief_workspace.answer(
+        [BRIEF_RULES[0], {**CI_TIMEOUT_RULES[1], "pid_file": str(pid_file)}, BRIEF_RULES[2]]
+    )
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 0, result.output
+    pid = int(pid_file.read_text())
+    end = time.monotonic() + 2
+    while time.monotonic() < end and process_exists(pid):
+        time.sleep(0.05)
+    assert not process_exists(pid)
+
+
+def process_exists(pid: int) -> bool:
+    """Whether ``pid`` still runs (or waits, unreaped, for its parent)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
 class TestNetwork:
     def test_calls_no_gh_when_no_network(
         self, brief_workspace: Workspace, golden_sections: Callable[[Path], dict[str, bytes]]
@@ -426,29 +502,31 @@ def test_ignores_git_dir_when_caller_sets_it(
     assert result.stdout_bytes == golden_of("no_network", golden_sections)["stdout"]
 
 
-def test_prints_git_state_when_gh_hangs(
-    brief_workspace: Workspace,
-    golden_sections: Callable[[Path], dict[str, bytes]],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Every gh call hangs far past the per-call timeout; the gh phase's budget ends them all.
-    monkeypatch.setattr(brief_command, "GH_PHASE_BUDGET", 0.5)
+def test_prints_git_state_when_gh_hangs(brief_workspace: Workspace) -> None:
+    # Every gh call hangs far past the deadline: the git state stays, each CI is unknown.
     brief_workspace.answer([{"stdout": "#1 never shown\n", "delay": 120}])
-    started = time.monotonic()
 
     result = run_brief(brief_workspace)
 
     assert result.exit_code == 0, result.output
-    assert result.stdout_bytes == golden_of("no_network", golden_sections)["stdout"]
+    lines = result.stdout.splitlines()
+    assert lines[lines.index("## Repos") + 1 : lines.index("## Repos") + 8] == [
+        "- hub: trunk, 0 changed file(s), 0 behind origin/trunk",
+        "  CI: unknown (timeout)",
+        "- api: trunk, 2 changed file(s), 1 behind origin/trunk",
+        "  CI: unknown (timeout)",
+        "- web: detached@dd68590, 0 changed file(s), ? behind origin/trunk",
+        "  CI: unknown (timeout)",
+        "- ui: not found",
+    ]
     assert len(brief_workspace.calls().splitlines()) == 6
-    assert time.monotonic() - started < brief_command.BRIEF_GH_TIMEOUT
 
 
-def test_skips_git_calls_when_git_budget_spent(
+def test_skips_git_calls_when_deadline_spent(
     brief_workspace: Workspace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # No time left for git: each value is left out, as for a git that fails.
-    monkeypatch.setattr(brief_command, "GIT_PHASE_BUDGET", 0)
+    monkeypatch.setattr(brief_command, "BRIEF_DEADLINE", 0)
 
     result = run_brief(brief_workspace, "--no-network")
 

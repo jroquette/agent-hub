@@ -1464,10 +1464,30 @@ if barrier:  # wait until `count` calls have arrived, so only calls made at once
 if "group_file" in rule:
     with open(rule["group_file"], "w", encoding="utf-8") as stream:
         stream.write(str(os.getpgid(0)))
+if "pid_file" in rule:
+    with open(rule["pid_file"], "w", encoding="utf-8") as stream:
+        stream.write(str(os.getpid()))
 time.sleep(rule.get("delay", 0))
 sys.stdout.buffer.write(rule.get("stdout", "").encode())
 sys.stderr.buffer.write(rule.get("stderr", "").encode())
 sys.exit(rule.get("rc", 0))
+"""
+# The fake git: waits at a rule's barrier (the fake gh's rule), then runs the real git with the
+# same arguments; a call that matches no rule runs the real git at once.
+_BRIEF_FAKE_GIT = """import json, os, sys, time
+real, answers, args = sys.argv[1], sys.argv[2], sys.argv[3:]
+with open(answers, encoding="utf-8") as stream:
+    rules = json.load(stream)
+rule = next((r for r in rules if all(a in args for a in r.get("argv_has", []))), None)
+barrier = (rule or {}).get("barrier")
+if barrier:  # wait until `count` calls have arrived, so only calls made at once can all pass
+    open(os.path.join(barrier["dir"], f"started.{os.getpid()}"), "w").close()
+    end = time.monotonic() + barrier["wait"]
+    while len(os.listdir(barrier["dir"])) < barrier["count"]:
+        if time.monotonic() > end:
+            sys.exit(1)
+        time.sleep(0.01)
+os.execv(real, [real, *args])
 """
 
 
@@ -1616,6 +1636,22 @@ class BriefWorkspace:
         )
         gh.chmod(0o755)
         self.answer(BRIEF_GH)
+
+    def install_git(self, rules: list[dict[str, Any]]) -> None:
+        """Put the fake git first on ``PATH``: the first rule whose ``argv_has`` items are all
+        arguments sets its ``barrier``; every call then runs the real git."""
+        real = shutil.which("git", path=os.pathsep.join(BRIEF_SYSTEM_PATH))
+        assert real is not None, "git is needed for the brief workspace"
+        bin_dir = self.root / "bin"
+        answers = bin_dir / "git-answers.json"
+        answers.write_text(json.dumps(rules, indent=2) + "\n")
+        (bin_dir / "fake_git.py").write_text(_BRIEF_FAKE_GIT)
+        git = bin_dir / "git"
+        git.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" -I -S "{bin_dir / "fake_git.py"}"'
+            f' "{real}" "{answers}" "$@"\n'
+        )
+        git.chmod(0o755)
 
 
 def _build_brief_workspace(root: Path) -> None:

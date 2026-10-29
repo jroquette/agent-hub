@@ -4,24 +4,12 @@ from importlib.resources import files
 from agent_hub.cli import brief_command
 
 
-def test_pins_git_timeout_when_module_loaded() -> None:
-    assert brief_command.BRIEF_GIT_TIMEOUT == 6
+def test_pins_brief_deadline_when_module_loaded() -> None:
+    assert brief_command.BRIEF_DEADLINE == 2
 
 
-def test_pins_gh_timeout_when_module_loaded() -> None:
-    assert brief_command.BRIEF_GH_TIMEOUT == 6
-
-
-def test_pins_gh_workers_when_module_loaded() -> None:
-    assert brief_command.MAX_GH_WORKERS == 8
-
-
-def test_pins_git_phase_budget_when_module_loaded() -> None:
-    assert brief_command.GIT_PHASE_BUDGET == 3
-
-
-def test_pins_gh_phase_budget_when_module_loaded() -> None:
-    assert brief_command.GH_PHASE_BUDGET == 5
+def test_pins_workers_when_module_loaded() -> None:
+    assert brief_command.MAX_WORKERS == 8
 
 
 def test_fits_hook_deadline_when_budgets_added() -> None:
@@ -34,5 +22,5 @@ def test_fits_hook_deadline_when_budgets_added() -> None:
     assert found is not None
     hook_deadline = int(found.group(1))
 
-    budgets = brief_command.GIT_PHASE_BUDGET + brief_command.GH_PHASE_BUDGET
-    assert budgets < hook_deadline - 1
+    deadline = brief_command.BRIEF_DEADLINE
+    assert deadline < hook_deadline - 1
