@@ -27,6 +27,7 @@ from agent_hub.core.hub_files.plan_sync import (
     Verb,
     plan_sync,
 )
+from agent_hub.core.hub_files.release_commit import ReleaseCommit
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.hub_files.rendered_link import RenderedLink
@@ -473,6 +474,30 @@ def test_emits_no_adopt_verb_when_sync_planned(
         SyncChange(path="scripts/run.sh", verb=Verb.RESTORED),
     )
     assert {Verb.RECORDED, Verb.MIGRATED}.isdisjoint(change.verb for change in plan.changes)
+
+
+def test_writes_commit_when_release_is_given(a_rendered_hub: HubFactory, config: HubConfig) -> None:
+    rendered = a_rendered_hub()
+    lock = a_lock(rendered, config)
+    assert "platform_commit" not in json.loads(lock_bytes(lock))  # the lock read holds no commit
+    commit = "0123456789abcdef0123456789abcdef01234567"
+    repository = "git+https://github.com/acme/agent-hub"
+
+    plan = plan_sync(
+        rendered=rendered,
+        config=CONFIG,
+        lock=lock,
+        lock_content=lock_bytes(lock),
+        tree=a_tree(synced_tree(rendered)),
+        extensions=NO_EXTENSIONS,
+        release=ReleaseCommit(commit=commit, repository=repository),
+    )
+
+    assert isinstance(plan, SyncPlan)
+    assert plan.lock_written
+    assert plan.writes == (lock_write(plan.lock),)
+    written = json.loads(plan.writes[0].content)
+    assert (written["platform_commit"], written["platform_repository"]) == (commit, repository)
 
 
 def test_returns_empty_plan_when_nothing_differs(

@@ -112,6 +112,35 @@ class EnvFileFacts:
     linked: bool = False
 
 
+# RED stubs for AGH-603 (plan LOCK-1 commit 11): what the CLI's tag probe found, no logic yet.
+class ReleaseFound:
+    """The pinned tag exists on the platform repository and names ``commit``."""
+
+    commit: str
+
+    def __init__(self, *, commit: str) -> None:
+        raise NotImplementedError
+
+
+class ReleaseTagMissing:
+    """The platform repository answered, and has no tag for the pinned version."""
+
+    def __init__(self) -> None:
+        raise NotImplementedError
+
+
+class ReleaseProbeFailed:
+    """The tag could not be read (no network, no credential, timeout): ``reason`` says why."""
+
+    reason: str
+
+    def __init__(self, *, reason: str) -> None:
+        raise NotImplementedError
+
+
+type ReleaseProbe = ReleaseFound | ReleaseTagMissing | ReleaseProbeFailed
+
+
 # What ``hub.lock`` holds: the lock, no lock, something that is no file, or its problems.
 type LockState = HubLock | LockAbsent | LockNotRegular | tuple[ConfigProblem, ...]
 

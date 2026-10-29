@@ -532,3 +532,92 @@ def test_does_no_io_when_lock_read() -> None:
 
     assert list(parameters) == ["content"]
     assert parameters["content"].annotation is bytes
+
+
+# What v0.27.1 wrote for ``a_rendered_hub`` and the builder's config: written out by hand (the
+# hashes are ``sha256sum`` of each file's bytes) and checked once against the v0.27.1 tree. A lock
+# with no release commit must stay exactly these bytes (ADR 0054, spec Q1).
+V0_27_1_LOCK = (
+    b'{\n  "files": {\n'
+    b'    ".claude/agents/x.md": {\n      "ownership": "managed",\n'
+    b'      "symlink": "../../plugin/agents/x.md"\n    },\n'
+    b'    ".claude/skills/y": {\n      "ownership": "seeded"\n    },\n'
+    b'    "AGENTS.md": {\n      "executable": false,\n      "ownership": "managed",\n'
+    b'      "sha256": "a3af2177809b3c009bfec4d1c507c6ee32757385e856bce9ae5ac3aec41a791b"\n    },\n'
+    b'    "README.md": {\n      "ownership": "seeded"\n    },\n'
+    b'    "hub.json": {\n      "ownership": "seeded"\n    },\n'
+    b'    "plugin/agents/x.md": {\n      "executable": false,\n      "ownership": "managed",\n'
+    b'      "sha256": "725651977bd0fb8b5ecf902083f3bddd16f7554a5094d5a97d7ff55131879cc6"\n    },\n'
+    b'    "scripts/run.sh": {\n      "executable": true,\n      "ownership": "managed",\n'
+    b'      "sha256": "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf"\n    }\n'
+    b'  },\n  "lock_version": 1,\n  "modules": [\n    "bench",\n    "cloud"\n  ],\n'
+    b'  "platform_version": "0.2.0",\n  "schema_version": 1\n}\n'
+)
+COMMIT = "0123456789abcdef0123456789abcdef01234567"
+REPOSITORY = "git+https://github.com/acme/agent-hub"
+COMMIT_FIELDS = {"platform_commit", "platform_repository"}
+
+
+def _old_lock_with(**header: object) -> bytes:
+    value = json.loads(V0_27_1_LOCK)
+    value.update(header)
+    return dump_json(value)
+
+
+def _assert_pair_accepted() -> None:
+    both = read_hub_lock(_old_lock_with(platform_commit=COMMIT, platform_repository=REPOSITORY))
+    assert isinstance(both, HubLock), both  # the pair is valid: only the change is refused
+    assert both.model_dump(include=COMMIT_FIELDS) == {
+        "platform_commit": COMMIT,
+        "platform_repository": REPOSITORY,
+    }
+
+
+def test_reads_lock_without_commit_when_written_by_older_release() -> None:
+    read = read_hub_lock(V0_27_1_LOCK)
+
+    assert isinstance(read, HubLock), read
+    assert read.model_dump(include=COMMIT_FIELDS) == {
+        "platform_commit": None,
+        "platform_repository": None,
+    }
+
+
+def test_keeps_lock_bytes_when_no_commit_is_set(
+    a_rendered_hub: Callable[..., RenderedHub], config: HubConfig
+) -> None:
+    read = read_hub_lock(V0_27_1_LOCK)
+    assert isinstance(read, HubLock), read
+
+    built = build_hub_lock(rendered=a_rendered_hub(), config=config, release=None)
+
+    assert lock_bytes(built) == V0_27_1_LOCK
+    assert lock_bytes(read) == V0_27_1_LOCK
+
+
+@pytest.mark.parametrize(
+    "header",
+    [{"platform_commit": COMMIT}, {"platform_repository": REPOSITORY}],
+    ids=["commit-only", "repository-only"],
+)
+def test_refuses_lock_when_only_one_commit_field_is_set(header: dict[str, str]) -> None:
+    _assert_pair_accepted()
+
+    problems = read_hub_lock(_old_lock_with(**header))
+
+    assert isinstance(problems, tuple)
+    assert len(problems) == 1, problems
+
+
+@pytest.mark.parametrize(
+    "commit",
+    [COMMIT[:-1], COMMIT + "8", COMMIT.upper(), "g" * 40, "0" * 64, COMMIT[:7], ""],
+    ids=["thirty-nine", "forty-one", "uppercase", "not-hex", "sha256-long", "abbreviated", "empty"],
+)
+def test_refuses_lock_when_commit_is_not_forty_hex(commit: str) -> None:
+    _assert_pair_accepted()
+
+    problems = read_hub_lock(_old_lock_with(platform_commit=commit, platform_repository=REPOSITORY))
+
+    assert isinstance(problems, tuple)
+    assert [problem.path for problem in problems] == ["platform_commit"]
