@@ -331,6 +331,19 @@ def test_builds_read_only_mapping_values_at_import_when_other_models_defer() -> 
     assert [name for name, model in values.items() if model.model_config.get("defer_build")] == []
 
 
+def test_dumps_from_binding_when_node_holds_one_in_with() -> None:
+    node = NODE.validate_python(
+        {"id": "b", "type": "agent", "prompt": "x", "with": {"plan": {"from": "$a.output.steps"}}}
+    )
+    binding = {"from": "$a.output.steps", "if_skipped": None}
+
+    assert node.model_dump(by_alias=True)["with"] == {"plan": binding}
+    assert node.model_dump(by_alias=True, mode="json")["with"] == {"plan": binding}
+    assert '"with":{"plan":{"from":"$a.output.steps","if_skipped":null}}' in node.model_dump_json(
+        by_alias=True
+    )
+
+
 def test_keeps_schema_and_errors_when_models_are_built(characterization: Any) -> None:
     valid = {
         "id": "plan",

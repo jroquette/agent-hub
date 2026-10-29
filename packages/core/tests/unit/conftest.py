@@ -77,7 +77,9 @@ class Characterization:
         if not path.is_file():
             pytest.fail(f"{path} is missing; write it with GOLDEN_UPDATE=1 and review it")
         expected = json.loads(path.read_text(encoding="utf-8"))
-        assert json.loads(text) == expected, f"{path.name}: behaviour changed (see AGH-607)"
+        assert json.loads(text) == expected, (
+            f"{path.name}: behaviour changed; rewrite with GOLDEN_UPDATE=1 only if intended"
+        )
 
 
 @pytest.fixture
