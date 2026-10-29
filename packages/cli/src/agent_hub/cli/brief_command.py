@@ -3,11 +3,12 @@ the environments of ``hub.json`` and ``hub.local.json`` when they declare any).
 
 The hub is ``AGENT_HUB_ROOT`` or the cwd, and its repos are ``../<dir>``. Git runs in each
 checkout with ``GIT_OPTIONAL_LOCKS=0`` and git's location variables dropped, so the brief writes
-nothing; ``gh`` runs in the hub, its calls at once (at most ``MAX_GH_WORKERS``, spec Q-4), and the
-output keeps the order of ``hub.json``. Every call has a timeout within its phase's budget, and
-stays in the caller's process group, so the SessionStart hook's kill reaches it; a failed, slow
-or missing tool only leaves its value out, as the old script did. The text itself is
-``agent_hub.core.workspace.brief_text``.
+nothing; ``gh`` runs in the hub. The git and gh calls run at once in one pool (at most
+``MAX_WORKERS``, spec Q-4 and Q8), and the output keeps the order of ``hub.json``. Every call
+has a timeout within the brief's one deadline (a ``gh run list`` it ends shows
+``CI: unknown (timeout)``), and stays in the caller's process group, so the SessionStart
+hook's kill reaches it; a failed, slow or missing tool only leaves its value out, as the old
+script did. The text itself is ``agent_hub.core.workspace.brief_text``.
 """
 
 import datetime
@@ -41,20 +42,25 @@ from agent_hub.core.workspace.brief_text import (
 from agent_hub.core.workspace.environment_lines import brief_block
 
 COMMAND: Final = "brief"
-BRIEF_GIT_TIMEOUT: Final = 6.0
-BRIEF_GH_TIMEOUT: Final = 6.0
-# Each phase has one deadline, so the whole brief fits the SessionStart hook's 10 s with its
-# resolve step: a call gets what is left (at most its own timeout), none when nothing is left.
-GIT_PHASE_BUDGET: Final = 3.0
-GH_PHASE_BUDGET: Final = 5.0
-MAX_GH_WORKERS: Final = 8
+# One deadline for every git and gh call (spec Q8), so the whole brief fits the SessionStart
+# hook's 10 s with its resolve step: a call gets what is left, none when nothing is left.
+BRIEF_DEADLINE: Final = 2.0
+MAX_WORKERS: Final = 8
 NOW_PATH: Final = "brain/now.md"
 JOURNAL_GLOB: Final = "brain/journal/[0-9]*/[0-9]*/[0-9][0-9].md"
 HUB_LINE_NAME: Final = "hub"
 _PR_QUERY: Final = '.[] | "#\\(.number) \\(.title)"'
 _FAILED_RUNS_QUERY: Final = '.[] | select(.conclusion=="failure") | .name'
+_STATUS: Final = ("status", "--porcelain")
 # C0 controls but line feed and tab, DEL and C1: a PR title must not move the cursor or recolor.
 _CONTROLS = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+class GhAnswer(NamedTuple):
+    """One gh call's output (empty when it failed) and whether the deadline ended it."""
+
+    text: str
+    timed_out: bool
 
 
 class _Checkout(NamedTuple):
@@ -142,40 +148,75 @@ def _repos(root: Path, config: HubConfig, *, network: bool) -> tuple[RepoState, 
         ),
     ]
     git = shutil.which("git")
-    deadline = time.monotonic() + GIT_PHASE_BUDGET
-    states = [_git_state(checkout, git=git, deadline=deadline) for checkout in checkouts]
     gh = shutil.which("gh") if network else None
-    if gh is None:
-        return tuple(states)
-    shown = [index for index, state in enumerate(states) if state.checkout]
-    outputs = _gh_outputs(
-        gh, root, repos=[(checkouts[index].github, checkouts[index].branch) for index in shown]
-    )
-    for index, (prs, ci) in zip(shown, outputs, strict=True):
-        states[index] = states[index].model_copy(update={"prs": prs, "ci": ci})
+    deadline = time.monotonic() + BRIEF_DEADLINE
+    states = [RepoState(name=checkout.name, checkout=False) for checkout in checkouts]
+    indexes = [index for index, checkout in enumerate(checkouts) if _is_checkout(checkout.path)]
+    shown = [checkouts[index] for index in indexes]
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+        # Spec Q8: each repo's git branch and gh pr list start at once; status, rev-list and
+        # gh run list start when that repo's branch is known.
+        branches = [pool.submit(_branch, git, checkout.path, deadline) for checkout in shown]
+        prs = [
+            pool.submit(_gh_output, gh, root, _pr_arguments(checkout), deadline=deadline)
+            for checkout in shown
+        ]
+        later = []
+        for checkout, branch in zip(shown, branches, strict=True):
+            branch.result()
+            later.append(
+                (
+                    pool.submit(_git_output, git, checkout.path, _STATUS, deadline=deadline),
+                    pool.submit(
+                        _git_output,
+                        git,
+                        checkout.path,
+                        ("rev-list", "--count", f"HEAD..origin/{checkout.branch}"),
+                        deadline=deadline,
+                    ),
+                    pool.submit(_gh_output, gh, root, _run_arguments(checkout), deadline=deadline),
+                )
+            )
+        for index, checkout, branch, pr, (status, behind, run) in zip(
+            indexes, shown, branches, prs, later, strict=True
+        ):
+            states[index] = RepoState(
+                name=checkout.name,
+                checkout=True,
+                branch=branch.result(),
+                dirty=len([line for line in status.result().splitlines() if line]),
+                behind=behind.result(),
+                base=f"origin/{checkout.branch}",
+                default_branch=checkout.branch,
+                prs=pr.result().text,
+                ci=run.result().text,
+                ci_timed_out=run.result().timed_out,
+            )
     return tuple(states)
 
 
-def _git_state(checkout: _Checkout, *, git: str | None, deadline: float) -> RepoState:
-    if not _is_checkout(checkout.path):
-        return RepoState(name=checkout.name, checkout=False)
-    base = f"origin/{checkout.branch}"
-
-    def output(*arguments: str) -> str:
-        return _git_output(git, checkout.path, arguments, deadline=deadline)
-
-    branch = (
-        output("branch", "--show-current") or f"detached@{output('rev-parse', '--short', 'HEAD')}"
+def _pr_arguments(checkout: _Checkout) -> tuple[str, ...]:
+    return ("pr", "list", "-R", checkout.github, "--author", "@me", "--json", "number,title") + (
+        "-q",
+        _PR_QUERY,
     )
-    status = output("status", "--porcelain")
-    return RepoState(
-        name=checkout.name,
-        checkout=True,
-        branch=branch,
-        dirty=len([line for line in status.splitlines() if line]),
-        behind=output("rev-list", "--count", f"HEAD..{base}"),
-        base=base,
-        default_branch=checkout.branch,
+
+
+def _run_arguments(checkout: _Checkout) -> tuple[str, ...]:
+    return ("run", "list", "-R", checkout.github, "--branch", checkout.branch, "-L", "3") + (
+        "--json",
+        "name,conclusion",
+        "-q",
+        _FAILED_RUNS_QUERY,
+    )
+
+
+def _branch(git: str | None, folder: Path, deadline: float) -> str:
+    def output(*arguments: str) -> str:
+        return _git_output(git, folder, arguments, deadline=deadline)
+
+    return (
+        output("branch", "--show-current") or f"detached@{output('rev-parse', '--short', 'HEAD')}"
     )
 
 
@@ -189,7 +230,7 @@ def _is_checkout(path: Path) -> bool:
 
 def _git_output(git: str | None, folder: Path, arguments: Sequence[str], *, deadline: float) -> str:
     # Like the old script: git's stdout whatever its exit code; nothing when it cannot answer.
-    timeout = _time_left(deadline, cap=BRIEF_GIT_TIMEOUT)
+    timeout = _time_left(deadline)
     if git is None or timeout is None:
         return ""
     try:
@@ -205,33 +246,22 @@ def _git_output(git: str | None, folder: Path, arguments: Sequence[str], *, dead
     return _text(result.stdout).strip()
 
 
-def _time_left(deadline: float, *, cap: float) -> float | None:
-    """The timeout of a call started now: what is left before ``deadline``, at most ``cap``."""
+def _time_left(deadline: float) -> float | None:
+    """The timeout of a call started now: what is left before ``deadline``, None when nothing."""
     left = deadline - time.monotonic()
-    return min(left, cap) if left > 0 else None
+    return left if left > 0 else None
 
 
-def _gh_outputs(gh: str, root: Path, *, repos: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
-    """Each repo's open PRs and failing run names on its branch, the calls made at once, in
-    ``repos`` (``owner/name``, branch) order."""
-    calls = []
-    for repo, branch in repos:
-        calls.append(["pr", "list", "-R", repo, "--author", "@me", "--json", "number,title"])
-        calls[-1] += ["-q", _PR_QUERY]
-        calls.append(["run", "list", "-R", repo, "--branch", branch, "-L", "3"])
-        calls[-1] += ["--json", "name,conclusion", "-q", _FAILED_RUNS_QUERY]
-    deadline = time.monotonic() + GH_PHASE_BUDGET
-    with ThreadPoolExecutor(max_workers=MAX_GH_WORKERS) as pool:
-        outputs = list(
-            pool.map(lambda arguments: _gh_output(gh, root, arguments, deadline=deadline), calls)
-        )
-    return [(outputs[index], outputs[index + 1]) for index in range(0, len(outputs), 2)]
-
-
-def _gh_output(gh: str, root: Path, arguments: Sequence[str], *, deadline: float) -> str:
-    timeout = _time_left(deadline, cap=BRIEF_GH_TIMEOUT)
+def _gh_output(
+    gh: str | None, root: Path, arguments: Sequence[str], *, deadline: float
+) -> GhAnswer:
+    """``gh``'s output, empty when there is no ``gh`` (no network) or it fails; ``timed_out``
+    when the deadline ended it (run_child kills the child) or left it no time to start."""
+    if gh is None:
+        return GhAnswer("", timed_out=False)
+    timeout = _time_left(deadline)
     if timeout is None:
-        return ""
+        return GhAnswer("", timed_out=True)
     try:
         # The environment as it is: -R names the repo, so gh does not look for one from the
         # cwd and git's location variables cannot mislead it.
@@ -242,6 +272,8 @@ def _gh_output(gh: str, root: Path, arguments: Sequence[str], *, deadline: float
             timeout=timeout,
             own_session=False,
         )
-    except OSError, ChildTimedOutError:
-        return ""
-    return _CONTROLS.sub("", _text(result.stdout)).strip()
+    except ChildTimedOutError:
+        return GhAnswer("", timed_out=True)
+    except OSError:
+        return GhAnswer("", timed_out=False)
+    return GhAnswer(_CONTROLS.sub("", _text(result.stdout)).strip(), timed_out=False)
