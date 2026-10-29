@@ -112,7 +112,7 @@ class EnvFileFacts:
     linked: bool = False
 
 
-# What the CLI's probe of the pinned release's tag found (ADR 0054, AGH-603).
+# What the CLI's probe of the pinned release's tag found (ADR 0054).
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ReleaseFound:
     """The pinned tag exists on the platform repository and names ``commit``."""

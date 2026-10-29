@@ -9,6 +9,7 @@ git missing, a refused transport or a timeout is never an exception: it is the a
 """
 
 import os
+import re
 from typing import Final
 
 from agent_hub.cli.child_process import git_env, run_child
@@ -30,6 +31,9 @@ OUTPUT_LIMIT: Final = 65536
 _PIP_GIT_PREFIX: Final = "git+"
 # A reason is shown on one line; git's message is cut to this many characters.
 _REASON_CHARS: Final = 200
+# The ``user[:password]@`` part of a URL git names: a rewrite (``url.<base>.insteadOf``, as the CI
+# template's ``x-access-token:<token>@``) can put a credential in the URL git prints.
+_URL_CREDENTIALS: Final = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^/\s@]+@")
 
 
 def lookup_release(*, cwd: str, timeout: float = SYNC_LOOKUP_TIMEOUT) -> ReleaseLookup:
@@ -74,5 +78,6 @@ def tag_commit(
 
 
 def _shown(text: str) -> str:
-    """``text`` on one line, its control characters escaped, at most ``_REASON_CHARS`` long."""
-    return one_line(text)[:_REASON_CHARS]
+    """``text`` on one line, its control characters escaped and any URL's credentials removed, at
+    most ``_REASON_CHARS`` long."""
+    return one_line(_URL_CREDENTIALS.sub(r"\1", text))[:_REASON_CHARS]

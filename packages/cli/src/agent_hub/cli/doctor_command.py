@@ -20,7 +20,7 @@ the pinned release's tag (one ``git ls-remote``, ``DOCTOR_PROBE_TIMEOUT`` second
 ``lock.drift`` runs and the lock records a commit for the pin (ADR 0054); a remote that cannot be
 read is one note on stderr, never a finding. The findings go to stdout as lines and totals, or
 as one JSON object with ``--json``; the exit is 1 when one is an error, else 0. ``check_hub`` is
-the same check on a given root, for ``hub setup``.
+the same check on a given root, for ``hub setup``, which probes no release tag.
 
 ``--fix`` first rewrites what can be fixed without a person, all at once: today every
 ``brain.leak`` (the brain note gets a pointer to the repo line in place of the copied text,
@@ -131,9 +131,9 @@ def doctor(
         context.fail(f"unknown rule in --only: {shown_path(unknown[0])}")
     root = root_or_exit(None)
     _hub_or_exit(root)
-    run = check_hub(root, only=wanted)
+    run = check_hub(root, only=wanted, probe_release=True)
     if fix and isinstance(run, DoctorRun) and _fix_all(root, run):
-        run = check_hub(root, only=wanted)
+        run = check_hub(root, only=wanted, probe_release=True)
     if isinstance(run, UsageProblem):
         context.fail(run.message)
     for note in run.notes:
@@ -155,12 +155,16 @@ class DoctorRun(NamedTuple):
     snapshot: DoctorSnapshot | None = None
 
 
-def check_hub(root: str, *, only: Sequence[str] = ()) -> DoctorRun | UsageProblem:
+def check_hub(
+    root: str, *, only: Sequence[str] = (), probe_release: bool = False
+) -> DoctorRun | UsageProblem:
     """The check of ``hub doctor`` on the hub at ``root``: same reads, same order, no output.
 
     ``root`` must be the hub's real absolute path, taken once (as ``root_or_exit`` gives it):
     the repo checkouts are found at ``root/../<dir>`` and the findings name paths relative to
     it. ``only`` holds known rule ids; a selection the config refuses is the ``UsageProblem``.
+    ``probe_release`` lets ``lock.drift`` read the pinned release's tag over the network (ADR
+    0054): ``hub doctor`` sets it, ``hub setup`` does not.
     """
     running = version(DISTRIBUTION)
     config = config_state(read_hub_bytes(Path(root, FILE_LABEL)), running_version=running)
@@ -188,7 +192,7 @@ def check_hub(root: str, *, only: Sequence[str] = ()) -> DoctorRun | UsageProble
             local=local,
             branch_prefix=_prefix_reader(config, local=local, home=home),
             remote_probes=_remote_prober(root, config),
-            release_probe=_release_prober(root),
+            release_probe=_release_prober(root) if probe_release else None,
         )
     return DoctorRun(
         findings=run_rules(selection, snapshot),
@@ -210,7 +214,7 @@ def _release_prober(root: str) -> ReleaseProber:
 
 
 def _release_notes(probe: ReleaseProbe | None) -> tuple[str, ...]:
-    """Spec Q5: an unreadable remote leaves the lock's commit unchecked, said once on stderr."""
+    """An unreadable remote leaves the lock's commit unchecked, said once on stderr (ADR 0054)."""
     if not isinstance(probe, ReleaseProbeFailed):
         return ()
     return (f"lock.drift: hub.lock's release commit not checked: {probe.reason}",)

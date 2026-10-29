@@ -86,6 +86,7 @@ def _lock_drift(snapshot: DoctorSnapshot) -> Iterable[Finding]:
             for problem in lock
         )
     config = snapshot.hub_config
+    # The release commit only once the version matches the pin: a pending sync looks it up again.
     header = _header_finding(lock, pin=config.platform.version) or _release_finding(
         lock, config, snapshot.release_probe
     )
@@ -125,7 +126,6 @@ def _header_finding(lock: HubLock, *, pin: str) -> Finding | None:
 def _release_finding(
     lock: HubLock, config: HubConfig, probe: ReleaseProbe | None
 ) -> Finding | None:
-    # Only once the version matches the pin: a pending sync looks the commit up again anyway.
     if lock.platform_commit is None or lock.platform_repository is None:
         return None
     in_use = config.platform.effective_repository

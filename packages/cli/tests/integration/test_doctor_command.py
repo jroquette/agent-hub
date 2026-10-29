@@ -2267,7 +2267,7 @@ def test_finds_nothing_for_seeded_tree_scenario_when_doctor_runs(
     assert lines == ["0 errors, 0 warnings, 0 infos"]
 
 
-# ADR 0054 (AGH-603): lock.drift checks the lock's release commit against the pinned tag, from
+# ADR 0054: lock.drift checks the lock's release commit against the pinned tag, from
 # the CLI, only when the lock records a commit. The release repository is the default one
 # (docs/design/project-config.md); the workspace's git rewrites its owner's URLs to ``origins``.
 RELEASE_REPOSITORY = "git+https://github.com/jroquette/agent-hub"
@@ -2356,7 +2356,9 @@ def test_notes_unchecked_commit_when_remote_unreachable(
     result = run_doctor(demo_workspace.hub, "--only", "lock.drift")
 
     assert (result.exit_code, result.stdout) == (0, f"{CLEAN}\n"), result.output
-    assert len(result.stderr.splitlines()) == 1, result.stderr
+    notes = result.stderr.splitlines()
+    assert len(notes) == 1, result.stderr
+    assert notes[0].startswith("lock.drift: hub.lock's release commit not checked: "), notes
     assert len(release_probes(traced_git)) == 1
 
 

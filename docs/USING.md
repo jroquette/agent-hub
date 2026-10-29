@@ -230,7 +230,7 @@ A human then reads the proposal and sets its `status` to `approved`, and `/onboa
 `/onboard`: raise `platform.version` in `hub.json` to the version of § Find the version and check the CLI, run
 `./hub sync`, and commit that change through a PR (a sync after a pin change reads the new tag's commit into
 `hub.lock` with one `git ls-remote`; offline it prints a `warning: hub.lock written without the release commit`
-line and still exits 0: run `./hub sync` again with network before the PR). If the newest release has no `.claude/skills/onboard` either, stop
+line and still exits 0: before the PR, restore `hub.lock` from git and run `./hub sync` again with network). If the newest release has no `.claude/skills/onboard` either, stop
 and tell the user; do not try other versions.
 
 ### Run the control plane

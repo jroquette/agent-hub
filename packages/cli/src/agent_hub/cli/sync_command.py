@@ -87,13 +87,14 @@ def sync(
         _sync(check=check)
 
 
-# Q3 of the AGH-603 spec: the restored lock still holds the older pin, so the next sync looks again.
+# The way back after a failed lookup (ADR 0054): the restored lock still holds the older pin, so
+# the next sync looks again; a second sync without the restore would find no pin change.
 NO_COMMIT_WAY_BACK: Final = (
     "to record it, restore hub.lock from git, then run hub sync with network"
 )
 
 
-def _sync(*, check: bool, lookup: ReleaseLookup | None = None) -> None:
+def _sync(*, check: bool) -> None:
     root = Path(root_or_exit(None))
     config = load_hub_json_or_exit(root / HUB_JSON_PATH, missing_hint=MISSING_HUB_JSON_HINT).config
     read = lock_or_exit(root, way_out=LOCK_WAY_OUT)
@@ -101,7 +102,7 @@ def _sync(*, check: bool, lookup: ReleaseLookup | None = None) -> None:
         fail(ADOPT_POINTER)
     lock, lock_content = read
     tree, extensions, rendered = rendering_or_exit(root, config=config, lock_files=lock.files)
-    release = _release(lock, config, check=check, lookup=lookup or lookup_release(cwd=str(root)))
+    release = _release(lock, config, check=check, lookup=lookup_release(cwd=str(root)))
     planned = plan_sync(
         rendered=rendered,
         config=config,
@@ -131,7 +132,7 @@ def _report(
     check: bool,
     release: ReleaseCommit | LookupFailure | None,
 ) -> None:
-    """The plan's lines; Q3's warning when the lock was written without the commit it lacked."""
+    """The plan's lines; one warning when the lock was written without the commit it lacked."""
     for line in change_lines(planned, check=check):
         typer.echo(line)
     if isinstance(release, LookupFailure) and planned.pending:

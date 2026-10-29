@@ -71,9 +71,9 @@ older hubs and forks keep today's tag path.
   1. A lock without them is byte for byte what the previous release wrote.
 - **Who looks it up.** Only `hub sync`, and only on a pin change: when the lock's `platform_version` or
   `platform_repository` differs from `hub.json`. It runs `git ls-remote <repository> refs/tags/vX.Y.Z
-  refs/tags/vX.Y.Z^{}`, with a timeout and a read cap, and takes the peeled entry when there is one. `hub init`,
-  `hub sync --adopt` and a re-sync with an unchanged pin write or keep the commit with no network call. Sync never
-  re-checks a commit it already holds.
+  refs/tags/vX.Y.Z^{}`, with a timeout and a read cap, and takes the peeled entry when there is one. `hub init`
+  and `hub sync --adopt` write no commit; a re-sync with an unchanged pin keeps the lock's commit with no network
+  call. Sync never re-checks a commit it already holds.
 - **Offline lookup.** When the lookup fails (no network, sandbox, no credential), sync writes the lock without a
   commit, prints one warning line naming the way back (restore `hub.lock` from git, then `hub sync` with network),
   and exits 0. The shim then uses the tag, as today.
@@ -82,7 +82,8 @@ older hubs and forks keep today's tag path.
 - **Doctor.** `hub doctor` checks the commit against the tag only when the lock has a commit and `lock.drift` is
   selected, from the CLI only (the API never probes), with a 5 s timeout. A different commit, or a tag that no longer
   exists, is a `lock.drift` error with the fix "run hub sync". An unreachable remote gives one stderr note and no
-  finding. A lock with no commit gives no finding.
+  finding. A lock whose recorded repository is not the one in use is a `lock.drift` warning with the same fix, and
+  no probe runs. A lock with no commit gives no finding.
 - **The shim.** The shim (and SessionStart and cloud setup) uses `<repository>@<commit>` only when the lock's
   `platform_version` equals `platform.version`, the lock's `platform_repository` equals the repository in use, and
   the commit is 40 lowercase hex. Then it makes one uvx call. In every other case it uses `@v<version>` as today.

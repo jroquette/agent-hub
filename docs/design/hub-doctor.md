@@ -102,7 +102,7 @@ The release probe: when `lock.drift` is selected and the lock records a commit f
 the CLI reads the tag with one `git ls-remote` (no terminal prompt, 5 s timeout). A remote that cannot be read is one
 note on stderr (`lock.drift: hub.lock's release commit not checked: <reason>`), never a finding; with `--only` not
 naming `lock.drift` (e.g. `--only features.tracker`), or a lock with no commit, no probe runs. The control plane's
-doctor snapshot passes no probe.
+doctor snapshot passes no probe, and neither does `hub setup`'s doctor item.
 `--only RULE` (repeatable) runs just those rules, plus `config.schema` always; skills use
 `hub doctor --only features.tracker`. `--json` prints one object with a `findings` list (the finding fields above)
 and the totals (keys `errors`, `warnings`, `infos` with integer counts), for scripts and the Layer 2 control plane.

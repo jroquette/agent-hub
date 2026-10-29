@@ -197,7 +197,7 @@ def lock_bytes(lock: HubLock) -> bytes:
     """``lock`` in the one JSON form: sorted keys, two-space indent, UTF-8, final newline.
 
     The release fields are left out when unset, so a lock without a commit keeps the bytes an
-    older release wrote (spec Q1).
+    older release wrote (ADR 0054).
     """
     unset = {name for name in RELEASE_FIELDS if getattr(lock, name) is None}
     return dump_json(lock.model_dump(mode="json", exclude=unset))

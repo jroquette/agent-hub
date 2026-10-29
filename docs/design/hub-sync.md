@@ -20,13 +20,13 @@ A fourth input ([ADR 0054](../adr/0054-pin-the-platform-release-by-commit.md)): 
 `platform_commit`, the commit tag `v<platform_version>` names, and `platform_repository`, the repository it was read
 from (`platform.repository`, else the default). Both fields or neither; a lock without them (written by v0.27.1 or
 older, or by `hub init`) keeps its bytes. `hub sync` keeps the lock's commit while its version and repository match
-`hub.json`; it looks the tag up only when the pin changed since the lock (Q7: a lock without a commit at the pinned
+`hub.json`; it looks the tag up only when the pin changed since the lock (a lock without a commit at the pinned
 version asks for none, so init and an unchanged hub stay offline): one `git ls-remote <url> refs/tags/vX.Y.Z
 refs/tags/vX.Y.Z^{}` in the hub, no terminal prompt, 20 s timeout, the last 64 KiB of output read, the peeled `^{}`
 line winning over the tag's own (a lightweight tag has only that one). When the lookup fails (offline, the sandbox,
 no credential, no tag, timeout), sync still writes the lock, without a commit, and prints one warning on stderr:
 `warning: hub.lock written without the release commit (<reason>); to record it, restore hub.lock from git, then run
-hub sync with network` (Q3). `--check` never looks up (Q4): it compares against the lock built with the kept commit.
+hub sync with network`. `--check` never looks up: it compares against the lock built with the kept commit.
 
 ### hub sync
 

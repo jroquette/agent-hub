@@ -123,22 +123,28 @@ def test_keeps_commit_when_lock_matches_version_and_repository(
 
 
 @pytest.mark.parametrize(
-    ("written", "in_use", "locked_repository", "locked_version"),
-    [
-        (FORK, FORK, DEFAULT_REPOSITORY, PIN),
-        (None, DEFAULT_REPOSITORY, FORK, PIN),
-        (None, DEFAULT_REPOSITORY, DEFAULT_REPOSITORY, "0.1.9"),
-    ],
-    ids=["fork-in-config", "fork-in-lock", "version-differs"],
+    ("written", "in_use", "locked_repository"),
+    [(FORK, FORK, DEFAULT_REPOSITORY), (None, DEFAULT_REPOSITORY, FORK)],
+    ids=["fork-in-config", "fork-in-lock"],
 )
 def test_drops_commit_when_repository_differs(
-    *, written: str | None, in_use: str, locked_repository: str, locked_version: str
+    *, written: str | None, in_use: str, locked_repository: str
 ) -> None:
     config = a_config(written)
     # The commit under the config's own version and repository is kept: only the change drops it.
     assert kept_release(a_lock(commit=LOCKED, repository=in_use), config) is not None
 
-    lock = a_lock(version=locked_version, commit=LOCKED, repository=locked_repository)
+    lock = a_lock(commit=LOCKED, repository=locked_repository)
+
+    assert kept_release(lock, config) is None
+
+
+def test_drops_commit_when_version_differs() -> None:
+    config = a_config()
+    # The commit under the config's own version and repository is kept: only the change drops it.
+    assert kept_release(a_lock(commit=LOCKED, repository=DEFAULT_REPOSITORY), config) is not None
+
+    lock = a_lock(version="0.1.9", commit=LOCKED, repository=DEFAULT_REPOSITORY)
 
     assert kept_release(lock, config) is None
 
@@ -149,18 +155,22 @@ def test_drops_commit_when_repository_differs(
         {"version": "0.1.9"},
         {"version": "0.1.9", "commit": LOCKED, "repository": DEFAULT_REPOSITORY},
         {"version": "1.0.0", "commit": LOCKED, "repository": DEFAULT_REPOSITORY},
-        {"commit": LOCKED, "repository": FORK},
     ],
-    ids=["older-lock-without-commit", "older-lock-with-commit", "newer-lock", "repository-differs"],
+    ids=["older-lock-without-commit", "older-lock-with-commit", "newer-lock"],
 )
 def test_asks_for_lookup_when_lock_version_differs_from_pin(header: dict[str, str]) -> None:
     assert needs_lookup(a_lock(**header), a_config()) is True
 
 
-@pytest.mark.parametrize(
-    "header",
-    [{}, {"commit": LOCKED, "repository": DEFAULT_REPOSITORY}],
-    ids=["without-commit", "with-commit"],
-)
-def test_asks_for_no_lookup_when_lock_without_commit_matches_pin(header: dict[str, str]) -> None:
-    assert needs_lookup(a_lock(**header), a_config()) is False
+def test_asks_for_lookup_when_lock_repository_differs_from_pin() -> None:
+    assert needs_lookup(a_lock(commit=LOCKED, repository=FORK), a_config()) is True
+
+
+def test_asks_for_no_lookup_when_lock_without_commit_matches_pin() -> None:
+    assert needs_lookup(a_lock(), a_config()) is False
+
+
+def test_asks_for_no_lookup_when_lock_commit_matches_pin() -> None:
+    lock = a_lock(commit=LOCKED, repository=DEFAULT_REPOSITORY)
+
+    assert needs_lookup(lock, a_config()) is False

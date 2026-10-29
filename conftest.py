@@ -2,8 +2,6 @@
 
 import pytest
 
-from scripts.pytest_levels import level_of
-
 pytest_plugins = ("scripts.pytest_levels",)
 
 # The contract suites live in core, outside the test trees pytest rewrites by default; rewrite
@@ -25,7 +23,11 @@ def git_stays_local(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPa
     whose platform URL is not rewritten to a local bare repository fails the lookup offline
     instead of reading the real tag.
     """
-    # The level ``scripts.pytest_levels`` reads from the test's folder.
+    # The level ``scripts.pytest_levels`` reads from the test's folder. Imported here, once the
+    # plugin is registered: a module-level import would come first and keep pytest from
+    # rewriting the plugin's asserts.
+    from scripts.pytest_levels import level_of  # noqa: PLC0415
+
     if level_of(str(request.node.path)) != NETWORK_LEVEL:
         monkeypatch.setenv(GIT_PROTOCOL_VARIABLE, LOCAL_GIT_PROTOCOL)
 

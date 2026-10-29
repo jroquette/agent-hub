@@ -1881,7 +1881,7 @@ def test_adds_nothing_when_scenario_seed_sync_existing_hub(
     assert tree_digest(demo_hub) == before
 
 
-# ADR 0054 (AGH-603): the commit of the pinned release's tag, looked up only at a pin change.
+# ADR 0054: the commit of the pinned release's tag, looked up only at a pin change.
 # The release repository is the default one (docs/design/project-config.md); the DEMO workspace's
 # git rewrites its owner's GitHub URLs to ``origins``, where ``release_origin`` puts the tags.
 RELEASE_REPOSITORY = "git+https://github.com/jroquette/agent-hub"
@@ -1978,13 +1978,13 @@ def lookup_warnings(stderr: str, *, pin_changed: bool) -> bool:
     return len(lines) == 1 and is_lookup_warning(lines[0])
 
 
-@pytest.mark.parametrize("annotated", [True, False], ids=["annotated", "lightweight"])
-def test_records_tag_commit_when_sync_follows_pin_change(
-    release_workspace: Any, traced_git: Any, run_sync: SyncRunner, *, annotated: bool
+def assert_records_tag_commit(
+    workspace: Any, traced: Any, run_sync: SyncRunner, *, annotated: bool
 ) -> None:
-    """AC-1: the peeled commit of an annotated tag, the tag's own of a lightweight one."""
-    origin = release_origin(release_workspace, annotated=annotated)
-    hub = release_workspace.hub
+    """A sync after the pin moved from 0.0.1 to this release records the pinned tag's commit,
+    with one ``git ls-remote``."""
+    origin = release_origin(workspace, annotated=annotated)
+    hub = workspace.hub
     # The lock records the older release's commit: the pin moved from 0.0.1 to this release.
     set_lock_release(hub, version=OLDER_VERSION, commit=origin.older_commit)
 
@@ -1992,7 +1992,42 @@ def test_records_tag_commit_when_sync_follows_pin_change(
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, "updated hub.lock\n", "")
     assert lock_release(hub) == (VERSION, origin.commit, RELEASE_REPOSITORY)
-    assert len(ls_remote_calls(traced_git)) == 1
+    assert len(ls_remote_calls(traced)) == 1
+
+
+def test_records_tag_commit_when_sync_follows_pin_change(
+    release_workspace: Any, traced_git: Any, run_sync: SyncRunner
+) -> None:
+    """AC-1: the peeled commit of an annotated tag (the release workflow's kind)."""
+    assert_records_tag_commit(release_workspace, traced_git, run_sync, annotated=True)
+
+
+def test_records_tag_commit_when_tag_is_lightweight(
+    release_workspace: Any, traced_git: Any, run_sync: SyncRunner
+) -> None:
+    """AC-1: a lightweight tag's own line names the commit."""
+    assert_records_tag_commit(release_workspace, traced_git, run_sync, annotated=False)
+
+
+def test_looks_up_commit_again_when_repository_changes_at_same_version(
+    release_workspace: Any, traced_git: Any, run_sync: SyncRunner
+) -> None:
+    """AC-3: a commit read from another repository (a fork) is no longer kept: the same version
+    in the repository now in use is looked up once and recorded with that repository."""
+    origin = release_origin(release_workspace, annotated=True)
+    hub = release_workspace.hub
+    set_lock_release(hub, version=VERSION, commit=origin.older_commit)
+    lock: dict[str, Any] = json.loads((hub / "hub.lock").read_bytes())
+    lock["platform_repository"] = CUSTOM_REPOSITORY
+    (hub / "hub.lock").write_bytes(dump_json(lock))
+
+    result = run_sync(hub)
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "updated hub.lock\n", "")
+    assert lock_release(hub) == (VERSION, origin.commit, RELEASE_REPOSITORY)
+    calls = ls_remote_calls(traced_git)
+    assert len(calls) == 1
+    assert "github.com/jroquette/agent-hub" in calls[0]
 
 
 @pytest.mark.disable_socket
