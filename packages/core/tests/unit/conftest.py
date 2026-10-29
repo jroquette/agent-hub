@@ -1,4 +1,4 @@
-"""The characterization golden of the core unit tests (AGH-607): models' schemas and outcomes.
+"""The characterization golden of the core unit tests: models' schemas and outcomes.
 
 A module's golden (``packages/core/tests/data/characterization/<module>.json``) pins the JSON
 schema of every public pydantic model the module defines and the result of validating a few

@@ -26,12 +26,13 @@ from datetime import UTC, datetime, timedelta
 from threading import Event
 from typing import Final, Self
 
-from pydantic import ConfigDict, JsonValue, StrictInt, StrictStr, model_validator
+from pydantic import JsonValue, StrictInt, StrictStr, model_validator
 
 from agent_hub.core.workflows.engine import EnginePorts, run_workflow
 from agent_hub.core.workflows.failures import FailureKind, NodeFailedError, RetryRecord
 from agent_hub.core.workflows.gates import GateAnswer, GateError
 from agent_hub.core.workflows.nodes import (
+    READ_ONLY_VALUE_CONFIG,
     ActionNode,
     ApprovalNode,
     ExecutableNode,
@@ -79,9 +80,7 @@ class Stub(WorkflowObject):
     text, approver}`` (an approval; the approver as a recorded decision names it), ``{text}`` or
     ``{choice, text}`` (an attention wait), or ``{}``."""
 
-    # Built at import: a read-only mapping dumps its values with their own serializer, which
-    # must not be the placeholder a deferred model holds until its first use.
-    model_config = ConfigDict(defer_build=False)
+    model_config = READ_ONLY_VALUE_CONFIG
 
     output: JsonValue = None
     text: StrictStr | None = None
