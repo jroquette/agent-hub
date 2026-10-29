@@ -192,7 +192,7 @@ def _target(entry: CommandEntry) -> Any:  # noqa: ANN401 - a command function or
 
 
 def import_all() -> None:
-    """Resolve every entry of the table, importing every command module."""
+    """Import every command module in the table and read each entry's attribute."""
     for entry in COMMANDS:
         _target(entry)
 

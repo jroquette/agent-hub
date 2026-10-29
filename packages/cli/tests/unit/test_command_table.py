@@ -124,6 +124,12 @@ def test_matches_loaded_command_help_when_table_is_read() -> None:
         table = {name: plain(getattr(listed[name], field)) for name in RECORDED_ORDER}
         real = {name: plain(getattr(loaded[name], field)) for name in RECORDED_ORDER}
         assert table == real, field
+    # The table's command class reaches the loaded command (agent passes its arguments through).
+    classes = {
+        entry.name: entry.command_class for entry in command_table.COMMANDS if entry.command_class
+    }
+    assert classes == {"agent": "PassThroughCommand"}
+    assert type(loaded["agent"]).__name__ == "PassThroughCommand"
 
 
 def test_builds_commands_with_root_exception_setting_when_loaded() -> None:
