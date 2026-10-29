@@ -11,6 +11,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+## [0.27.1] - 2026-10-29
+
 ## [0.27.0] - 2026-10-28
 
 ### Added
@@ -1417,7 +1419,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.27.1...HEAD
+[0.27.1]: https://github.com/jroquette/agent-hub/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/jroquette/agent-hub/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/jroquette/agent-hub/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/jroquette/agent-hub/compare/v0.24.0...v0.25.0
