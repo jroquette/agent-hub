@@ -198,7 +198,9 @@ a link or FIFO) of at most 1 MiB whose `platform_commit` is 40 lowercase hex and
 hub …` (signals, stdin and the exit code are uvx's, and uv's own error text is the cause), and only a uv folder that
 nothing can write is found before it (exit 1, no call). Tag path (any other lock, or none): two calls, the resolve step
 `uvx --from <pinned source> hub --version` (fails: exit 1 naming the source and the missing access, no real call), then
-the `exec`'d real call. Either way the real call keeps the caller's cwd, gets `AGENT_HUB_ROOT` = the shim's folder, and
+the `exec`'d real call. The shim, the SessionStart hook and cloud setup read only the lock's `platform_*` fields;
+`hub sync` validates the whole lock, so a lock whose other fields are invalid runs the commit in those three while sync
+refuses it (`test_lock_commit_parity.py` pins both). Either way the real call keeps the caller's cwd, gets `AGENT_HUB_ROOT` = the shim's folder, and
 passes its exit code through. Windows
 is not supported. A script is deleted when its command lands, after characterization tests (brief, bench, retro, lint,
 cloud setup). Order: `worktree`, `brief`, `doctor`, `agent`, `next`/`run`, `bench`, `setup`, `start`.

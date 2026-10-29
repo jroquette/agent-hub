@@ -770,7 +770,7 @@ def test_cuts_environments_when_over_sixty(
     )
 
 
-# AGH-606 (ADR 0054): with a matching commit in hub.lock the pinned brief is one call from the
+# ADR 0054: with a matching commit in hub.lock the pinned brief is one call from the
 # commit, with no resolve step; a lock without one keeps the two tag calls.
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 DEFAULT_REPOSITORY = "git+https://github.com/jroquette/agent-hub"
@@ -798,11 +798,27 @@ def write_lock(hub: Path, *, commit: str | None) -> None:
     assert (lock["platform_version"], lock.get("platform_commit")) == (VERSION, commit)
 
 
+NETWORK_LOGGER = '#!/bin/sh\nprintf \'%s\\n\' "{name} $*" >> "{log}"\nexit 0\n'
+
+
 def test_calls_brief_once_with_commit_source_when_lock_has_commit(
-    hub: Path, *, hook_python: str, run_hook_file: RunHook, bin_dir: Path, uvx_log: Path
+    hub: Path,
+    *,
+    hook_python: str,
+    run_hook_file: RunHook,
+    bin_dir: Path,
+    uvx_log: Path,
+    tmp_path: Path,
 ) -> None:
     install_uvx(bin_dir, python=hook_python, log=uvx_log)
     write_lock(hub, commit=COMMIT)
+    # git and gh loggers on PATH: the hook reads no release from the network.
+    network_log = tmp_path / "network-calls.log"
+    for name in ("git", "gh"):
+        (bin_dir / name).write_text(
+            NETWORK_LOGGER.format(name=name, log=network_log), encoding="utf-8"
+        )
+        (bin_dir / name).chmod(0o755)
 
     completed, _ = start(hub, python=hook_python, run_hook_file=run_hook_file, bin_dir=bin_dir)
 
@@ -811,6 +827,7 @@ def test_calls_brief_once_with_commit_source_when_lock_has_commit(
     assert calls(uvx_log) == [
         {"args": ["--from", COMMIT_SOURCE, "hub", "brief"], "cwd": str(hub), "root": str(hub)}
     ]
+    assert not network_log.exists()
 
 
 def test_calls_brief_with_tag_source_when_lock_has_no_commit(

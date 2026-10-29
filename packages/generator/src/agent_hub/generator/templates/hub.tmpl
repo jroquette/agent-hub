@@ -118,12 +118,11 @@ if [ -n "$uv_own" ]; then
   UV_PYTHON_DOWNLOADS=${UV_PYTHON_DOWNLOADS:-never}
   export UV_CACHE_DIR UV_TOOL_DIR UV_TOOL_BIN_DIR UV_PYTHON_DOWNLOADS
 fi
-write_hint="hub: cannot run agent-hub $version: uv could not write its cache or tool folder, which is not a repository access problem; inside a Claude Code sandbox only the workspace and \$TMPDIR are writable: set UV_CACHE_DIR and UV_TOOL_DIR to a folder there, or run ./hub outside the sandbox"
 if [ -n "$commit" ]; then
   # Commit path: one call, exec'd (signals, stdin and the exit code are uvx's); uv's own error
   # text is the cause, apart from a uv folder the probe found nothing could write.
   if [ "$probe" -eq 3 ]; then
-    printf '%s\n' "$write_hint" >&2
+    echo "hub: cannot run agent-hub $version: uv could not write its cache or tool folder, which is not a repository access problem; inside a Claude Code sandbox only the workspace and \$TMPDIR are writable: set UV_CACHE_DIR and UV_TOOL_DIR to a folder there, or run ./hub outside the sandbox" >&2
     exit 1
   fi
   AGENT_HUB_ROOT=$hub_dir
@@ -137,7 +136,7 @@ resolve_errors=$(uvx --from "$source" hub --version 2>&1 </dev/null >/dev/null) 
   [ -z "$resolve_errors" ] || printf '%s\n' "$resolve_errors" >&2
   case $resolve_errors in
     *"os error 1)"*|*"os error 13)"*|*"os error 30)"*|*"Operation not permitted"*|*"Read-only file system"*|*"Failed to initialize cache"*|*"Could not create temporary file"*)
-      printf '%s\n' "$write_hint" >&2 ;;
+      echo "hub: cannot run agent-hub $version: uv could not write its cache or tool folder, which is not a repository access problem; inside a Claude Code sandbox only the workspace and \$TMPDIR are writable: set UV_CACHE_DIR and UV_TOOL_DIR to a folder there, or run ./hub outside the sandbox" >&2 ;;
     *"No interpreter found"*)
       echo "hub: cannot run agent-hub $version: uv found no Python it may use and downloads none here (UV_PYTHON_DOWNLOADS=${UV_PYTHON_DOWNLOADS:-unset}); run uv python install 3.14 outside the Claude Code sandbox, then retry" >&2 ;;
     *)

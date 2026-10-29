@@ -9,7 +9,7 @@ test folder: a fake ``uvx`` (a Python logger: every argument as one JSON list it
 ``AGENT_HUB_ROOT`` and stdin) and a ``python3`` link, each only when the case wants it. A case
 may set ``platform.repository`` too; the shim reads it at every run, like the pin (AGH-49).
 
-AGH-606 (ADR 0054): a case may also write ``hub.lock`` (``write_lock``). With a commit whose
+ADR 0054: a case may also write ``hub.lock`` (``write_lock``). With a commit whose
 version and repository match ``hub.json``, the shim makes one call from
 ``<repository>@<commit>``; any other lock, or none, keeps the two tag calls above. The fake
 ``uvx`` also logs its parent's pid (``FAKE_UVX_PARENT=1``: the caller's own pid when the shim
@@ -590,7 +590,7 @@ def test_names_python_install_when_no_interpreter(
     ]
 
 
-# AGH-606 (ADR 0054): the commit path. A lock whose version and repository match hub.json and
+# The commit path (ADR 0054). A lock whose version and repository match hub.json and
 # whose commit is 40 lowercase hex runs one ``exec``'d call from the commit; every other lock keeps
 # the tag path above, byte for byte.
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
@@ -795,6 +795,44 @@ def test_uses_tag_source_when_lock_is_too_large(
     (hub / "hub.lock").write_text(padded, encoding="utf-8")
     assert (hub / "hub.lock").stat().st_size == LOCK_CAP + 1
     assert json.loads(padded)["platform_commit"] == COMMIT
+
+    assert_runs_tag_source(hub, run, log)
+
+
+def padded_lock(rendered: RenderedHub, size: int) -> str:
+    """The matching lock as valid JSON of exactly ``size`` bytes: spaces before the last brace."""
+    text = json.dumps(lock_document(rendered), sort_keys=True)
+    padded = text[:-1] + " " * (size - len(text)) + "}"
+    assert len(padded.encode()) == size
+    assert json.loads(padded)["platform_commit"] == COMMIT
+    return padded
+
+
+@ALL_SHELLS
+def test_runs_lock_commit_source_when_lock_is_exactly_the_cap(
+    hub: Path, run: Run, *, tools: None, log: Path, demo_render: RenderedHub
+) -> None:
+    # The cap itself is still read: only a larger file keeps the tag.
+    (hub / "hub.lock").write_text(padded_lock(demo_render, LOCK_CAP), encoding="utf-8")
+    assert (hub / "hub.lock").stat().st_size == LOCK_CAP
+
+    completed = run(hub / "hub", "brief")
+
+    assert completed.returncode == 0, completed.stderr
+    assert [call["args"] for call in calls(log)] == [["--from", COMMIT_SOURCE, "hub", "brief"]]
+
+
+@ALL_SHELLS
+def test_uses_tag_source_when_lock_is_a_link(
+    hub: Path, run: Run, *, tools: None, log: Path, tmp_path: Path, demo_render: RenderedHub
+) -> None:
+    # A link to a matching lock is not read: only a regular file at hub.lock is.
+    target = tmp_path / "elsewhere.lock"
+    target.write_text(
+        json.dumps(lock_document(demo_render), indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    (hub / "hub.lock").symlink_to(target)
+    assert json.loads((hub / "hub.lock").read_text(encoding="utf-8"))["platform_commit"] == COMMIT
 
     assert_runs_tag_source(hub, run, log)
 

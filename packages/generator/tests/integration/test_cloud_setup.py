@@ -624,7 +624,7 @@ class TestAccess:
     def test_warms_cache_with_commit_source_when_lock_has_commit(
         self, cloud_ws: CloudWorkspace
     ) -> None:
-        # AGH-606 (Q15): the access check stays on the tag; only the warm-up uses the commit.
+        # The access check stays on the tag; only the warm-up uses the commit.
         write_lock(cloud_ws, commit=COMMIT)
 
         completed = cloud_ws.run()
@@ -653,7 +653,7 @@ class TestAccess:
         assert [call for call in calls if call.startswith(("uv ", "uvx "))] == [warm_up_call()]
 
 
-# AGH-606 (ADR 0054): the commit the lock records for the pin, and its warm-up source, written out.
+# ADR 0054: the commit the lock records for the pin, and its warm-up source, written out.
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 COMMIT_SOURCE = (
     "git+https://github.com/jroquette/agent-hub@0123456789abcdef0123456789abcdef01234567"

@@ -1,4 +1,4 @@
-"""The four readers of the release commit in ``hub.lock`` pick the same source (AGH-606, ADR 0054).
+"""The four readers of the release commit in ``hub.lock`` pick the same source (ADR 0054).
 
 Each case is a ``hub.json`` (the demo pinned to ``VERSION``, with or without a
 ``platform.repository``) and a ``hub.lock`` (absent, written by ``hub sync``'s own builder, or
@@ -11,7 +11,15 @@ cloud setup's warm-up (on bash). The rendered ones run from one demo render with
 holding only a test folder: a ``uvx`` that logs each call (``uvx <args>``) and answers, a
 ``python3`` link to ``hook_python``, and, for cloud setup only, a ``git`` that does nothing and
 exits 0 (its access check passes; only the warm-up is read). The shim and the hook must make one
-call at a commit and the resolve step then the call at a tag; cloud setup one warm-up.
+call at a commit and the resolve step then the call at a tag; cloud setup one warm-up; the hook
+exits 0 with nothing on stderr (it fails open).
+
+The rendered readers check only the lock's ``platform_*`` fields, while the CLI validates the whole
+lock: a lock whose other fields are invalid runs the commit in the shim, hook and cloud setup, and
+``hub sync`` refuses it (no commit kept). That row names the CLI's own source. The second test
+holds what only the rendered readers decide, the kind and size of the file: a link, a FIFO or a
+lock over 1 MiB keeps the tag, a lock of exactly 1 MiB is read (``hub sync`` has its own file
+checks and refuses a lock that is not a regular file).
 """
 
 import json
@@ -75,6 +83,11 @@ def not_json(lock: dict[str, Any]) -> str:
     return as_written(lock) + "}\n"
 
 
+def bad_files_entry(lock: dict[str, Any]) -> str:
+    lock["files"]["AGENTS.md"] = 123
+    return as_written(lock)
+
+
 @dataclass(frozen=True)
 class LockCase:
     """A hub.json repository (None: left out), the lock sync wrote, an edit, the source to run."""
@@ -86,8 +99,11 @@ class LockCase:
     edit: LockEdit = as_written
     # The source each reader must run, written out: a commit source or a tag source.
     source: str = f"{DEFAULT_REPOSITORY}@v{VERSION}{SUBDIRECTORY}"
+    # The CLI's source when it differs from the rendered readers' (None: the same).
+    cli_source: str | None = None
 
 
+DEFAULT_TAG_SOURCE = f"{DEFAULT_REPOSITORY}@v{VERSION}{SUBDIRECTORY}"
 DEFAULT_COMMIT_SOURCE = f"{DEFAULT_REPOSITORY}@{COMMIT}{SUBDIRECTORY}"
 CUSTOM_TAG_SOURCE = f"{CUSTOM_REPOSITORY}@v{VERSION}{SUBDIRECTORY}"
 CASES = [
@@ -108,6 +124,13 @@ CASES = [
     LockCase("commit-not-text", None, edit=with_commit(123)),
     LockCase("commit-without-repository", None, edit=without_repository),
     LockCase("not-json", None, edit=not_json),
+    LockCase(
+        "files-entry-invalid",
+        None,
+        edit=bad_files_entry,
+        source=DEFAULT_COMMIT_SOURCE,
+        cli_source=DEFAULT_TAG_SOURCE,
+    ),
 ]
 
 
@@ -196,6 +219,74 @@ def install(folder: Path, *, log: Path, python: str, git: bool) -> Path:
     return folder
 
 
+def hook_verdict(lines: list[str], expected: list[str], completed: Any) -> str:
+    """The hook must also fail open: exit 0, nothing on stderr, whatever the lock holds."""
+    if (completed.returncode, completed.stderr) != (0, b""):
+        return f"exit {completed.returncode}: {completed.stderr!r}"
+    return run_verdict(lines, expected, completed)
+
+
+@dataclass(frozen=True)
+class RenderedReaders:
+    """The three rendered readers of one hub, each run with the fake tools on ``PATH``."""
+
+    hub: Path
+    log: Path
+    bin_dir: Path
+    cloud_bin: Path
+    elsewhere: Path
+    home: Path
+    hook_python: str
+    run_hook_file: Callable[..., Any]
+
+    def verdicts(self, source: str) -> dict[str, str]:
+        """Each reader's verdict on running ``source`` for the hub's current ``hub.lock``."""
+        shim = run_tool(
+            [which("sh"), str(self.hub / "hub"), "brief"],
+            cwd=self.elsewhere,
+            env={"PATH": str(self.bin_dir)},
+        )
+        given = {"shim": run_verdict(logged(self.log), calls_of(source, "brief"), shim)}
+        event = json.dumps(
+            {"session_id": "abcdef123456", "cwd": str(self.hub), "source": "startup"}
+        )
+        hook = self.run_hook_file(
+            self.hook_python,
+            self.hub / HOOK,
+            stdin=event.encode(),
+            cwd=self.hub.parent,
+            env={"PATH": str(self.bin_dir), "HOME": str(self.home)},
+        )
+        given["hook"] = hook_verdict(logged(self.log), calls_of(source, "brief"), hook)
+        cloud = run_tool(
+            [which("bash"), str(self.hub / CLOUD_SETUP)],
+            cwd=self.elsewhere,
+            env={"PATH": str(self.cloud_bin), "HOME": str(self.home), "GIT_CONFIG_NOSYSTEM": "1"},
+        )
+        given["cloud setup"] = run_verdict(logged(self.log), calls_of(source, "--version"), cloud)
+        return given
+
+
+def rendered_readers(
+    hub: Path, *, hook_python: str, run_hook_file: Callable[..., Any], tmp_path: Path
+) -> RenderedReaders:
+    log = tmp_path / "uvx.log"
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    return RenderedReaders(
+        hub=hub,
+        log=log,
+        bin_dir=install(tmp_path / "bin", log=log, python=hook_python, git=False),
+        cloud_bin=install(tmp_path / "cloud-bin", log=log, python=hook_python, git=True),
+        elsewhere=elsewhere,
+        home=home,
+        hook_python=hook_python,
+        run_hook_file=run_hook_file,
+    )
+
+
 def test_agrees_on_source_when_shim_hook_cloud_setup_and_cli_read_a_lock(
     *,
     rendered_hub: Callable[[HubConfig], Path],
@@ -206,14 +297,9 @@ def test_agrees_on_source_when_shim_hook_cloud_setup_and_cli_read_a_lock(
 ) -> None:
     hub = rendered_hub(demo_config).resolve()
     rendered = render_hub(demo_config)
-    log = tmp_path / "uvx.log"
-    bin_dir = install(tmp_path / "bin", log=log, python=hook_python, git=False)
-    cloud_bin = install(tmp_path / "cloud-bin", log=log, python=hook_python, git=True)
-    elsewhere = tmp_path / "elsewhere"
-    elsewhere.mkdir()
-    home = tmp_path / "home"
-    home.mkdir()
-    event = json.dumps({"session_id": "abcdef123456", "cwd": str(hub), "source": "startup"})
+    readers = rendered_readers(
+        hub, hook_python=hook_python, run_hook_file=run_hook_file, tmp_path=tmp_path
+    )
     verdicts: dict[str, dict[str, str]] = {"cli": {}, "shim": {}, "hook": {}, "cloud setup": {}}
     for case in CASES:
         document = hub_document(case)
@@ -224,31 +310,85 @@ def test_agrees_on_source_when_shim_hook_cloud_setup_and_cli_read_a_lock(
             (hub / "hub.lock").write_text(text, encoding="utf-8")
         assert (hub / "hub.lock").exists() == (text is not None)
 
-        verdicts["cli"][case.name] = cli_verdict(text, document, case.source)
-        shim = run_tool(
-            [which("sh"), str(hub / "hub"), "brief"], cwd=elsewhere, env={"PATH": str(bin_dir)}
-        )
-        verdicts["shim"][case.name] = run_verdict(logged(log), calls_of(case.source, "brief"), shim)
-        hook = run_hook_file(
-            hook_python,
-            hub / HOOK,
-            stdin=event.encode(),
-            cwd=hub.parent,
-            env={"PATH": str(bin_dir), "HOME": str(home)},
-        )
-        verdicts["hook"][case.name] = run_verdict(logged(log), calls_of(case.source, "brief"), hook)
-        cloud = run_tool(
-            [which("bash"), str(hub / CLOUD_SETUP)],
-            cwd=elsewhere,
-            env={"PATH": str(cloud_bin), "HOME": str(home), "GIT_CONFIG_NOSYSTEM": "1"},
-        )
-        verdicts["cloud setup"][case.name] = run_verdict(
-            logged(log), calls_of(case.source, "--version"), cloud
-        )
+        verdicts["cli"][case.name] = cli_verdict(text, document, case.cli_source or case.source)
+        for reader, given in readers.verdicts(case.source).items():
+            verdicts[reader][case.name] = given
 
     expected = {case.name: AGREES for case in CASES}
-    assert len(expected) == len(CASES) == 12
+    assert len(expected) == len(CASES) == 13
     # Both paths are in the table, so a reader that always picks one cannot pass.
     assert {"@v" in case.source for case in CASES} == {True, False}
+    for reader, given in verdicts.items():
+        assert given == expected, reader
+
+
+# The largest hub.lock the rendered readers read (1 MiB).
+LOCK_CAP = 1024 * 1024
+
+
+def padded(text: str, size: int) -> str:
+    """``text`` (a JSON object) as valid JSON of exactly ``size`` bytes: spaces before the brace."""
+    stripped = text.rstrip()
+    result = stripped[:-1] + " " * (size - len(stripped.encode())) + "}"
+    assert len(result.encode()) == size
+    json.loads(result)
+    return result
+
+
+def place_link(hub: Path, text: str) -> None:
+    target = hub.parent / "elsewhere.lock"
+    target.write_text(text, encoding="utf-8")
+    (hub / "hub.lock").symlink_to(target)
+
+
+def place_fifo(hub: Path, _text: str) -> None:
+    # A FIFO with no writer: a blocking read of it would hang until the timeout.
+    os.mkfifo(hub / "hub.lock")
+
+
+def place_over_cap(hub: Path, text: str) -> None:
+    (hub / "hub.lock").write_text(padded(text, LOCK_CAP + 1), encoding="utf-8")
+
+
+def place_at_cap(hub: Path, text: str) -> None:
+    (hub / "hub.lock").write_text(padded(text, LOCK_CAP), encoding="utf-8")
+
+
+FILE_CASES: list[tuple[str, Callable[[Path, str], None], str]] = [
+    ("link", place_link, DEFAULT_TAG_SOURCE),
+    ("fifo", place_fifo, DEFAULT_TAG_SOURCE),
+    ("over-cap", place_over_cap, DEFAULT_TAG_SOURCE),
+    ("at-cap", place_at_cap, DEFAULT_COMMIT_SOURCE),
+]
+
+
+def test_agrees_on_source_when_rendered_readers_read_lock_file_kind(
+    *,
+    rendered_hub: Callable[[HubConfig], Path],
+    demo_config: HubConfig,
+    hook_python: str,
+    run_hook_file: Callable[..., Any],
+    tmp_path: Path,
+) -> None:
+    hub = rendered_hub(demo_config).resolve()
+    rendered = render_hub(demo_config)
+    readers = rendered_readers(
+        hub, hook_python=hook_python, run_hook_file=run_hook_file, tmp_path=tmp_path
+    )
+    matching = LockCase("commit-matches", None, source=DEFAULT_COMMIT_SOURCE)
+    (hub / "hub.json").write_text(json.dumps(hub_document(matching)), encoding="utf-8")
+    text = lock_text(matching, rendered)
+    assert text is not None
+    verdicts: dict[str, dict[str, str]] = {"shim": {}, "hook": {}, "cloud setup": {}}
+    for name, place, source in FILE_CASES:
+        (hub / "hub.lock").unlink(missing_ok=True)
+        place(hub, text)
+
+        for reader, given in readers.verdicts(source).items():
+            verdicts[reader][name] = given
+
+    expected = {name: AGREES for name, _, _ in FILE_CASES}
+    assert len(expected) == len(FILE_CASES) == 4
+    assert {"@v" in source for _, _, source in FILE_CASES} == {True, False}
     for reader, given in verdicts.items():
         assert given == expected, reader
