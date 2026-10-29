@@ -30,6 +30,11 @@ CLI_ROWS = (
     "hub --version",
     "./hub --version (local uvx stand-in)",
     "hub brief --no-network",
+    "hub repo list",
+    "hub env list",
+    "hub action list",
+    "hub scenario list",
+    "hub workflow list",
 )
 # (path, hook script, hook_event_name, tool_name named by the path or None)
 HOOK_ROWS = (
@@ -132,6 +137,8 @@ def test_lists_the_canonical_cli_and_hook_paths_when_probes_are_built(tmp_path: 
     brief = [str(a) for a in _probe(cli, "hub brief --no-network").argv]
     assert brief[0] == str(hub_bin)
     assert {"brief", "--no-network"} <= set(brief)
+    for path in CLI_ROWS[3:]:
+        assert [str(a) for a in _probe(cli, path).argv] == [str(hub_bin), *path.split()[1:]]
     for path, script, _event, _tool in HOOK_ROWS:
         argv = [str(a) for a in _probe(hooks, path).argv]
         assert len(argv) == 2

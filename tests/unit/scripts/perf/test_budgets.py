@@ -17,6 +17,8 @@ from scripts.perf.fixture import FEATURE_SLUG, PAGE_SESSION
 
 SHIPPED = Path(__file__).resolve().parents[4] / "scripts" / "perf" / "budgets.json"
 PROPOSED = "AGH-601 proposed"
+# The source of an entry added after the seed, at a value ADR 0053 sets.
+ADR_SOURCE = "ADR 0053"
 RESTART_API = "hub web start → /api/v1/sessions"
 
 
@@ -211,7 +213,7 @@ def test_raises_budget_file_error_when_enforced_is_not_a_boolean(
 
 def test_enforces_nothing_with_the_default_margin_when_shipped() -> None:
     budgets = load_budgets(SHIPPED)
-    assert len(budgets) == 23
+    assert len(budgets) == 28
 
     assert [key for key, budget in budgets.items() if budget.enforced] == []
     assert budgets_module.load_margin(SHIPPED) == pytest.approx(0.2)
@@ -222,7 +224,7 @@ def test_marks_every_seeded_entry_proposed_when_shipped() -> None:
     keys = [(row["kind"], row["path"]) for row in rows]
 
     assert len(rows) > 0
-    assert [row["source"] for row in rows] == [PROPOSED] * len(rows)
+    assert [row["source"] for row in rows if row["source"] not in {PROPOSED, ADR_SOURCE}] == []
     assert len(set(keys)) == len(keys)
 
 
@@ -245,6 +247,14 @@ ROUTES = (
     "/api/v1/live-sessions",
 )
 PAGES = ("/", "/features", f"/features/perf/{FEATURE_SLUG}", f"/sessions/{PAGE_SESSION}")
+# The list commands' rows: ADR 0053's `every` cli ceiling of 300 ms.
+LIST_COMMANDS = (
+    "hub repo list",
+    "hub env list",
+    "hub action list",
+    "hub scenario list",
+    "hub workflow list",
+)
 # The seeded budgets, one (kind, path, budget) per suite row; None where a row has no budget.
 OWNER_TABLE: list[tuple[str, str, Budget | None]] = [
     ("cli", "hub --version", Budget(p95_ms=150, api_calls=None, rss_mb=None, source=PROPOSED)),
@@ -254,6 +264,10 @@ OWNER_TABLE: list[tuple[str, str, Budget | None]] = [
         Budget(p95_ms=300, api_calls=None, rss_mb=None, source=PROPOSED),
     ),
     ("cli", "./hub --version (local uvx stand-in)", None),
+    *[
+        ("cli", command, Budget(p95_ms=300, api_calls=None, rss_mb=None, source=ADR_SOURCE))
+        for command in LIST_COMMANDS
+    ],
     *[
         ("hook", hook, Budget(p95_ms=80, api_calls=None, rss_mb=None, source=PROPOSED))
         for hook in HOOKS
@@ -280,7 +294,7 @@ OWNER_TABLE: list[tuple[str, str, Budget | None]] = [
 
 @pytest.mark.parametrize(("kind", "path", "expected"), OWNER_TABLE)
 def test_seeds_the_owner_budget_when_shipped(kind: str, path: str, expected: Budget | None) -> None:
-    assert len(OWNER_TABLE) == 24
+    assert len(OWNER_TABLE) == 29
 
     assert load_budgets(SHIPPED).get((kind, path)) == expected
 
@@ -299,7 +313,7 @@ def test_names_only_probed_paths_when_the_shipped_budgets_are_read() -> None:
     }
     keys = [(row["kind"], row["path"]) for row in json.loads(SHIPPED.read_text("utf-8"))["rows"]]
     assert len(keys) > 0
-    assert len(probed) == 24
+    assert len(probed) == 29
 
     assert sorted(set(keys) - probed) == []
 
@@ -398,7 +412,7 @@ def test_keeps_every_budget_under_the_adr_ceiling_when_shipped() -> None:
 def test_names_only_probed_paths_when_the_adr_table_is_read() -> None:
     ceilings = _ceilings(ADR.read_text("utf-8"))
     probed = _probed()
-    assert len(probed) == 24
+    assert len(probed) == 29
 
     assert [c for c in ceilings if c.paths != EVERY and (c.kind, c.paths) not in probed] == []
     assert sorted({c.kind for c in ceilings}) == sorted({kind for kind, _path in probed})
