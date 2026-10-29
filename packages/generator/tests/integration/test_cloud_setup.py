@@ -34,6 +34,8 @@ import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.platform_repository import PLATFORM_REPOSITORY_FORM
+from agent_hub.core.hub_files.hub_lock import build_hub_lock, lock_bytes
+from agent_hub.core.hub_files.release_commit import ReleaseCommit
 from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 from agent_hub.core.testing.platform_repository_cases import (
     CUSTOM_REPOSITORY,
@@ -41,6 +43,7 @@ from agent_hub.core.testing.platform_repository_cases import (
     VALUE_PARTS,
     RepositoryCase,
 )
+from agent_hub.generator.render_hub import render_hub
 
 TIMEOUT = 60
 SCRIPT = "scripts/cloud-setup.sh"
@@ -617,6 +620,60 @@ class TestAccess:
         assert calls.count(warm_up_call()) == 1
         assert not any(call.startswith("git clone") for call in calls)
         assert not any(call.endswith("fetch --quiet origin") for call in calls)
+
+    def test_warms_cache_with_commit_source_when_lock_has_commit(
+        self, cloud_ws: CloudWorkspace
+    ) -> None:
+        # AGH-606 (Q15): the access check stays on the tag; only the warm-up uses the commit.
+        write_lock(cloud_ws, commit=COMMIT)
+
+        completed = cloud_ws.run()
+
+        assert completed.returncode == 0, completed.stderr
+        calls = cloud_ws.calls()
+        assert [call for call in calls if call.startswith("git ls-remote")] == [
+            f"git ls-remote --exit-code {RELEASE_URL} refs/tags/v{VERSION}"
+        ]
+        assert [call for call in calls if call.startswith(("uv ", "uvx "))] == [
+            f"uvx --from {COMMIT_SOURCE} hub --version"
+        ]
+
+    def test_warms_cache_with_tag_source_when_lock_has_no_commit(
+        self, cloud_ws: CloudWorkspace
+    ) -> None:
+        write_lock(cloud_ws, commit=None)
+
+        completed = cloud_ws.run()
+
+        assert completed.returncode == 0, completed.stderr
+        calls = cloud_ws.calls()
+        assert [call for call in calls if call.startswith("git ls-remote")] == [
+            f"git ls-remote --exit-code {RELEASE_URL} refs/tags/v{VERSION}"
+        ]
+        assert [call for call in calls if call.startswith(("uv ", "uvx "))] == [warm_up_call()]
+
+
+# AGH-606 (ADR 0054): the commit the lock records for the pin, and its warm-up source, written out.
+COMMIT = "0123456789abcdef0123456789abcdef01234567"
+COMMIT_SOURCE = (
+    "git+https://github.com/jroquette/agent-hub@0123456789abcdef0123456789abcdef01234567"
+    "#subdirectory=packages/agent-hub"
+)
+
+
+def write_lock(ws: CloudWorkspace, *, commit: str | None) -> None:
+    """The lock ``hub sync`` writes for ALL pinned to ``VERSION``, with ``commit`` read from the
+    default repository (None: no commit)."""
+    config = HubConfig.model_validate(a_pinned_document())
+    release = (
+        None if commit is None else ReleaseCommit(commit=commit, repository=f"git+{RELEASE_URL}")
+    )
+    content = lock_bytes(
+        build_hub_lock(rendered=render_hub(config), config=config, release=release)
+    )
+    (ws.hub / "hub.lock").write_bytes(content)
+    lock = json.loads(content)
+    assert (lock["platform_version"], lock.get("platform_commit")) == (VERSION, commit)
 
 
 CUSTOM_SOURCE = f"{CUSTOM_REPOSITORY}@v{VERSION}#subdirectory=packages/agent-hub"

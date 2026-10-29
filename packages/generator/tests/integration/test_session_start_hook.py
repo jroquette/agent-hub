@@ -26,6 +26,8 @@ import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND, pinned_release_command
+from agent_hub.core.hub_files.hub_lock import build_hub_lock, lock_bytes
+from agent_hub.core.hub_files.release_commit import ReleaseCommit
 from agent_hub.core.testing.builders import (
     a_hub_document,
     a_local_environments_document,
@@ -766,3 +768,61 @@ def test_cuts_environments_when_over_sixty(
     assert context_of(completed) == (
         f"{expected_mini_brief('no uv')}\n\n## Environments\n{shown}\n… 1 more: ./hub env list"
     )
+
+
+# AGH-606 (ADR 0054): with a matching commit in hub.lock the pinned brief is one call from the
+# commit, with no resolve step; a lock without one keeps the two tag calls.
+COMMIT = "0123456789abcdef0123456789abcdef01234567"
+DEFAULT_REPOSITORY = "git+https://github.com/jroquette/agent-hub"
+# Written out, as AC_SOURCE is, so a change to how the hook builds it fails here.
+COMMIT_SOURCE = (
+    "git+https://github.com/jroquette/agent-hub@0123456789abcdef0123456789abcdef01234567"
+    "#subdirectory=packages/agent-hub"
+)
+
+
+def write_lock(hub: Path, *, commit: str | None) -> None:
+    """The lock ``hub sync`` writes for the demo pinned to ``VERSION``, with ``commit`` read from
+    the default repository (None: no commit)."""
+    document = a_hub_document()
+    document["platform"]["version"] = VERSION
+    config = HubConfig.model_validate(document)
+    release = (
+        None if commit is None else ReleaseCommit(commit=commit, repository=DEFAULT_REPOSITORY)
+    )
+    content = lock_bytes(
+        build_hub_lock(rendered=render_hub(config), config=config, release=release)
+    )
+    (hub / "hub.lock").write_bytes(content)
+    lock = json.loads(content)
+    assert (lock["platform_version"], lock.get("platform_commit")) == (VERSION, commit)
+
+
+def test_calls_brief_once_with_commit_source_when_lock_has_commit(
+    hub: Path, *, hook_python: str, run_hook_file: RunHook, bin_dir: Path, uvx_log: Path
+) -> None:
+    install_uvx(bin_dir, python=hook_python, log=uvx_log)
+    write_lock(hub, commit=COMMIT)
+
+    completed, _ = start(hub, python=hook_python, run_hook_file=run_hook_file, bin_dir=bin_dir)
+
+    assert context_of(completed) == BRIEF.strip()
+    # No --version call: the commit needs no resolve step.
+    assert calls(uvx_log) == [
+        {"args": ["--from", COMMIT_SOURCE, "hub", "brief"], "cwd": str(hub), "root": str(hub)}
+    ]
+
+
+def test_calls_brief_with_tag_source_when_lock_has_no_commit(
+    hub: Path, *, hook_python: str, run_hook_file: RunHook, bin_dir: Path, uvx_log: Path
+) -> None:
+    install_uvx(bin_dir, python=hook_python, log=uvx_log)
+    write_lock(hub, commit=None)
+
+    completed, _ = start(hub, python=hook_python, run_hook_file=run_hook_file, bin_dir=bin_dir)
+
+    assert context_of(completed) == BRIEF.strip()
+    assert [call["args"] for call in calls(uvx_log)] == [
+        ["--from", AC_SOURCE, "hub", "--version"],
+        ["--from", AC_SOURCE, "hub", "brief"],
+    ]
