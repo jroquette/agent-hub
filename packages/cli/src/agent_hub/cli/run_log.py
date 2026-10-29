@@ -17,20 +17,21 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 import typer
 
 from agent_hub.cli.collect import hub_project_name
 from agent_hub.cli.database_path import default_database_path
 from agent_hub.cli.errors import RunLogError
-from agent_hub.collector.run_records import RunEventMapper
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.events.event_store import EventStore
 from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.runner.run_record import Stage, run_record
-from agent_hub.storage.event_store import DatabaseBusyError, open_event_store
+
+if TYPE_CHECKING:
+    from agent_hub.collector.run_records import RunEventMapper
 
 RUN_ID_LENGTH: Final = 8
 RUNS_FOLDER: Final = Path(".agent-runs")
@@ -52,6 +53,8 @@ def now() -> datetime.datetime:
 
 def open_default_event_store() -> EventStore:
     """The event database ``hub collect`` would use: ``AGENT_HUB_DB``, else the default path."""
+    from agent_hub.storage.event_store import open_event_store  # noqa: PLC0415 - only a live run opens it
+
     given = os.environ.get(DATABASE_VARIABLE)
     return open_event_store(Path(given) if given else default_database_path(os.environ))
 
@@ -109,6 +112,9 @@ class RunLog:
         """Append the record's events; busy skips the record, any other failure stops the events."""
         if self._is_store_unavailable:
             return
+        from agent_hub.collector.run_records import RunEventMapper  # noqa: PLC0415 - only a live run writes events
+        from agent_hub.storage.event_store import DatabaseBusyError  # noqa: PLC0415 - only a live run writes events
+
         try:
             if self._events is None:
                 project = hub_project_name(self.hub) or self.hub.name

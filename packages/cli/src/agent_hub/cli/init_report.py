@@ -7,9 +7,10 @@ string, so a newline in a name cannot break a line or fake one.
 
 import json
 import shlex
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
-from agent_hub.core.hub_files.plan_init import InitPlan
+if TYPE_CHECKING:
+    from agent_hub.core.hub_files.plan_init import InitPlan
 
 # Only commands that work in this release; ./agent starts Claude Code with every repo attached.
 _REVIEW_STEP: Final = "review hub.json, AGENTS.project.md and README.md"

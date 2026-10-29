@@ -65,10 +65,10 @@ from agent_hub.cli.errors import ChildTimedOutError
 from agent_hub.cli.run_children import (
     IMPLEMENT_STEP,
     RUN_ID_VARIABLE,
-    SESSION_DENIED_TOOLS,
     SESSION_HIDDEN,
     RunOptions,
     child_env,
+    session_denied_tools,
     session_env,
     untrusted_env,
 )
@@ -247,7 +247,7 @@ class WorkflowExecutors:
                 *IMPLEMENTING_TOOLS,
                 *gate_tools(command for repo in gated for command in (repo.check_fast, repo.check)),
             ),
-            denied_tools=(*SESSION_DENIED_TOOLS, *(EDIT_TOOLS if read_only else ())),
+            denied_tools=(*session_denied_tools(), *(EDIT_TOOLS if read_only else ())),
             settings_file=settings_file,
         )
         if call.resume_session is not None:
