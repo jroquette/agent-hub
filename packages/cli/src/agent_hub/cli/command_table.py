@@ -1,4 +1,4 @@
-"""The hub's commands by name, each imported from its module only when it runs (AGH-604).
+"""The hub's commands by name, each imported from its module only when it runs.
 
 ``hub --help`` and ``hub <typo>`` read the table: each name keeps its help as data, so listing
 the commands imports no command module. ``HubGroup`` holds one placeholder per entry (Typer's own
@@ -17,7 +17,7 @@ import typer.main
 from typer._click.core import Command, Context
 from typer.models import CommandInfo, TyperInfo
 
-# The root ``typer.Typer`` keeps Typer's default, which the real commands are built with.
+# The real commands are built with this value; ``main.app`` must keep it (a unit test checks).
 PRETTY_EXCEPTIONS_SHORT: Final = True
 
 
@@ -204,10 +204,9 @@ class HubGroup(typer.core.TyperGroup):
         super().__init__(**attrs)
         self._placeholders: dict[str, Command] = {}
         for entry in COMMANDS:
-            if entry.name not in self.commands:
-                placeholder = self._placeholder(entry)
-                self._placeholders[entry.name] = placeholder
-                self.commands[entry.name] = placeholder
+            placeholder = self._placeholder(entry)
+            self._placeholders[entry.name] = placeholder
+            self.commands[entry.name] = placeholder
 
     def _placeholder(self, entry: CommandEntry) -> Command:
         kind: Callable[..., Command] = (
@@ -226,7 +225,8 @@ class HubGroup(typer.core.TyperGroup):
 
     def _load(self, entry: CommandEntry) -> Command:
         """Build the real command from its module, as ``app.command`` or ``app.add_typer`` would."""
-        target = _target(entry)
+        module = import_module(entry.module)
+        target = getattr(module, entry.attribute)
         if entry.kind == "group":
             command: Command = typer.main.get_group_from_info(
                 TyperInfo(target, name=entry.name),
@@ -235,7 +235,6 @@ class HubGroup(typer.core.TyperGroup):
                 rich_markup_mode=self.rich_markup_mode,
             )
         else:
-            module = import_module(entry.module)
             cls = getattr(module, entry.command_class) if entry.command_class else None
             command = typer.main.get_command_from_info(
                 CommandInfo(

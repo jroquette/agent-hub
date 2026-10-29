@@ -21,7 +21,7 @@ HOOK = "hook"
 HUB_VERSION = "hub --version"
 LOCAL_HUB_VERSION = "./hub --version (local uvx stand-in)"
 HUB_BRIEF = "hub brief --no-network"
-# The list commands, run in the temp hub (AGH-604): each row's path is its command line.
+# The list commands, run in the temp hub: each row's path is its command line.
 LIST_COMMANDS = (
     "hub repo list",
     "hub env list",

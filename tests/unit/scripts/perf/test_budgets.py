@@ -19,6 +19,14 @@ SHIPPED = Path(__file__).resolve().parents[4] / "scripts" / "perf" / "budgets.js
 PROPOSED = "AGH-601 proposed"
 # The source of an entry added after the seed, at a value ADR 0053 sets.
 ADR_SOURCE = "ADR 0053"
+# The list-command rows, whose budget comes from the ADR rather than AGH-601's proposal.
+LIST_COMMAND_PATHS = (
+    "hub repo list",
+    "hub env list",
+    "hub action list",
+    "hub scenario list",
+    "hub workflow list",
+)
 RESTART_API = "hub web start → /api/v1/sessions"
 
 
@@ -222,10 +230,18 @@ def test_enforces_nothing_with_the_default_margin_when_shipped() -> None:
 def test_marks_every_seeded_entry_proposed_when_shipped() -> None:
     rows = json.loads(SHIPPED.read_text("utf-8"))["rows"]
     keys = [(row["kind"], row["path"]) for row in rows]
+    seeded = [row for row in rows if row["path"] not in LIST_COMMAND_PATHS]
 
-    assert len(rows) > 0
-    assert [row["source"] for row in rows if row["source"] not in {PROPOSED, ADR_SOURCE}] == []
+    assert len(seeded) == 23
+    assert [row["source"] for row in seeded if row["source"] != PROPOSED] == []
     assert len(set(keys)) == len(keys)
+
+
+def test_marks_list_command_entries_from_adr_when_shipped() -> None:
+    rows = json.loads(SHIPPED.read_text("utf-8"))["rows"]
+    listed = {row["path"]: row["source"] for row in rows if row["path"] in LIST_COMMAND_PATHS}
+
+    assert listed == dict.fromkeys(LIST_COMMAND_PATHS, ADR_SOURCE)
 
 
 HOOKS = (

@@ -8,6 +8,7 @@ from typing import Any
 import typer.main
 from typer.models import DefaultPlaceholder
 
+from agent_hub.cli import command_table
 from agent_hub.cli.main import app
 
 # The 18 commands and 7 groups of `hub --help` on v0.27.1, in their order (golden/hub_help.txt).
@@ -125,6 +126,11 @@ def test_matches_loaded_command_help_when_table_is_read() -> None:
         assert table == real, field
 
 
+def test_builds_commands_with_root_exception_setting_when_loaded() -> None:
+    # The commands loaded on demand take this value, as app.command would take the root app's.
+    assert app.pretty_exceptions_short is command_table.PRETTY_EXCEPTIONS_SHORT
+
+
 def test_lists_commands_in_recorded_order_when_help_built(tmp_path: Path) -> None:
     code = LOADED_PRELUDE + (
         "import typer.main\n"
@@ -140,9 +146,8 @@ def test_lists_commands_in_recorded_order_when_help_built(tmp_path: Path) -> Non
     seen = run_child(code, tmp_path)
 
     assert seen["names"] == RECORDED_ORDER
-    # The help is built from the table: no command module is imported for it, except `agent`'s,
-    # whose PassThroughCommand class the table keeps.
-    assert set(seen["loaded"]) <= {"agent_hub.cli.agent_command"}
+    # The help is built from the table: no command module is imported for it.
+    assert seen["loaded"] == []
 
 
 def test_imports_only_its_module_when_command_runs(tmp_path: Path) -> None:
@@ -157,8 +162,7 @@ def test_imports_only_its_module_when_command_runs(tmp_path: Path) -> None:
 
     loaded = run_child(code, tmp_path)
 
-    assert "agent_hub.cli.repo_command" in loaded
-    assert set(loaded) <= {"agent_hub.cli.repo_command", "agent_hub.cli.agent_command"}
+    assert loaded == ["agent_hub.cli.repo_command"]
 
 
 def test_loads_every_command_module_when_all_imported(tmp_path: Path) -> None:

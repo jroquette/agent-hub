@@ -7,7 +7,7 @@ import typer
 
 from agent_hub.cli.command_table import HubGroup
 
-# Each subcommand is imported when it runs: its name and help are in command_table (AGH-604).
+# Each subcommand is imported when it runs: its name and help are in command_table.
 app = typer.Typer(name="hub", cls=HubGroup, no_args_is_help=True)
 
 
