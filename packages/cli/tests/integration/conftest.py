@@ -2336,7 +2336,9 @@ class ChildCalls:
 def child_calls(monkeypatch: pytest.MonkeyPatch) -> ChildCalls:
     """Spy on ``run_child`` in every loaded ``agent_hub.cli`` module (each import holds its own
     reference); a ``hub ship`` run's children are its calls."""
-    import agent_hub.cli.main  # noqa: F401 - loads every command module before patching
+    from agent_hub.cli import command_table  # noqa: PLC0415 - read when the fixture runs
+
+    command_table.import_all()  # loads every command module before patching
 
     return ChildCalls(monkeypatch)
 

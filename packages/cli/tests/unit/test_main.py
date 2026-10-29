@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -67,6 +68,49 @@ def test_prints_recorded_help_when_help_requested(tmp_path: Path) -> None:
     assert "\N{BOX DRAWINGS LIGHT ARC DOWN AND RIGHT}".encode() in result.stdout
     assert b"\x1b[" not in result.stdout
     assert result.stdout == HELP_GOLDEN.read_bytes()
+
+
+def test_loads_no_web_or_store_module_when_main_imported(tmp_path: Path) -> None:
+    code = (
+        "import json, sys\n"
+        "HEAVY = ('fastapi', 'sqlalchemy', 'alembic', 'agent_hub.api')\n"
+        "def heavy():\n"
+        "    return sorted(m for m in sys.modules if m in HEAVY or m.startswith(HEAVY_DOTTED))\n"
+        "HEAVY_DOTTED = tuple(name + '.' for name in HEAVY)\n"
+        "seen = {}\n"
+        "import agent_hub.cli.main\n"
+        "seen['import'] = heavy()\n"
+        "from typer.testing import CliRunner\n"
+        "for option in ('--version', '--help'):\n"
+        "    result = CliRunner().invoke(agent_hub.cli.main.app, [option])\n"
+        "    assert result.exit_code == 0, result.output\n"
+        "    seen[option] = heavy()\n"
+        "import fastapi\n"
+        "seen['self-check'] = heavy()\n"
+        "print(json.dumps(seen))\n"
+    )
+
+    result = subprocess.run(  # noqa: S603 - this interpreter, a fixed script
+        [sys.executable, "-c", code],
+        env=fixed_help_env(),
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    seen = json.loads(result.stdout.splitlines()[-1])
+    # Self-check: the probe sees a heavy module once one is imported.
+    assert "fastapi" in seen.pop("self-check")
+    assert seen == {"import": [], "--version": [], "--help": []}
+
+
+def test_suggests_close_name_when_command_is_unknown() -> None:
+    result = CliRunner().invoke(app, ["rpo"])
+
+    assert result.exit_code == 2
+    assert "No such command 'rpo'. Did you mean 'repo'?" in unstyle(result.output)
 
 
 def test_lists_commands_when_help_requested() -> None:
