@@ -261,6 +261,68 @@ dev dependency of the workspace.
   allowed (React's and React Router's error-text doc links, XML namespace ids, React Router's `http://localhost`
   parsing base); any other URL, such as an external font, script or API, fails.
 
+## Performance (`make perf`)
+
+`make perf` (`$R python -m scripts.perf.run_suite`, code in `scripts/perf/`) measures how long the interactive paths
+take on a synthetic 400,000-event database spread over 90 days. It builds or reuses the fixture, copies it into a fresh
+temp root, renders a synthetic hub there (`hub init`, `git init` and one commit), then measures, one at a time:
+
+- `cli`: `hub --version`, `./hub --version (local uvx stand-in)`, `hub brief --no-network`;
+- `hook`: the eight rendered hooks, each fed a synthetic hook input (`guard (PreToolUse Bash)`,
+  `session_start (local uvx stand-in)`, ...);
+- `route`: seven `hub web` routes (`/api/v1/sessions`, `/api/v1/features`, `/api/v1/search?q=make`, ...);
+- `page`: four pages in Playwright's Chromium (`apps/web/e2e/perf.spec.ts`), ready when no `/api/v1/` request is in
+  flight for 500 ms after `load`, with the number of API calls;
+- `restart`: `hub web start → GET /` and `hub web start → /api/v1/sessions`, with peak RSS (Linux only, else `null`).
+
+These names are the canonical paths: the table, `perf.json` and the budgets all use the same strings. The child
+processes get an environment built from scratch, with `HOME` under the temp root, so nothing reads the real database,
+`~/.claude` or the network.
+
+Knobs, all optional: `PERF_EVENTS` (400000), `PERF_RUNS` (10), `PERF_RESTART_RUNS` (3), `PERF_STRICT` (off),
+`PERF_REBUILD` (off: rebuild the cached fixture), `PERF_OUT` (`perf.json`), `PERF_BUDGETS`
+(`scripts/perf/budgets.json`), `PERF_CACHE` (`.perf/`), and `AGENT_HUB_CHROMIUM` (else the headless shell under
+`PLAYWRIGHT_BROWSERS_PATH`). The fixture is cached in `.perf/` by event count, seed and Alembic head, so a rerun skips
+the build. On a 4 vCPU Linux machine a first run takes about 7 minutes (the fixture build about 20 s), a cached
+one about 6.5.
+
+It prints one table and writes `perf.json`: a list of rows, each with `kind`, `path`, `runs`, `median_ms`, `p95_ms`,
+`budget`, `status` (`pass`, `over`, `no budget` or `skipped`, with a `reason`), `api_calls` (pages), `rss_mb`
+(restarts) and the run's `events`, `seed`, `commit` and `machine`. The budgets are data in `scripts/perf/budgets.json`,
+one entry per `(kind, path)` with `p95_ms`, `api_calls` or `rss_mb`; every entry's `source` is "AGH-601 proposed" until
+the ADR that sets them is accepted. A path with no entry shows `no budget`. Without npm, Chromium or
+`apps/web/node_modules`, the page rows are `skipped`; `make perf` itself runs `npm ci` first, so on a machine without
+npm run `uv run --locked --all-packages python -m scripts.perf.run_suite` instead. The runner's exit code: 0, also
+when a row is over; 1 when `PERF_STRICT=1` and a row is `over`; 2 when the suite itself fails (a bad budgets file or
+knob, `hub web` not starting, a route not answering 200 or timing out), after writing the rows measured before the
+failure. `make perf` exits 0 or, in both failure cases, 2 (make's own code for a failed recipe), so a caller that must
+tell "over budget" from "suite broken", such as CI, runs the runner directly.
+
+Known gaps:
+
+- The live set is empty: `/api/v1/live-sessions` and the `/` page measure no live session, because the fixture is 90
+  days old and live tiles are judged against the server clock.
+- `./hub --version` and `session_start` run through a local `uvx` stand-in that runs the worktree's `hub`: no release
+  is fetched, so uvx's own resolve time is not counted (the path names say so).
+
+`make perf` is in no local gate: `make check-fast` and `make check` never run it, and it never runs in their parallel
+lanes. Run it by hand on a quiet machine, with output to a file: `make perf > perf.log 2>&1; echo $?`.
+
+CI's `perf` job runs the runner on the 400k-event fixture, then the gate
+(`$R python -m scripts.perf.ci_gate [--perf perf.json] [--budgets scripts/perf/budgets.json]`), and uploads
+`perf.json` as the `perf` artifact. The gate judges each row again against the budgets file, writes a Markdown table
+(with each budget's limit plus the margin and whether it is enforced) to stdout and to the job summary, and prints a
+`::warning::` line for each row over its budget. It exits 1, with an `::error::` line naming the path, only when an
+entry marked `"enforced": true` is over its p95, API calls or RSS times `1 + margin`; the top-level `"margin"` (a
+fraction, default 0.2) absorbs runner noise and never changes the stored budget, which stays under the ADR 0053
+ceiling. Skipped and no-budget rows never fail, and no entry is enforced until a milestone meets its budgets. A broken
+suite (runner exit 2) fails the job on its own; a bad `perf.json` or budgets file makes the gate exit 2. An enforced
+row over its budget but within the margin, or skipped, passes with a `::warning::` line that says so.
+
+The job runs on `ubuntu-latest`, which may have fewer cores than ADR 0053's reference machine (Linux, 4 vCPU). Before
+an entry is marked enforced, check the core count in the `machine` field of a CI `perf.json`; if it is below 4, move
+the job to a 4-core runner first, so that "over" stays a property of the code and not of the runner.
+
 ## Coverage
 
 Floors, counting lines and branches together (`(covered_lines + covered_branches) / (num_statements + num_branches)`)
@@ -324,9 +386,10 @@ Never run the gate targets with `-j`: they set it themselves, and the tests are 
 
 CI (`.github/workflows/ci.yml`) runs the same make targets as separate jobs at once: `checks`, `web`, `tests` (three
 shards set by `TESTS`: `packages/generator`, `packages/cli`, and the rest, each running its own serial tests after its
-parallel ones), `coverage` (combines the shards' data, then the floors), `e2e`, and `e2e-serial` (the visual file and
-the rest, each on its own runner). The required `check` job passes only when all of them did. PR titles are not checked
-in CI: run `make pr-title TITLE="<title>"` before opening the PR ([CONTRIBUTING.md](CONTRIBUTING.md)).
+parallel ones), `coverage` (combines the shards' data, then the floors), `e2e`, `e2e-serial` (the visual file and
+the rest, each on its own runner), and `perf` (the perf suite and its gate, see Performance). The required `check`
+job passes only when all of them did. PR titles are not checked in CI: run `make pr-title TITLE="<title>"` before
+opening the PR ([CONTRIBUTING.md](CONTRIBUTING.md)).
 
 Notes:
 

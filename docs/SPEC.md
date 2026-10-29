@@ -1021,6 +1021,18 @@ The sessions and GitHub/Linear feed the collector, and the web app reads everyth
   and transcripts mounted read-only at their host paths. It is local-only like `hub web`: published on `127.0.0.1`.
 - **Adapters:** Claude Code is the first. Other agents (Codex, Cursor) come in as adapters that emit the same canonical event.
 
+## Non-functional requirements
+
+### Latency budgets
+
+[ADR 0053](adr/0053-interactive-path-latency-budgets.md) names the interactive paths (a `hub` command, a hook per
+tool call, a session ready, an API route, a page, a `hub web` restart, the Stop gate) and sets each one's budget as a
+ceiling. The live values are in [`scripts/perf/budgets.json`](../scripts/perf/budgets.json): they may be tighter
+than the ADR, never looser, and a `check-fast` test enforces it. `make perf` measures them on the reference machine
+(Linux, 4 vCPU, Python 3.14, warm uv cache); CI enforces them through AGH-602. Not allowed on an interactive path: a
+network call with no cache, a new database connection per query, a full scan of the event log, the doctor rules, or a
+full test suite.
+
 ## MVP and phases
 
 The MVP goes up to Phase 2: generate hubs from Loki and see the agents' sessions on one screen. Each phase starts only when the previous one's gate passes.

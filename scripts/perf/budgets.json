@@ -1,0 +1,28 @@
+{
+  "margin": 0.2,
+  "rows": [
+    {"kind": "cli", "path": "hub --version", "p95_ms": 150, "source": "AGH-601 proposed"},
+    {"kind": "cli", "path": "hub brief --no-network", "p95_ms": 300, "source": "AGH-601 proposed"},
+    {"kind": "hook", "path": "guard (PreToolUse Bash)", "p95_ms": 80, "source": "AGH-601 proposed"},
+    {"kind": "hook", "path": "event_sensor (PreToolUse, sensor closed)", "p95_ms": 80, "source": "AGH-601 proposed"},
+    {"kind": "hook", "path": "post_edit (PostToolUse Edit)", "p95_ms": 80, "source": "AGH-601 proposed"},
+    {"kind": "hook", "path": "readonly_gate (PreToolUse Bash)", "p95_ms": 80, "source": "AGH-601 proposed"},
+    {"kind": "hook", "path": "session_end", "p95_ms": 80, "source": "AGH-601 proposed"},
+    {"kind": "hook", "path": "stop_gate (no changes)", "p95_ms": 80, "source": "AGH-601 proposed"},
+    {"kind": "hook", "path": "session_start (local uvx stand-in)", "p95_ms": 1500, "source": "AGH-601 proposed"},
+    {"kind": "hook", "path": "pre_compact", "p95_ms": 80, "source": "AGH-601 proposed"},
+    {"kind": "route", "path": "/api/v1/sessions", "p95_ms": 150, "source": "AGH-601 proposed"},
+    {"kind": "route", "path": "/api/v1/sessions?issue=AGH-7", "p95_ms": 150, "source": "AGH-601 proposed"},
+    {"kind": "route", "path": "/api/v1/features", "p95_ms": 150, "source": "AGH-601 proposed"},
+    {"kind": "route", "path": "/api/v1/features/perf/search-index", "p95_ms": 150, "source": "AGH-601 proposed"},
+    {"kind": "route", "path": "/api/v1/projects/perf/skills", "p95_ms": 150, "source": "AGH-601 proposed"},
+    {"kind": "route", "path": "/api/v1/search?q=make", "p95_ms": 150, "source": "AGH-601 proposed"},
+    {"kind": "route", "path": "/api/v1/live-sessions", "p95_ms": 150, "source": "AGH-601 proposed"},
+    {"kind": "page", "path": "/", "p95_ms": 800, "api_calls": 5, "source": "AGH-601 proposed"},
+    {"kind": "page", "path": "/features", "p95_ms": 800, "api_calls": 5, "source": "AGH-601 proposed"},
+    {"kind": "page", "path": "/features/perf/search-index", "p95_ms": 800, "api_calls": 5, "source": "AGH-601 proposed"},
+    {"kind": "page", "path": "/sessions/perf-00000", "p95_ms": 800, "api_calls": 5, "source": "AGH-601 proposed"},
+    {"kind": "restart", "path": "hub web start → GET /", "p95_ms": 1000, "rss_mb": 300, "source": "AGH-601 proposed"},
+    {"kind": "restart", "path": "hub web start → /api/v1/sessions", "p95_ms": 1000, "rss_mb": 300, "source": "AGH-601 proposed"}
+  ]
+}

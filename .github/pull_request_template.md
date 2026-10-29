@@ -13,6 +13,7 @@ Tracker issue: AGH-___
 - [ ] check green in CI
 - [ ] every AC has a test
 - [ ] docs/ADR/SPEC updated if scope changed
+- [ ] on an interactive path (ADR 0053): no doctor rule, full scan of the event log or full test suite, and the `make perf` rows it touches stay within budget
 - [ ] CHANGELOG.md `[Unreleased]` updated if users see the change
 - [ ] PR reviewed and merged by the owner
 - [ ] issue Done
