@@ -140,12 +140,12 @@ def _over_limit(row: Row, budget: Budget, margin: float) -> str:
     """What is over ``budget`` plus ``margin``, as text; empty when nothing is."""
     p95, calls, rss = _limits(budget, margin)
     checks = (
-        (row.p95_ms, p95, "p95 {value:.0f} ms > {limit:.0f} ms"),
-        (row.api_calls, calls, "{value:.0f} API calls > {limit:.0f}"),
-        (row.rss_mb, rss, "peak RSS {value:.0f} MB > {limit:.0f} MB"),
+        (row.p95_ms, p95, "p95 {value} ms > {limit} ms"),
+        (row.api_calls, calls, "{value} API calls > {limit}"),
+        (row.rss_mb, rss, "peak RSS {value} MB > {limit} MB"),
     )
     found = [
-        text.format(value=value, limit=limit)
+        text.format(value=_amount(value), limit=_amount(limit))
         for value, limit, text in checks
         if value is not None and limit is not None and value > limit
     ]
@@ -182,7 +182,8 @@ def _budget_text(p95_ms: float | None, calls: float | None, rss_mb: float | None
 
 
 def _amount(value: float | None) -> str:
-    return "-" if value is None else f"{value:.0f}"
+    """One decimal place without a trailing ``.0``, so a widened limit of 3.6 never reads as 4."""
+    return "-" if value is None else f"{value:.1f}".removesuffix(".0")
 
 
 def _escape(cell: str) -> str:

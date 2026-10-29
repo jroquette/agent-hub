@@ -173,6 +173,21 @@ def test_judges_against_the_budget_plus_the_margin_when_an_enforced_row_is_over(
         assert warnings == []
 
 
+def test_names_the_widened_limit_with_its_decimal_when_it_is_not_whole(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # 3 calls * 1.2 = 3.6: a page with 4 calls is over, and the message must not read "4 > 4".
+    perf = _perf(tmp_path, [_row("page", FEATURES_PAGE, p95_ms=100.0, status="over", api_calls=4)])
+    budgets = _budgets(tmp_path, [_entry("page", FEATURES_PAGE, enforced=True, api_calls=3)])
+
+    code = main(_argv(perf, budgets), {})
+
+    errors = _lines(capsys.readouterr().out, "::error")
+    assert code == 1
+    assert len(errors) == 1
+    assert "4 API calls > 3.6" in errors[0]
+
+
 # AGH-602 (AC-3): a budget not enforced only warns, however far over it is.
 def test_passes_with_one_warning_naming_the_path_when_a_row_not_enforced_is_over(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
