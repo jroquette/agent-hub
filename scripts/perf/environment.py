@@ -6,8 +6,9 @@ XDG folders sit under the temp root, and ``PATH`` is the root's ``bin/`` only. T
 (``make_tool_bin``) holds links to ``git``, ``python3`` and ``sh`` (``npm exec`` runs its command
 through ``sh``) and a ``uvx`` stand-in that runs the worktree's ``hub``, so ``./hub`` and
 ``session_start`` do real work offline. ``create_hub`` makes
-a ``hub init`` hub under the root with the fixture's feature folder, a synthetic transcript, and
-one commit by a made-up author.
+a ``hub init`` hub under the root with the fixture's feature folder, a synthetic transcript, a
+release commit in its ``hub.lock`` (ADR 0054, so ``./hub`` takes the one-call commit path that a
+synced hub takes; the stand-in ignores ``--from``), and one commit by a made-up author.
 """
 
 import json
@@ -19,6 +20,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Protocol, Self
 
+from agent_hub.core.hub_config.platform_repository import DEFAULT_PLATFORM_REPOSITORY
 from scripts.perf.fixture import (
     BRANCH_PREFIX,
     CWD,
@@ -49,6 +51,8 @@ HUB_FLAGS = (
     "--author-email",
     AUTHOR_EMAIL,
 )
+# The made-up release commit the temp hub's lock records: 40 lowercase hex, never fetched.
+RELEASE_COMMIT = "0123456789abcdef0123456789abcdef01234567"
 # Git reads no config of the developer's: no global file, no system file.
 GIT_ISOLATION = {"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"}
 
@@ -195,13 +199,26 @@ def _transcript(env: Mapping[str, str]) -> None:
     path.write_text("".join(json.dumps(line) + "\n" for line in lines), "utf-8")
 
 
+def _release_commit(hub: Path) -> None:
+    """Record ``RELEASE_COMMIT`` and the repository in use in ``hub.lock``, as a sync at a pin
+    change would, so the shim and the hooks take the commit path; the rest of the lock is kept."""
+    platform = json.loads((hub / "hub.json").read_text("utf-8")).get("platform", {})
+    lock_path = hub / "hub.lock"
+    lock = json.loads(lock_path.read_text("utf-8"))
+    lock["platform_commit"] = RELEASE_COMMIT
+    lock["platform_repository"] = platform.get("repository", DEFAULT_PLATFORM_REPOSITORY)
+    lock_path.write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n", "utf-8")
+
+
 def create_hub(root: Path, *, runner: Runner, env: Mapping[str, str]) -> Path:
     """Make the temp hub under ``root`` and return its folder.
 
-    ``hub init`` runs through the ``uvx`` stand-in on ``env``'s ``PATH``; then the feature folder
-    and the transcript are written, and ``git init``, ``git add -A`` and one commit follow."""
+    ``hub init`` runs through the ``uvx`` stand-in on ``env``'s ``PATH``; then the lock gets its
+    release commit, the feature folder and the transcript are written, and ``git init``,
+    ``git add -A`` and one commit follow."""
     hub = root / HUB_DIR
     runner(["uvx", "hub", "init", PROJECT, *HUB_FLAGS, "--dir", str(hub)], cwd=root, env=env)
+    _release_commit(hub)
     _feature_files(hub)
     _transcript(env)
     git_env = {**env, **GIT_ISOLATION}

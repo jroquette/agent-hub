@@ -3,6 +3,7 @@
   "rows": [
     {"kind": "cli", "path": "hub --version", "p95_ms": 150, "source": "AGH-601 proposed"},
     {"kind": "cli", "path": "hub brief --no-network", "p95_ms": 300, "source": "AGH-601 proposed"},
+    {"kind": "cli", "path": "./hub --version (local uvx stand-in)", "p95_ms": 450, "source": "ADR 0053"},
     {"kind": "cli", "path": "hub repo list", "p95_ms": 300, "source": "ADR 0053"},
     {"kind": "cli", "path": "hub env list", "p95_ms": 300, "source": "ADR 0053"},
     {"kind": "cli", "path": "hub action list", "p95_ms": 300, "source": "ADR 0053"},
