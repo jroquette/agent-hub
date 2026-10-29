@@ -28,7 +28,7 @@ LIST_COMMAND_PATHS = (
     "hub workflow list",
 )
 RESTART_API = "hub web start → /api/v1/sessions"
-# The shim row, budgeted once AGH-606 runs it in one uvx call: ADR 0053's `hub` row plus 300 ms.
+# The shim row on the one-call commit path: ADR 0053's `hub` row plus 300 ms.
 SHIM_PATH = "./hub --version (local uvx stand-in)"
 ADR_PATHS = (*LIST_COMMAND_PATHS, SHIM_PATH)
 

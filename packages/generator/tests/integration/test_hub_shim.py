@@ -851,7 +851,7 @@ def test_calls_no_tag_source_or_git_when_lock_has_commit(
     tmp_path: Path,
     demo_render: RenderedHub,
 ) -> None:
-    # AC-23: git and gh loggers on PATH; the shim's foreground reads no release from the network.
+    # git and gh loggers on PATH: the shim's foreground reads no release from the network.
     write_lock(hub, lock_document(demo_render))
     network_log = tmp_path / "network-calls.log"
     for name in ("git", "gh"):
