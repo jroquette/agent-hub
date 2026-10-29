@@ -1,6 +1,9 @@
 """Fixtures: a dry run and what it must show (status, outcome, failed and reached sets;
 AC-213.11)."""
 
+import json
+import subprocess
+import sys
 from typing import Any
 
 import pytest
@@ -276,3 +279,45 @@ def test_gives_same_path_when_scenario_fixture_deterministic(
         assert (runs[0].captures, runs[0].polls) == ((), 7)
     skeleton = skeleton_fixture(SCENARIO, outputs=KeysOutputs())
     assert run_fixture(SCENARIO, parse_fixture(skeleton), outputs=KeysOutputs()).passed
+
+
+# Dumps in a new interpreter, before any other use builds ``Stub``: a read-only mapping dumps
+# its values with their own serializer, so a deferred value model would fail here (AGH-607).
+_DUMP_FRESH = """
+import json
+from agent_hub.core.workflows.fixtures import Fixture
+fixture = Fixture.model_validate({
+    "workflow": "demo",
+    "stubs": {"a": {"output": 1}, "b": [{"output": 2}]},
+    "expect": {"status": "done"},
+    "reached": [],
+})
+print(json.dumps([fixture.model_dump(mode="json"), json.loads(fixture.model_dump_json())]))
+"""
+
+
+def test_dumps_every_stub_when_a_fixture_is_dumped_in_a_fresh_process() -> None:
+    stub = {
+        "output": None,
+        "text": None,
+        "fail": None,
+        "until_exit": None,
+        "decision": None,
+        "choice": None,
+        "approver": None,
+    }
+    expected = {
+        "workflow": "demo",
+        "inputs": {},
+        "stubs": {"a": stub | {"output": 1}, "b": [stub | {"output": 2}]},
+        "expect": {"status": "done", "outcome": None},
+        "failed": [],
+        "reached": [],
+    }
+
+    done = subprocess.run(  # noqa: S603 - the running interpreter, fixed arguments
+        [sys.executable, "-c", _DUMP_FRESH], capture_output=True, text=True, check=False
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == [expected, expected]
