@@ -179,8 +179,11 @@ def scratch_env(tmp_path: Path) -> dict[str, str]:
     temp.mkdir(exist_ok=True)
     bin_dir.mkdir(exist_ok=True)
     stub = bin_dir / "uvx"
-    stub.write_text(STUB_UVX, encoding="utf-8")
-    stub.chmod(0o755)
+    # Written once: a detached SessionStart refresh from an earlier input may still be running
+    # it, and opening a running executable for writing fails with ETXTBSY.
+    if not stub.exists():
+        stub.write_text(STUB_UVX, encoding="utf-8")
+        stub.chmod(0o755)
     path = os.pathsep.join([str(bin_dir), os.environ.get("PATH", os.defpath)])
     return {
         "HOME": str(home),
