@@ -13,12 +13,12 @@ def test_pins_workers_when_module_loaded() -> None:
 
 
 def test_fits_hook_deadline_when_budgets_added() -> None:
-    # The SessionStart hook gives its resolve step and hub brief one deadline; the resolve step
-    # keeps at least a second of it.
+    # The SessionStart refresh gives its resolve step and hub brief --write-cache one deadline;
+    # the resolve step keeps at least a second of it.
     template = (
         files("agent_hub.generator") / "templates/plugin/hub-workflow/hooks/session_start.py.tmpl"
     ).read_text(encoding="utf-8")
-    found = re.search(r"^BRIEF_TIMEOUT = ([0-9]+)", template, re.M)
+    found = re.search(r"^REFRESH_TIMEOUT = ([0-9]+)", template, re.M)
     assert found is not None
     hook_deadline = int(found.group(1))
 

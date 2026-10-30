@@ -75,6 +75,14 @@ this reader falls back instead.
   whose ``platform_repository`` is the repository in use (``platform.repository``, else the
   caller's ``default_repository``, the platform's own); else ``None``, and the caller uses the tag.
 
+- ``read_brief_cache`` and ``read_refresh_cause`` read ``.hub-cache/brief.json`` (what
+  ``hub brief --write-cache`` writes) and ``.hub-cache/refresh.json`` (what a failed SessionStart
+  refresh writes; ADR 0055) as untrusted: only a regular file (not a link, in a folder that is not
+  a link) of at most ``CACHE_FILE_MAX_BYTES`` holding a JSON object whose ``made_at`` is a finite
+  number at most ``CACHE_FUTURE_SECONDS`` ahead of ``now``, and whose ``brief`` (cut at
+  ``CACHE_BRIEF_MAX_CHARS``, then stripped, not empty) or ``cause`` (cut at
+  ``REFRESH_CAUSE_MAX_CHARS``, then stripped, not empty) is a string; else ``None``.
+
 A hook that loads this file by path must register the module before running it, or the frozen
 dataclasses fail to build (``AttributeError`` on ``NoneType.__dict__``)::
 
@@ -87,6 +95,7 @@ dataclasses fail to build (``AttributeError`` on ``NoneType.__dict__``)::
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import stat
@@ -110,6 +119,15 @@ LOCK_FILE = "hub.lock"
 LOCK_FILE_MAX_BYTES = 1_048_576
 RELEASE_COMMIT = re.compile(r"[0-9a-f]{40}")
 RELEASE_SUBDIRECTORY = "#subdirectory=packages/agent-hub"
+# The brief cache (ADR 0055): core's ``agent_hub.core.workspace.brief_cache`` writes the same names.
+CACHE_FOLDER = ".hub-cache"
+BRIEF_CACHE_FILE = "brief.json"
+REFRESH_RECORD_FILE = "refresh.json"
+CACHE_FILE_MAX_BYTES = 65_536
+CACHE_BRIEF_MAX_CHARS = 8000
+REFRESH_CAUSE_MAX_CHARS = 200
+# A clock a little behind the writer's still reads its file; one far ahead of it does not.
+CACHE_FUTURE_SECONDS = 60
 # The model's bounds for ``repos[].check_fast_timeout``.
 CHECK_FAST_TIMEOUT_MIN = 1
 CHECK_FAST_TIMEOUT_MAX = 160
@@ -863,6 +881,54 @@ def read_lock_source(
     if lock.get("platform_repository") != repository:
         return None
     return repository + "@" + commit + RELEASE_SUBDIRECTORY
+
+
+@dataclass(frozen=True)
+class BriefCache:
+    """The brief cache: when it was made (seconds since the epoch) and its brief."""
+
+    made_at: float
+    brief: str
+
+
+def read_brief_cache(hub: str | os.PathLike[str], now: float) -> BriefCache | None:
+    """The hub's brief cache, else ``None`` (see the module docstring); never raises."""
+    found = _cache_document(hub, BRIEF_CACHE_FILE, "brief", CACHE_BRIEF_MAX_CHARS, now)
+    return None if found is None else BriefCache(made_at=found[0], brief=found[1])
+
+
+def read_refresh_cause(hub: str | os.PathLike[str], now: float) -> str | None:
+    """The cause the last failed refresh recorded, else ``None``; never raises."""
+    found = _cache_document(hub, REFRESH_RECORD_FILE, "cause", REFRESH_CAUSE_MAX_CHARS, now)
+    return None if found is None else found[1]
+
+
+def _cache_document(
+    hub: str | os.PathLike[str], name: str, key: str, max_chars: int, now: float
+) -> tuple[float, str] | None:
+    """(``made_at``, the text under ``key`` cut at ``max_chars``) of a ``.hub-cache`` file."""
+    folder = os.path.join(hub, CACHE_FOLDER)
+    if os.path.islink(folder):  # the CLI refuses a linked folder; so does the reader
+        return None
+    document = _read_object(
+        os.path.join(folder, name), max_bytes=CACHE_FILE_MAX_BYTES, follow_links=False
+    )
+    if document is None:
+        return None
+    made_at = document.get("made_at")
+    if isinstance(made_at, bool) or not isinstance(made_at, (int, float)):
+        return None
+    try:
+        if not math.isfinite(made_at) or made_at > now + CACHE_FUTURE_SECONDS:
+            return None
+        made_at = float(made_at)
+    except OverflowError:  # an integer too large for a float
+        return None
+    text = document.get(key)
+    if not isinstance(text, str):
+        return None
+    text = text[:max_chars].strip()
+    return (made_at, text) if text else None
 
 
 def _version(platform: dict[str, object]) -> str | None:

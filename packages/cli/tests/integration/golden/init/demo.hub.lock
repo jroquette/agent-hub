@@ -386,12 +386,12 @@
     "plugin/hub-workflow/hooks/session_start.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "295afb8b7979cb07e4523c4d10e99b2d1ce0bbf275b22a05262768543d3cc64a"
+      "sha256": "d56047b30b66fcebece5e5dd440b1d1f53ced9d0a1123189991c99600eccaae9"
     },
     "plugin/hub-workflow/hooks/stdlib_reader.py": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "25b4c0c0a522c28406883adef966188b2b51661734d9285bc1d1db14e993e33f"
+      "sha256": "28d6c68265979a5832903c017d8229a25713c8e14596264978e8160ed9cf08f9"
     },
     "plugin/hub-workflow/hooks/stop_gate.py": {
       "executable": true,
