@@ -7,11 +7,13 @@ real command, built from its one module, when the name is resolved. A unit test 
 entry's help with the loaded command's, so a docstring change shows up there.
 """
 
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import import_module
 from typing import Any, Final, Literal
 
+import typer
 import typer.core
 import typer.main
 from typer._click.core import Command, Context
@@ -245,6 +247,18 @@ class HubGroup(typer.core.TyperGroup):
             )
         self.commands[entry.name] = command
         return command
+
+    def invoke(self, ctx: Context) -> Any:  # noqa: ANN401 - whatever the command returns
+        """Run the command; a broken install's pre-parsed table ends it with one line, exit 1."""
+        try:
+            return super().invoke(ctx)
+        except Exception as error:
+            # Only that module raises it, so it is loaded whenever the error is one of its own.
+            table = sys.modules.get("agent_hub.generator.parsed_builtins")
+            if table is not None and isinstance(error, table.ParsedBuiltinsError):
+                typer.echo(f"hub: {error}", err=True)
+                raise typer.Exit(1) from None
+            raise
 
     def resolve_command(
         self, ctx: Context, args: list[str]
