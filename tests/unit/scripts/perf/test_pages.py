@@ -10,7 +10,8 @@ Seam: ``chromium_executable(environ, *, web_dir)`` returns a path string or ``No
 ``page_rows(env, *, npm, node, chromium, web_dir, pages, runs, results, runner)`` returns one item
 per page with ``kind``, ``path``, ``samples_ms``, ``api_calls`` and ``reason`` (set only when
 skipped). ``runner`` is called like ``environment.Runner`` (``argv``, ``cwd``, ``env``); the spec
-appends one JSON object per line, ``{path, run, ready_ms, api_calls}``, to ``PERF_PAGES_OUT``."""
+appends one JSON object per line, ``{path, run, ready_ms, api_calls, dom_nodes}``, to
+``PERF_PAGES_OUT``; ``dom_nodes`` is a reported field only, and an older line has none."""
 
 import json
 import os
@@ -19,12 +20,24 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from scripts.perf.environment import child_env
 from scripts.perf.fixture import FEATURE_SLUG, PAGE_SESSION
 from scripts.perf.pages import chromium_executable, page_env, page_rows, web_deps_missing
 
-# The page rows, written out by hand.
-PAGES = ("/", "/features", f"/features/perf/{FEATURE_SLUG}", f"/sessions/{PAGE_SESSION}")
+# The page rows, written out by hand: the sessions list and a note in a 100-note Brain folder
+# (AGH-614's two added rows) come last.
+SESSIONS_PAGE = "/sessions"
+BRAIN_PAGE = "/projects/perf/brain/tree-3/note-050.md"
+PAGES = (
+    "/",
+    "/features",
+    f"/features/perf/{FEATURE_SLUG}",
+    f"/sessions/{PAGE_SESSION}",
+    SESSIONS_PAGE,
+    BRAIN_PAGE,
+)
 NPM = "/usr/local/bin/npm"
 NODE = "/usr/local/bin/node"
 CHROMIUM = "/opt/browsers/chrome-headless-shell"
@@ -303,7 +316,59 @@ def test_reads_page_rows_when_the_spec_wrote_results(tmp_path: Path) -> None:
         ("page", "/features", [200.0, 201.0], 3, None),
         ("page", f"/features/perf/{FEATURE_SLUG}", [300.0, 301.0], 4, None),
         ("page", f"/sessions/{PAGE_SESSION}", [400.0, 401.0], 5, None),
+        ("page", SESSIONS_PAGE, [500.0, 501.0], 6, None),
+        ("page", BRAIN_PAGE, [600.0, 601.0], 7, None),
     ]
     assert [
         (row.kind, row.path, list(row.samples_ms), row.api_calls, row.reason) for row in rows
     ] == expected
+
+
+def _measured(tmp_path: Path, lines: Sequence[Mapping[str, object]]) -> list[Any]:
+    rows = page_rows(
+        {"PATH": "/perf-root/bin"},
+        npm=NPM,
+        node=NODE,
+        chromium=CHROMIUM,
+        web_dir=_web_dir(tmp_path, deps=True),
+        pages=PAGES,
+        runs=2,
+        results=tmp_path / "pages.jsonl",
+        runner=RecordingRunner(lines),
+    )
+    assert [row.path for row in rows] == list(PAGES)
+    return list(rows)
+
+
+@pytest.mark.parametrize(
+    "counts",
+    [pytest.param((900, 950), id="rising"), pytest.param((950, 900), id="falling")],
+)
+def test_keeps_most_dom_nodes_when_page_lines_are_read(
+    tmp_path: Path, counts: tuple[int, int]
+) -> None:
+    lines: list[dict[str, object]] = []
+    for line in _results_lines():
+        run = line["run"]
+        assert isinstance(run, int)
+        lines.append({**line, "dom_nodes": counts[run] if line["path"] == BRAIN_PAGE else 40})
+    assert [line["dom_nodes"] for line in lines if line["path"] == BRAIN_PAGE] == list(counts)
+
+    rows = _measured(tmp_path, lines)
+
+    # By hand: the most nodes seen in one run of the page, whichever run saw them.
+    assert {row.path: row.dom_nodes for row in rows} == {
+        **dict.fromkeys(PAGES, 40),
+        BRAIN_PAGE: 950,
+    }
+
+
+def test_leaves_dom_nodes_empty_when_lines_have_none(tmp_path: Path) -> None:
+    lines = _results_lines()
+    assert len(lines) == 2 * len(PAGES)
+    assert [line for line in lines if "dom_nodes" in line] == []
+
+    rows = _measured(tmp_path, lines)
+
+    assert len(rows) == len(PAGES)
+    assert [row.dom_nodes for row in rows] == [None] * len(PAGES)

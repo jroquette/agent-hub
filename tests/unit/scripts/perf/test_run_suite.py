@@ -5,7 +5,7 @@ gates, which never reach the ``perf`` target. No process, socket or database."""
 import json
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
@@ -20,6 +20,8 @@ MAKEFILE = REPO_ROOT / "Makefile"
 PROPOSED = "AGH-601 proposed"
 SESSIONS_BUDGET_MS = 100
 VERSION_BUDGET_MS = 150
+BRAIN_PAGE = "/projects/perf/brain/tree-3/note-050.md"
+BRAIN_DOM_NODES = 6612
 _RULE = re.compile(r"^([A-Za-z0-9_.-]+(?:[ \t]+[A-Za-z0-9_.-]+)*)[ \t]*:(?![=:])(.*)$")
 _WORD = re.compile(r"[A-Za-z0-9_-]+")
 
@@ -132,6 +134,26 @@ def test_returns_the_report_exit_when_rows_are_over(tmp_path: Path, case: ExitCa
     code = run(settings, [_phase([passing]), _phase([]), _phase([sessions])])
 
     assert code == case.expected
+
+
+def test_writes_dom_nodes_when_page_row_has_them(tmp_path: Path) -> None:
+    out = tmp_path / "perf.json"
+    environ = {
+        "PERF_OUT": str(out),
+        "PERF_BUDGETS": str(_budgets_file(tmp_path)),
+        "PERF_CACHE": str(tmp_path / "cache"),
+    }
+    cli = _row("cli", "hub --version", p95_ms=50.0, budget_ms=VERSION_BUDGET_MS)
+    page = replace(_row("page", BRAIN_PAGE, p95_ms=400.0, budget_ms=800), dom_nodes=BRAIN_DOM_NODES)
+
+    code = run(Settings.from_env(environ), [_phase([cli]), _phase([page])])
+
+    assert code == 0
+    rows = json.loads(out.read_text("utf-8"))
+    assert [(row["kind"], row["path"], row["dom_nodes"]) for row in rows] == [
+        ("cli", "hub --version", None),
+        ("page", BRAIN_PAGE, BRAIN_DOM_NODES),
+    ]
 
 
 def test_writes_the_rows_measured_so_far_when_a_phase_fails(tmp_path: Path) -> None:

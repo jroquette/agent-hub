@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from agent_hub.core.hub_config.platform_repository import DEFAULT_PLATFORM_REPOSITORY
+from scripts.perf import fixture
 from scripts.perf.environment import child_env, create_hub, make_tool_bin, web_argv
 from scripts.perf.fixture import BRANCH_PREFIX, FEATURE_SLUG, PAGE_SESSION
 
@@ -60,6 +61,12 @@ INIT_LOCK = {
     "platform_version": INIT_VERSION,
     "schema_version": 1,
 }
+# The perf brain (AGH-614), written out by hand: six folders of a hundred notes under
+# ``brain/tree-<n>/``, outside ``brain/features/``, and the note the Brain page row opens.
+BRAIN_NOTES = frozenset(
+    f"tree-{folder}/note-{note:03d}.md" for folder in range(1, 7) for note in range(1, 101)
+)
+BRAIN_PAGE_NOTE = "tree-3/note-050.md"
 COMMIT_HEX = re.compile(r"[0-9a-f]{40}")
 ABSOLUTE_PATH = re.compile(r"(?<![\w.])/[\w.+-]+(?:/[\w.+-]+)*")
 
@@ -93,6 +100,7 @@ class Call:
     cwd: Path | None
     env: dict[str, str] | None
     feature_files: frozenset[str]
+    brain_notes: frozenset[str]
 
 
 class RecordingRunner:
@@ -126,6 +134,7 @@ class RecordingRunner:
                 cwd=None if cwd is None else Path(cwd),
                 env=None if env is None else dict(env),
                 feature_files=self._feature_files(),
+                brain_notes=self._brain_notes(),
             )
         )
         return subprocess.CompletedProcess(args, 0, "", "")
@@ -147,6 +156,14 @@ class RecordingRunner:
             return frozenset()
         folder = self.hub_dir / "brain" / "features" / FEATURE_SLUG
         return frozenset(p.name for p in folder.glob("*") if p.is_file())
+
+    def _brain_notes(self) -> frozenset[str]:
+        if self.hub_dir is None:
+            return frozenset()
+        brain = self.hub_dir / "brain"
+        return frozenset(
+            p.relative_to(brain).as_posix() for p in brain.glob("tree-*/*") if p.is_file()
+        )
 
 
 def _created_hub(tmp_path: Path) -> tuple[Path, dict[str, str], RecordingRunner]:
@@ -340,3 +357,18 @@ def test_writes_release_commit_when_hub_is_created(tmp_path: Path) -> None:
         k: v for k, v in INIT_LOCK.items() if not k.startswith("platform_")
     }
     assert lock["platform_version"] == INIT_VERSION
+
+
+def test_seeds_six_folders_of_a_hundred_notes_when_hub_is_created(tmp_path: Path) -> None:
+    _root_, _env_, runner = _created_hub(tmp_path)
+    assert runner.hub_dir is not None
+    assert len(BRAIN_NOTES) == 600
+    assert BRAIN_PAGE_NOTE in BRAIN_NOTES
+
+    adds = [c for c in runner.git_calls() if _git_subcommand(c.argv) == "add"]
+
+    # Present when ``git add -A`` runs, so the hub's one commit holds every note.
+    assert len(adds) == 1
+    assert adds[0].brain_notes == BRAIN_NOTES
+    assert fixture.BRAIN_PAGE_NOTE == BRAIN_PAGE_NOTE
+    assert (runner.hub_dir / "brain" / BRAIN_PAGE_NOTE).read_text("utf-8").strip() != ""
