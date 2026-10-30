@@ -78,3 +78,13 @@ def test_reads_what_cli_wrote_when_hook_reads_cache(
     output = json.loads(completed.stdout)["hookSpecificOutput"]
     assert output["additionalContext"] == f"(brief from 3 min ago)\n\n{expected}"
     assert not log.exists()
+
+
+def test_writes_same_gitignore_when_hook_and_cli_create_cache_folder(
+    rendered_hub: Callable[[HubConfig], Path], demo_config: HubConfig
+) -> None:
+    # The hook rewrites a .gitignore that differs from its copy, so a drift would make the hook
+    # and hub brief --write-cache rewrite each other's file on every run.
+    source = (rendered_hub(demo_config) / HOOK).read_text(encoding="utf-8")
+
+    assert f"CACHE_GITIGNORE = {json.dumps(GITIGNORE_TEXT)}\n" in source
