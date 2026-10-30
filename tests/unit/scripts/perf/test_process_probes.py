@@ -214,3 +214,24 @@ def test_fails_the_suite_when_a_command_exits_non_zero(tmp_path: Path) -> None:
 
     with pytest.raises(SuiteError, match=re.escape("hub brief --no-network")):
         measure(probe, runs=3, runner=runner, clock=clock)
+
+
+def test_seeds_brief_cache_when_session_start_probe_is_built(tmp_path: Path) -> None:
+    hub, transcript, _hub_bin = _layout(tmp_path)
+    hooks = hook_probes(hub, transcript)
+    probe = _probe(hooks, "session_start (local uvx stand-in)")
+    clock = FakeClock()
+    runner = RecordingRunner(clock, [5.0, 0.010, 0.020, 0.030])
+
+    samples = measure(probe, runs=3, runner=runner, clock=clock)
+
+    # Seeded once through the temp hub's uvx stand-in, so every timed run reads a cache under
+    # the hook's 5 min refresh floor and starts no refresh (Q14); the seed is not timed.
+    assert probe.seed == ("uvx", "hub", "brief", "--write-cache", "--no-network")
+    assert [argv for argv, _stdin in runner.calls] == [
+        list(probe.seed),
+        *[[str(a) for a in probe.argv]] * 3,
+    ]
+    assert [stdin for _argv, stdin in runner.calls] == [None, *[probe.stdin] * 3]
+    assert list(samples) == pytest.approx([10.0, 20.0, 30.0])
+    assert [p.path for p in hooks if p.seed is not None] == [probe.path]
