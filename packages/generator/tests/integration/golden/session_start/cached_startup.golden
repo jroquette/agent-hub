@@ -1,0 +1,12 @@
+--- rc (2 bytes) ---
+0
+
+--- stdout (162 bytes) ---
+{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "(brief from 3 min ago)\n\n# Brief\n\n## Now\nShip the collector.\nThen the CLI."}}
+
+--- stderr (0 bytes) ---
+
+--- fs (0 bytes) ---
+
+--- calls (0 bytes) ---
+

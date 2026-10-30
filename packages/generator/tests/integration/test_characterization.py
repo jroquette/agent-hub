@@ -230,6 +230,7 @@ LONG_SNAPSHOT = (
     + "".join(f"- note {i:03d}: café … résumé; keep going\n" for i in range(1, 80))
 )[:2501]
 BRIEF_SCRIPT = "scripts/brief.py"
+CACHED_BRIEF = "# Brief\n\n## Now\nShip the collector.\nThen the CLI.\n"
 
 
 def session_event(source: str, cwd: Path | None = None) -> bytes:
@@ -360,6 +361,22 @@ def session_start_brief_crash_compact(*, ws: Any) -> Run:
     ws.commit_hub({"hub.json": json.dumps(broken, indent=2) + "\n"})  # AGH-7's brief: KeyError
     write_snapshot(ws, "  Snapshot body with surrounding spaces.  \n\n")
     return start(ws, session_event("compact", hub_of(ws)))
+
+
+def session_start_cached_startup(*, ws: Any) -> Run:
+    # ADR 0055 (AGH-612): a hub pinned to a release with a cache made 200 s ago, under the 5 min
+    # refresh floor. The cached brief, headed with its age, is the context; the fake uvx is on
+    # PATH and never called, and nothing is written.
+    ws.brief_workspace()
+    pinned = dict(ws.BRIEF_HUB_JSON, platform={"version": "1.2.3"})
+    ws.commit_hub({"hub.json": json.dumps(pinned, indent=2) + "\n"})
+    ws.fake(ws.root / "bin" / "uvx", "uvx")
+    cache = {"made_at": ws.FIXED - 200, "brief": CACHED_BRIEF}
+    ws.write_files(
+        hub_of(ws),
+        {".hub-cache/.gitignore": "*\n", ".hub-cache/brief.json": json.dumps(cache)},
+    )
+    return start(ws, session_event("startup", hub_of(ws)), cwd=hub_of(ws))
 
 
 # session_end (AGH-7's test_session_end.py).
@@ -995,6 +1012,7 @@ CASES: dict[str, Builder] = {
     "session_start/hub_worktree_cwd": session_start_hub_worktree_cwd,
     "session_start/non_object_stdin": session_start_non_object_stdin,
     "session_start/brief_crash_compact": session_start_brief_crash_compact,
+    "session_start/cached_startup": session_start_cached_startup,
     "session_end/no_hub": session_end_no_hub,
     "session_end/new_day_file": session_end_new_day_file,
     "session_end/append": session_end_append,
@@ -1028,7 +1046,7 @@ CASES: dict[str, Builder] = {
 # AGH-200's guard and stop_gate cases (E9).
 CASES_PER_FILE = {
     "post_edit": 11,
-    "session_start": 9,
+    "session_start": 10,  # AGH-612: cached_startup
     "session_end": 5,
     "pre_compact": 4,
     "retro_metrics": 7,
