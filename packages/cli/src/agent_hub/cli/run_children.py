@@ -12,6 +12,7 @@ task's six ``HUB_*`` variables (``worktree_steps.script_env``).
 A dry run prints each child as ``would run: <argv>   (cwd <folder>)``, each argument shell-quoted,
 or JSON-escaped when it holds a line break or another unprintable character, so tracker text
 cannot write to the terminal.
+The hidden names and ``without`` are defined in ``hidden_env`` and re-exported here.
 """
 
 import functools
@@ -19,12 +20,16 @@ import json
 import os
 import re
 import shlex
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
 from agent_hub.cli.child_process import git_env
+from agent_hub.cli.hidden_env import CHILD_HIDDEN as CHILD_HIDDEN
+from agent_hub.cli.hidden_env import KEY_VARIABLE as KEY_VARIABLE
+from agent_hub.cli.hidden_env import SESSION_HIDDEN as SESSION_HIDDEN
+from agent_hub.cli.hidden_env import without as without
 from agent_hub.cli.init_report import shown_path
 from agent_hub.cli.session_settings import session_settings_path
 from agent_hub.core.hub_config.conventions import EffectiveConventions
@@ -46,10 +51,6 @@ from agent_hub.core.tracker.tracker_client import Issue
 from agent_hub.core.workspace.worktree_name import worktree_branch
 
 WORKTREES: Final = Path(".claude", "worktrees")
-KEY_VARIABLE: Final = "LINEAR_API_KEY"
-# Hidden from every child; the implementing session also loses the GitHub tokens.
-CHILD_HIDDEN: Final = (KEY_VARIABLE,)
-SESSION_HIDDEN: Final = (KEY_VARIABLE, "GH_TOKEN", "GITHUB_TOKEN")
 OTEL_VARIABLE: Final = "OTEL_RESOURCE_ATTRIBUTES"
 # Read by the hook sensor: the run, step and attempt its session belongs to (D6).
 RUN_ID_VARIABLE: Final = "AGENT_HUB_RUN_ID"
@@ -262,12 +263,6 @@ def pr_edit_command(url: str, body_file: Path) -> list[str]:
     """The edit of the PR at ``url``: its body replaced by the text of ``body_file`` (a body
     can be longer than one argv string may be)."""
     return ["gh", "pr", "edit", url, "--body-file", str(body_file)]
-
-
-def without(environ: Mapping[str, str], names: Iterable[str]) -> dict[str, str]:
-    """A copy of ``environ`` without ``names``."""
-    hidden = set(names)
-    return {name: value for name, value in environ.items() if name not in hidden}
 
 
 def child_env(environ: Mapping[str, str]) -> dict[str, str]:

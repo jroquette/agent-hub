@@ -6,14 +6,16 @@ Every error goes to stderr on its own line, escaped so that it cannot fake a sec
 import os
 from collections.abc import Collection
 from pathlib import Path
-from typing import Final, NoReturn
+from typing import TYPE_CHECKING, Final, NoReturn
 
 import typer
 
 from agent_hub.cli.init_report import shown_path, shown_text
-from agent_hub.core.hub_files.extension_inputs import ExtensionInputs, extension_inputs_from
-from agent_hub.core.hub_files.tree_snapshot import TreeSnapshot
-from agent_hub.generator.errors import GeneratorError
+
+if TYPE_CHECKING:
+    from agent_hub.core.hub_files.extension_inputs import ExtensionInputs
+    from agent_hub.core.hub_files.tree_snapshot import TreeSnapshot
+    from agent_hub.generator.errors import GeneratorError
 
 # Any failure after the usage check: config, modules, target, tree or write.
 FAILURE: Final = 1
@@ -37,6 +39,11 @@ def extension_inputs_or_exit(
     A sibling that is not a regular file, or an agent or skill name ``hub.lock`` cannot record
     (plan E9), is an input error: nothing is written.
     """
+    from agent_hub.core.hub_files.extension_inputs import (  # noqa: PLC0415 - it loads the workflow catalog
+        ExtensionInputs,
+        extension_inputs_from,
+    )
+
     found = extension_inputs_from(tree, project=project, siblings=siblings)
     if not isinstance(found, ExtensionInputs):
         fail(*(f"{shown_path(path)}: {message}" for path, message in found))
