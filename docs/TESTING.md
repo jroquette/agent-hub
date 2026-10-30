@@ -274,7 +274,9 @@ temp root, renders a synthetic hub there (`hub init`, `git init` and one commit)
 - `cli`: `hub --version`, `./hub --version (local uvx stand-in)`, `hub brief --no-network`, and the list commands
   `hub repo list`, `hub env list`, `hub action list`, `hub scenario list`, `hub workflow list`, run in the temp hub;
 - `hook`: the eight rendered hooks, each fed a synthetic hook input (`guard (PreToolUse Bash)`,
-  `session_start (local uvx stand-in)`, ...);
+  `session_start (local uvx stand-in)`, ...). The `session_start` row keeps its pinned name but measures the cached
+  path (ADR 0055): building the probe runs `hub brief --write-cache` once in the temp hub, so every run reads a cache
+  under the 5 min refresh floor, starts no refresh and runs no `uvx` in the foreground;
 - `route`: seven `hub web` routes (`/api/v1/sessions`, `/api/v1/features`, `/api/v1/search?q=make`, ...);
 - `page`: four pages in Playwright's Chromium (`apps/web/e2e/perf.spec.ts`), ready when no `/api/v1/` request is in
   flight for 500 ms after `load`, with the number of API calls;
@@ -307,8 +309,9 @@ Known gaps:
 
 - The live set is empty: `/api/v1/live-sessions` and the `/` page measure no live session, because the fixture is 90
   days old and live tiles are judged against the server clock.
-- `./hub --version` and `session_start` run through a local `uvx` stand-in that runs the worktree's `hub`: no release
-  is fetched, so uvx's own resolve time is not counted (the path names say so).
+- `./hub --version` runs through a local `uvx` stand-in that runs the worktree's `hub`: no release is fetched, so
+  uvx's own resolve time is not counted (the path name says so). `session_start` reads a fresh cache and calls no
+  `uvx` at all, so neither the background refresh nor a cold first session (no cache: the mini brief) is measured.
 
 `make perf` is in no local gate: `make check-fast` and `make check` never run it, and it never runs in their parallel
 lanes. Run it by hand on a quiet machine, with output to a file: `make perf > perf.log 2>&1; echo $?`.

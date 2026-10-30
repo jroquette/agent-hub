@@ -78,12 +78,26 @@ start, a sibling hub only if the start is in it or a repo it lists. That file gi
 replace them, and `readable_env_files` is the hook root's only; for
 `guard.infra`, the mode and `allow` are the hook root's only and `$HUB_CONFIG`'s `prod_markers` and unusable-value
 problem are added (in the plugin cache, the found file's `guard.infra` as is); the extension, `@hub/` anchors and
-guard-file asks stay pinned to the hook root. Only SessionStart calls the CLI, from the hub with `AGENT_HUB_ROOT` set:
+guard-file asks stay pinned to the hook root. Only SessionStart calls the CLI, and never in the foreground
+([ADR 0055](../adr/0055-session-start-brief-from-a-cache.md)). In a fixed order: (1) no version, a bad
+`platform.repository` or no `uvx` give the mini brief naming it (`no version`, `no uv`), with nothing written and no
+refresh; (2) it reads the brief cache `<hub>/.hub-cache/brief.json` through the stdlib reader (a regular file only, no
+link, at most 64 KiB, fields checked, the brief cut at 8000 characters); (3) when the cache is missing, unreadable or
+at least 5 min old, it writes `.hub-cache/.gitignore` (`*`) first, takes a non-blocking `flock` on
+`.hub-cache/refresh.lock` (held: no refresh starts) and starts the refresh; (4) a cache under 12 h old is the
+context, headed with its age (`brief from 3 min ago`), else the mini brief names why: the last failed refresh's cause
+from `.hub-cache/refresh.json`, else `no brief cache`, `brief cache stale` or `brief cache unreadable`; (5) after a
+compaction, the pre-compact snapshot as before. The refresh is the same hook file run as
+`python3 session_start.py --refresh <hub>`, in its own session (`start_new_session`), stdio on `/dev/null` and only
+the lock's descriptor passed on, so it holds none of the hook's output, outlives the hook and its process-group kill,
+and holds the lock until it exits. It runs the pinned `hub brief --write-cache` from the hub with `AGENT_HUB_ROOT` set:
 when `hub.lock` records the release commit for the pin (`platform_commit`, read by the stdlib reader's
 `read_lock_source`, [ADR 0054](../adr/0054-pin-the-platform-release-by-commit.md)), one `uvx --from <repository>@<commit>…
-hub brief`; else the shim's resolve step (`uvx … hub --version`), then `uvx … hub brief`; all within one 10 s deadline; else a mini
-brief naming the cause (`no version`, `no uv`, `resolve failed`, `failed (exit N)`, `(no output)` or `(cannot start)`,
-`timed out`). Guard extension: the seeded `plugin/<project>/hooks/project_guard.py` of the hook root (never from
+hub brief --write-cache`; else the shim's resolve step (`uvx … hub --version`), then the same source's brief; all
+within one 60 s limit, then the call's process group is killed. A failed refresh writes `refresh.json` with its cause
+(`resolve failed`, `failed (exit N)`, `failed (no output)`, `failed (cannot start)`, `timed out`); one that succeeds
+removes it. Plain `hub brief` writes nothing; only `--write-cache` writes the cache (folder made with its own
+`.gitignore` first, refused when it is a link, file replaced atomically). Guard extension: the seeded `plugin/<project>/hooks/project_guard.py` of the hook root (never from
 `CLAUDE_PROJECT_DIR`, the cwd or tool input). Unless the base verdict is `deny` (final), it runs in a child `python3` in
 its own session (3 s, then killed with its process group) and only tightens: `check(event, cfg)` returns `None`,
 `("deny", reason)` or `("ask", reason)`, and the child, given the event JSON on stdin, prints it as one JSON value,
@@ -179,7 +193,7 @@ report instead of block for up to 12 h. Proof: integration tests, characterizati
 | `worktree.sh`, `make worktree`, `make worktree-remove` | `./hub worktree <name> [--only REPO]... [--remove]` | keeps the per-repo setup/teardown scripts |
 | — | `./hub start ISSUE [--repo DIR]… [--no-agent]` | issue to worktrees, started state and a session ([hub-start.md](hub-start.md)) |
 | — | `./hub setup [--yes]` | onboards a machine ([hub-setup.md](hub-setup.md)) |
-| `brief.py`, `make brain-brief` | `./hub brief [--no-network]` | SessionStart calls it (Hooks) |
+| `brief.py`, `make brain-brief` | `./hub brief [--no-network] [--write-cache]` | SessionStart's background refresh calls it with `--write-cache` (Hooks) |
 | `agent_runner.py`, `make next`, `make run-issue` | `hub next`, `hub run <issue> --repo REPO [--live] [--budget USD] [--from implement\|verify]` | through `TrackerClient`; `run-issue` passes `BUDGET` and `FROM`, each checked as a name |
 | `agent`, `make agent` | `./agent`: `exec ./hub agent "$@"` | `--add-dir` per repo dir; the repos' `AGENTS.md` in `brain/auto/agent-context.md` (rewritten per launch, gitignored); auto memory in `brain/auto/workspace/` (personal, gitignored); then `exec claude` |
 | `bench.py`, `make bench`, `make bench-validate` | `hub bench [--validate] [options]`, module `bench` | cases stay in the brain: `brain/workflow/bench/tasks.json` (absent or `[]`: nothing to do; bounds: the `bench.tasks` row of [hub-doctor.md](hub-doctor.md)); without `bench` selected, exit 2 `module bench is not selected`. `--validate` (no run option) grades each case not excluded at its merge's parent (must fail) and at its merge (must pass), never runs `claude`. A run (`--runs` 3, `--arms with,without`, `--cases` all, `--budget` 15, `--per-run` 2, `--parallel` 3, `--label` `bench-%Y%m%d-%H%M`, `--trace`; `BENCH_EFFORT` low/medium/high) lays `origin/main`'s agent config over each case's merge parent in a detached worktree under `<ws>/_bench/wt` (`<ws>`: the folder of the hub's main checkout), runs one `claude -p` per job (the `with` arm enables `hub-workflow@<project>`), then grades it; a wave starts only while it fits the budget (else `STOP:`), and a failed session without a cost counts at `--per-run`. Records go to `<ws>/_bench/results/<label>.jsonl` (traces in `results/traces/`, files 0600), then the summary. Children run without `LINEAR_API_KEY`, `GH_TOKEN`, `GITHUB_TOKEN`; sessions use `--setting-sources user`, so the user's own hooks and plugins load in both arms (AGH-77 checks whether project instruction files are read). `<ws>/_bench/bench.lock` allows one bench per workspace; a left-behind lock exits 1 for the user to delete. Each job's `git worktree add` and its removal (`remove`, `prune`) run under one in-process lock, one at a time (AGH-120). Exits: 0 done, 1 bad cases, wrong grade, failed step or lock, 2 usage |
