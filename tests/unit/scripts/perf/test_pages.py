@@ -27,7 +27,7 @@ from scripts.perf.fixture import FEATURE_SLUG, PAGE_SESSION
 from scripts.perf.pages import chromium_executable, page_env, page_rows, web_deps_missing
 
 # The page rows, written out by hand: the sessions list and a note in a 100-note Brain folder
-# (AGH-614's two added rows) come last.
+# come last.
 SESSIONS_PAGE = "/sessions"
 BRAIN_PAGE = "/projects/perf/brain/tree-3/note-050.md"
 PAGES = (

@@ -30,7 +30,7 @@ LIST_COMMAND_PATHS = (
 RESTART_API = "hub web start → /api/v1/sessions"
 # The shim row on the one-call commit path: ADR 0053's `hub` row plus 300 ms.
 SHIM_PATH = "./hub --version (local uvx stand-in)"
-# The page rows added after the seed (AGH-614), at ADR 0053's `every` page ceiling.
+# The page rows added after the seed, at ADR 0053's `every` page ceiling.
 ADR_PAGES = ("/sessions", "/projects/perf/brain/tree-3/note-050.md")
 ADR_PATHS = (*LIST_COMMAND_PATHS, SHIM_PATH, *ADR_PAGES)
 

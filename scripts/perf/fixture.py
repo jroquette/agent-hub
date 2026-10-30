@@ -51,7 +51,7 @@ FEATURE_EVERY = 10
 FAILURE_RATE = 0.05
 JITTER_SECONDS = 600
 FEATURE_SPEC = f"brain/features/{FEATURE_SLUG}/spec.md"
-# The temp hub's perf brain (AGH-614): ``brain/tree-<n>/note-<nnn>.md``, outside
+# The temp hub's perf brain: ``brain/tree-<n>/note-<nnn>.md``, outside
 # ``brain/features/`` so no feature scan reads it, and the note the Brain page row opens.
 BRAIN_FOLDERS = 6
 NOTES_PER_FOLDER = 100

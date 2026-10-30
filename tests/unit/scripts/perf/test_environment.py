@@ -61,7 +61,7 @@ INIT_LOCK = {
     "platform_version": INIT_VERSION,
     "schema_version": 1,
 }
-# The perf brain (AGH-614), written out by hand: six folders of a hundred notes under
+# The perf brain, written out by hand: six folders of a hundred notes under
 # ``brain/tree-<n>/``, outside ``brain/features/``, and the note the Brain page row opens.
 BRAIN_NOTES = frozenset(
     f"tree-{folder}/note-{note:03d}.md" for folder in range(1, 7) for note in range(1, 101)

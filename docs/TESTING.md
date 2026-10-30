@@ -299,9 +299,10 @@ one about 6.5.
 
 It prints one table and writes `perf.json`: a list of rows, each with `kind`, `path`, `runs`, `median_ms`, `p95_ms`,
 `budget`, `status` (`pass`, `over`, `no budget` or `skipped`, with a `reason`), `api_calls` (pages), `dom_nodes`
-(pages; a reported field only, with no budget and no table column, `null` elsewhere), `rss_mb` (restarts) and the run's `events`, `seed`, `commit` and `machine`. The budgets are data in `scripts/perf/budgets.json`,
-one entry per `(kind, path)` with `p95_ms`, `api_calls` or `rss_mb`; every entry's `source` is "AGH-601 proposed" until
-the ADR that sets them is accepted. A path with no entry shows `no budget`. Without npm, Chromium or
+(pages; a reported field only, with no budget and no table column, `null` elsewhere), `rss_mb` (restarts) and the
+run's `events`, `seed`, `commit` and `machine`. The budgets are data in `scripts/perf/budgets.json`, one entry per
+`(kind, path)` with `p95_ms`, `api_calls` or `rss_mb`; an entry's `source` is "AGH-601 proposed" (the proposed
+numbers) or "ADR 0053" (a row at that ADR's ceilings). A path with no entry shows `no budget`. Without npm, Chromium or
 `apps/web/node_modules`, the page rows are `skipped`; `make perf` itself runs `npm ci` first, so on a machine without
 npm run `uv run --locked --all-packages python -m scripts.perf.run_suite` instead. The runner's exit code: 0, also
 when a row is over; 1 when `PERF_STRICT=1` and a row is `over`; 2 when the suite itself fails (a bad budgets file or

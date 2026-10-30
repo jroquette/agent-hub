@@ -170,7 +170,6 @@ def _feature_files(hub: Path) -> None:
 
 
 def _brain_tree(hub: Path) -> None:
-    """``BRAIN_FOLDERS`` folders of ``NOTES_PER_FOLDER`` notes, each a heading and one line."""
     for folder in range(1, BRAIN_FOLDERS + 1):
         directory = hub / "brain" / f"tree-{folder}"
         directory.mkdir(parents=True, exist_ok=True)
