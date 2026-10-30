@@ -110,13 +110,15 @@ def test_loads_no_web_or_store_module_when_main_imported(tmp_path: Path) -> None
     assert seen == {"import": [], "--version": [], "--help": []}
 
 
-# What `hub repo list` and `hub env list` never use (AGH-607, AC-15): the workflow catalog and the
-# modules that only reach for it.
-CATALOG_CHAIN = (
+# What `hub repo list` and `hub env list` never use: the workflow catalog, the modules that only
+# reach for it, and the modules `command_exits` names only in type hints.
+LIST_UNUSED = (
     "agent_hub.core.workflows.catalog",
     "agent_hub.cli.run_children",
     "agent_hub.core.hub_files.plan_init",
     "agent_hub.core.doctor.snapshot",
+    "agent_hub.core.hub_files.tree_snapshot",
+    "agent_hub.generator.errors",
 )
 
 
@@ -147,7 +149,7 @@ def test_loads_no_workflow_catalog_when_list_command_runs(
     (hub / "hub.json").write_text(json.dumps(pinned, indent=2) + "\n")
     code = (
         "import importlib, json, sys\n"
-        f"CHAIN = {CATALOG_CHAIN!r}\n"
+        f"CHAIN = {LIST_UNUSED!r}\n"
         "def loaded():\n"
         "    return sorted(m for m in CHAIN if m in sys.modules)\n"
         "from typer.testing import CliRunner\n"
@@ -183,7 +185,7 @@ def test_loads_no_workflow_catalog_when_list_command_runs(
     # the probe sees every name of the chain once it is imported.
     assert seen.pop("output").splitlines()[0] == first_line
     assert "agent_hub.core.workflows.catalog" in seen.pop("self-check workflow list")
-    assert seen.pop("self-check import") == sorted(CATALOG_CHAIN)
+    assert seen.pop("self-check import") == sorted(LIST_UNUSED)
     assert seen == {"before": [], "list": []}
 
 
