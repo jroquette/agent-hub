@@ -9,11 +9,14 @@ inside it nothing is followed). The branch prefix needs git in the developer's m
 which stays with the caller: it passes ``branch_prefix``, called only when a rule reads the
 developer identity and the local file is valid. The remote probes (AGH-134) run git against the
 network, also the caller's: it passes ``remote_probes`` only from a Claude Code session, called
-only when a rule reads the remotes. The workflows are the hub's and the built-ins, read as
-``hub workflow`` reads them, when a rule reads them (AGH-227). The item folders (AGH-297) are
-scanned by name only for temp-shaped entries an interrupted item write left beside a unit. The
-declared env files are looked up in the workspace (the hub's parent), with ``git check-ignore`` in
-the checkout that holds each, only when a rule reads them. The scenarios are the hub's
+only when a rule reads the remotes. The probe of the pinned release's tag (ADR 0054) is the
+caller's too: it passes ``release_probe``, called only when a rule reads the release commit and
+the lock records one for the pin and repository in use (the control plane passes none). The
+workflows are the hub's and the built-ins, read as ``hub workflow`` reads them, when a rule
+reads them (AGH-227). The item folders (AGH-297) are scanned by name only for temp-shaped
+entries an interrupted item write left beside a unit. The declared env files are looked up in
+the workspace (the hub's parent), with ``git check-ignore`` in the checkout that holds each, only
+when a rule reads them. The scenarios are the hub's
 ``scenarios/<pack>/``, read as ``hub scenario`` reads them, when a rule reads them.
 """
 
@@ -29,6 +32,7 @@ from agent_hub.core.doctor.snapshot import (
     DoctorSnapshot,
     EnvFileFacts,
     LockState,
+    ReleaseProbe,
     RemoteProbe,
     RepoFiles,
     hub_paths,
@@ -42,7 +46,8 @@ from agent_hub.core.hub_config.effective_identity import Sourced
 from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
-from agent_hub.core.hub_files.hub_lock import HUB_LOCK_PATH
+from agent_hub.core.hub_files.hub_lock import HUB_LOCK_PATH, HubLock
+from agent_hub.core.hub_files.release_commit import kept_release
 from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
 from agent_hub.core.item_versions.hub_item_writer import DRAFTS_FOLDER
 from agent_hub.core.skills.skill_sources import DEFAULT_LIMITS
@@ -59,6 +64,8 @@ from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
 type BranchPrefixReader = Callable[[], Sourced | None]
 # Each repo checkout's ``git ls-remote origin``, in ``hub.json`` order.
 type RemoteProber = Callable[[], tuple[RemoteProbe, ...]]
+# What tag ``v<version>`` names in a platform repository: (repository, version) to the probe.
+type ReleaseProber = Callable[[str, str], ReleaseProbe]
 
 
 def build_doctor_snapshot(
@@ -70,6 +77,7 @@ def build_doctor_snapshot(
     local: LocalConfig | tuple[ConfigProblem, ...],
     branch_prefix: BranchPrefixReader | None,
     remote_probes: RemoteProber | None = None,
+    release_probe: ReleaseProber | None = None,
 ) -> DoctorSnapshot:
     """The snapshot of the hub at ``root`` (its real path) for the selected rules."""
     reads = {read for rule in selection.rules for read in rule.reads}
@@ -82,6 +90,10 @@ def build_doctor_snapshot(
     if Read.DEVELOPER_IDENTITY in reads and isinstance(local, LocalConfig) and branch_prefix:
         prefix = branch_prefix()
     probes = remote_probes() if Read.REMOTES in reads and remote_probes else None
+    release = None
+    if Read.RELEASE_COMMIT in reads and release_probe is not None and isinstance(lock, HubLock):
+        kept = kept_release(lock, config)
+        release = None if kept is None else release_probe(kept.repository, config.platform.version)
     workflows = DiscoveredWorkflowSource(Path(root)) if Read.WORKFLOWS in reads else None
     packs = pack_folders(root) if workflows is not None else ()
     leftovers, item_folders = item_leftovers(root) if Read.ITEM_FOLDERS in reads else (None, ())
@@ -105,6 +117,7 @@ def build_doctor_snapshot(
         env_files=env_files,
         scenarios=scenarios,
         scenario_folders=scenario_packs,
+        release_probe=release,
     )
 
 

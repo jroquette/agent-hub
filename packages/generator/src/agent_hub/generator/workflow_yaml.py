@@ -19,12 +19,24 @@ consumer names the line of its nearest recorded ancestor. For JSON the map is be
 same composer reads the text (tabs read as spaces), and the map is empty when it cannot, or when
 the text holds a character YAML counts as a line break and JSON does not (U+0085, U+2028, U+2029).
 What the mapping means is core's document model; this module only reads it.
+
+``load_workflow_bytes`` parses each distinct file once per process: a cache keyed by the
+format and the SHA-256 of the bytes sits in front of ``read_workflow_strictly``, which is never
+cached itself. Only a result that passed every check is stored, so refused bytes are parsed (and
+refused) again on every read. An entry holds the document as JSON text and a read-only line map,
+and each caller gets a document of its own, so no caller can change what the next one reads. The
+cache is bounded (``MAX_CACHED_WORKFLOWS`` entries and ``MAX_CACHED_BYTES`` of input bytes, oldest
+out first) and guarded by one lock, since ``hub web`` reads in worker threads. A YAML miss first
+asks ``parsed_builtins.lookup`` for the digest: the built-ins' exact bytes are shipped pre-parsed,
+and any other bytes, an edited built-in included, take the strict path.
 """
 
+import hashlib
 import json
 import math
 import re
-from collections import deque
+import threading
+from collections import OrderedDict, deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -38,10 +50,13 @@ from yaml.reader import ReaderError
 from agent_hub.core.hub_config.versions import cut_echo
 from agent_hub.core.json_form import InvalidJsonError, JsonValue, load_json_bytes
 from agent_hub.generator.errors import GeneratorError
+from agent_hub.generator.parsed_builtins import lookup
 
 MAX_WORKFLOW_BYTES: Final = 256 * 1024
 MAX_LINE_DEPTH: Final = 8
 MAX_LINE_ENTRIES: Final = 20_000
+MAX_CACHED_WORKFLOWS: Final = 128
+MAX_CACHED_BYTES: Final = 1024 * 1024
 JSON_SUFFIX: Final = ".json"
 _SURROGATE: Final = re.compile("[\ud800-\udfff]")
 # The line breaks of YAML's reader: what its marks count as a new line.
@@ -76,7 +91,32 @@ class WorkflowFileError(GeneratorError):
 
 def load_workflow_bytes(content: bytes, *, source: str) -> LoadedWorkflow:
     """The mapping a workflow file holds, with its key lines; JSON when ``source`` ends in
-    ``.json``, else YAML.
+    ``.json``, else YAML. The same bytes in the same format are parsed once per process.
+
+    Raises ``WorkflowFileError`` naming ``source`` and, when known, the line.
+    """
+    if len(content) > MAX_WORKFLOW_BYTES:
+        reason = f"the file is over {MAX_WORKFLOW_BYTES} bytes"
+        raise WorkflowFileError(source=source, line=None, reason=reason)
+    is_json = source.endswith(JSON_SUFFIX)
+    digest = hashlib.sha256(content).digest()
+    key = (is_json, digest)
+    parsed = _CACHE.get(key)
+    if parsed is None:
+        builtin = None if is_json else lookup(digest)
+        if builtin is None:
+            loaded = read_workflow_strictly(content, source=source)
+            _CACHE.put(key, loaded, size=len(content))
+            return loaded
+        # The table's entry is shared: the caller gets a document of its own, from the cache.
+        parsed = _CACHE.put(
+            key, LoadedWorkflow(document=builtin.document, lines=builtin.lines), size=len(content)
+        )
+    return LoadedWorkflow(document=json.loads(parsed.document_text), lines=parsed.lines)
+
+
+def read_workflow_strictly(content: bytes, *, source: str) -> LoadedWorkflow:
+    """``load_workflow_bytes`` without its cache: every call parses and checks ``content``.
 
     Raises ``WorkflowFileError`` naming ``source`` and, when known, the line.
     """
@@ -91,6 +131,53 @@ def load_workflow_bytes(content: bytes, *, source: str) -> LoadedWorkflow:
         reason = "the top level is not a mapping of keys to values"
         raise WorkflowFileError(source=source, line=lines.get(()), reason=reason)
     return LoadedWorkflow(document=value, lines=MappingProxyType(lines))
+
+
+type _CacheKey = tuple[bool, bytes]
+"""Whether the bytes are read as JSON, and their SHA-256 digest."""
+
+
+@dataclass(frozen=True, slots=True)
+class _Parsed:
+    """A cache entry: the document as JSON text, its line map (read-only) and the input size."""
+
+    document_text: str
+    lines: Mapping[KeyPath, int]
+    size: int
+
+
+class _ParseCache:
+    """Parsed files by key, oldest out first past either bound; one lock guards every access."""
+
+    def __init__(self) -> None:
+        self._entries: OrderedDict[_CacheKey, _Parsed] = OrderedDict()
+        self._bytes = 0
+        self._lock = threading.Lock()
+
+    def get(self, key: _CacheKey) -> _Parsed | None:
+        with self._lock:
+            return self._entries.get(key)
+
+    def put(self, key: _CacheKey, loaded: LoadedWorkflow, *, size: int) -> _Parsed:
+        """Store ``loaded`` under ``key`` unless an entry is there, and return the stored entry."""
+        # The loader's values are JSON's (no surrogate, no infinity, ints Python can read), so
+        # the text reads back to an equal document.
+        entry = _Parsed(json.dumps(loaded.document, allow_nan=False), loaded.lines, size)
+        with self._lock:
+            stored = self._entries.get(key)
+            if stored is not None:
+                return stored
+            while self._entries and (
+                len(self._entries) >= MAX_CACHED_WORKFLOWS or self._bytes + size > MAX_CACHED_BYTES
+            ):
+                _, dropped = self._entries.popitem(last=False)
+                self._bytes -= dropped.size
+            self._entries[key] = entry
+            self._bytes += size
+        return entry
+
+
+_CACHE: Final = _ParseCache()
 
 
 def _load_json(content: bytes, *, source: str) -> tuple[JsonValue, dict[KeyPath, int]]:

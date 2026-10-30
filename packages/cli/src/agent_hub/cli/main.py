@@ -5,33 +5,10 @@ from typing import Annotated
 
 import typer
 
-from agent_hub.cli.action_command import action_app
-from agent_hub.cli.agent_command import PassThroughCommand, agent
-from agent_hub.cli.bench_command import bench
-from agent_hub.cli.brain_command import brain_app
-from agent_hub.cli.brief_command import brief
-from agent_hub.cli.collect import collect
-from agent_hub.cli.doctor_command import doctor
-from agent_hub.cli.env_command import env_app
-from agent_hub.cli.generator import init
-from agent_hub.cli.mcp_command import mcp
-from agent_hub.cli.next_command import next_command
-from agent_hub.cli.repo_command import repo_app
-from agent_hub.cli.run_engine import run
-from agent_hub.cli.scenario_command import scenario_app
-from agent_hub.cli.search_command import search
-from agent_hub.cli.setup_command import setup
-from agent_hub.cli.ship_command import ship
-from agent_hub.cli.skill_usage_command import skill_usage
-from agent_hub.cli.start_command import start
-from agent_hub.cli.step_command import step_app
-from agent_hub.cli.sync_command import sync
-from agent_hub.cli.validate_output_command import validate_output
-from agent_hub.cli.web_command import web
-from agent_hub.cli.workflow_command import workflow_app
-from agent_hub.cli.worktree_command import worktree
+from agent_hub.cli.command_table import HubGroup
 
-app = typer.Typer(name="hub", no_args_is_help=True)
+# Each subcommand is imported when it runs: its name and help are in command_table.
+app = typer.Typer(name="hub", cls=HubGroup, no_args_is_help=True)
 
 
 def _print_version(*, requested: bool) -> None:
@@ -54,30 +31,3 @@ def main(
     ] = False,
 ) -> None:
     """Create, operate and observe agent hubs."""
-
-
-app.command("collect")(collect)
-app.command("init")(init)
-app.command("sync")(sync)
-app.command("doctor")(doctor)
-app.command("setup")(setup)
-app.command("worktree")(worktree)
-app.command("brief")(brief)
-app.command("agent", cls=PassThroughCommand, add_help_option=False)(agent)
-app.command("next")(next_command)
-app.command("run")(run)
-app.command("ship")(ship)
-app.command("bench")(bench)
-app.command("start")(start)
-app.command("web")(web)
-app.command("validate-output")(validate_output)
-app.command("search")(search)
-app.command("mcp")(mcp)
-app.command("skill-usage")(skill_usage)
-app.add_typer(workflow_app, name="workflow")
-app.add_typer(step_app, name="step")
-app.add_typer(env_app, name="env")
-app.add_typer(repo_app, name="repo")
-app.add_typer(action_app, name="action")
-app.add_typer(scenario_app, name="scenario")
-app.add_typer(brain_app, name="brain")

@@ -30,6 +30,11 @@ CLI_ROWS = (
     "hub --version",
     "./hub --version (local uvx stand-in)",
     "hub brief --no-network",
+    "hub repo list",
+    "hub env list",
+    "hub action list",
+    "hub scenario list",
+    "hub workflow list",
 )
 # (path, hook script, hook_event_name, tool_name named by the path or None)
 HOOK_ROWS = (
@@ -132,6 +137,8 @@ def test_lists_the_canonical_cli_and_hook_paths_when_probes_are_built(tmp_path: 
     brief = [str(a) for a in _probe(cli, "hub brief --no-network").argv]
     assert brief[0] == str(hub_bin)
     assert {"brief", "--no-network"} <= set(brief)
+    for path in CLI_ROWS[3:]:
+        assert [str(a) for a in _probe(cli, path).argv] == [str(hub_bin), *path.split()[1:]]
     for path, script, _event, _tool in HOOK_ROWS:
         argv = [str(a) for a in _probe(hooks, path).argv]
         assert len(argv) == 2
@@ -207,3 +214,56 @@ def test_fails_the_suite_when_a_command_exits_non_zero(tmp_path: Path) -> None:
 
     with pytest.raises(SuiteError, match=re.escape("hub brief --no-network")):
         measure(probe, runs=3, runner=runner, clock=clock)
+
+
+class SeedingRunner(RecordingRunner):
+    """A ``RecordingRunner`` whose first call (the seed) writes ``cache``, as the real one does."""
+
+    def __init__(self, clock: FakeClock, steps: Sequence[float], *, cache: Path) -> None:
+        super().__init__(clock, steps)
+        self.cache = cache
+
+    def __call__(self, argv: Sequence[object], stdin: object = None, **_: object) -> Completed:
+        if not self.calls:
+            self.cache.parent.mkdir(exist_ok=True)
+            self.cache.write_text('{"made_at": 0, "brief": "# Brief"}', "utf-8")
+        return super().__call__(argv, stdin)
+
+
+def test_seeds_brief_cache_when_session_start_probe_is_built(tmp_path: Path) -> None:
+    hub, transcript, _hub_bin = _layout(tmp_path)
+    hooks = hook_probes(hub, transcript)
+    probe = _probe(hooks, "session_start (local uvx stand-in)")
+    clock = FakeClock()
+    runner = SeedingRunner(
+        clock, [5.0, 0.010, 0.020, 0.030], cache=hub / ".hub-cache" / "brief.json"
+    )
+
+    samples = measure(probe, runs=3, runner=runner, clock=clock)
+
+    # Seeded once through the temp hub's uvx stand-in, so every timed run reads a cache under
+    # the hook's 5 min refresh floor and starts no refresh (Q14); the seed is not timed.
+    assert probe.seed == ("uvx", "hub", "brief", "--write-cache", "--no-network")
+    assert [argv for argv, _stdin in runner.calls] == [
+        list(probe.seed),
+        *[[str(a) for a in probe.argv]] * 3,
+    ]
+    assert [stdin for _argv, stdin in runner.calls] == [None, *[probe.stdin] * 3]
+    assert list(samples) == pytest.approx([10.0, 20.0, 30.0])
+    assert [p.path for p in hooks if p.seed is not None] == [probe.path]
+    assert probe.seeded == hub / ".hub-cache" / "brief.json"
+
+
+def test_fails_the_suite_when_seed_leaves_no_brief_cache(tmp_path: Path) -> None:
+    # A seed that exits 0 but writes no cache would time the no-cache path, starting refreshes.
+    hub, transcript, _hub_bin = _layout(tmp_path)
+    probe = _probe(hook_probes(hub, transcript), "session_start (local uvx stand-in)")
+    clock = FakeClock()
+    runner = RecordingRunner(clock, [5.0, 0.010, 0.020, 0.030])
+
+    with pytest.raises(
+        SuiteError, match=re.escape("session_start (local uvx stand-in): seed left")
+    ):
+        measure(probe, runs=3, runner=runner, clock=clock)
+
+    assert len(runner.calls) == 1

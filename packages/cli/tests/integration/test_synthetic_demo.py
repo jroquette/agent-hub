@@ -645,6 +645,7 @@ def test_prints_up_to_date_when_sync_reruns(
     run_sync: SyncRunner,
     tree_digest: TreeDigest,
     adapter_calls: list[tuple[str, str]],
+    lookup_warning: Callable[[str], bool],
 ) -> None:
     root = init_demo(demo_config_file, tmp_path / "hub")
     fresh = tree_digest(root)
@@ -655,7 +656,9 @@ def test_prints_up_to_date_when_sync_reruns(
 
     applied = run_sync(root)
 
-    assert (applied.exit_code, applied.stderr) == (0, ""), applied.output
+    assert applied.exit_code == 0, applied.output
+    # The older lock version is a pin change: its commit lookup fails offline (AGH-603 Q3).
+    assert lookup_warning(applied.stderr)
     assert applied.stdout == "restored AGENTS.md\nupdated hub.lock\n"
     assert tree_digest(root) == fresh
     lock_mtime = (root / "hub.lock").stat().st_mtime_ns
@@ -696,6 +699,7 @@ def test_writes_identical_trees_when_sync_runs_twice(
     set_umask: Callable[[int], None],
     lock_golden: LockGolden,
     no_git_path: Path,
+    lookup_warning: Callable[[str], bool],
 ) -> None:
     make_all_pending(demo_hub)
     child_root = tmp_path / "child"
@@ -725,8 +729,12 @@ def test_writes_identical_trees_when_sync_runs_twice(
         timeout=CHILD_TIMEOUT,
     )
 
-    assert (in_process.exit_code, in_process.stderr) == (0, ""), in_process.output
-    assert (child.returncode, child.stderr) == (0, ""), child.stderr
+    assert in_process.exit_code == 0, in_process.output
+    assert child.returncode == 0, child.stderr
+    # The lock header's older version is a pin change: its commit lookup fails offline (the root
+    # conftest's guard in process, no git on the child's PATH), one warning each (AGH-603 Q3).
+    assert lookup_warning(in_process.stderr)
+    assert lookup_warning(child.stderr)
     assert in_process.stdout.splitlines()[-1] == "updated hub.lock"
     assert child.stdout == in_process.stdout
     # The child's umask really differed: some permission bits of the written files differ.

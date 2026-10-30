@@ -1,15 +1,17 @@
 """``hub brief``: the session brief, against the hub's brief characterization (AC-15.5, AC-15.6).
 
-The ten goldens in ``golden/brief/`` are hub ``tests/characterization/golden/brief/*.golden`` at
-hub commit ``8eaebae``, byte for byte, but for one divergence (AGH-46): a failing CI line names
-the repo's branch, so six of them read ``failing on trunk`` where the hub's read ``failing on
-main``, their stdout byte count one higher. ``brief_workspace`` rebuilds that commit's synthetic
-workspace (nothing is copied from the hub's brain).
+Ten of the eleven goldens in ``golden/brief/`` are hub
+``tests/characterization/golden/brief/*.golden`` at hub commit ``8eaebae``, byte for byte, but for
+one divergence (AGH-46): a failing CI line names the repo's branch, so six of them read ``failing
+on trunk`` where the hub's read ``failing on main``, their stdout byte count one higher. The
+eleventh, ``ci_timeout``, is AGH-605's own case, from no hub characterization. ``brief_workspace``
+rebuilds that commit's synthetic workspace (nothing is copied from the hub's brain).
 """
 
 import datetime
 import json
 import os
+import stat
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -40,8 +42,19 @@ BRIEF_RULES: list[dict[str, Any]] = [
     {"argv_has": ["run", "acme/api"], "stdout": "lint\nbuild\nlint\n"},
     {"argv_has": ["acme/web"], "stdout": ""},
 ]
-# How long each fake gh call waits at the barrier for the others (inside the gh phase budget).
+# How long each fake call waits at the barrier for the others; the barrier tests raise the
+# brief's deadline to BARRIER_DEADLINE, so only the barrier, not a loaded runner, can fail them.
 BARRIER_WAIT = 4.0
+BARRIER_DEADLINE = 10.0
+# The hung-gh tests check what the brief prints, not the 2 s value: they raise the deadline to
+# HUNG_GH_DEADLINE so every call that answers does so in time on a loaded runner.
+HUNG_GH_DEADLINE = 5.0
+# api's gh run list never answers within the deadline; its other calls answer as in BRIEF_RULES.
+CI_TIMEOUT_RULES: list[dict[str, Any]] = [
+    BRIEF_RULES[0],
+    {"argv_has": ["run", "acme/api"], "stdout": "never shown\n", "delay": 120},
+    BRIEF_RULES[2],
+]
 
 
 def test_rebuilds_hub_workspace_when_brief_fixture_built(brief_workspace: Workspace) -> None:
@@ -94,6 +107,7 @@ CASES: dict[str, dict[str, Any]] = {
     },
     "truncated": {"changes": {"brain/now.md": LONG_NOW}},
     "gh_failing": {"answers": [{"stderr": "HTTP 503\n", "rc": 1}]},
+    "ci_timeout": {"answers": CI_TIMEOUT_RULES, "deadline": HUNG_GH_DEADLINE},
     "journal_week_edge": {
         "changes": {
             f"{JOURNAL}14.md": None,
@@ -145,6 +159,8 @@ def test_matches_golden_when_case_runs(
         brief_workspace.commit_hub(setup["changes"])
     if "answers" in setup:
         brief_workspace.answer(setup["answers"])
+    if "deadline" in setup:
+        monkeypatch.setattr(brief_command, "BRIEF_DEADLINE", setup["deadline"])
     golden = golden_of(case, golden_sections)
 
     result = run_brief(brief_workspace, *setup.get("argv", ()))
@@ -301,9 +317,12 @@ def test_names_each_repo_branch_when_repo_sets_one(brief_workspace: Workspace) -
 
 
 def test_runs_gh_concurrently_when_network_on(
-    brief_workspace: Workspace, golden_sections: Callable[[Path], dict[str, bytes]]
+    brief_workspace: Workspace,
+    golden_sections: Callable[[Path], dict[str, bytes]],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Every call waits at a barrier for all six: made one after another, the first would give up.
+    monkeypatch.setattr(brief_command, "BRIEF_DEADLINE", BARRIER_DEADLINE)
     folder = brief_workspace.root / "elsewhere" / "barrier"
     folder.mkdir()
     barrier = {"dir": str(folder), "count": 6, "wait": BARRIER_WAIT}
@@ -319,6 +338,81 @@ def test_runs_gh_concurrently_when_network_on(
     assert result.exit_code == 0, result.output
     assert result.stdout_bytes == golden_of("fresh_network", golden_sections)["stdout"]
     assert len(list(folder.iterdir())) == 6
+
+
+def test_runs_git_and_gh_together_when_network_on(
+    brief_workspace: Workspace,
+    golden_sections: Callable[[Path], dict[str, bytes]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Each repo's git branch and gh pr list need nothing else: all six wait at one barrier, so
+    # a git phase before the gh phase (or one call after another) leaves them short of six.
+    monkeypatch.setattr(brief_command, "BRIEF_DEADLINE", BARRIER_DEADLINE)
+    folder = brief_workspace.root / "elsewhere" / "barrier"
+    folder.mkdir()
+    barrier = {"dir": str(folder), "count": 6, "wait": BARRIER_WAIT}
+    brief_workspace.install_git([{"argv_has": ["branch", "--show-current"], "barrier": barrier}])
+    brief_workspace.answer(
+        [
+            {"argv_has": ["pr", "acme/demo-hub"], "rc": 1, "barrier": barrier},
+            {**BRIEF_RULES[0], "barrier": barrier},
+            BRIEF_RULES[1],
+            {"argv_has": ["pr", "acme/web"], "stdout": "", "barrier": barrier},
+            BRIEF_RULES[2],
+        ]
+    )
+    assert list(folder.iterdir()) == []
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout_bytes == golden_of("fresh_network", golden_sections)["stdout"]
+    assert len(list(folder.iterdir())) == 6
+
+
+@pytest.mark.serial
+def test_shows_ci_unknown_when_gh_run_list_times_out(brief_workspace: Workspace) -> None:
+    brief_workspace.answer(CI_TIMEOUT_RULES)
+    started = time.monotonic()
+
+    result = run_brief(brief_workspace)
+
+    elapsed = time.monotonic() - started
+    assert result.exit_code == 0, result.output
+    assert elapsed < brief_command.BRIEF_DEADLINE + 1, elapsed
+    lines = result.stdout.splitlines()
+    api = lines.index("- api: trunk, 2 changed file(s), 1 behind origin/trunk")
+    assert lines[api + 2] == "  CI: unknown (timeout)"
+
+
+@pytest.mark.serial
+def test_kills_gh_child_when_gh_run_list_times_out(brief_workspace: Workspace) -> None:
+    pid_file = brief_workspace.root / "elsewhere" / "gh-pid"
+    brief_workspace.answer(
+        [BRIEF_RULES[0], {**CI_TIMEOUT_RULES[1], "pid_file": str(pid_file)}, BRIEF_RULES[2]]
+    )
+
+    started = time.monotonic()
+    result = run_brief(brief_workspace)
+    elapsed = time.monotonic() - started
+
+    assert result.exit_code == 0, result.output
+    # A child left running would hold the brief until the fake's long sleep ends.
+    assert elapsed < brief_command.BRIEF_DEADLINE + 1, elapsed
+    pid = int(pid_file.read_text())
+    end = time.monotonic() + 2
+    while time.monotonic() < end and process_exists(pid):
+        time.sleep(0.05)
+    assert not process_exists(pid)
+
+
+def process_exists(pid: int) -> bool:
+    """Whether ``pid`` still runs (or waits, unreaped, for its parent)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
 
 
 class TestNetwork:
@@ -356,6 +450,93 @@ def test_writes_nothing_when_brief_runs(
     assert result.exit_code == 0, result.output
     assert tree_digest(brief_workspace.ws) == before
     assert [index.stat().st_mtime_ns for index in indexes] == stamps
+
+
+CACHE = ".hub-cache"
+
+
+def cache_lines(gitignore: Path) -> list[str]:
+    """The rules of ``gitignore``: its lines but blank ones and comments."""
+    lines = gitignore.read_text(encoding="utf-8").splitlines()
+    return [line for line in lines if line.strip() and not line.startswith("#")]
+
+
+def test_writes_cache_when_write_cache_given(
+    brief_workspace: Workspace, golden_sections: Callable[[Path], dict[str, bytes]]
+) -> None:
+    hub = brief_workspace.hub
+    assert not (hub / CACHE).exists()
+    assert brief_workspace.git("status", "--porcelain", cwd=hub) == ""
+    before = time.time()
+
+    result = run_brief(brief_workspace, "--write-cache")
+
+    after = time.time()
+    assert result.exit_code == 0, result.output
+    cache = hub / CACHE / "brief.json"
+    assert stat.S_ISREG(cache.lstat().st_mode)
+    assert stat.S_IMODE(cache.stat().st_mode) == 0o600
+    document = json.loads(cache.read_bytes())
+    assert sorted(document) == ["brief", "made_at"]
+    assert document["brief"] == golden_of("fresh_network", golden_sections)["stdout"].decode()
+    assert before <= document["made_at"] <= after
+    assert cache_lines(hub / CACHE / ".gitignore") == ["*"]
+    assert brief_workspace.git("status", "--porcelain", cwd=hub) == ""
+
+
+def test_repairs_ignore_rule_when_gitignore_is_empty(brief_workspace: Workspace) -> None:
+    # A run killed between creating .gitignore and writing it leaves it empty: the next one
+    # writes the rule whole, which also hides a killed run's temp.
+    hub = brief_workspace.hub
+    (hub / CACHE).mkdir()
+    (hub / CACHE / ".gitignore").write_bytes(b"")
+    (hub / CACHE / ".gitignore.hub-tmp-0000").write_bytes(b"")
+
+    result = run_brief(brief_workspace, "--no-network", "--write-cache")
+
+    assert result.exit_code == 0, result.output
+    assert cache_lines(hub / CACHE / ".gitignore") == ["*"]
+    assert stat.S_IMODE((hub / CACHE / ".gitignore").stat().st_mode) == 0o644
+    assert brief_workspace.git("status", "--porcelain", cwd=hub) == ""
+
+
+def test_refuses_cache_folder_when_it_is_a_link(brief_workspace: Workspace) -> None:
+    target = brief_workspace.root / "elsewhere" / "planted"
+    target.mkdir()
+    (brief_workspace.hub / CACHE).symlink_to(target)
+    assert list(target.iterdir()) == []
+
+    result = run_brief(brief_workspace, "--no-network", "--write-cache")
+
+    assert list(target.iterdir()) == []
+    assert (brief_workspace.hub / CACHE).is_symlink()
+    assert result.exit_code == 1, result.output
+    assert CACHE in result.stderr
+
+
+def test_replaces_cache_atomically_when_written_twice(brief_workspace: Workspace) -> None:
+    cache = brief_workspace.hub / CACHE / "brief.json"
+    first = run_brief(brief_workspace, "--no-network", "--write-cache")
+    assert first.exit_code == 0, first.output
+    old = json.loads(cache.read_bytes())
+    assert "Ship the cache." not in old["brief"]
+    brief_workspace.commit_hub(
+        {"brain/now.md": FRESH_NOW.replace("Ship the collector.", "Ship the cache.")}
+    )
+
+    # A reader that opened the first cache keeps a whole document: the file is replaced, not
+    # rewritten in place.
+    with cache.open("rb") as reader:
+        second = run_brief(brief_workspace, "--no-network", "--write-cache")
+        held = json.loads(reader.read())
+
+    assert second.exit_code == 0, second.output
+    assert held == old
+    new = json.loads(cache.read_bytes())
+    assert "Ship the cache." in new["brief"]
+    assert new["made_at"] >= old["made_at"]
+    assert stat.S_IMODE(cache.stat().st_mode) == 0o600
+    assert sorted(path.name for path in cache.parent.iterdir()) == [".gitignore", "brief.json"]
 
 
 def test_warns_undated_when_last_verified_invalid(brief_workspace: Workspace) -> None:
@@ -426,29 +607,61 @@ def test_ignores_git_dir_when_caller_sets_it(
     assert result.stdout_bytes == golden_of("no_network", golden_sections)["stdout"]
 
 
+@pytest.mark.serial
 def test_prints_git_state_when_gh_hangs(
     brief_workspace: Workspace,
     golden_sections: Callable[[Path], dict[str, bytes]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Every gh call hangs far past the per-call timeout; the gh phase's budget ends them all.
-    monkeypatch.setattr(brief_command, "GH_PHASE_BUDGET", 0.5)
+    # Every gh call hangs far past the deadline: the git state stays, each CI is unknown.
+    monkeypatch.setattr(brief_command, "BRIEF_DEADLINE", HUNG_GH_DEADLINE)
     brief_workspace.answer([{"stdout": "#1 never shown\n", "delay": 120}])
     started = time.monotonic()
 
     result = run_brief(brief_workspace)
 
     assert result.exit_code == 0, result.output
-    assert result.stdout_bytes == golden_of("no_network", golden_sections)["stdout"]
+    expected = with_ci_timeouts(golden_of("no_network", golden_sections)["stdout"])
+    assert result.stdout_bytes == expected
     assert len(brief_workspace.calls().splitlines()) == 6
-    assert time.monotonic() - started < brief_command.BRIEF_GH_TIMEOUT
+    assert time.monotonic() - started < brief_command.BRIEF_DEADLINE + 2
 
 
-def test_skips_git_calls_when_git_budget_spent(
+@pytest.mark.serial
+def test_prints_git_state_when_hung_gh_fills_workers(
+    brief_workspace: Workspace,
+    golden_sections: Callable[[Path], dict[str, bytes]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Two workers and three hung gh pr list calls: a git call queued behind gh would get no time.
+    monkeypatch.setattr(brief_command, "MAX_WORKERS", 2)
+    monkeypatch.setattr(brief_command, "BRIEF_DEADLINE", HUNG_GH_DEADLINE)
+    brief_workspace.answer([{"stdout": "#1 never shown\n", "delay": 120}])
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 0, result.output
+    expected = with_ci_timeouts(golden_of("no_network", golden_sections)["stdout"])
+    assert result.stdout_bytes == expected
+
+
+def with_ci_timeouts(stdout: bytes) -> bytes:
+    """``stdout`` with ``CI: unknown (timeout)`` under each found repo of its Repos section."""
+    lines: list[str] = []
+    in_repos = False
+    for line in stdout.decode().split("\n"):
+        lines.append(line)
+        in_repos = line == "## Repos" or (in_repos and line != "")
+        if in_repos and line.startswith("- ") and not line.endswith(": not found"):
+            lines.append("  CI: unknown (timeout)")
+    return "\n".join(lines).encode()
+
+
+def test_skips_git_calls_when_deadline_spent(
     brief_workspace: Workspace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # No time left for git: each value is left out, as for a git that fails.
-    monkeypatch.setattr(brief_command, "GIT_PHASE_BUDGET", 0)
+    monkeypatch.setattr(brief_command, "BRIEF_DEADLINE", 0)
 
     result = run_brief(brief_workspace, "--no-network")
 

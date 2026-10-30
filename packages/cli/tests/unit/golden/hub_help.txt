@@ -1,0 +1,50 @@
+                                                                                                    
+ Usage: hub [OPTIONS] COMMAND [ARGS]...                                                             
+                                                                                                    
+ Create, operate and observe agent hubs.                                                            
+                                                                                                    
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
+│ --version                     Print the version and exit.                                        │
+│ --install-completion          Install completion for the current shell.                          │
+│ --show-completion             Show completion for the current shell, to copy it or customize the │
+│                               installation.                                                      │
+│ --help                        Show this message and exit.                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────╮
+│ collect          Ingest events (JSON Lines, a transcript or run records), all or nothing.        │
+│ init             Create a hub for a project with its repos and task tracker.                     │
+│ sync             Reapply the hub templates without overwriting what the project customized.      │
+│ doctor           Check the hub's rules, links, dead references and instruction size.             │
+│ setup            Set up this machine for the hub: tools, identity, environments, repos, then hub │
+│                  doctor.                                                                         │
+│ worktree         Create isolated worktrees for one task in the hub's repos, or remove them.      │
+│ brief            Print the session brief: now.md, the last journal days, each repo's git, PR and │
+│                  CI state.                                                                       │
+│ agent            Start Claude Code with every repo in hub.json attached; every argument goes to  │
+│                  claude.                                                                         │
+│ next             Print the tracker's ready issues, oldest first: id, repo, title and url.        │
+│ run              Take one tracker issue to a PR: worktree, implementing session, gate, PR,       │
+│                  report.                                                                         │
+│ ship             Ship an issue: each changed repo's check, push and PR, the PRs linked, the      │
+│                  issue to review.                                                                │
+│ bench            Benchmark the hub-workflow plugin on closed issues: each case's hidden tests    │
+│                  grade it.                                                                       │
+│ start            Start or resume an issue: its worktrees, its started state and a Claude Code    │
+│                  session.                                                                        │
+│ web              Serve the control plane (API and web app) on 127.0.0.1 until interrupted.       │
+│ validate-output  Check one agent output JSON file: every problem, one per line.                  │
+│ search           Search the hub's brain and its repos' docs; the index is brought up to date     │
+│                  first.                                                                          │
+│ mcp              Serve the hub's brain and repo docs to Claude Code over stdio (MCP tools:       │
+│                  search, read,                                                                   │
+│                  propose).                                                                       │
+│ skill-usage      Print the hub's skills and agents with their runs over 7, 30 and 90 days.       │
+│ workflow         List, check and run workflows.                                                  │
+│ step             Run one stage of hub run.                                                       │
+│ env              List, show and change the declared environments and services.                   │
+│ repo             List, add, change and remove the hub's repos.                                   │
+│ action           List, plan and run the hub's actions.                                           │
+│ scenario         List, plan and run the hub's scenarios.                                         │
+│ brain            Work on the hub's brain and its knowledge index.                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+

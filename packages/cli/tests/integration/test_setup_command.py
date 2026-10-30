@@ -31,6 +31,7 @@ from agent_hub.cli.main import app
 from agent_hub.cli.setup_identity import ANSWER_LIMIT
 from agent_hub.core.hub_config.local_config import LOCAL_FILE_MAX_BYTES
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
+from agent_hub.core.json_form import dump_json
 from agent_hub.core.testing import builders
 from agent_hub.core.workspace.setup_checklist import (
     CLAUDE_FIX,
@@ -51,6 +52,10 @@ from agent_hub.core.workspace.setup_checklist import (
     UV_FIX,
     ProbeResult,
 )
+
+# A release commit and the default platform repository, as a synced ``hub.lock`` records them.
+RECORDED_COMMIT = "a" * 40
+RELEASE_REPOSITORY = "git+https://github.com/jroquette/agent-hub"
 
 # The conftest's fixtures (tests cannot import a conftest in importlib mode).
 type Workspace = Any
@@ -1898,6 +1903,23 @@ class TestDoctor:
         assert result.stdout.splitlines()[-1] == "setup: 1 missing, 9 ok"
         assert result.exit_code == 1
         assert "Traceback" not in result.stderr
+
+    def test_probes_no_release_tag_when_lock_records_commit(
+        self, demo_workspace: Workspace, env_traced_git: TracedGit, run_setup: SetupRunner
+    ) -> None:
+        """ADR 0054: only ``hub doctor`` reads the pinned release's tag; setup's item never does."""
+        hub = Path(demo_workspace.hub)
+        _give_repos_agents(demo_workspace)
+        lock = json.loads((hub / "hub.lock").read_bytes())
+        lock["platform_commit"] = RECORDED_COMMIT
+        lock["platform_repository"] = RELEASE_REPOSITORY
+        (hub / "hub.lock").write_bytes(dump_json(lock))
+
+        result = run_setup(hub)
+
+        assert _doctor_lines(result.stdout) == ["ok      hub doctor: 0 errors, 0 warnings, 0 infos"]
+        assert result.exit_code == 0, result.output
+        assert [call.args for call in env_traced_git.calls() if "refs/tags/" in call.args] == []
 
 
 @pytest.mark.usefixtures("tools_ok")

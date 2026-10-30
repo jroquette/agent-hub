@@ -16,6 +16,7 @@ from agent_hub.core.scenarios.access_policy import Effect
 from agent_hub.core.workflows.document import load_error
 from agent_hub.core.workflows.nodes import (
     READ_ONLY,
+    READ_ONLY_VALUE_CONFIG,
     ActionTimeout,
     JsonObject,
     KebabId,
@@ -52,6 +53,8 @@ ScriptPath = Annotated[PackPath, AfterValidator(_in_scripts_folder)]
 
 class ActionInput(WorkflowObject):
     """A typed input; a value that does not fit its type is refused before the script runs."""
+
+    model_config = READ_ONLY_VALUE_CONFIG
 
     type: ActionInputType = "string"
     required: StrictBool = False

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from agent_hub.cli.command_exits import fail
+from agent_hub.cli.hidden_env import SESSION_HIDDEN, without
 from agent_hub.cli.hub_config_reader import (
     DISTRIBUTION,
     FILE_LABEL,
@@ -19,7 +20,6 @@ from agent_hub.cli.hub_config_reader import (
     local_lines,
 )
 from agent_hub.cli.hub_root import hub_root_or_exit, local_home
-from agent_hub.cli.run_children import SESSION_HIDDEN, without
 from agent_hub.core.hub_config.document_check import check_hub_document
 from agent_hub.core.hub_config.effective_environments import local_environment_problems
 from agent_hub.core.hub_config.environment_edits import Document

@@ -1,10 +1,15 @@
 """The node models: one ``type`` each, carrying only that type's keys (AC-213.1)."""
 
-from typing import Any
+import importlib
+import inspect
+import pkgutil
+from collections.abc import Iterator
+from typing import Any, TypeAliasType, get_args
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
+from agent_hub.core.workflows import nodes as nodes_module
 from agent_hub.core.workflows.nodes import (
     AgentNode,
     ApprovalNode,
@@ -282,3 +287,76 @@ def test_refuses_the_wait_when_its_condition_is_missing_or_malformed(
     keys: dict[str, object],
 ) -> None:
     assert errors_of({"id": "nap", "type": "wait"} | keys)
+
+
+def _models_in(annotation: object) -> Iterator[type[BaseModel]]:
+    """Every pydantic model ``annotation`` names, through aliases, ``Annotated`` and unions."""
+    if isinstance(annotation, TypeAliasType):
+        annotation = annotation.__value__
+    if inspect.isclass(annotation) and issubclass(annotation, BaseModel):
+        yield annotation
+        return
+    for argument in get_args(annotation):
+        yield from _models_in(argument)
+
+
+def _read_only_value_models() -> dict[str, type[BaseModel]]:
+    """Every model a ``READ_ONLY`` mapping field of a core model holds as a value, by name."""
+    core = importlib.import_module("agent_hub.core")
+    for module in pkgutil.walk_packages(core.__path__, f"{core.__name__}."):
+        importlib.import_module(module.name)
+    serializer = nodes_module.READ_ONLY[1]
+    found: dict[str, type[BaseModel]] = {}
+    for model in _subclasses(BaseModel):
+        if not model.__module__.startswith(f"{core.__name__}."):
+            continue
+        for field in model.model_fields.values():
+            if any(item is serializer for item in field.metadata):
+                found.update(
+                    (value.__name__, value) for value in _models_in(get_args(field.annotation)[1])
+                )
+    return found
+
+
+def _subclasses(model: type[BaseModel]) -> Iterator[type[BaseModel]]:
+    for child in model.__subclasses__():
+        yield child
+        yield from _subclasses(child)
+
+
+def test_builds_read_only_mapping_values_at_import_when_other_models_defer() -> None:
+    values = _read_only_value_models()
+
+    assert set(values) >= {"FromBinding", "WorkflowInput", "ActionInput", "Stub"}
+    assert [name for name, model in values.items() if model.model_config.get("defer_build")] == []
+
+
+def test_dumps_from_binding_when_node_holds_one_in_with() -> None:
+    node = NODE.validate_python(
+        {"id": "b", "type": "agent", "prompt": "x", "with": {"plan": {"from": "$a.output.steps"}}}
+    )
+    binding = {"from": "$a.output.steps", "if_skipped": None}
+
+    assert node.model_dump(by_alias=True)["with"] == {"plan": binding}
+    assert node.model_dump(by_alias=True, mode="json")["with"] == {"plan": binding}
+    assert '"with":{"plan":{"from":"$a.output.steps","if_skipped":null}}' in node.model_dump_json(
+        by_alias=True
+    )
+
+
+def test_keeps_schema_and_errors_when_models_are_built(characterization: Any) -> None:
+    valid = {
+        "id": "plan",
+        "type": "agent",
+        "prompt": "Plan $INPUTS.issue",
+        "retry": {"max_attempts": 2},
+    }
+    invalid = {"id": "Bad Id", "type": "shell", "command": [" "], "colour": "red"}
+
+    characterization.check(
+        characterization.snapshot(
+            nodes_module,
+            {"valid node": (NODE, valid), "invalid node": (NODE, invalid)},
+            extra_schemas={"Node": NODE},
+        )
+    )

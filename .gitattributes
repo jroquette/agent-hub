@@ -1,9 +1,11 @@
 packages/core/src/agent_hub/core/hub_config/hub.schema.json text eol=lf
 packages/core/src/agent_hub/core/features/*.v1.json text eol=lf
 packages/generator/src/agent_hub/generator/templates/** text eol=lf
+packages/generator/src/agent_hub/generator/parsed_builtins.json text eol=lf linguist-generated
 packages/generator/tests/integration/golden/** -text
 packages/generator/tests/integration/rendered/** -text
 packages/cli/tests/integration/golden/** -text
+packages/cli/tests/unit/golden/** -text
 packages/api/openapi.json text eol=lf linguist-generated
 packages/api/src/agent_hub/api/web_dist/** -text linguist-generated
 apps/web/src/api/schema.d.ts text eol=lf linguist-generated

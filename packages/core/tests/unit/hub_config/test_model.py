@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+from agent_hub.core.hub_config import model as hub_config_model
 from agent_hub.core.hub_config.document_check import check_hub_document
 from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import (
@@ -2039,3 +2040,16 @@ def test_names_cap_when_ui_paths_glob_has_too_many_stars() -> None:
     [error] = caught.value.errors()
     assert error["type"] == "ui_path_wildcards"
     assert error["msg"] == "a path segment holds more than 3 * (a ** segment counts as one)"
+
+
+def test_keeps_schema_and_errors_when_models_are_built(characterization: Any) -> None:
+    invalid = a_hub_document() | {"schema_version": "1", "repos": [], "colour": "red"}
+    del invalid["project"]
+    config: TypeAdapter[Any] = TypeAdapter(HubConfig)
+
+    characterization.check(
+        characterization.snapshot(
+            hub_config_model,
+            {"valid hub": (config, a_hub_document()), "invalid hub": (config, invalid)},
+        )
+    )

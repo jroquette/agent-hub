@@ -61,10 +61,15 @@ class Spy:
 
 
 @pytest.fixture
-def spy(monkeypatch: pytest.MonkeyPatch) -> Iterator[Spy]:
-    """Wrap every guarded name in every loaded ``agent_hub.cli`` module (each import holds its own
+def spy(
+    monkeypatch: pytest.MonkeyPatch, import_every_cli_module: Callable[[], None]
+) -> Iterator[Spy]:
+    """Wrap every guarded name in every ``agent_hub.cli`` module (each import holds its own
     reference), so a call from any module is seen."""
-    import agent_hub.cli.main  # noqa: F401 - loads every command module before patching
+    from agent_hub.cli import command_table  # noqa: PLC0415 - read when the fixture runs
+
+    command_table.import_all()  # loads every command module before patching
+    import_every_cli_module()  # and the modules a command loads only when it runs
 
     seen = Spy()
     for module_name, module in list(sys.modules.items()):

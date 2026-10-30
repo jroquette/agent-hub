@@ -183,6 +183,31 @@ After any change to a model, run `make output-schemas` and commit the files. Two
 `tests/unit/scripts/test_export_output_schemas.py` (`test_matches_repo_files_when_schemas_exported`), both on the exact
 bytes.
 
+## Derived package data
+
+A data file that a package ships and that is built from other files in the repo (a schema, a table) follows one rule:
+
+- a `make` target runs a `scripts/export_*.py` script that writes the file with `newline="\n"`, so every platform
+  writes the same bytes and a second run leaves `git status --porcelain` empty;
+- a drift test in `make check-fast` (under `tests/unit/scripts/`) fails while the committed bytes differ from the
+  export, so a stale file never reaches a PR;
+- `.gitattributes` marks the file `text eol=lf linguist-generated`;
+- the file never sits under a folder that is seeded into hubs (`packages/core/src/agent_hub/core/workflows/builtin/`,
+  the generator's `templates/`).
+
+Example: `packages/generator/src/agent_hub/generator/parsed_builtins.json` holds the built-in workflows pre-parsed by
+the strict loader, keyed by the SHA-256 of each file's bytes, so `hub workflow list` skips parsing them (AGH-636).
+After any change to a built-in workflow or to the strict loader in `workflow_yaml.py`, regenerate it from the repo
+root and commit the file with the change:
+
+```bash
+make parsed-builtins
+```
+
+`tests/unit/scripts/test_export_parsed_builtins.py` fails until you do. A PyYAML upgrade that changes the line marks
+the loader reads needs the same regeneration in its PR. An edited built-in is not in the table and takes the strict
+path; a loader change leaves the table's entries stale, and only the drift test catches it.
+
 ## Releases
 
 A release is an annotated tag `vX.Y.Z` on a commit of `main` ([ADR 0013](adr/0013-release-by-git-tags.md)). The

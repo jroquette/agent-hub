@@ -184,6 +184,9 @@ PositiveNumber = Annotated[float, BeforeValidator(_json_number), AfterValidator(
 READ_ONLY = (AfterValidator(read_only), PlainSerializer(dict, return_type=dict))
 JsonObject = Annotated[Mapping[str, JsonValue], *READ_ONLY]
 EnvMap = Annotated[Mapping[EnvName, StrictStr], *READ_ONLY]
+# The config of a model held as a ``READ_ONLY`` mapping value: built at import, since the mapping
+# dumps its values with their own serializer, a placeholder while a model's build is deferred.
+READ_ONLY_VALUE_CONFIG: Final = ConfigDict(defer_build=False)
 
 
 def empty[Key, Value]() -> Mapping[Key, Value]:
@@ -194,7 +197,8 @@ def empty[Key, Value]() -> Mapping[Key, Value]:
 class WorkflowObject(BaseModel):
     """A frozen object of a workflow document: an unknown key is a load error."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    # Built on first use, not at import: a command that loads no workflow skips it.
+    model_config = ConfigDict(frozen=True, extra="forbid", defer_build=True)
 
 
 class Retry(WorkflowObject):
@@ -218,6 +222,8 @@ class ResumeContext(WorkflowObject):
 
 class FromBinding(WorkflowObject):
     """A ``with`` value read from an upstream output, ``if_skipped`` when that node skipped."""
+
+    model_config = READ_ONLY_VALUE_CONFIG
 
     from_: OutputRef = Field(alias="from")
     if_skipped: JsonValue = None

@@ -112,6 +112,29 @@ class EnvFileFacts:
     linked: bool = False
 
 
+# What the CLI's probe of the pinned release's tag found (ADR 0054).
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ReleaseFound:
+    """The pinned tag exists on the platform repository and names ``commit``."""
+
+    commit: str
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ReleaseTagMissing:
+    """The platform repository answered, and has no tag for the pinned version."""
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ReleaseProbeFailed:
+    """The tag could not be read (no network, no credential, timeout): ``reason`` says why."""
+
+    reason: str
+
+
+type ReleaseProbe = ReleaseFound | ReleaseTagMissing | ReleaseProbeFailed
+
+
 # What ``hub.lock`` holds: the lock, no lock, something that is no file, or its problems.
 type LockState = HubLock | LockAbsent | LockNotRegular | tuple[ConfigProblem, ...]
 
@@ -141,6 +164,8 @@ class DoctorSnapshot:
     ``None``. ``scenarios`` is the hub's scenarios (``scenarios/<pack>/``), as ``hub scenario``
     reads them, when a selected rule reads them; else ``None``. ``scenario_folders`` then lists
     the pack folders, so the control plane's cache sees a scenario added, removed or rewritten.
+    ``release_probe`` is what the probe of the pinned release's tag found, when a selected rule
+    reads the release commit and the lock records one; else ``None``.
     """
 
     config: HubConfig | ConfigFailure
@@ -161,6 +186,7 @@ class DoctorSnapshot:
     scenarios: WorkflowSource | None = None
     # The folders directly under ``scenarios/`` (``scenarios/<pack>``), read with ``scenarios``.
     scenario_folders: tuple[str, ...] = ()
+    release_probe: ReleaseProbe | None = None
 
     @property
     def hub_config(self) -> HubConfig:

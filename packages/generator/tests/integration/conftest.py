@@ -223,6 +223,16 @@ def run_hook_file() -> Callable[..., subprocess.CompletedProcess[bytes]]:
     return run_entry_point
 
 
+@pytest.fixture
+def no_process_left(tmp_path: Path) -> Iterator[None]:
+    """After the case, kill whatever still runs from its folder: a SessionStart refresh (ADR 0055)
+    the hook left detached, a fake tool, a holder."""
+    yield
+    pkill = shutil.which("pkill")
+    assert pkill is not None, "pkill is needed to reap the detached refreshes"
+    subprocess.run([pkill, "-KILL", "-f", str(tmp_path)], check=False, capture_output=True)  # noqa: S603 - pkill from PATH, this case's own folder
+
+
 # A ``hub.json`` nested deeper than a JSON parser goes on a small C stack. Whether ``json.load``
 # raises RecursionError on it depends on the interpreter and its stack: 3.9 counts frames against
 # ``sys.getrecursionlimit()``, while 3.14 measures the C stack, so under a large or unlimited

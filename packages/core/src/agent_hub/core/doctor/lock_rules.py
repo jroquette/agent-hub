@@ -2,9 +2,11 @@
 
 Each managed file must hold the bytes and executable bit its entry records, and each managed
 link its target, looked at without following links; seeded paths are the project's and never
-compared. The lock's ``platform_version`` is compared with the pin as numbers; its other header
-fields are ``hub sync``'s to judge. ``lock_state`` reads the lock as ``hub sync`` does, returning
-what it found instead of exiting.
+compared. The lock's ``platform_version`` is compared with the pin as numbers. When the lock
+records a release commit (ADR 0054), its repository must be the one in use, and the commit the
+one the CLI's probe found for the pinned tag; a failed or absent probe gives no finding (the CLI
+prints its note). The other header fields are ``hub sync``'s to judge. ``lock_state`` reads the
+lock as ``hub sync`` does, returning what it found instead of exiting.
 """
 
 import hashlib
@@ -13,8 +15,17 @@ from dataclasses import replace
 from typing import Final
 
 from agent_hub.core.doctor.finding import Finding, Read, Rule
-from agent_hub.core.doctor.snapshot import DoctorSnapshot, LockAbsent, LockNotRegular, LockState
+from agent_hub.core.doctor.snapshot import (
+    DoctorSnapshot,
+    LockAbsent,
+    LockNotRegular,
+    LockState,
+    ReleaseFound,
+    ReleaseProbe,
+    ReleaseTagMissing,
+)
 from agent_hub.core.hub_config.doctor_rules import LOCK_DRIFT_RULE, RULE_MODULES, Severity
+from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.versions import cut_echo
 from agent_hub.core.hub_files.hub_lock import (
     HUB_LOCK_PATH,
@@ -74,7 +85,11 @@ def _lock_drift(snapshot: DoctorSnapshot) -> Iterable[Finding]:
             )
             for problem in lock
         )
-    header = _header_finding(lock, pin=snapshot.hub_config.platform.version)
+    config = snapshot.hub_config
+    # The release commit only once the version matches the pin: a pending sync looks it up again.
+    header = _header_finding(lock, pin=config.platform.version) or _release_finding(
+        lock, config, snapshot.release_probe
+    )
     return (*(() if header is None else (header,)), *_entry_findings(lock, snapshot))
 
 
@@ -104,6 +119,42 @@ def _header_finding(lock: HubLock, *, pin: str) -> Finding | None:
             path=HUB_LOCK_PATH,
             message=f"downgrade: {written}, newer than the {cut_echo(pin)} hub.json pins",
             fix=f"pin {cut_echo(lock.platform_version)} in hub.json, or run hub sync to downgrade",
+        )
+    return None
+
+
+def _release_finding(
+    lock: HubLock, config: HubConfig, probe: ReleaseProbe | None
+) -> Finding | None:
+    if lock.platform_commit is None or lock.platform_repository is None:
+        return None
+    in_use = config.platform.effective_repository
+    if lock.platform_repository != in_use:
+        return _warning(
+            path=HUB_LOCK_PATH,
+            message=(
+                f"hub.lock records the commit of {lock.platform_repository}, hub.json uses {in_use}"
+            ),
+            fix=SYNC_FIX,
+        )
+    tag = f"v{lock.platform_version}"
+    if isinstance(probe, ReleaseFound) and probe.commit != lock.platform_commit:
+        return LOCK_DRIFT.finding(
+            path=HUB_LOCK_PATH,
+            message=(
+                f"hub.lock records commit {lock.platform_commit} for {tag},"
+                f" the tag names {probe.commit}"
+            ),
+            fix=SYNC_FIX,
+        )
+    if isinstance(probe, ReleaseTagMissing):
+        return LOCK_DRIFT.finding(
+            path=HUB_LOCK_PATH,
+            message=(
+                f"hub.lock records commit {lock.platform_commit} for {tag},"
+                f" and {in_use} has no tag {tag}"
+            ),
+            fix=SYNC_FIX,
         )
     return None
 
@@ -174,6 +225,6 @@ LOCK_DRIFT: Final = Rule(
     severity=Severity.ERROR,
     summary="each managed file and link matches its hub.lock entry, and the lock the pin",
     module=RULE_MODULES.get(LOCK_DRIFT_RULE),
-    reads=frozenset({Read.LOCK_PATHS}),
+    reads=frozenset({Read.LOCK_PATHS, Read.RELEASE_COMMIT}),
     check=_lock_drift,
 )

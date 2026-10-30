@@ -5,7 +5,8 @@
 # their own), from HUB_AUTHOR_NAME/HUB_AUTHOR_EMAIL, repo-local only (never ~/.gitconfig), else a
 # WARN and no identity; checks access to the release pinned in hub.json
 # (platform.version, from platform.repository: absent, the platform's own) with git ls-remote on
-# its tag; warms the uv cache with that release (uvx … hub --version); then fetches the repos
+# its tag; warms the uv cache with that release (uvx … hub --version), from the commit hub.lock
+# records for that pin and repository when it has one (ADR 0054), else from the tag; then fetches the repos
 # already beside the hub and clones the missing ones. The repos and the default release source
 # are rendered by hub sync (re-run it after changing the repos); the pin, the repository and the
 # author are read from hub.json at every run, so a new pin or repository needs no sync.
@@ -173,8 +174,39 @@ git ls-remote --exit-code "$release_url" "refs/tags/v$version" >/dev/null 2>&1 |
   echo "cloud-setup: cannot read agent-hub v$version at $release_url: $access_hint" >&2
   exit 1
 }
-uvx --from "$release_source" hub --version </dev/null >/dev/null || {
-  echo "cloud-setup: cannot run agent-hub $version from $release_source: the uv cache warm-up failed" >&2
+# The warm-up's source: the commit hub.lock records (40 lowercase hex) when the lock is a regular
+# file (not a link) of at most 1 MiB whose platform_version and platform_repository match; else the
+# tag. The access check above stays on the tag.
+warm_source=$release_source
+lock_commit=$(python3 -I -S -c '
+import json, os, re, stat, sys
+try:
+    if not stat.S_ISREG(os.lstat(sys.argv[1]).st_mode):
+        sys.exit(0)
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    with open(os.open(sys.argv[1], flags), "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            sys.exit(0)
+        content = stream.read(1048577)
+    if len(content) > 1048576:
+        sys.exit(0)
+    lock = json.loads(content.decode("utf-8"))
+except (OSError, ValueError, RecursionError):
+    sys.exit(0)
+commit = lock.get("platform_commit") if isinstance(lock, dict) else None
+if (
+    isinstance(commit, str)
+    and re.fullmatch("[0-9a-f]{40}", commit)
+    and lock.get("platform_version") == sys.argv[2]
+    and lock.get("platform_repository") == sys.argv[3]
+):
+    print(commit)
+' "$hub_dir/hub.lock" "$version" "${release%@v*}") || lock_commit=
+if [ -n "$lock_commit" ]; then
+  warm_source="${release%@v*}@$lock_commit#subdirectory=packages/agent-hub"
+fi
+uvx --from "$warm_source" hub --version </dev/null >/dev/null || {
+  echo "cloud-setup: cannot run agent-hub $version from $warm_source: the uv cache warm-up failed" >&2
   exit 1
 }
 

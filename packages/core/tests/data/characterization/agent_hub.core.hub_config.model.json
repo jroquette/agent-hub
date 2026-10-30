@@ -1,0 +1,2357 @@
+{
+  "module": "agent_hub.core.hub_config.model",
+  "outcomes": {
+    "invalid hub": {
+      "errors": [
+        {
+          "loc": [
+            "schema_version"
+          ],
+          "msg": "must be an integer",
+          "type": "int_type"
+        },
+        {
+          "loc": [
+            "project"
+          ],
+          "msg": "Field required",
+          "type": "missing"
+        },
+        {
+          "loc": [
+            "repos"
+          ],
+          "msg": "must hold at least one item",
+          "type": "empty_list"
+        },
+        {
+          "loc": [
+            "colour"
+          ],
+          "msg": "Extra inputs are not permitted",
+          "type": "extra_forbidden"
+        }
+      ]
+    },
+    "valid hub": {
+      "valid": {
+        "$schema": "./hub.schema.json",
+        "doctor": {
+          "rules": {
+            "attribution.ai": null,
+            "bench.tasks": null,
+            "brain.leak": null,
+            "brain.memory": null,
+            "config.identity": null,
+            "config.stop_gate": null,
+            "environments.env_file": null,
+            "environments.production": null,
+            "features.tracker": null,
+            "hooks.guard-extension": null,
+            "instructions.duplicates": null,
+            "instructions.refs": null,
+            "instructions.size": null,
+            "items.leftovers": null,
+            "links.dead": null,
+            "lock.drift": null,
+            "makefile.override": null,
+            "mcp.pinned": null,
+            "permissions.bypass": null,
+            "platform.version": null,
+            "repos.agents": null,
+            "repos.ui_paths": null,
+            "rules.frontmatter": null,
+            "sandbox.workflow": null,
+            "scenarios.graph_format": null,
+            "secrets.config": null,
+            "settings.valid": null,
+            "settings.weakening": null,
+            "workflows.starts": null,
+            "workflows.valid": null
+          }
+        },
+        "environments": {},
+        "events": [],
+        "guard": {
+          "ask_before_edit": [
+            "demo-api/docs/adr"
+          ],
+          "blocked_words": [],
+          "blocked_words_env": [],
+          "blocked_words_files": [],
+          "deny_hosts": [],
+          "deny_paths": [],
+          "infra": null,
+          "readable_env_files": [],
+          "secret_env_files": []
+        },
+        "models": {
+          "agents": {
+            "architect": null,
+            "evaluator": null,
+            "planner": null,
+            "quality-reviewer": null,
+            "requirements-analyst": null,
+            "researcher": null,
+            "security-reviewer": null,
+            "spec-reviewer": null,
+            "test-writer": null,
+            "ux-designer": null
+          },
+          "tiers": {
+            "large": null,
+            "medium": null,
+            "small": null
+          }
+        },
+        "modules": {
+          "bench": {},
+          "cloud": {},
+          "contract-sync": null,
+          "marketplace": null
+        },
+        "platform": {
+          "repository": null,
+          "version": "0.2.0"
+        },
+        "project": {
+          "author_email": "jane@example.com",
+          "author_name": "Jane Doe",
+          "branch_prefix": "jdoe/",
+          "conventions": null,
+          "default_branch": "main",
+          "hub_repo": "acme/demo-hub",
+          "name": "demo"
+        },
+        "repos": [
+          {
+            "check": "make check",
+            "check_fast": "make check-fast",
+            "check_fast_timeout": null,
+            "conventions": null,
+            "default_branch": null,
+            "dir": "demo-api",
+            "github": "acme/demo-api",
+            "role": "app",
+            "services": {},
+            "ui_paths": null
+          }
+        ],
+        "schedules": [],
+        "schema_version": 1,
+        "tracker": {
+          "blocked_label": null,
+          "failed_label": "agent-failed",
+          "kind": "linear",
+          "ready_label": "agent-ready",
+          "states": {
+            "review": "In Review",
+            "started": "In Progress"
+          },
+          "team": "DEM",
+          "teams": null,
+          "transport": "api"
+        }
+      }
+    }
+  },
+  "schemas": {
+    "ContractSyncSettings": {
+      "additionalProperties": false,
+      "description": "``contract-sync``: the repo that exports the contract and the repo that imports it.\n\nBoth are ``repos[].dir`` entries, checked by ``HubConfig``, which knows the repos.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "source": {
+          "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
+          "title": "Source",
+          "type": "string"
+        },
+        "target": {
+          "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
+          "title": "Target",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "target"
+      ],
+      "title": "ContractSyncSettings",
+      "type": "object"
+    },
+    "Conventions": {
+      "additionalProperties": false,
+      "description": "Branch and title patterns; each absent key keeps today's shape.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "branch": {
+          "description": "Branch pattern: {prefix}, {ISSUE}, {issue_lower}, {slug}; needs {ISSUE} or {issue_lower}. Default {prefix}{issue_lower}-{slug}.",
+          "type": "string"
+        },
+        "commit_title": {
+          "description": "Commit title pattern: {ISSUE}, {type}, {scope}, {summary}; needs {summary}. Default {type}({scope}): {summary} ({ISSUE}).",
+          "type": "string"
+        },
+        "pr_title": {
+          "description": "PR title pattern: {ISSUE}, {type}, {scope}, {summary}; needs {summary}. Default: the effective commit_title.",
+          "type": "string"
+        }
+      },
+      "title": "Conventions",
+      "type": "object"
+    },
+    "Doctor": {
+      "$defs": {
+        "BrainLeakSettings": {
+          "additionalProperties": false,
+          "description": "``brain.leak``: the shortest trimmed brain line that counts as a leak.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "enabled": {
+              "default": true,
+              "title": "Enabled",
+              "type": "boolean"
+            },
+            "min_line_length": {
+              "exclusiveMinimum": 0,
+              "maximum": 10000,
+              "type": "integer"
+            },
+            "severity": {
+              "$ref": "#/$defs/Severity"
+            }
+          },
+          "title": "BrainLeakSettings",
+          "type": "object"
+        },
+        "DoctorRules": {
+          "additionalProperties": false,
+          "description": "``doctor.rules``: one optional entry per rule id, except ``config.schema``.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "attribution.ai": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "bench.tasks": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "brain.leak": {
+              "$ref": "#/$defs/BrainLeakSettings"
+            },
+            "brain.memory": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "config.identity": {
+              "$ref": "#/$defs/IdentityRuleSettings"
+            },
+            "config.stop_gate": {
+              "$ref": "#/$defs/StopGateRuleSettings"
+            },
+            "environments.env_file": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "environments.production": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "features.tracker": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "hooks.guard-extension": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "instructions.duplicates": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "instructions.refs": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "instructions.size": {
+              "$ref": "#/$defs/InstructionsSizeSettings"
+            },
+            "items.leftovers": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "links.dead": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "lock.drift": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "makefile.override": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "mcp.pinned": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "permissions.bypass": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "platform.version": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "repos.agents": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "repos.ui_paths": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "rules.frontmatter": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "sandbox.workflow": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "scenarios.graph_format": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "secrets.config": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "settings.valid": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "settings.weakening": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "workflows.starts": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "workflows.valid": {
+              "$ref": "#/$defs/RuleSettings"
+            }
+          },
+          "title": "DoctorRules",
+          "type": "object"
+        },
+        "IdentityRuleSettings": {
+          "additionalProperties": false,
+          "description": "``config.identity``: whether it runs. It has no ``severity``: its finding stays an info,\nso a hub gives every developer the same exit code.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "enabled": {
+              "default": true,
+              "title": "Enabled",
+              "type": "boolean"
+            }
+          },
+          "title": "IdentityRuleSettings",
+          "type": "object"
+        },
+        "InstructionsSizeSettings": {
+          "additionalProperties": false,
+          "description": "``instructions.size``: the line limits of instruction files.\n\n``max_lines`` stays a plain ``dict``, so frozen is shallow for the ``max_lines`` map.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "enabled": {
+              "default": true,
+              "title": "Enabled",
+              "type": "boolean"
+            },
+            "max_lines": {
+              "additionalProperties": {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              },
+              "maxProperties": 256,
+              "patternProperties": {
+                "^_": {}
+              },
+              "propertyNames": {
+                "maxLength": 1024,
+                "minLength": 1
+              },
+              "type": "object"
+            },
+            "severity": {
+              "$ref": "#/$defs/Severity"
+            }
+          },
+          "title": "InstructionsSizeSettings",
+          "type": "object"
+        },
+        "RuleSettings": {
+          "additionalProperties": false,
+          "description": "How a project tunes one rule: whether it runs, and the level of its findings.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "enabled": {
+              "default": true,
+              "title": "Enabled",
+              "type": "boolean"
+            },
+            "severity": {
+              "$ref": "#/$defs/Severity"
+            }
+          },
+          "title": "RuleSettings",
+          "type": "object"
+        },
+        "Severity": {
+          "description": "The level of a finding.",
+          "enum": [
+            "error",
+            "warning",
+            "info"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "StopGateRuleSettings": {
+          "additionalProperties": false,
+          "description": "``config.stop_gate``: whether it runs. It has no ``severity``: a repo without a Stop gate\nstays a warning, never an error that fails the hub's checks on its own.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "enabled": {
+              "default": true,
+              "title": "Enabled",
+              "type": "boolean"
+            }
+          },
+          "title": "StopGateRuleSettings",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "How ``hub doctor`` is tuned for this project (docs/design/hub-doctor.md).",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "rules": {
+          "$ref": "#/$defs/DoctorRules"
+        }
+      },
+      "title": "Doctor",
+      "type": "object"
+    },
+    "Guard": {
+      "$defs": {
+        "GuardInfra": {
+          "additionalProperties": false,
+          "description": "Regexes the guard hook matches against infra commands: allowed environments and production\nmarkers.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "allow": {
+              "default": [],
+              "items": {
+                "pattern": "^[^\\x00-\\x1f\\x7f]*[^\\x00-\\x1f\\x7f\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000][^\\x00-\\x1f\\x7f]*$",
+                "type": "string"
+              },
+              "title": "Allow",
+              "type": "array"
+            },
+            "prod_markers": {
+              "default": [],
+              "items": {
+                "pattern": "^[^\\x00-\\x1f\\x7f]*[^\\x00-\\x1f\\x7f\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000][^\\x00-\\x1f\\x7f]*$",
+                "type": "string"
+              },
+              "title": "Prod Markers",
+              "type": "array"
+            }
+          },
+          "title": "GuardInfra",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Paths and hosts the hub's guard hook asks about or denies.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "ask_before_edit": {
+          "default": [],
+          "items": {
+            "pattern": "^(?:[!-.0-\\[\\]-~]*[!-\\-0-\\[\\]-~][!-.0-\\[\\]-~]*|\\.{3,})(?:/(?:[!-.0-\\[\\]-~]*[!-\\-0-\\[\\]-~][!-.0-\\[\\]-~]*|\\.{3,}))*$",
+            "type": "string"
+          },
+          "title": "Ask Before Edit",
+          "type": "array"
+        },
+        "blocked_words": {
+          "default": [],
+          "description": "Words the guard denies in commands, the session, paths and listed files; matched ignoring ASCII case, bounded by any character that is not a letter.",
+          "items": {
+            "maxLength": 64,
+            "minLength": 2,
+            "pattern": "^[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*$",
+            "type": "string"
+          },
+          "maxItems": 200,
+          "title": "Blocked Words",
+          "type": "array"
+        },
+        "blocked_words_env": {
+          "default": [],
+          "description": "Names of variables whose values the guard checks for blocked words; a trailing * matches a prefix.",
+          "items": {
+            "pattern": "^[A-Z_][A-Z0-9_]{0,63}\\*?$",
+            "type": "string"
+          },
+          "maxItems": 50,
+          "title": "Blocked Words Env",
+          "type": "array"
+        },
+        "blocked_words_files": {
+          "default": [],
+          "description": "Globs of files whose contents the guard checks for blocked words, on top of .env* files.",
+          "items": {
+            "maxLength": 200,
+            "pattern": "^[!-.0-~][!-~]*$",
+            "type": "string"
+          },
+          "maxItems": 100,
+          "title": "Blocked Words Files",
+          "type": "array"
+        },
+        "deny_hosts": {
+          "default": [],
+          "items": {
+            "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*$",
+            "type": "string"
+          },
+          "title": "Deny Hosts",
+          "type": "array"
+        },
+        "deny_paths": {
+          "default": [],
+          "items": {
+            "pattern": "^(?:[!-.0-\\[\\]-~]*[!-\\-0-\\[\\]-~][!-.0-\\[\\]-~]*|\\.{3,})(?:/(?:[!-.0-\\[\\]-~]*[!-\\-0-\\[\\]-~][!-.0-\\[\\]-~]*|\\.{3,}))*$",
+            "type": "string"
+          },
+          "title": "Deny Paths",
+          "type": "array"
+        },
+        "infra": {
+          "$ref": "#/$defs/GuardInfra",
+          "description": "Turns on the guard's infra classification: Python re patterns, searched with no flags. Absent: the fixed infra rule."
+        },
+        "readable_env_files": {
+          "default": [],
+          "description": "Env file names (.env.<suffix>) the guard does not treat as secret, on top of its fixed list (.env.example, .env.sample, ...).",
+          "items": {
+            "pattern": "^\\.env\\.[A-Za-z0-9_.-]+$",
+            "type": "string"
+          },
+          "title": "Readable Env Files",
+          "type": "array"
+        },
+        "secret_env_files": {
+          "default": [],
+          "description": "Env file names (.env.<suffix>) the guard always treats as secret, even when its fixed list or readable_env_files names them.",
+          "items": {
+            "pattern": "^\\.env\\.[A-Za-z0-9_.-]+$",
+            "type": "string"
+          },
+          "title": "Secret Env Files",
+          "type": "array"
+        }
+      },
+      "title": "Guard",
+      "type": "object"
+    },
+    "GuardInfra": {
+      "additionalProperties": false,
+      "description": "Regexes the guard hook matches against infra commands: allowed environments and production\nmarkers.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "allow": {
+          "default": [],
+          "items": {
+            "pattern": "^[^\\x00-\\x1f\\x7f]*[^\\x00-\\x1f\\x7f\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000][^\\x00-\\x1f\\x7f]*$",
+            "type": "string"
+          },
+          "title": "Allow",
+          "type": "array"
+        },
+        "prod_markers": {
+          "default": [],
+          "items": {
+            "pattern": "^[^\\x00-\\x1f\\x7f]*[^\\x00-\\x1f\\x7f\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000][^\\x00-\\x1f\\x7f]*$",
+            "type": "string"
+          },
+          "title": "Prod Markers",
+          "type": "array"
+        }
+      },
+      "title": "GuardInfra",
+      "type": "object"
+    },
+    "HubConfig": {
+      "$defs": {
+        "AgentTiers": {
+          "additionalProperties": false,
+          "description": "The tier of each plugin agent that does not keep its template's tier.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "architect": {
+              "enum": [
+                "small",
+                "medium",
+                "large"
+              ],
+              "type": "string"
+            },
+            "evaluator": {
+              "enum": [
+                "small",
+                "medium",
+                "large"
+              ],
+              "type": "string"
+            },
+            "planner": {
+              "enum": [
+                "small",
+                "medium",
+                "large"
+              ],
+              "type": "string"
+            },
+            "quality-reviewer": {
+              "enum": [
+                "small",
+                "medium",
+                "large"
+              ],
+              "type": "string"
+            },
+            "requirements-analyst": {
+              "enum": [
+                "small",
+                "medium",
+                "large"
+              ],
+              "type": "string"
+            },
+            "researcher": {
+              "enum": [
+                "small",
+                "medium",
+                "large"
+              ],
+              "type": "string"
+            },
+            "security-reviewer": {
+              "enum": [
+                "small",
+                "medium",
+                "large"
+              ],
+              "type": "string"
+            },
+            "spec-reviewer": {
+              "enum": [
+                "small",
+                "medium",
+                "large"
+              ],
+              "type": "string"
+            },
+            "test-writer": {
+              "enum": [
+                "small",
+                "medium",
+                "large"
+              ],
+              "type": "string"
+            },
+            "ux-designer": {
+              "enum": [
+                "small",
+                "medium",
+                "large"
+              ],
+              "type": "string"
+            }
+          },
+          "title": "AgentTiers",
+          "type": "object"
+        },
+        "BrainLeakSettings": {
+          "additionalProperties": false,
+          "description": "``brain.leak``: the shortest trimmed brain line that counts as a leak.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "enabled": {
+              "default": true,
+              "title": "Enabled",
+              "type": "boolean"
+            },
+            "min_line_length": {
+              "exclusiveMinimum": 0,
+              "maximum": 10000,
+              "type": "integer"
+            },
+            "severity": {
+              "$ref": "#/$defs/Severity"
+            }
+          },
+          "title": "BrainLeakSettings",
+          "type": "object"
+        },
+        "ContractSyncSettings": {
+          "additionalProperties": false,
+          "description": "``contract-sync``: the repo that exports the contract and the repo that imports it.\n\nBoth are ``repos[].dir`` entries, checked by ``HubConfig``, which knows the repos.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "source": {
+              "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
+              "title": "Source",
+              "type": "string"
+            },
+            "target": {
+              "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
+              "title": "Target",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source",
+            "target"
+          ],
+          "title": "ContractSyncSettings",
+          "type": "object"
+        },
+        "Conventions": {
+          "additionalProperties": false,
+          "description": "Branch and title patterns; each absent key keeps today's shape.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "branch": {
+              "description": "Branch pattern: {prefix}, {ISSUE}, {issue_lower}, {slug}; needs {ISSUE} or {issue_lower}. Default {prefix}{issue_lower}-{slug}.",
+              "type": "string"
+            },
+            "commit_title": {
+              "description": "Commit title pattern: {ISSUE}, {type}, {scope}, {summary}; needs {summary}. Default {type}({scope}): {summary} ({ISSUE}).",
+              "type": "string"
+            },
+            "pr_title": {
+              "description": "PR title pattern: {ISSUE}, {type}, {scope}, {summary}; needs {summary}. Default: the effective commit_title.",
+              "type": "string"
+            }
+          },
+          "title": "Conventions",
+          "type": "object"
+        },
+        "Credentials": {
+          "additionalProperties": false,
+          "description": "Where the credentials of an environment come from: names, never values.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "aws_profile": {
+              "description": "An AWS profile name.",
+              "pattern": "^[A-Za-z0-9_.-]{1,64}$",
+              "type": "string"
+            },
+            "env": {
+              "default": [],
+              "description": "Names of the environment variables that hold credentials.",
+              "items": {
+                "pattern": "^[A-Z_][A-Z0-9_]{0,63}$",
+                "type": "string"
+              },
+              "maxItems": 10,
+              "title": "Env",
+              "type": "array"
+            },
+            "env_file": {
+              "description": "A dotenv file, relative to the folder holding the hub and its repos, that only actions read; at most 200 characters, no '..', no leading '/' or '~'.",
+              "maxLength": 200,
+              "pattern": "^[!-.0-}][!-~]*$",
+              "type": "string"
+            }
+          },
+          "title": "Credentials",
+          "type": "object"
+        },
+        "Doctor": {
+          "additionalProperties": false,
+          "description": "How ``hub doctor`` is tuned for this project (docs/design/hub-doctor.md).",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "rules": {
+              "$ref": "#/$defs/DoctorRules"
+            }
+          },
+          "title": "Doctor",
+          "type": "object"
+        },
+        "DoctorRules": {
+          "additionalProperties": false,
+          "description": "``doctor.rules``: one optional entry per rule id, except ``config.schema``.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "attribution.ai": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "bench.tasks": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "brain.leak": {
+              "$ref": "#/$defs/BrainLeakSettings"
+            },
+            "brain.memory": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "config.identity": {
+              "$ref": "#/$defs/IdentityRuleSettings"
+            },
+            "config.stop_gate": {
+              "$ref": "#/$defs/StopGateRuleSettings"
+            },
+            "environments.env_file": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "environments.production": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "features.tracker": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "hooks.guard-extension": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "instructions.duplicates": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "instructions.refs": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "instructions.size": {
+              "$ref": "#/$defs/InstructionsSizeSettings"
+            },
+            "items.leftovers": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "links.dead": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "lock.drift": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "makefile.override": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "mcp.pinned": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "permissions.bypass": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "platform.version": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "repos.agents": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "repos.ui_paths": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "rules.frontmatter": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "sandbox.workflow": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "scenarios.graph_format": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "secrets.config": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "settings.valid": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "settings.weakening": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "workflows.starts": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "workflows.valid": {
+              "$ref": "#/$defs/RuleSettings"
+            }
+          },
+          "title": "DoctorRules",
+          "type": "object"
+        },
+        "Endpoint": {
+          "additionalProperties": false,
+          "anyOf": [
+            {
+              "required": [
+                "url"
+              ]
+            },
+            {
+              "required": [
+                "resource"
+              ]
+            }
+          ],
+          "description": "How a service is reached in one environment: a url, a resource name, or both.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "credentials": {
+              "$ref": "#/$defs/Credentials",
+              "description": "Names of the credentials to use here; never a value."
+            },
+            "note": {
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f\\u061c\\u200e\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]+$",
+              "type": "string"
+            },
+            "resource": {
+              "description": "A resource name, such as a table or a function.",
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f\\u061c\\u200e\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]+$",
+              "type": "string"
+            },
+            "url": {
+              "description": "scheme://host[:port][/path], at most 200 characters; no user info, query or fragment.",
+              "maxLength": 200,
+              "pattern": "^[A-Za-z][A-Za-z0-9+.-]*://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[!\"$->A-~]*)?$",
+              "type": "string"
+            }
+          },
+          "title": "Endpoint",
+          "type": "object"
+        },
+        "Environment": {
+          "additionalProperties": false,
+          "description": "A place the agent may reach, and what it may do there.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "access": {
+              "enum": [
+                "read",
+                "write",
+                "ask"
+              ],
+              "title": "Access",
+              "type": "string"
+            },
+            "credentials": {
+              "$ref": "#/$defs/Credentials",
+              "description": "Names of the credentials to use; never a value."
+            },
+            "description": {
+              "description": "At most 80 characters; AGENTS.md renders it as text.",
+              "maxLength": 80,
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f\\u061c\\u200e\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]+$",
+              "type": "string"
+            },
+            "production": {
+              "default": false,
+              "title": "Production",
+              "type": "boolean"
+            },
+            "values": {
+              "additionalProperties": {
+                "maxLength": 200,
+                "minLength": 1,
+                "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f\\u061c\\u200e\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]+$",
+                "type": "string"
+              },
+              "description": "Values that fill a scenario's inputs of the same name when it runs here, before the input's default: at most 32, each at most 200 characters; never a secret.",
+              "maxProperties": 32,
+              "patternProperties": {
+                "^_": {}
+              },
+              "propertyNames": {
+                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+              },
+              "title": "Values",
+              "type": "object"
+            }
+          },
+          "required": [
+            "access"
+          ],
+          "title": "Environment",
+          "type": "object"
+        },
+        "EventKind": {
+          "enum": [
+            "merge",
+            "ci_red",
+            "pr_opened"
+          ],
+          "type": "string"
+        },
+        "EventStart": {
+          "additionalProperties": false,
+          "description": "A workflow ``hub web`` starts when a repo's event happens (GitHub, through gh).",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "inputs": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "maxLength": 1000,
+                    "pattern": "^[^\\x00]*$",
+                    "type": "string"
+                  }
+                ]
+              },
+              "description": "The run's inputs; sha, pr and ci_run come from the event.",
+              "maxProperties": 64,
+              "patternProperties": {
+                "^_": {}
+              },
+              "propertyNames": {
+                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+              },
+              "title": "Inputs",
+              "type": "object"
+            },
+            "on": {
+              "$ref": "#/$defs/EventKind",
+              "description": "merge: a new commit on the default branch; ci_red: a failed Actions run on it; pr_opened: a newly opened pull request."
+            },
+            "repo": {
+              "description": "A repos[].dir.",
+              "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
+              "title": "Repo",
+              "type": "string"
+            },
+            "workflow": {
+              "maxLength": 128,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Workflow",
+              "type": "string"
+            }
+          },
+          "required": [
+            "workflow",
+            "on",
+            "repo"
+          ],
+          "title": "EventStart",
+          "type": "object"
+        },
+        "Guard": {
+          "additionalProperties": false,
+          "description": "Paths and hosts the hub's guard hook asks about or denies.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "ask_before_edit": {
+              "default": [],
+              "items": {
+                "pattern": "^(?:[!-.0-\\[\\]-~]*[!-\\-0-\\[\\]-~][!-.0-\\[\\]-~]*|\\.{3,})(?:/(?:[!-.0-\\[\\]-~]*[!-\\-0-\\[\\]-~][!-.0-\\[\\]-~]*|\\.{3,}))*$",
+                "type": "string"
+              },
+              "title": "Ask Before Edit",
+              "type": "array"
+            },
+            "blocked_words": {
+              "default": [],
+              "description": "Words the guard denies in commands, the session, paths and listed files; matched ignoring ASCII case, bounded by any character that is not a letter.",
+              "items": {
+                "maxLength": 64,
+                "minLength": 2,
+                "pattern": "^[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*$",
+                "type": "string"
+              },
+              "maxItems": 200,
+              "title": "Blocked Words",
+              "type": "array"
+            },
+            "blocked_words_env": {
+              "default": [],
+              "description": "Names of variables whose values the guard checks for blocked words; a trailing * matches a prefix.",
+              "items": {
+                "pattern": "^[A-Z_][A-Z0-9_]{0,63}\\*?$",
+                "type": "string"
+              },
+              "maxItems": 50,
+              "title": "Blocked Words Env",
+              "type": "array"
+            },
+            "blocked_words_files": {
+              "default": [],
+              "description": "Globs of files whose contents the guard checks for blocked words, on top of .env* files.",
+              "items": {
+                "maxLength": 200,
+                "pattern": "^[!-.0-~][!-~]*$",
+                "type": "string"
+              },
+              "maxItems": 100,
+              "title": "Blocked Words Files",
+              "type": "array"
+            },
+            "deny_hosts": {
+              "default": [],
+              "items": {
+                "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*$",
+                "type": "string"
+              },
+              "title": "Deny Hosts",
+              "type": "array"
+            },
+            "deny_paths": {
+              "default": [],
+              "items": {
+                "pattern": "^(?:[!-.0-\\[\\]-~]*[!-\\-0-\\[\\]-~][!-.0-\\[\\]-~]*|\\.{3,})(?:/(?:[!-.0-\\[\\]-~]*[!-\\-0-\\[\\]-~][!-.0-\\[\\]-~]*|\\.{3,}))*$",
+                "type": "string"
+              },
+              "title": "Deny Paths",
+              "type": "array"
+            },
+            "infra": {
+              "$ref": "#/$defs/GuardInfra",
+              "description": "Turns on the guard's infra classification: Python re patterns, searched with no flags. Absent: the fixed infra rule."
+            },
+            "readable_env_files": {
+              "default": [],
+              "description": "Env file names (.env.<suffix>) the guard does not treat as secret, on top of its fixed list (.env.example, .env.sample, ...).",
+              "items": {
+                "pattern": "^\\.env\\.[A-Za-z0-9_.-]+$",
+                "type": "string"
+              },
+              "title": "Readable Env Files",
+              "type": "array"
+            },
+            "secret_env_files": {
+              "default": [],
+              "description": "Env file names (.env.<suffix>) the guard always treats as secret, even when its fixed list or readable_env_files names them.",
+              "items": {
+                "pattern": "^\\.env\\.[A-Za-z0-9_.-]+$",
+                "type": "string"
+              },
+              "title": "Secret Env Files",
+              "type": "array"
+            }
+          },
+          "title": "Guard",
+          "type": "object"
+        },
+        "GuardInfra": {
+          "additionalProperties": false,
+          "description": "Regexes the guard hook matches against infra commands: allowed environments and production\nmarkers.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "allow": {
+              "default": [],
+              "items": {
+                "pattern": "^[^\\x00-\\x1f\\x7f]*[^\\x00-\\x1f\\x7f\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000][^\\x00-\\x1f\\x7f]*$",
+                "type": "string"
+              },
+              "title": "Allow",
+              "type": "array"
+            },
+            "prod_markers": {
+              "default": [],
+              "items": {
+                "pattern": "^[^\\x00-\\x1f\\x7f]*[^\\x00-\\x1f\\x7f\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000][^\\x00-\\x1f\\x7f]*$",
+                "type": "string"
+              },
+              "title": "Prod Markers",
+              "type": "array"
+            }
+          },
+          "title": "GuardInfra",
+          "type": "object"
+        },
+        "IdentityRuleSettings": {
+          "additionalProperties": false,
+          "description": "``config.identity``: whether it runs. It has no ``severity``: its finding stays an info,\nso a hub gives every developer the same exit code.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "enabled": {
+              "default": true,
+              "title": "Enabled",
+              "type": "boolean"
+            }
+          },
+          "title": "IdentityRuleSettings",
+          "type": "object"
+        },
+        "InstructionsSizeSettings": {
+          "additionalProperties": false,
+          "description": "``instructions.size``: the line limits of instruction files.\n\n``max_lines`` stays a plain ``dict``, so frozen is shallow for the ``max_lines`` map.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "enabled": {
+              "default": true,
+              "title": "Enabled",
+              "type": "boolean"
+            },
+            "max_lines": {
+              "additionalProperties": {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              },
+              "maxProperties": 256,
+              "patternProperties": {
+                "^_": {}
+              },
+              "propertyNames": {
+                "maxLength": 1024,
+                "minLength": 1
+              },
+              "type": "object"
+            },
+            "severity": {
+              "$ref": "#/$defs/Severity"
+            }
+          },
+          "title": "InstructionsSizeSettings",
+          "type": "object"
+        },
+        "ModelTiers": {
+          "additionalProperties": false,
+          "description": "The model name of each tier; an absent tier takes its default.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "large": {
+              "description": "Default: opus.",
+              "pattern": "^[A-Za-z0-9._-]{1,64}$",
+              "type": "string"
+            },
+            "medium": {
+              "description": "Default: sonnet.",
+              "pattern": "^[A-Za-z0-9._-]{1,64}$",
+              "type": "string"
+            },
+            "small": {
+              "description": "Default: haiku.",
+              "pattern": "^[A-Za-z0-9._-]{1,64}$",
+              "type": "string"
+            }
+          },
+          "title": "ModelTiers",
+          "type": "object"
+        },
+        "Models": {
+          "additionalProperties": false,
+          "description": "Which model each tier names, and which agents leave their template's tier.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "agents": {
+              "$ref": "#/$defs/AgentTiers"
+            },
+            "tiers": {
+              "$ref": "#/$defs/ModelTiers"
+            }
+          },
+          "title": "Models",
+          "type": "object"
+        },
+        "ModuleSettings": {
+          "additionalProperties": false,
+          "description": "The settings of a module that takes none: only ``{}`` (and ``_`` keys).",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {},
+          "title": "ModuleSettings",
+          "type": "object"
+        },
+        "Modules": {
+          "additionalProperties": false,
+          "description": "The optional modules this hub selects: a key present means the module is selected.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "bench": {
+              "$ref": "#/$defs/ModuleSettings"
+            },
+            "cloud": {
+              "$ref": "#/$defs/ModuleSettings"
+            },
+            "contract-sync": {
+              "$ref": "#/$defs/ContractSyncSettings"
+            },
+            "marketplace": {
+              "$ref": "#/$defs/ModuleSettings"
+            }
+          },
+          "title": "Modules",
+          "type": "object"
+        },
+        "Platform": {
+          "additionalProperties": false,
+          "description": "The platform release this hub is pinned to.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "repository": {
+              "description": "The platform's git source: the repository root as git+https://<host>/<path>, at most 200 characters. The hub runs <repository>@v<platform.version>#subdirectory=packages/agent-hub. Absent: the agent-hub release repository (docs/design/project-config.md).",
+              "maxLength": 200,
+              "pattern": "^git\\+https://[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*(?:/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*)+$",
+              "type": "string"
+            },
+            "version": {
+              "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+              "title": "Version",
+              "type": "string"
+            }
+          },
+          "required": [
+            "version"
+          ],
+          "title": "Platform",
+          "type": "object"
+        },
+        "Project": {
+          "additionalProperties": false,
+          "description": "Project identity, authorship and branch rules.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "author_email": {
+              "description": "Per developer: hub.local.json, else this, else git config (docs/design/developer-identity.md).",
+              "pattern": "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$",
+              "type": "string"
+            },
+            "author_name": {
+              "description": "Per developer: hub.local.json, else this, else git config (docs/design/developer-identity.md).",
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "type": "string"
+            },
+            "branch_prefix": {
+              "description": "Per developer: hub.local.json, else this, else the effective author email's local part plus / (docs/design/developer-identity.md).",
+              "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*/$",
+              "type": "string"
+            },
+            "conventions": {
+              "$ref": "#/$defs/Conventions",
+              "description": "Branch and title patterns for every repo; absent keys keep today's shapes."
+            },
+            "default_branch": {
+              "default": "main",
+              "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*(?:/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*)*$",
+              "title": "Default Branch",
+              "type": "string"
+            },
+            "hub_repo": {
+              "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
+              "title": "Hub Repo",
+              "type": "string"
+            },
+            "name": {
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "hub_repo"
+          ],
+          "title": "Project",
+          "type": "object"
+        },
+        "Repo": {
+          "additionalProperties": false,
+          "description": "A repo managed by the hub, checked out next to it.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "check": {
+              "pattern": "^[^\\x00-\\x1f\\x7f]*[^\\x00-\\x1f\\x7f\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000][^\\x00-\\x1f\\x7f]*$",
+              "title": "Check",
+              "type": "string"
+            },
+            "check_fast": {
+              "description": "The fast gate the Stop hook runs. Absent, empty or blank: no Stop gate.",
+              "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+              "type": "string"
+            },
+            "check_fast_timeout": {
+              "description": "Seconds the Stop hook gives check_fast, within its 160 s budget. Absent: 150.",
+              "maximum": 160,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "conventions": {
+              "$ref": "#/$defs/Conventions",
+              "description": "Overrides project.conventions key by key."
+            },
+            "default_branch": {
+              "description": "The repo's default branch: worktree and PR base, push guard. Absent: project.default_branch.",
+              "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*(?:/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*)*$",
+              "type": "string"
+            },
+            "dir": {
+              "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
+              "title": "Dir",
+              "type": "string"
+            },
+            "github": {
+              "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
+              "title": "Github",
+              "type": "string"
+            },
+            "role": {
+              "default": "app",
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Role",
+              "type": "string"
+            },
+            "services": {
+              "additionalProperties": {
+                "$ref": "#/$defs/Service"
+              },
+              "description": "The services the repo runs, keyed by name, with their endpoints (docs/design/environments.md).",
+              "patternProperties": {
+                "^_": {}
+              },
+              "propertyNames": {
+                "maxLength": 40,
+                "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$"
+              },
+              "title": "Services",
+              "type": "object"
+            },
+            "ui_paths": {
+              "description": "Globs of the repo's screen paths, from the repo root (** spans folders; no [ or ], at most 3 * per segment): a review round whose diff touches one runs the UX lens. Absent: the repo has no UI.",
+              "items": {
+                "maxLength": 200,
+                "pattern": "^[!-.0-~][!-~]*$",
+                "type": "string"
+              },
+              "maxItems": 50,
+              "minItems": 1,
+              "type": "array"
+            }
+          },
+          "required": [
+            "dir",
+            "github",
+            "check"
+          ],
+          "title": "Repo",
+          "type": "object"
+        },
+        "RuleSettings": {
+          "additionalProperties": false,
+          "description": "How a project tunes one rule: whether it runs, and the level of its findings.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "enabled": {
+              "default": true,
+              "title": "Enabled",
+              "type": "boolean"
+            },
+            "severity": {
+              "$ref": "#/$defs/Severity"
+            }
+          },
+          "title": "RuleSettings",
+          "type": "object"
+        },
+        "Schedule": {
+          "additionalProperties": false,
+          "description": "A workflow ``hub web`` starts at each slot of a cron (UTC).",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "cron": {
+              "description": "5 numeric fields (minute hour day month weekday), read in UTC.",
+              "maxLength": 100,
+              "minLength": 1,
+              "title": "Cron",
+              "type": "string"
+            },
+            "environment": {
+              "description": "A declared environment the run gets (--env). Absent: none.",
+              "maxLength": 40,
+              "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
+              "type": "string"
+            },
+            "inputs": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "maxLength": 1000,
+                    "pattern": "^[^\\x00]*$",
+                    "type": "string"
+                  }
+                ]
+              },
+              "description": "The run's inputs.",
+              "maxProperties": 64,
+              "patternProperties": {
+                "^_": {}
+              },
+              "propertyNames": {
+                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+              },
+              "title": "Inputs",
+              "type": "object"
+            },
+            "workflow": {
+              "maxLength": 128,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Workflow",
+              "type": "string"
+            }
+          },
+          "required": [
+            "workflow",
+            "cron"
+          ],
+          "title": "Schedule",
+          "type": "object"
+        },
+        "Service": {
+          "additionalProperties": false,
+          "description": "A service a repo runs, with its endpoint in each declared environment.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "description": {
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f\\u061c\\u200e\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]+$",
+              "type": "string"
+            },
+            "endpoints": {
+              "additionalProperties": {
+                "$ref": "#/$defs/Endpoint"
+              },
+              "description": "Keyed by a declared environment's name.",
+              "patternProperties": {
+                "^_": {}
+              },
+              "propertyNames": {
+                "maxLength": 40,
+                "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$"
+              },
+              "title": "Endpoints",
+              "type": "object"
+            },
+            "kind": {
+              "description": "What the service is (api, dynamodb, lambda, ...): informational.",
+              "maxLength": 32,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          "title": "Service",
+          "type": "object"
+        },
+        "Severity": {
+          "description": "The level of a finding.",
+          "enum": [
+            "error",
+            "warning",
+            "info"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "StopGateRuleSettings": {
+          "additionalProperties": false,
+          "description": "``config.stop_gate``: whether it runs. It has no ``severity``: a repo without a Stop gate\nstays a warning, never an error that fails the hub's checks on its own.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "enabled": {
+              "default": true,
+              "title": "Enabled",
+              "type": "boolean"
+            }
+          },
+          "title": "StopGateRuleSettings",
+          "type": "object"
+        },
+        "Tracker": {
+          "additionalProperties": false,
+          "description": "The task tracker, how the CLI reaches it and the labels the runner uses.",
+          "oneOf": [
+            {
+              "required": [
+                "team"
+              ]
+            },
+            {
+              "required": [
+                "teams"
+              ]
+            }
+          ],
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "blocked_label": {
+              "description": "The label hub run adds when its session stops for a human; absent: tracker.failed_label.",
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "type": "string"
+            },
+            "failed_label": {
+              "default": "agent-failed",
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Failed Label",
+              "type": "string"
+            },
+            "kind": {
+              "const": "linear",
+              "title": "Kind",
+              "type": "string"
+            },
+            "ready_label": {
+              "default": "agent-ready",
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Ready Label",
+              "type": "string"
+            },
+            "states": {
+              "$ref": "#/$defs/TrackerStates"
+            },
+            "team": {
+              "description": "The tracker's team key. Never with tracker.teams.",
+              "pattern": "^[A-Za-z0-9]+$",
+              "type": "string"
+            },
+            "teams": {
+              "description": "Several team keys, the first being the default. Never with tracker.team.",
+              "items": {
+                "pattern": "^[A-Za-z0-9]+$",
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            "transport": {
+              "default": "api",
+              "enum": [
+                "api",
+                "mcp"
+              ],
+              "title": "Transport",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "title": "Tracker",
+          "type": "object"
+        },
+        "TrackerStates": {
+          "additionalProperties": false,
+          "description": "The workflow state names the CLI moves issues to; `review` is for the review step.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "review": {
+              "default": "In Review",
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Review",
+              "type": "string"
+            },
+            "started": {
+              "default": "In Progress",
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Started",
+              "type": "string"
+            }
+          },
+          "title": "TrackerStates",
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "The whole ``hub.json``; the CLI and ``hub doctor`` validate with it.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "$schema": {
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "type": "string"
+        },
+        "doctor": {
+          "$ref": "#/$defs/Doctor"
+        },
+        "environments": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Environment"
+          },
+          "description": "The environments agents may reach, keyed by name, and what they may do there (docs/design/environments.md).",
+          "patternProperties": {
+            "^_": {}
+          },
+          "propertyNames": {
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$"
+          },
+          "title": "Environments",
+          "type": "object"
+        },
+        "events": {
+          "default": [],
+          "description": "Workflows hub web starts on a repo's GitHub event, polled through gh (ADR 0048).",
+          "items": {
+            "$ref": "#/$defs/EventStart"
+          },
+          "maxItems": 32,
+          "title": "Events",
+          "type": "array"
+        },
+        "guard": {
+          "$ref": "#/$defs/Guard"
+        },
+        "models": {
+          "$ref": "#/$defs/Models"
+        },
+        "modules": {
+          "$ref": "#/$defs/Modules"
+        },
+        "platform": {
+          "$ref": "#/$defs/Platform"
+        },
+        "project": {
+          "$ref": "#/$defs/Project"
+        },
+        "repos": {
+          "items": {
+            "$ref": "#/$defs/Repo"
+          },
+          "minItems": 1,
+          "title": "Repos",
+          "type": "array"
+        },
+        "schedules": {
+          "default": [],
+          "description": "Workflows hub web starts at the slots of a cron, in UTC; one per workflow (ADR 0048).",
+          "items": {
+            "$ref": "#/$defs/Schedule"
+          },
+          "maxItems": 32,
+          "title": "Schedules",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "tracker": {
+          "$ref": "#/$defs/Tracker"
+        }
+      },
+      "required": [
+        "schema_version",
+        "platform",
+        "project",
+        "tracker",
+        "repos"
+      ],
+      "title": "hub.json",
+      "type": "object"
+    },
+    "ModuleSettings": {
+      "additionalProperties": false,
+      "description": "The settings of a module that takes none: only ``{}`` (and ``_`` keys).",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {},
+      "title": "ModuleSettings",
+      "type": "object"
+    },
+    "Modules": {
+      "$defs": {
+        "ContractSyncSettings": {
+          "additionalProperties": false,
+          "description": "``contract-sync``: the repo that exports the contract and the repo that imports it.\n\nBoth are ``repos[].dir`` entries, checked by ``HubConfig``, which knows the repos.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "source": {
+              "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
+              "title": "Source",
+              "type": "string"
+            },
+            "target": {
+              "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
+              "title": "Target",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source",
+            "target"
+          ],
+          "title": "ContractSyncSettings",
+          "type": "object"
+        },
+        "ModuleSettings": {
+          "additionalProperties": false,
+          "description": "The settings of a module that takes none: only ``{}`` (and ``_`` keys).",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {},
+          "title": "ModuleSettings",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "The optional modules this hub selects: a key present means the module is selected.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "bench": {
+          "$ref": "#/$defs/ModuleSettings"
+        },
+        "cloud": {
+          "$ref": "#/$defs/ModuleSettings"
+        },
+        "contract-sync": {
+          "$ref": "#/$defs/ContractSyncSettings"
+        },
+        "marketplace": {
+          "$ref": "#/$defs/ModuleSettings"
+        }
+      },
+      "title": "Modules",
+      "type": "object"
+    },
+    "Platform": {
+      "additionalProperties": false,
+      "description": "The platform release this hub is pinned to.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "repository": {
+          "description": "The platform's git source: the repository root as git+https://<host>/<path>, at most 200 characters. The hub runs <repository>@v<platform.version>#subdirectory=packages/agent-hub. Absent: the agent-hub release repository (docs/design/project-config.md).",
+          "maxLength": 200,
+          "pattern": "^git\\+https://[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*(?:/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*)+$",
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version"
+      ],
+      "title": "Platform",
+      "type": "object"
+    },
+    "Project": {
+      "$defs": {
+        "Conventions": {
+          "additionalProperties": false,
+          "description": "Branch and title patterns; each absent key keeps today's shape.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "branch": {
+              "description": "Branch pattern: {prefix}, {ISSUE}, {issue_lower}, {slug}; needs {ISSUE} or {issue_lower}. Default {prefix}{issue_lower}-{slug}.",
+              "type": "string"
+            },
+            "commit_title": {
+              "description": "Commit title pattern: {ISSUE}, {type}, {scope}, {summary}; needs {summary}. Default {type}({scope}): {summary} ({ISSUE}).",
+              "type": "string"
+            },
+            "pr_title": {
+              "description": "PR title pattern: {ISSUE}, {type}, {scope}, {summary}; needs {summary}. Default: the effective commit_title.",
+              "type": "string"
+            }
+          },
+          "title": "Conventions",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Project identity, authorship and branch rules.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "author_email": {
+          "description": "Per developer: hub.local.json, else this, else git config (docs/design/developer-identity.md).",
+          "pattern": "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$",
+          "type": "string"
+        },
+        "author_name": {
+          "description": "Per developer: hub.local.json, else this, else git config (docs/design/developer-identity.md).",
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "type": "string"
+        },
+        "branch_prefix": {
+          "description": "Per developer: hub.local.json, else this, else the effective author email's local part plus / (docs/design/developer-identity.md).",
+          "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*/$",
+          "type": "string"
+        },
+        "conventions": {
+          "$ref": "#/$defs/Conventions",
+          "description": "Branch and title patterns for every repo; absent keys keep today's shapes."
+        },
+        "default_branch": {
+          "default": "main",
+          "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*(?:/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*)*$",
+          "title": "Default Branch",
+          "type": "string"
+        },
+        "hub_repo": {
+          "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
+          "title": "Hub Repo",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "hub_repo"
+      ],
+      "title": "Project",
+      "type": "object"
+    },
+    "Repo": {
+      "$defs": {
+        "Conventions": {
+          "additionalProperties": false,
+          "description": "Branch and title patterns; each absent key keeps today's shape.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "branch": {
+              "description": "Branch pattern: {prefix}, {ISSUE}, {issue_lower}, {slug}; needs {ISSUE} or {issue_lower}. Default {prefix}{issue_lower}-{slug}.",
+              "type": "string"
+            },
+            "commit_title": {
+              "description": "Commit title pattern: {ISSUE}, {type}, {scope}, {summary}; needs {summary}. Default {type}({scope}): {summary} ({ISSUE}).",
+              "type": "string"
+            },
+            "pr_title": {
+              "description": "PR title pattern: {ISSUE}, {type}, {scope}, {summary}; needs {summary}. Default: the effective commit_title.",
+              "type": "string"
+            }
+          },
+          "title": "Conventions",
+          "type": "object"
+        },
+        "Credentials": {
+          "additionalProperties": false,
+          "description": "Where the credentials of an environment come from: names, never values.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "aws_profile": {
+              "description": "An AWS profile name.",
+              "pattern": "^[A-Za-z0-9_.-]{1,64}$",
+              "type": "string"
+            },
+            "env": {
+              "default": [],
+              "description": "Names of the environment variables that hold credentials.",
+              "items": {
+                "pattern": "^[A-Z_][A-Z0-9_]{0,63}$",
+                "type": "string"
+              },
+              "maxItems": 10,
+              "title": "Env",
+              "type": "array"
+            },
+            "env_file": {
+              "description": "A dotenv file, relative to the folder holding the hub and its repos, that only actions read; at most 200 characters, no '..', no leading '/' or '~'.",
+              "maxLength": 200,
+              "pattern": "^[!-.0-}][!-~]*$",
+              "type": "string"
+            }
+          },
+          "title": "Credentials",
+          "type": "object"
+        },
+        "Endpoint": {
+          "additionalProperties": false,
+          "anyOf": [
+            {
+              "required": [
+                "url"
+              ]
+            },
+            {
+              "required": [
+                "resource"
+              ]
+            }
+          ],
+          "description": "How a service is reached in one environment: a url, a resource name, or both.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "credentials": {
+              "$ref": "#/$defs/Credentials",
+              "description": "Names of the credentials to use here; never a value."
+            },
+            "note": {
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f\\u061c\\u200e\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]+$",
+              "type": "string"
+            },
+            "resource": {
+              "description": "A resource name, such as a table or a function.",
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f\\u061c\\u200e\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]+$",
+              "type": "string"
+            },
+            "url": {
+              "description": "scheme://host[:port][/path], at most 200 characters; no user info, query or fragment.",
+              "maxLength": 200,
+              "pattern": "^[A-Za-z][A-Za-z0-9+.-]*://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[!\"$->A-~]*)?$",
+              "type": "string"
+            }
+          },
+          "title": "Endpoint",
+          "type": "object"
+        },
+        "Service": {
+          "additionalProperties": false,
+          "description": "A service a repo runs, with its endpoint in each declared environment.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "description": {
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f\\u061c\\u200e\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]+$",
+              "type": "string"
+            },
+            "endpoints": {
+              "additionalProperties": {
+                "$ref": "#/$defs/Endpoint"
+              },
+              "description": "Keyed by a declared environment's name.",
+              "patternProperties": {
+                "^_": {}
+              },
+              "propertyNames": {
+                "maxLength": 40,
+                "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$"
+              },
+              "title": "Endpoints",
+              "type": "object"
+            },
+            "kind": {
+              "description": "What the service is (api, dynamodb, lambda, ...): informational.",
+              "maxLength": 32,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            }
+          },
+          "title": "Service",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "A repo managed by the hub, checked out next to it.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "check": {
+          "pattern": "^[^\\x00-\\x1f\\x7f]*[^\\x00-\\x1f\\x7f\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000][^\\x00-\\x1f\\x7f]*$",
+          "title": "Check",
+          "type": "string"
+        },
+        "check_fast": {
+          "description": "The fast gate the Stop hook runs. Absent, empty or blank: no Stop gate.",
+          "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+          "type": "string"
+        },
+        "check_fast_timeout": {
+          "description": "Seconds the Stop hook gives check_fast, within its 160 s budget. Absent: 150.",
+          "maximum": 160,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "conventions": {
+          "$ref": "#/$defs/Conventions",
+          "description": "Overrides project.conventions key by key."
+        },
+        "default_branch": {
+          "description": "The repo's default branch: worktree and PR base, push guard. Absent: project.default_branch.",
+          "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*(?:/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*)*$",
+          "type": "string"
+        },
+        "dir": {
+          "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
+          "title": "Dir",
+          "type": "string"
+        },
+        "github": {
+          "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
+          "title": "Github",
+          "type": "string"
+        },
+        "role": {
+          "default": "app",
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Role",
+          "type": "string"
+        },
+        "services": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Service"
+          },
+          "description": "The services the repo runs, keyed by name, with their endpoints (docs/design/environments.md).",
+          "patternProperties": {
+            "^_": {}
+          },
+          "propertyNames": {
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$"
+          },
+          "title": "Services",
+          "type": "object"
+        },
+        "ui_paths": {
+          "description": "Globs of the repo's screen paths, from the repo root (** spans folders; no [ or ], at most 3 * per segment): a review round whose diff touches one runs the UX lens. Absent: the repo has no UI.",
+          "items": {
+            "maxLength": 200,
+            "pattern": "^[!-.0-~][!-~]*$",
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "dir",
+        "github",
+        "check"
+      ],
+      "title": "Repo",
+      "type": "object"
+    },
+    "Tracker": {
+      "$defs": {
+        "TrackerStates": {
+          "additionalProperties": false,
+          "description": "The workflow state names the CLI moves issues to; `review` is for the review step.",
+          "patternProperties": {
+            "^_": {}
+          },
+          "properties": {
+            "review": {
+              "default": "In Review",
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Review",
+              "type": "string"
+            },
+            "started": {
+              "default": "In Progress",
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "title": "Started",
+              "type": "string"
+            }
+          },
+          "title": "TrackerStates",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "The task tracker, how the CLI reaches it and the labels the runner uses.",
+      "oneOf": [
+        {
+          "required": [
+            "team"
+          ]
+        },
+        {
+          "required": [
+            "teams"
+          ]
+        }
+      ],
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "blocked_label": {
+          "description": "The label hub run adds when its session stops for a human; absent: tracker.failed_label.",
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "type": "string"
+        },
+        "failed_label": {
+          "default": "agent-failed",
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Failed Label",
+          "type": "string"
+        },
+        "kind": {
+          "const": "linear",
+          "title": "Kind",
+          "type": "string"
+        },
+        "ready_label": {
+          "default": "agent-ready",
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Ready Label",
+          "type": "string"
+        },
+        "states": {
+          "$ref": "#/$defs/TrackerStates"
+        },
+        "team": {
+          "description": "The tracker's team key. Never with tracker.teams.",
+          "pattern": "^[A-Za-z0-9]+$",
+          "type": "string"
+        },
+        "teams": {
+          "description": "Several team keys, the first being the default. Never with tracker.team.",
+          "items": {
+            "pattern": "^[A-Za-z0-9]+$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "transport": {
+          "default": "api",
+          "enum": [
+            "api",
+            "mcp"
+          ],
+          "title": "Transport",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "Tracker",
+      "type": "object"
+    },
+    "TrackerStates": {
+      "additionalProperties": false,
+      "description": "The workflow state names the CLI moves issues to; `review` is for the review step.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "review": {
+          "default": "In Review",
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Review",
+          "type": "string"
+        },
+        "started": {
+          "default": "In Progress",
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Started",
+          "type": "string"
+        }
+      },
+      "title": "TrackerStates",
+      "type": "object"
+    }
+  }
+}

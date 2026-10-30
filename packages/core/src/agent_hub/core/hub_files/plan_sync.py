@@ -45,6 +45,7 @@ from agent_hub.core.hub_files.plan_init import (
     _missing_folders,
     _type_problem,
 )
+from agent_hub.core.hub_files.release_commit import ReleaseCommit
 from agent_hub.core.hub_files.rendered_file import Ownership, RenderedFile
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.hub_files.rendered_link import RenderedLink
@@ -321,6 +322,7 @@ def plan_sync(
     lock_content: bytes,
     tree: TreeSnapshot,
     extensions: ExtensionInputs,
+    release: ReleaseCommit | None = None,
 ) -> SyncPlan | SyncConflicts:
     """Plan a sync of the hub ``tree`` describes to ``rendered`` for ``config``.
 
@@ -329,7 +331,9 @@ def plan_sync(
     managed file and of every managed file ``lock`` records. Raises ``ValueError`` when the render
     holds ``hub.json`` or ``hub.lock``, or when a file it compares was read without its content.
     ``extensions`` are the inputs ``rendered`` was rendered with: a project agent or skill named
-    like another entry of its folder is a conflict.
+    like another entry of its folder is a conflict. ``release`` is the pinned release's commit the
+    new lock records (ADR 0054), kept from ``lock`` or looked up by the caller; ``None`` records
+    none.
     """
     _check_render(rendered)
     entries = tree.entries
@@ -348,7 +352,7 @@ def plan_sync(
     problems = _problems([*verdicts.values(), *gone.values(), *clashes])
     if problems:
         return SyncConflicts(problems=problems)
-    new_lock = build_hub_lock(rendered=rendered, config=config)
+    new_lock = build_hub_lock(rendered=rendered, config=config, release=release)
     new_bytes = lock_bytes(new_lock)
     # Files come before links in ``items``, each in path order: the write order of spec Q-13.
     writes: list[FileWrite | LinkWrite] = [

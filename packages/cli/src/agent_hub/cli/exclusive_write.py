@@ -4,6 +4,8 @@ The bytes go to a temp file in the same folder, created for this call only, and 
 then gives them the final name. A link never replaces an entry, so a file that is already
 there, or that appears meanwhile, is kept exactly as it is, and the name never holds a
 partial write. After the link the folder is synced, so the name survives a crash.
+``write_replacing`` is the same temp file published with ``os.replace``, for a file that is
+rewritten (``hub brief --write-cache``): a reader of the old file keeps the whole old file.
 """
 
 import contextlib
@@ -46,6 +48,28 @@ def write_exclusive(folder: Path, name: str, content: bytes, *, mode: int = 0o64
         # the error being raised (or the False) is what the caller must see, not the unlink's.
         with contextlib.suppress(OSError):
             os.unlink(temp)
+
+
+def write_replacing(folder: Path, name: str, content: bytes, *, mode: int = 0o644) -> None:
+    """Write ``content`` as ``folder/name`` with ``mode``, replacing what is there (a link too).
+
+    The name never holds a partial write. Raises ``OSError``; the temp is then removed, best
+    effort.
+    """
+    temp = folder / f".{name}{TEMP_INFIX}{secrets.token_hex(4)}"
+    descriptor = os.open(temp, _TEMP_FLAGS, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as file:
+            os.fchmod(file.fileno(), mode)
+            file.write(content)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temp, folder / name)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(temp)
+        raise
+    sync_folder(folder)
 
 
 def sync_folder(folder: Path) -> None:

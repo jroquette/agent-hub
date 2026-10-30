@@ -15,6 +15,7 @@ import typer
 
 from agent_hub.cli.child_process import git_env
 from agent_hub.cli.git_defaults import read_git_defaults
+from agent_hub.cli.hidden_env import SESSION_HIDDEN, without
 from agent_hub.cli.hub_config_reader import (
     FAILURE,
     FILE_LABEL,
@@ -23,7 +24,6 @@ from agent_hub.cli.hub_config_reader import (
     read_local_json,
 )
 from agent_hub.cli.hub_root import local_home
-from agent_hub.cli.run_children import SESSION_HIDDEN, without
 from agent_hub.core.hub_config.effective_environments import local_environment_problems
 from agent_hub.core.hub_config.effective_identity import (
     GitReader,

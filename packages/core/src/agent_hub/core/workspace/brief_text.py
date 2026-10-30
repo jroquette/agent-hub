@@ -41,7 +41,8 @@ _FOOTER: Final = (
 class RepoState(BaseModel):
     """What the brief shows of one checkout; ``prs`` and ``ci`` are ``gh``'s output, or empty.
 
-    ``default_branch`` is the branch ``base`` tracks and ``ci`` was read on.
+    ``default_branch`` is the branch ``base`` tracks and ``ci`` was read on; ``ci_timed_out``:
+    the CI read did not answer within the brief's deadline.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -55,6 +56,7 @@ class RepoState(BaseModel):
     default_branch: str = ""
     prs: str = ""
     ci: str = ""
+    ci_timed_out: bool = False
 
 
 class BriefInputs(BaseModel):
@@ -93,7 +95,8 @@ def journal_day(path: str) -> str:
 
 
 def repo_line(state: RepoState, *, network: bool) -> str:
-    """One repo's line, with its open PRs and failing runs under it when the network is on."""
+    """One repo's line, with its open PRs and failing runs under it when the network is on;
+    with ``state.ci_timed_out``, ``CI: unknown (timeout)`` takes the failing runs' place."""
     if not state.checkout:
         return f"- {state.name}: not found"
     behind = state.behind or "?"
@@ -106,7 +109,9 @@ def repo_line(state: RepoState, *, network: bool) -> str:
     if state.prs:
         prs = " | ".join(pr[:PR_CAP] for pr in state.prs.splitlines()[:PR_LINES])
         line += f"\n  open PRs: {prs}"
-    if state.ci:
+    if state.ci_timed_out:
+        line += "\n  CI: unknown (timeout)"
+    elif state.ci:
         failing = ", ".join(sorted(set(state.ci.splitlines())))
         line += f"\n  ⚠ failing on {state.default_branch}: {failing}"
     return line

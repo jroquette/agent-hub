@@ -36,6 +36,7 @@ from agent_hub.core.hub_config.problems import one_line
 from agent_hub.core.hub_config.text_shapes import SAFE_SEGMENT
 from agent_hub.core.workflows.nodes import (
     READ_ONLY,
+    READ_ONLY_VALUE_CONFIG,
     SELF_ID,
     FieldName,
     KebabId,
@@ -110,6 +111,8 @@ class WorkflowLoadError(AgentHubError):
 
 
 class WorkflowInput(WorkflowObject):
+    model_config = READ_ONLY_VALUE_CONFIG
+
     type: Literal["string", "integer", "number", "boolean"] = "string"
     required: StrictBool = False
     # Any JSON value, checked against ``type`` below: one message whatever the mismatch.

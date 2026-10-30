@@ -81,10 +81,14 @@ HANDLED = frozenset({*FIXED_STDINS, "event", *tool_field_events(Path("/"))})
 GUARD_CRASH = b"could not check this call"
 TRACEBACK = b"Traceback (most recent call last)"
 FAILING_GIT = "#!/bin/sh\necho 'fatal: not a git repository' >&2\nexit 128\n"
-# A `hub brief` stub: SessionStart then falls back to the mini brief (cause "failed").
+# A `uvx` stub that fails every call. SessionStart never calls it in the foreground (ADR 0055):
+# with no brief cache it shows the mini brief and starts a detached refresh, which this stub
+# fails ("resolve failed"); ``no_process_left`` reaps any refresh still running after the case.
 STUB_UVX = "#!/bin/sh\necho 'hub: brief is not implemented yet' >&2\nexit 2\n"
 
 type RunHook = Callable[..., subprocess.CompletedProcess[bytes]]
+
+pytestmark = pytest.mark.usefixtures("no_process_left")
 
 
 def valid_event(name: str, hub: Path) -> dict[str, Any]:
@@ -175,8 +179,11 @@ def scratch_env(tmp_path: Path) -> dict[str, str]:
     temp.mkdir(exist_ok=True)
     bin_dir.mkdir(exist_ok=True)
     stub = bin_dir / "uvx"
-    stub.write_text(STUB_UVX, encoding="utf-8")
-    stub.chmod(0o755)
+    # Written once: a detached SessionStart refresh from an earlier input may still be running
+    # it, and opening a running executable for writing fails with ETXTBSY.
+    if not stub.exists():
+        stub.write_text(STUB_UVX, encoding="utf-8")
+        stub.chmod(0o755)
     path = os.pathsep.join([str(bin_dir), os.environ.get("PATH", os.defpath)])
     return {
         "HOME": str(home),

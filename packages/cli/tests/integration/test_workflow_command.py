@@ -15,6 +15,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,7 @@ from agent_hub.cli import workflow_command, workflow_runs
 from agent_hub.cli.main import app
 from agent_hub.core.approvals.fold_approvals import fold_approvals
 from agent_hub.core.events.event_query import EventQuery
+from agent_hub.generator import parsed_builtins
 from agent_hub.storage.event_store import open_event_store
 
 CHECK_YAML = """\
@@ -103,6 +105,25 @@ def test_lists_the_loading_ones_and_exits_one_when_a_file_is_broken(hub: Path) -
     assert result.exit_code == 1
     assert result.stdout.splitlines() == ["check  2 nodes  Lint, then test."]
     assert result.stderr.startswith("workflows/demo/broken.yaml:3: $: ")
+
+
+def test_names_table_without_traceback_when_shipped_table_is_missing(
+    hub: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bytes no other case reads, so the in-process parse cache cannot answer before the table.
+    write(hub, "workflows/demo/check.yaml", f"# {uuid.uuid4()}\n{CHECK_YAML}")
+    empty = tmp_path_factory.mktemp("no-table")
+    monkeypatch.setattr(parsed_builtins, "files", lambda package: empty)
+    monkeypatch.setattr(parsed_builtins, "_loaded", [])
+
+    result = run(hub, "list")
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), result.exception
+    assert result.stdout == ""
+    [line] = result.stderr.splitlines()
+    assert line.startswith("hub: the pre-parsed built-in workflows table ")
+    assert parsed_builtins.TABLE_FILE in line
 
 
 def test_validates_each_workflow_when_every_file_loads(hub: Path) -> None:

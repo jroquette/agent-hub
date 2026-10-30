@@ -139,3 +139,43 @@ def test_reads_brain_note_when_hub_registered(hub: Path) -> None:
     assert personal.is_missing
     assert reader.brain_file_size(hub_path, "auto/me.md") is None
     assert reader.brain_folders(hub_path) == ("features",)
+
+
+def test_probes_no_release_when_api_builds_doctor_snapshot(
+    hub: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Q5 (AGH-603): the control plane never probes the pinned tag, even when the lock records a
+    commit and lock.drift is selected."""
+    lock = {
+        "lock_version": 1,
+        "platform_version": RUNNING,
+        "schema_version": 1,
+        "modules": [],
+        "files": {},
+        "platform_commit": "a" * 40,
+        "platform_repository": "git+https://github.com/jroquette/agent-hub",
+    }
+    (hub / "hub.lock").write_text(json.dumps(lock), encoding="utf-8")
+    bin_dir = tmp_path / "logging-git-bin"
+    bin_dir.mkdir()
+    log = tmp_path / "git.log"
+    git = bin_dir / "git"
+    git.write_text(f'#!/bin/sh\nprintf \'%s\\n\' "$*" >> "{log}"\nexit 1\n', encoding="utf-8")
+    git.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    config = HubConfig.model_validate(json.loads((hub / "hub.json").read_bytes()))
+    selection = select_rules(REGISTRY, config=config, only=("lock.drift",))
+    assert isinstance(selection, Selection)
+    assert "lock.drift" in [rule.id for rule in selection.rules]
+
+    snapshot = HubFileSystem().doctor_snapshot(
+        str(hub),
+        config=config,
+        running_version=RUNNING,
+        selection=selection,
+        local=LocalConfig(),
+    )
+
+    assert getattr(snapshot.lock, "platform_commit", None) == "a" * 40
+    assert snapshot.release_probe is None
+    assert not log.exists()

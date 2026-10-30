@@ -6,7 +6,9 @@ from typing import Any
 
 import pytest
 import yaml
+from pydantic import TypeAdapter
 
+from agent_hub.core.scenarios import tree_document as tree_module
 from agent_hub.core.scenarios.tree_document import (
     MAX_CONDITION_CHARS,
     DoStep,
@@ -327,3 +329,15 @@ def test_dumps_the_keys_it_read_when_a_tree_is_written_back(path: Path) -> None:
     dumped = parse_tree(content).model_dump(mode="json", by_alias=True, exclude_unset=True)
 
     assert dumped == content
+
+
+def test_keeps_schema_and_errors_when_models_are_built(characterization: Any) -> None:
+    tree: TypeAdapter[Any] = TypeAdapter(TreeDocument)
+    invalid = a_tree(DO, colour="red") | {"revision": 0, "stages": []}
+
+    characterization.check(
+        characterization.snapshot(
+            tree_module,
+            {"valid tree": (tree, a_tree(DO, WAIT_UNTIL, YOU)), "invalid tree": (tree, invalid)},
+        )
+    )

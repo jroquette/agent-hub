@@ -15,9 +15,12 @@ rule reads the repos (its real path, taken once; inside it nothing is followed),
 developer's branch prefix when a rule reads it and the local file is valid (``git config`` runs
 in the main checkout only when no file sets the prefix), and, from a Claude Code session only
 (``CLAUDECODE=1``), each repo checkout's ``git ls-remote origin`` when a rule reads the remotes
-(AGH-134: run inside the session's sandbox, it shows whether a sandboxed fetch can work). The
-findings go to stdout as lines and totals, or as one JSON object with ``--json``; the exit is 1
-when one is an error, else 0. ``check_hub`` is the same check on a given root, for ``hub setup``.
+(AGH-134: run inside the session's sandbox, it shows whether a sandboxed fetch can work), and
+the pinned release's tag (one ``git ls-remote``, ``DOCTOR_PROBE_TIMEOUT`` seconds) when
+``lock.drift`` runs and the lock records a commit for the pin (ADR 0054); a remote that cannot be
+read is one note on stderr, never a finding. The findings go to stdout as lines and totals, or
+as one JSON object with ``--json``; the exit is 1 when one is an error, else 0. ``check_hub`` is
+the same check on a given root, for ``hub setup``, which probes no release tag.
 
 ``--fix`` first rewrites what can be fixed without a person, all at once: today every
 ``brain.leak`` (the brain note gets a pointer to the repo line in place of the copied text,
@@ -49,6 +52,7 @@ from agent_hub.cli.hub_config_reader import (
 )
 from agent_hub.cli.hub_root import local_home
 from agent_hub.cli.init_report import shown_path
+from agent_hub.cli.release_lookup import DOCTOR_PROBE_TIMEOUT, tag_commit
 from agent_hub.cli.run_children import SESSION_HIDDEN, without
 from agent_hub.core.doctor.brain_leak_fix import BrainEdit, brain_leak_edits
 from agent_hub.core.doctor.config_rules import config_state
@@ -60,7 +64,16 @@ from agent_hub.core.doctor.run_rules import (
     run_rules,
     select_rules,
 )
-from agent_hub.core.doctor.snapshot import ConfigFailure, DoctorSnapshot, HubFiles, RemoteProbe
+from agent_hub.core.doctor.snapshot import (
+    ConfigFailure,
+    DoctorSnapshot,
+    HubFiles,
+    ReleaseFound,
+    ReleaseProbe,
+    ReleaseProbeFailed,
+    ReleaseTagMissing,
+    RemoteProbe,
+)
 from agent_hub.core.hub_config.doctor_rules import BRAIN_LEAK_RULE, RULE_IDS
 from agent_hub.core.hub_config.effective_identity import (
     IdentityValues,
@@ -70,8 +83,10 @@ from agent_hub.core.hub_config.effective_identity import (
 from agent_hub.core.hub_config.local_config import LOCAL_FILE, LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
+from agent_hub.core.hub_files.release_commit import LookupFailure
 from agent_hub.generator.doctor_snapshot import (
     BranchPrefixReader,
+    ReleaseProber,
     RemoteProber,
     build_doctor_snapshot,
 )
@@ -116,9 +131,11 @@ def doctor(
         context.fail(f"unknown rule in --only: {shown_path(unknown[0])}")
     root = root_or_exit(None)
     _hub_or_exit(root)
-    run = check_hub(root, only=wanted)
+    # One probe per run: the check after --fix reuses its answer (a fix never touches the lock).
+    prober = _probed_once(_release_prober(root))
+    run = check_hub(root, only=wanted, release_prober=prober)
     if fix and isinstance(run, DoctorRun) and _fix_all(root, run):
-        run = check_hub(root, only=wanted)
+        run = check_hub(root, only=wanted, release_prober=prober)
     if isinstance(run, UsageProblem):
         context.fail(run.message)
     for note in run.notes:
@@ -140,12 +157,16 @@ class DoctorRun(NamedTuple):
     snapshot: DoctorSnapshot | None = None
 
 
-def check_hub(root: str, *, only: Sequence[str] = ()) -> DoctorRun | UsageProblem:
+def check_hub(
+    root: str, *, only: Sequence[str] = (), release_prober: ReleaseProber | None = None
+) -> DoctorRun | UsageProblem:
     """The check of ``hub doctor`` on the hub at ``root``: same reads, same order, no output.
 
     ``root`` must be the hub's real absolute path, taken once (as ``root_or_exit`` gives it):
     the repo checkouts are found at ``root/../<dir>`` and the findings name paths relative to
     it. ``only`` holds known rule ids; a selection the config refuses is the ``UsageProblem``.
+    ``release_prober`` lets ``lock.drift`` read the pinned release's tag over the network (ADR
+    0054): ``hub doctor`` passes one, ``hub setup`` does not.
     """
     running = version(DISTRIBUTION)
     config = config_state(read_hub_bytes(Path(root, FILE_LABEL)), running_version=running)
@@ -173,10 +194,45 @@ def check_hub(root: str, *, only: Sequence[str] = ()) -> DoctorRun | UsageProble
             local=local,
             branch_prefix=_prefix_reader(config, local=local, home=home),
             remote_probes=_remote_prober(root, config),
+            release_probe=release_prober,
         )
     return DoctorRun(
-        findings=run_rules(selection, snapshot), notes=selection.notes, snapshot=snapshot
+        findings=run_rules(selection, snapshot),
+        notes=(*selection.notes, *_release_notes(snapshot.release_probe)),
+        snapshot=snapshot,
     )
+
+
+def _release_prober(root: str) -> ReleaseProber:
+    """The pinned release's tag, read in ``root`` within ``DOCTOR_PROBE_TIMEOUT`` seconds."""
+
+    def probe(repository: str, version: str) -> ReleaseProbe:
+        found = tag_commit(repository, version, cwd=root, timeout=DOCTOR_PROBE_TIMEOUT)
+        if isinstance(found, LookupFailure):
+            return ReleaseProbeFailed(reason=found.reason)
+        return ReleaseTagMissing() if found is None else ReleaseFound(commit=found)
+
+    return probe
+
+
+def _probed_once(probe: ReleaseProber) -> ReleaseProber:
+    """``probe``, asked at most once per repository and version; later calls get its answer."""
+    answers: dict[tuple[str, str], ReleaseProbe] = {}
+
+    def once(repository: str, version: str) -> ReleaseProbe:
+        key = (repository, version)
+        if key not in answers:
+            answers[key] = probe(repository, version)
+        return answers[key]
+
+    return once
+
+
+def _release_notes(probe: ReleaseProbe | None) -> tuple[str, ...]:
+    """An unreadable remote leaves the lock's commit unchecked, said once on stderr (ADR 0054)."""
+    if not isinstance(probe, ReleaseProbeFailed):
+        return ()
+    return (f"lock.drift: hub.lock's release commit not checked: {probe.reason}",)
 
 
 def _fix_all(root: str, run: DoctorRun) -> bool:

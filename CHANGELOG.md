@@ -11,6 +11,33 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- `hub.lock` records the commit of the pinned release: `platform_commit` and `platform_repository` ([ADR
+  0054](docs/adr/0054-pin-the-platform-release-by-commit.md), AGH-603).
+  - `hub sync` looks the tag up with one `git ls-remote`, only when the pin changes, and never with `--check`. Offline,
+    it prints one warning and writes the lock without the commit; restore `hub.lock` from git and sync again with
+    network.
+  - `hub doctor --only lock.drift` (and a full doctor) checks the tag with a 5 s timeout: a different commit is a
+    `lock.drift` error. An older lock without the fields keeps working.
+- `hub brief --write-cache` writes the brief to `.hub-cache/brief.json` in the hub. The folder ignores itself in git.
+  Plain `hub brief` still writes nothing (AGH-612).
+
+### Changed
+
+- Most `hub` commands start much faster: `hub --version` in about 80 ms instead of about 2 s. `hub repo list` and
+  `hub env list` take about 200 ms, and `hub workflow list` about 520 ms instead of 1.3 s. Each command loads only its
+  own code, and the built-in workflows ship pre-parsed (AGH-604, AGH-607, AGH-636).
+- With a commit in `hub.lock`, `./hub`, the SessionStart hook and `scripts/cloud-setup.sh` run `uvx` once, at that
+  commit, with no network call for the release. Without one they use the tag, as before (AGH-606).
+- The SessionStart hook shows the cached brief with its age and refreshes it in a detached process, so a session
+  starts in about 50 ms instead of several seconds. With no cache or an old one, it shows the short brief and names
+  why ([ADR 0055](docs/adr/0055-session-start-brief-from-a-cache.md), AGH-612).
+- `hub brief` runs its `git` and `gh` calls together within one 2 s deadline. A `gh run list` that does not answer
+  shows `CI: unknown (timeout)` (AGH-605).
+
+Run `hub sync` after bumping `platform.version` to get the new hooks, the shim and `cloud-setup.sh`.
+
 ## [0.27.1] - 2026-10-29
 
 ## [0.27.0] - 2026-10-28

@@ -32,6 +32,7 @@ from agent_hub.core.workflows.engine import EnginePorts, run_workflow
 from agent_hub.core.workflows.failures import FailureKind, NodeFailedError, RetryRecord
 from agent_hub.core.workflows.gates import GateAnswer, GateError
 from agent_hub.core.workflows.nodes import (
+    READ_ONLY_VALUE_CONFIG,
     ActionNode,
     ApprovalNode,
     ExecutableNode,
@@ -78,6 +79,8 @@ class Stub(WorkflowObject):
     ``until_exit`` is a loop iteration's ``until_bash`` exit. A gate's answer is ``{decision,
     text, approver}`` (an approval; the approver as a recorded decision names it), ``{text}`` or
     ``{choice, text}`` (an attention wait), or ``{}``."""
+
+    model_config = READ_ONLY_VALUE_CONFIG
 
     output: JsonValue = None
     text: StrictStr | None = None

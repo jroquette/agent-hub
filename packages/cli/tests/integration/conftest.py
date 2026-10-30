@@ -16,17 +16,20 @@ logs each git call and runs the real git; ``env_traced_git`` logs the environmen
 too, and can hang on a clone or fetch. For ``hub setup``, a byte-exact text golden harness
 (``compare_text_golden``). For ``hub ship`` a scripted ``gh`` (``ship_workspace``), its tracker
 (``ship_tracker``), task worktrees (``make_task_worktree``) and a ``run_child`` spy
-(``child_calls``). For ``hub mcp``'s ``propose``, a ``knowledge_hub`` with a bare ``origin`` and
-a fake ``gh`` (``proposal_hub``).
+(``child_calls``), loading every cli module before a spy wraps names in them
+(``import_every_cli_module``). For ``hub mcp``'s ``propose``, a ``knowledge_hub`` with a bare
+``origin`` and a fake ``gh`` (``proposal_hub``).
 """
 
 import builtins
 import datetime
 import difflib
 import errno
+import importlib
 import io
 import json
 import os
+import pkgutil
 import re
 import shlex
 import shutil
@@ -43,6 +46,7 @@ from typer.testing import CliRunner, Result
 
 from agent_hub.cli.hub_root import HUB_ROOT_VARIABLE
 from agent_hub.cli.main import app
+from agent_hub.cli.sync_command import NO_COMMIT_WAY_BACK
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
 from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
@@ -78,6 +82,10 @@ NOT_A_REPO = 128
 # Set by the caller (a git hook, a worktree script, a cloud session's config), a variable with
 # this prefix would change which repo git reads or how it reads it.
 GIT_VARIABLE_PREFIX = "GIT_"
+# The root conftest's guard, kept by every environment built here: git may reach only ``file``
+# remotes, so no command's git reaches the network.
+GIT_PROTOCOL_VARIABLE = "GIT_ALLOW_PROTOCOL"
+LOCAL_GIT_PROTOCOL = "file"
 
 
 @pytest.fixture(autouse=True)
@@ -89,6 +97,9 @@ def no_git_location(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     for variable in [name for name in os.environ if name.startswith(GIT_VARIABLE_PREFIX)]:
         monkeypatch.delenv(variable)
+    # Except the root conftest's guard: git reaches local bare repositories only (ADR 0054's
+    # release lookup must never read the real tag).
+    monkeypatch.setenv(GIT_PROTOCOL_VARIABLE, LOCAL_GIT_PROTOCOL)
     monkeypatch.delenv(HUB_ROOT_VARIABLE, raising=False)
     # Set when the suite runs from a Claude Code session; hub doctor would probe the remotes then
     # (AGH-134). A test that wants a session sets it.
@@ -273,6 +284,7 @@ def demo_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CheckoutFa
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_CEILING_DIRECTORIES": str(tmp_path),
+        GIT_PROTOCOL_VARIABLE: LOCAL_GIT_PROTOCOL,
     }
     for name, value in env.items():
         monkeypatch.setenv(name, value)
@@ -520,6 +532,25 @@ def run_sync(monkeypatch: pytest.MonkeyPatch) -> SyncRunner:
         return CliRunner().invoke(app, ["sync", *args])
 
     return run
+
+
+# AGH-603 Q3: the one warning of a sync whose release lookup failed, its reason, then the way back.
+_LOOKUP_WARNING = re.compile(
+    r"warning: hub\.lock written without the release commit \(.+\);"
+    rf" {re.escape(NO_COMMIT_WAY_BACK)}"
+)
+
+
+def is_lookup_warning(stderr: str) -> bool:
+    """Whether ``stderr`` is exactly Q3's one warning line, the real prefix and way back whole."""
+    lines = stderr.splitlines()
+    return len(lines) == 1 and _LOOKUP_WARNING.fullmatch(lines[0]) is not None
+
+
+@pytest.fixture
+def lookup_warning() -> Callable[[str], bool]:
+    """``lookup_warning(stderr)``: whether a sync's stderr is exactly Q3's one warning line."""
+    return is_lookup_warning
 
 
 type DoctorRunner = Callable[..., Result]
@@ -997,6 +1028,7 @@ def _workspace_git_env(home: Path) -> dict[str, str]:
         "HOME": str(home),
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_GLOBAL": os.devnull,
+        GIT_PROTOCOL_VARIABLE: LOCAL_GIT_PROTOCOL,
     }
 
 
@@ -1435,10 +1467,30 @@ if barrier:  # wait until `count` calls have arrived, so only calls made at once
 if "group_file" in rule:
     with open(rule["group_file"], "w", encoding="utf-8") as stream:
         stream.write(str(os.getpgid(0)))
+if "pid_file" in rule:
+    with open(rule["pid_file"], "w", encoding="utf-8") as stream:
+        stream.write(str(os.getpid()))
 time.sleep(rule.get("delay", 0))
 sys.stdout.buffer.write(rule.get("stdout", "").encode())
 sys.stderr.buffer.write(rule.get("stderr", "").encode())
 sys.exit(rule.get("rc", 0))
+"""
+# The fake git: waits at a rule's barrier (the fake gh's rule), then runs the real git with the
+# same arguments; a call that matches no rule runs the real git at once.
+_BRIEF_FAKE_GIT = """import json, os, sys, time
+real, answers, args = sys.argv[1], sys.argv[2], sys.argv[3:]
+with open(answers, encoding="utf-8") as stream:
+    rules = json.load(stream)
+rule = next((r for r in rules if all(a in args for a in r.get("argv_has", []))), None)
+barrier = (rule or {}).get("barrier")
+if barrier:  # wait until `count` calls have arrived, so only calls made at once can all pass
+    open(os.path.join(barrier["dir"], f"started.{os.getpid()}"), "w").close()
+    end = time.monotonic() + barrier["wait"]
+    while len(os.listdir(barrier["dir"])) < barrier["count"]:
+        if time.monotonic() > end:
+            sys.exit(1)
+        time.sleep(0.01)
+os.execv(real, [real, *args])
 """
 
 
@@ -1489,7 +1541,7 @@ def brief_env(root: Path) -> dict[str, str]:
         "GIT_COMMITTER_NAME": name,
         "GIT_COMMITTER_EMAIL": email,
         "GIT_COMMITTER_DATE": brief_at(),
-        "GIT_ALLOW_PROTOCOL": "file",
+        GIT_PROTOCOL_VARIABLE: LOCAL_GIT_PROTOCOL,
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_CEILING_DIRECTORIES": str(root),
         "GIT_CONFIG_COUNT": str(len(_NO_MAINTENANCE)),
@@ -1587,6 +1639,22 @@ class BriefWorkspace:
         )
         gh.chmod(0o755)
         self.answer(BRIEF_GH)
+
+    def install_git(self, rules: list[dict[str, Any]]) -> None:
+        """Put the fake git first on ``PATH``: the first rule whose ``argv_has`` items are all
+        arguments sets its ``barrier``; every call then runs the real git."""
+        real = shutil.which("git", path=os.pathsep.join(BRIEF_SYSTEM_PATH))
+        assert real is not None, "git is needed for the brief workspace"
+        bin_dir = self.root / "bin"
+        answers = bin_dir / "git-answers.json"
+        answers.write_text(json.dumps(rules, indent=2) + "\n")
+        (bin_dir / "fake_git.py").write_text(_BRIEF_FAKE_GIT)
+        git = bin_dir / "git"
+        git.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" -I -S "{bin_dir / "fake_git.py"}"'
+            f' "{real}" "{answers}" "$@"\n'
+        )
+        git.chmod(0o755)
 
 
 def _build_brief_workspace(root: Path) -> None:
@@ -2332,11 +2400,31 @@ class ChildCalls:
         return [call.argv[0] for call in self.calls]
 
 
+def _import_every_cli_module() -> None:
+    """Import every ``agent_hub.cli`` module but ``__main__`` (which would run the CLI), so a spy
+    that wraps names in the loaded modules also reaches the ones a command loads only when it
+    runs."""
+    import agent_hub.cli  # noqa: PLC0415 - read when a spy fixture runs
+
+    for module in pkgutil.walk_packages(agent_hub.cli.__path__, prefix="agent_hub.cli."):
+        if module.name != "agent_hub.cli.__main__":
+            importlib.import_module(module.name)
+
+
+@pytest.fixture
+def import_every_cli_module() -> Callable[[], None]:
+    """The helper that loads every cli module, for the spy fixtures of the test modules."""
+    return _import_every_cli_module
+
+
 @pytest.fixture
 def child_calls(monkeypatch: pytest.MonkeyPatch) -> ChildCalls:
-    """Spy on ``run_child`` in every loaded ``agent_hub.cli`` module (each import holds its own
+    """Spy on ``run_child`` in every ``agent_hub.cli`` module (each import holds its own
     reference); a ``hub ship`` run's children are its calls."""
-    import agent_hub.cli.main  # noqa: F401 - loads every command module before patching
+    from agent_hub.cli import command_table  # noqa: PLC0415 - read when the fixture runs
+
+    command_table.import_all()  # loads every command module before patching
+    _import_every_cli_module()  # and the modules a command loads only when it runs
 
     return ChildCalls(monkeypatch)
 
@@ -2462,6 +2550,7 @@ def _bench_git_env(home: Path, *, days_before: int = 0, hhmm: str = "10:30") -> 
         "GIT_CONFIG_GLOBAL": str(home / ".gitconfig"),
         "GIT_AUTHOR_DATE": date,
         "GIT_COMMITTER_DATE": date,
+        GIT_PROTOCOL_VARIABLE: LOCAL_GIT_PROTOCOL,
     }
 
 

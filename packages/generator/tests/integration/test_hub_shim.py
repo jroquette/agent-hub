@@ -8,6 +8,12 @@ cases (arguments, exit codes, the hub's real path, ``$0`` without a slash) also 
 test folder: a fake ``uvx`` (a Python logger: every argument as one JSON list item, the cwd,
 ``AGENT_HUB_ROOT`` and stdin) and a ``python3`` link, each only when the case wants it. A case
 may set ``platform.repository`` too; the shim reads it at every run, like the pin (AGH-49).
+
+ADR 0054: a case may also write ``hub.lock`` (``write_lock``). With a commit whose
+version and repository match ``hub.json``, the shim makes one call from
+``<repository>@<commit>``; any other lock, or none, keeps the two tag calls above. The fake
+``uvx`` also logs its parent's pid (``FAKE_UVX_PARENT=1``: the caller's own pid when the shim
+``exec``s) and prints ``FAKE_UVX_ERR`` on stderr on the real call.
 """
 
 import json
@@ -23,6 +29,9 @@ import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.platform_repository import PLATFORM_REPOSITORY_FORM
+from agent_hub.core.hub_files.hub_lock import build_hub_lock, lock_bytes
+from agent_hub.core.hub_files.release_commit import ReleaseCommit
+from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.core.testing.platform_repository_cases import (
     CUSTOM_REPOSITORY,
@@ -59,6 +68,8 @@ call = {"args": args, "cwd": os.getcwd(), "root": os.environ.get("AGENT_HUB_ROOT
 if os.environ.get("FAKE_UVX_ENV") == "1":
     call["uv"] = {name: os.environ.get(name) for name in
                   ("UV_CACHE_DIR", "UV_TOOL_DIR", "UV_TOOL_BIN_DIR", "UV_PYTHON_DOWNLOADS")}
+if os.environ.get("FAKE_UVX_PARENT") == "1":
+    call["parent"] = os.getppid()
 with open(sys.argv[1], "a", encoding="utf-8") as log:
     log.write(json.dumps(call) + "\\n")
 if args[-1:] == ["--version"]:
@@ -71,6 +82,8 @@ if args[-1:] == ["--version"]:
     sys.exit(code)
 if os.environ.get("FAKE_UVX_ECHO") == "1":
     sys.stdout.buffer.write(data)
+if os.environ.get("FAKE_UVX_ERR"):
+    sys.stderr.write(os.environ["FAKE_UVX_ERR"] + "\\n")
 sys.exit(int(os.environ.get("FAKE_UVX_RC", "0")))
 """
 
@@ -575,3 +588,280 @@ def test_names_python_install_when_no_interpreter(
         " here (UV_PYTHON_DOWNLOADS=never); run uv python install 3.14 outside the Claude Code"
         " sandbox, then retry",
     ]
+
+
+# The commit path (ADR 0054). A lock whose version and repository match hub.json and
+# whose commit is 40 lowercase hex runs one ``exec``'d call from the commit; every other lock keeps
+# the tag path above, byte for byte.
+COMMIT = "0123456789abcdef0123456789abcdef01234567"
+DEFAULT_REPOSITORY = "git+https://github.com/jroquette/agent-hub"
+# Written out, as SOURCE is, so a change to how the shim builds it fails here.
+COMMIT_SOURCE = (
+    "git+https://github.com/jroquette/agent-hub@0123456789abcdef0123456789abcdef01234567"
+    "#subdirectory=packages/agent-hub"
+)
+# The largest hub.lock the shim reads (1 MiB); a larger one is not read.
+LOCK_CAP = 1024 * 1024
+TAG_CALLS = [["--from", SOURCE, "hub", "--version"], ["--from", SOURCE, "hub", "brief"]]
+
+
+@pytest.fixture(scope="module")
+def demo_render() -> RenderedHub:
+    return render_hub(HubConfig.model_validate(a_hub_document()))
+
+
+def lock_document(
+    rendered: RenderedHub,
+    *,
+    version: str = VERSION,
+    commit: str | None = COMMIT,
+    repository: str = DEFAULT_REPOSITORY,
+) -> dict[str, Any]:
+    """The lock ``hub sync`` writes for the demo pinned to ``version``; with ``commit`` (None: no
+    commit) read from ``repository``."""
+    document = a_hub_document()
+    document["platform"]["version"] = version
+    config = HubConfig.model_validate(document)
+    release = None if commit is None else ReleaseCommit(commit=commit, repository=repository)
+    lock: dict[str, Any] = json.loads(
+        lock_bytes(build_hub_lock(rendered=rendered, config=config, release=release))
+    )
+    assert lock["platform_version"] == version
+    assert lock.get("platform_commit") == commit
+    return lock
+
+
+def write_lock(hub: Path, lock: dict[str, Any]) -> str:
+    text = json.dumps(lock, indent=2, sort_keys=True) + "\n"
+    (hub / "hub.lock").write_text(text, encoding="utf-8")
+    return text
+
+
+def assert_runs_tag_source(hub: Path, run: Run, log: Path) -> None:
+    """Today's tag path: the resolve step, then the real call, both from ``@v<version>``."""
+    completed = run(hub / "hub", "brief")
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stderr == b""
+    assert [call["args"] for call in calls(log)] == TAG_CALLS
+
+
+@ALL_SHELLS
+def test_runs_lock_commit_source_when_lock_matches_pin(
+    hub: Path, run: Run, *, tools: None, log: Path, demo_render: RenderedHub
+) -> None:
+    write_lock(hub, lock_document(demo_render))
+
+    completed = run(hub / "hub", "--version")
+
+    assert completed.returncode == 0, completed.stderr
+    assert [call["args"] for call in calls(log)] == [["--from", COMMIT_SOURCE, "hub", "--version"]]
+
+
+@ALL_SHELLS
+@pytest.mark.parametrize("code", [0, 3, 4])
+def test_calls_uvx_once_when_lock_has_commit(
+    hub: Path,
+    run: Run,
+    *,
+    tools: None,
+    log: Path,
+    tmp_path: Path,
+    demo_render: RenderedHub,
+    code: int,
+) -> None:
+    write_lock(hub, lock_document(demo_render))
+    data = b"line one\nline two\n"
+    env = {"FAKE_UVX_RC": str(code), "FAKE_UVX_ECHO": "1", "FAKE_UVX_PARENT": "1"}
+
+    completed = run(hub / "hub", "sync", "a b", stdin=data, env=env)
+
+    # One call, exec'd: its parent is this test's process, it gets the whole stdin, the caller's
+    # folder and the hub's root, and its exit code is the shim's.
+    assert completed.returncode == code
+    assert completed.stderr == b""
+    assert completed.stdout == data
+    assert calls(log) == [
+        {
+            "args": ["--from", COMMIT_SOURCE, "hub", "sync", "a b"],
+            "cwd": str(tmp_path / "elsewhere"),
+            "root": str(hub),
+            "stdin": data.decode(),
+            "parent": os.getpid(),
+        }
+    ]
+
+
+@ALL_SHELLS
+def test_names_cache_folder_without_uvx_when_no_folder_is_writable(
+    hub: Path, run: Run, *, tools: None, log: Path, tmp_path: Path, demo_render: RenderedHub
+) -> None:
+    write_lock(hub, lock_document(demo_render))
+    # Neither uv's own cache folder nor the hub's fallback can be created: .hub-uv is a file.
+    (hub / ".hub-uv").write_text("", encoding="utf-8")
+    assert (hub / ".hub-uv").is_file()
+
+    completed = run(hub / "hub", "brief", env={"UV_CACHE_DIR": unwritable(tmp_path)})
+
+    assert completed.returncode == 1
+    assert stderr_lines(completed) == [WRITE_HINT]
+    assert calls(log) == []
+
+
+@ALL_SHELLS
+def test_shows_uv_error_once_when_commit_call_fails(
+    hub: Path, run: Run, *, tools: None, log: Path, demo_render: RenderedHub
+) -> None:
+    write_lock(hub, lock_document(demo_render))
+    error = "error: Failed to fetch the release"
+
+    completed = run(hub / "hub", "brief", env={"FAKE_UVX_RC": "2", "FAKE_UVX_ERR": error})
+
+    # uv's own text is the cause: no classified line after it, no second (diagnosis) call.
+    assert completed.returncode == 2
+    assert stderr_lines(completed) == [error]
+    assert [call["args"] for call in calls(log)] == [["--from", COMMIT_SOURCE, "hub", "brief"]]
+
+
+@ALL_SHELLS
+def test_uses_tag_source_when_lock_has_no_commit(
+    hub: Path, run: Run, *, tools: None, log: Path, demo_render: RenderedHub
+) -> None:
+    lock = lock_document(demo_render, commit=None)
+    assert "platform_commit" not in lock
+    write_lock(hub, lock)
+
+    assert_runs_tag_source(hub, run, log)
+
+
+@ALL_SHELLS
+def test_uses_tag_source_when_lock_is_absent(
+    hub: Path, run: Run, *, tools: None, log: Path
+) -> None:
+    assert not (hub / "hub.lock").exists()
+
+    assert_runs_tag_source(hub, run, log)
+
+
+@ALL_SHELLS
+def test_uses_tag_source_when_lock_version_differs_from_pin(
+    hub: Path, run: Run, *, tools: None, log: Path, demo_render: RenderedHub
+) -> None:
+    # The pin was edited in hub.json and not synced yet: the lock's commit is the old release's.
+    write_lock(hub, lock_document(demo_render, version="4.5.5"))
+
+    assert_runs_tag_source(hub, run, log)
+
+
+@ALL_SHELLS
+def test_uses_tag_source_when_lock_repository_differs(
+    hub: Path, run: Run, *, tools: None, log: Path, demo_render: RenderedHub
+) -> None:
+    # hub.json uses the default repository; the commit was read from another one.
+    write_lock(hub, lock_document(demo_render, repository=OTHER_REPOSITORY))
+
+    assert_runs_tag_source(hub, run, log)
+
+
+@ALL_SHELLS
+def test_uses_tag_source_when_lock_is_malformed(
+    hub: Path, run: Run, *, tools: None, log: Path, demo_render: RenderedHub
+) -> None:
+    text = write_lock(hub, lock_document(demo_render))
+    # The matching commit is there, but the file is not JSON: extra data after the object.
+    (hub / "hub.lock").write_text(text + "}\n", encoding="utf-8")
+    assert COMMIT in (hub / "hub.lock").read_text(encoding="utf-8")
+
+    assert_runs_tag_source(hub, run, log)
+
+
+@ALL_SHELLS
+def test_uses_tag_source_when_lock_is_a_fifo(
+    hub: Path, run: Run, *, tools: None, log: Path
+) -> None:
+    # A FIFO with no writer would block a read for good: the shim never opens it.
+    os.mkfifo(hub / "hub.lock")
+
+    assert_runs_tag_source(hub, run, log)
+
+
+@ALL_SHELLS
+def test_uses_tag_source_when_lock_is_too_large(
+    hub: Path, run: Run, *, tools: None, log: Path, demo_render: RenderedHub
+) -> None:
+    text = json.dumps(lock_document(demo_render), sort_keys=True)
+    # Valid JSON holding the matching commit, one byte over the cap (spaces before the last brace).
+    padded = text[:-1] + " " * (LOCK_CAP + 1 - len(text)) + "}"
+    (hub / "hub.lock").write_text(padded, encoding="utf-8")
+    assert (hub / "hub.lock").stat().st_size == LOCK_CAP + 1
+    assert json.loads(padded)["platform_commit"] == COMMIT
+
+    assert_runs_tag_source(hub, run, log)
+
+
+def padded_lock(rendered: RenderedHub, size: int) -> str:
+    """The matching lock as valid JSON of exactly ``size`` bytes: spaces before the last brace."""
+    text = json.dumps(lock_document(rendered), sort_keys=True)
+    padded = text[:-1] + " " * (size - len(text)) + "}"
+    assert len(padded.encode()) == size
+    assert json.loads(padded)["platform_commit"] == COMMIT
+    return padded
+
+
+@ALL_SHELLS
+def test_runs_lock_commit_source_when_lock_is_exactly_the_cap(
+    hub: Path, run: Run, *, tools: None, log: Path, demo_render: RenderedHub
+) -> None:
+    # The cap itself is still read: only a larger file keeps the tag.
+    (hub / "hub.lock").write_text(padded_lock(demo_render, LOCK_CAP), encoding="utf-8")
+    assert (hub / "hub.lock").stat().st_size == LOCK_CAP
+
+    completed = run(hub / "hub", "brief")
+
+    assert completed.returncode == 0, completed.stderr
+    assert [call["args"] for call in calls(log)] == [["--from", COMMIT_SOURCE, "hub", "brief"]]
+
+
+@ALL_SHELLS
+def test_uses_tag_source_when_lock_is_a_link(
+    hub: Path, run: Run, *, tools: None, log: Path, tmp_path: Path, demo_render: RenderedHub
+) -> None:
+    # A link to a matching lock is not read: only a regular file at hub.lock is.
+    target = tmp_path / "elsewhere.lock"
+    target.write_text(
+        json.dumps(lock_document(demo_render), indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    (hub / "hub.lock").symlink_to(target)
+    assert json.loads((hub / "hub.lock").read_text(encoding="utf-8"))["platform_commit"] == COMMIT
+
+    assert_runs_tag_source(hub, run, log)
+
+
+LOGGER = '#!/bin/sh\nprintf \'%s\\n\' "{name} $*" >> "{log}"\nexit 0\n'
+
+
+@ALL_SHELLS
+def test_calls_no_tag_source_or_git_when_lock_has_commit(
+    hub: Path,
+    run: Run,
+    *,
+    tools: None,
+    log: Path,
+    bin_dir: Path,
+    tmp_path: Path,
+    demo_render: RenderedHub,
+) -> None:
+    # git and gh loggers on PATH: the shim's foreground reads no release from the network.
+    write_lock(hub, lock_document(demo_render))
+    network_log = tmp_path / "network-calls.log"
+    for name in ("git", "gh"):
+        (bin_dir / name).write_text(LOGGER.format(name=name, log=network_log), encoding="utf-8")
+        (bin_dir / name).chmod(0o755)
+
+    completed = run(hub / "hub", "--version")
+
+    assert completed.returncode == 0, completed.stderr
+    sources = [call["args"][1] for call in calls(log)]
+    assert sources == [COMMIT_SOURCE]
+    assert not any("@v" in source for source in sources)
+    assert not network_log.exists()

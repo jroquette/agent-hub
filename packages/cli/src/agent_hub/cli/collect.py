@@ -19,7 +19,7 @@ import stat
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Annotated, Final, NoReturn
+from typing import TYPE_CHECKING, Annotated, Final, NoReturn
 
 import typer
 
@@ -29,16 +29,15 @@ from agent_hub.cli.hub_config_reader import FILE_LABEL, read_hub_bytes
 from agent_hub.cli.hub_root import HUB_ROOT_VARIABLE
 from agent_hub.cli.transcript_repo import first_cwd, repo_of
 from agent_hub.collector.errors import CollectorError, InputNotFoundError, InputUnreadableError
-from agent_hub.collector.jsonl import ParsedEvent, parse_events, read_stream, read_text
-from agent_hub.collector.run_records import RunEventMapper, RunRecordError
-from agent_hub.collector.transcript import TranscriptOrigin, parse_transcript
 from agent_hub.core.errors import EventConflictError
 from agent_hub.core.events.event import MAX_ID_CHARS, Event, longer_than_cap
 from agent_hub.core.events.event_store import AppendResult
 from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.json_form import JsonValue
 from agent_hub.storage.errors import StorageError
-from agent_hub.storage.event_store import open_event_store
+
+if TYPE_CHECKING:
+    from agent_hub.collector.jsonl import ParsedEvent
 
 STDIN_ARGUMENT = Path("-")
 # P3: invalid input, a conflict or a storage failure. Typer keeps 2 for usage errors.
@@ -138,6 +137,8 @@ def _database(db: Path | None) -> Path:
 
 
 def _read_or_exit(file: Path | None) -> str:
+    from agent_hub.collector.jsonl import read_stream, read_text  # noqa: PLC0415 - only hub collect parses its input
+
     try:
         if file is None or file == STDIN_ARGUMENT:
             return read_stream(sys.stdin.buffer, name="stdin")
@@ -147,6 +148,8 @@ def _read_or_exit(file: Path | None) -> str:
 
 
 def _parse_or_exit(text: str) -> list[ParsedEvent]:
+    from agent_hub.collector.jsonl import parse_events  # noqa: PLC0415 - only hub collect parses its input
+
     batch = parse_events(text)
     if batch.errors:
         _fail(*(f"line {error.line_number}: {error.reason}" for error in batch.errors))
@@ -154,6 +157,8 @@ def _parse_or_exit(text: str) -> list[ParsedEvent]:
 
 
 def _transcript_events(path: Path, *, project: str, agent: str) -> list[Event]:
+    from agent_hub.collector.transcript import TranscriptOrigin, parse_transcript  # noqa: PLC0415 - only hub collect parses its input
+
     text = _bounded_text_or_exit(path, MAX_TRANSCRIPT_BYTES)
     repo = repo_of(first_cwd(text), _hub_root())
     origin = TranscriptOrigin(project=project, repo=repo, agent=agent, session=path.stem)
@@ -164,6 +169,8 @@ def _transcript_events(path: Path, *, project: str, agent: str) -> list[Event]:
 
 
 def _run_events(path: Path, *, project: str) -> list[Event]:
+    from agent_hub.collector.run_records import RunEventMapper, RunRecordError  # noqa: PLC0415 - only hub collect parses its input
+
     mapper = RunEventMapper(project=project)
     events: list[Event] = []
     errors: list[str] = []
@@ -183,6 +190,8 @@ def _run_events(path: Path, *, project: str) -> list[Event]:
 
 
 def _record(line: str) -> dict[str, JsonValue]:
+    from agent_hub.collector.run_records import RunRecordError  # noqa: PLC0415 - only hub collect parses its input
+
     try:
         value = json.loads(line)
     except ValueError as error:
@@ -221,6 +230,8 @@ def _bounded_text_or_exit(path: Path, max_bytes: int) -> str:
 
 def _bounded_text(path: Path, max_bytes: int) -> str:
     """The UTF-8 text of the regular file ``path``, refused when larger than ``max_bytes``."""
+    from agent_hub.collector.jsonl import read_stream  # noqa: PLC0415 - only hub collect parses its input
+
     quoted = _quoted(path)
     try:
         descriptor = os.open(path, _OPEN_FLAGS)
@@ -299,6 +310,8 @@ def _no_position(_index: int) -> str:
 def _ingest_or_exit(
     events: Sequence[Event], db_path: Path, *, position: Callable[[int], str]
 ) -> AppendResult:
+    from agent_hub.storage.event_store import open_event_store  # noqa: PLC0415 - only an ingest opens it
+
     try:
         return IngestEvents(open_event_store(db_path)).execute(events)
     except EventConflictError as error:
