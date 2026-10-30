@@ -2,8 +2,10 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from importlib.metadata import version
 from pathlib import Path
+from typing import Any
 
 import pytest
 import typer.core
@@ -11,6 +13,8 @@ from click import unstyle
 from typer.testing import CliRunner
 
 from agent_hub.cli.main import app
+from agent_hub.core.testing.builders import an_environments_document
+from agent_hub.core.testing.repo_edit_cases import a_repos_document
 
 HELP_GOLDEN = Path(__file__).parent / "golden" / "hub_help.txt"
 # Typer reads the terminal variables once, at import, so the help runs in a child whose
@@ -104,6 +108,83 @@ def test_loads_no_web_or_store_module_when_main_imported(tmp_path: Path) -> None
     # Self-check: the probe sees a heavy module once one is imported.
     assert "fastapi" in seen.pop("self-check")
     assert seen == {"import": [], "--version": [], "--help": []}
+
+
+# What `hub repo list` and `hub env list` never use (AGH-607, AC-15): the workflow catalog and the
+# modules that only reach for it.
+CATALOG_CHAIN = (
+    "agent_hub.core.workflows.catalog",
+    "agent_hub.cli.run_children",
+    "agent_hub.core.hub_files.plan_init",
+    "agent_hub.core.doctor.snapshot",
+)
+
+
+@pytest.mark.parametrize(
+    ("command", "document", "first_line"),
+    [
+        (
+            "repo",
+            a_repos_document,
+            "demo-api (acme/demo-api, app, branch main): "
+            "check_fast=make check-fast, check=make check",
+        ),
+        (
+            "env",
+            an_environments_document,
+            "local (write, hub.json): docker compose stack on this machine",
+        ),
+    ],
+    ids=["repo-list", "env-list"],
+)
+def test_loads_no_workflow_catalog_when_list_command_runs(
+    tmp_path: Path, *, command: str, document: Callable[[], dict[str, Any]], first_line: str
+) -> None:
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    pinned = document()
+    pinned["platform"]["version"] = version("agent-hub-cli")
+    (hub / "hub.json").write_text(json.dumps(pinned, indent=2) + "\n")
+    code = (
+        "import importlib, json, sys\n"
+        f"CHAIN = {CATALOG_CHAIN!r}\n"
+        "def loaded():\n"
+        "    return sorted(m for m in CHAIN if m in sys.modules)\n"
+        "from typer.testing import CliRunner\n"
+        "import agent_hub.cli.main\n"
+        "def run(*args):\n"
+        "    env = {'AGENT_HUB_ROOT': sys.argv[1]}\n"
+        "    result = CliRunner().invoke(agent_hub.cli.main.app, list(args), env=env)\n"
+        "    assert result.exit_code == 0, result.output\n"
+        "    return result.stdout\n"
+        "seen = {'before': loaded()}\n"
+        "seen['output'] = run(sys.argv[2], 'list')\n"
+        "seen['list'] = loaded()\n"
+        "run('workflow', 'list')\n"
+        "seen['self-check workflow list'] = loaded()\n"
+        "for name in CHAIN:\n"
+        "    importlib.import_module(name)\n"
+        "seen['self-check import'] = loaded()\n"
+        "print(json.dumps(seen))\n"
+    )
+
+    result = subprocess.run(  # noqa: S603 - this interpreter, a fixed script
+        [sys.executable, "-c", code, str(hub), command],
+        env=fixed_help_env(),
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    seen = json.loads(result.stdout.splitlines()[-1])
+    # Self-check: the command really listed the hub, a command that needs the catalog loads it, and
+    # the probe sees every name of the chain once it is imported.
+    assert seen.pop("output").splitlines()[0] == first_line
+    assert "agent_hub.core.workflows.catalog" in seen.pop("self-check workflow list")
+    assert seen.pop("self-check import") == sorted(CATALOG_CHAIN)
+    assert seen == {"before": [], "list": []}
 
 
 def test_suggests_close_name_when_command_is_unknown() -> None:
