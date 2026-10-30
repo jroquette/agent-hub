@@ -63,19 +63,11 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Final
+from typing import TYPE_CHECKING, Annotated, Final
 
 import typer
 from typer._click.exceptions import ClickException
 
-from agent_hub.cli.action_runs import (
-    ActionExecutors,
-    ActionLog,
-    action_effects,
-    approvers,
-    pinned_actions,
-    pinned_files,
-)
 from agent_hub.cli.collect import hub_project_name
 from agent_hub.cli.command_exits import FAILURE, fail
 from agent_hub.cli.effective_config import (
@@ -89,7 +81,6 @@ from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit, local_home
 from agent_hub.cli.init_report import shown_path, shown_text
 from agent_hub.cli.run_children import CHILD_HIDDEN, SESSION_HIDDEN, shown_command, without
 from agent_hub.cli.run_log import new_run_id, now, open_default_event_store
-from agent_hub.cli.scenario_investigation import check_answer
 from agent_hub.cli.workflow_checkout import GitCheckoutProbe
 from agent_hub.cli.workflow_delivery import (
     ISSUE_TEXT,
@@ -172,7 +163,6 @@ from agent_hub.core.workflows.nodes import ActionNode, ExpectNode, Node, ScriptN
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 from agent_hub.core.workflows.ports import RunEnd, RunRecorder, RunTrace
 from agent_hub.core.workflows.run_state import RunState
-from agent_hub.generator.action_discovery import ActionDiscovery, discover_actions
 from agent_hub.generator.workflow_discovery import (
     BUILTIN_WORKFLOWS,
     HUB_WORKFLOWS,
@@ -191,6 +181,11 @@ from agent_hub.generator.workflow_fixtures import (
 from agent_hub.generator.workflow_outputs import JsonSchemaOutputs
 from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
 from agent_hub.generator.workflow_yaml import WorkflowMapping
+
+if TYPE_CHECKING:
+    # Only a run in an environment uses these (AGH-636): `hub workflow list` never loads them.
+    from agent_hub.cli.action_runs import ActionLog
+    from agent_hub.generator.action_discovery import ActionDiscovery
 
 COMMAND: Final = "workflow"
 _PREFIX: Final = "hub workflow run"
@@ -361,6 +356,10 @@ def respond(
 def _decide(
     command: str, run_id: str, *, node: str | None, text: str | None, choice: str | None
 ) -> int:
+    from agent_hub.cli.scenario_investigation import (  # noqa: PLC0415 - only a decision checks an answer
+        check_answer,
+    )
+
     hub = _decision_hub(run_id)
     try:
         folder = existing_run(hub, run_id)
@@ -392,6 +391,10 @@ def decide(
 ) -> None:
     """Record one decision for the open gate GATE of a paused run, without resuming it (hub
     web's decisions: the text comes on stdin, never in argv)."""
+    from agent_hub.cli.scenario_investigation import (  # noqa: PLC0415 - only a decision checks an answer
+        check_answer,
+    )
+
     if gate_id.split(":", 1)[0] != run_id:
         raise typer.BadParameter(f"give a gate of run {run_id}", param_hint="--gate")
     hub = _decision_hub(run_id)
@@ -580,6 +583,10 @@ class _StartPolicy:
 
     def snapshot_files(self) -> dict[str, bytes]:
         """``policy_gates.json`` and exactly the files each used action pinned (E-4)."""
+        from agent_hub.cli.action_runs import (  # noqa: PLC0415 - only a run's snapshot pins actions
+            pinned_files,
+        )
+
         files = {GATES: gates_file(self.asks)}
         if self.actions is not None:
             files |= pinned_files(self.actions, frozenset(self.decided.pins))
@@ -600,6 +607,10 @@ def _start_policy(
     node refuses the start). An undeclared environment, a ``deny``, a plan problem, an included
     workflow declaring another environment, or two unordered gates exits 1 before anything is
     written; each decision is a ``policy.decision`` event either way."""
+    from agent_hub.generator.action_discovery import (  # noqa: PLC0415 - only a run in an environment reads actions
+        discover_actions,
+    )
+
     name = plan.document.name
     environment = workflow_environment(plan.document, env)
     actions = [n.id for n in plan.all_nodes() if isinstance(n, ActionNode | ExpectNode)]
@@ -878,6 +889,12 @@ def _continue_in_environment(
     """Resume a process workflow run that started in ``environment``: its plan rebuilt from the
     snapshot with the recorded gates and the re-asks it owes (``workflow_policy``); a recorded
     reject of a policy gate ends it ``cancelled``."""
+    from agent_hub.cli.action_runs import (  # noqa: PLC0415 - only a resume in an environment reads pinned actions
+        action_effects,
+        approvers,
+        pinned_actions,
+    )
+
     header, snapshot = records[0], folder / SNAPSHOT
     includes = snapshot_includes(snapshot)
     recorded = snapshot_gates(snapshot)
@@ -1037,6 +1054,12 @@ def _policy_runner(
     """The runner of a run in an environment, and its log: each node decided again before it
     starts with the effective config as loaded when this process started or resumed the run;
     its actions run from the snapshot's pinned files (``action_runs``)."""
+    from agent_hub.cli.action_runs import (  # noqa: PLC0415 - only a run in an environment runs actions
+        ActionExecutors,
+        ActionLog,
+        pinned_actions,
+    )
+
     effective = load_effective_config_or_exit(hub)
     view = effective_environments(effective.config, effective.local)
     project = hub_project_name(hub) or hub.name
