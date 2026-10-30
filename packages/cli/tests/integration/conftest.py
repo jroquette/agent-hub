@@ -2402,8 +2402,8 @@ class ChildCalls:
 
 def _import_every_cli_module() -> None:
     """Import every ``agent_hub.cli`` module but ``__main__`` (which would run the CLI), so a spy
-    that wraps names in the loaded modules also reaches the ones a command loads only when it runs
-    (AGH-636)."""
+    that wraps names in the loaded modules also reaches the ones a command loads only when it
+    runs."""
     import agent_hub.cli  # noqa: PLC0415 - read when a spy fixture runs
 
     for module in pkgutil.walk_packages(agent_hub.cli.__path__, prefix="agent_hub.cli."):

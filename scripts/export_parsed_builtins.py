@@ -1,4 +1,4 @@
-"""Regenerate the generator's table of pre-parsed built-in workflows (AGH-636).
+"""Regenerate the generator's table of pre-parsed built-in workflows.
 
 Reads every pack-level ``*.yaml`` built-in (the files discovery reads; hidden names skipped) with
 the strict loader, never the cached one (which would read the table it rebuilds), and writes

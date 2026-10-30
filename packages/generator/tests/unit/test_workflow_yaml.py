@@ -339,7 +339,7 @@ def test_counts_breaks_as_marks_do_when_control_character_given(content: bytes, 
     assert _refusal(content).line == line
 
 
-# The parse cache (AGH-636): every test builds bytes unique to the run, so the process-wide
+# The parse cache: every test builds bytes unique to the run, so the process-wide
 # cache never holds them from an earlier test, and counts the strict loader's calls.
 
 
@@ -462,7 +462,7 @@ def test_holds_bounds_when_cache_limits_are_read() -> None:
     assert MAX_CACHED_BYTES == 1024 * 1024
 
 
-# The pre-parsed built-ins (AGH-636, AC-26): a built-in's exact bytes skip the strict parse; any
+# The pre-parsed built-ins (AC-26): a built-in's exact bytes skip the strict parse; any
 # other byte string, an edited built-in included, takes the strict path and gets its answer.
 
 

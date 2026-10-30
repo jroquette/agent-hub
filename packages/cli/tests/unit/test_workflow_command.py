@@ -1,4 +1,4 @@
-"""What ``hub workflow list`` loads (AGH-636, AC-25): the catalog, never the run machinery."""
+"""What ``hub workflow list`` loads (AC-25): the catalog, never the run machinery."""
 
 import json
 import os
@@ -11,12 +11,19 @@ from pathlib import Path
 RUN_CHAIN = (
     "agent_hub.cli.action_runs",
     "agent_hub.cli.action_process",
+    "agent_hub.cli.collect",
+    "agent_hub.cli.effective_config",
     "agent_hub.cli.workflow_delivery",
     "agent_hub.cli.step_command",
     "agent_hub.cli.workflow_policy",
     "agent_hub.cli.workflow_executors",
     "agent_hub.cli.run_log",
     "agent_hub.cli.run_children",
+    "agent_hub.core.approvals.decide_gate",
+    "agent_hub.core.ingestion.ingest_events",
+    "agent_hub.core.scenarios.credentials",
+    "agent_hub.core.scenarios.policy_gates",
+    "agent_hub.core.scenarios.scenario_events",
     "agent_hub.core.workflows.engine",
     "agent_hub.core.workflows.launch",
     "agent_hub.core.agent_sessions.agent_session",

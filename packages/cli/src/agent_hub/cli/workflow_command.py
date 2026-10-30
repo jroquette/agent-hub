@@ -103,7 +103,7 @@ from agent_hub.generator.workflow_yaml import WorkflowMapping
 
 if TYPE_CHECKING:
     # Only annotations here: a run, a decision or a fixture imports each where it uses it, so
-    # `hub workflow list` never loads the run machinery (AGH-636).
+    # `hub workflow list` never loads the run machinery.
     from agent_hub.cli.action_runs import ActionLog
     from agent_hub.cli.workflow_checkout import GitCheckoutProbe
     from agent_hub.cli.workflow_delivery import IssueToPr

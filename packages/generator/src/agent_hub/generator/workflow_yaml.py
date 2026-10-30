@@ -20,7 +20,7 @@ same composer reads the text (tabs read as spaces), and the map is empty when it
 the text holds a character YAML counts as a line break and JSON does not (U+0085, U+2028, U+2029).
 What the mapping means is core's document model; this module only reads it.
 
-``load_workflow_bytes`` parses each distinct file once per process (AGH-636): a cache keyed by the
+``load_workflow_bytes`` parses each distinct file once per process: a cache keyed by the
 format and the SHA-256 of the bytes sits in front of ``read_workflow_strictly``, which is never
 cached itself. Only a result that passed every check is stored, so refused bytes are parsed (and
 refused) again on every read. An entry holds the document as JSON text and a read-only line map,

@@ -1,4 +1,4 @@
-"""The pre-parsed built-ins (AGH-636, AC-26): a table keyed by the SHA-256 of each built-in file's
+"""The pre-parsed built-ins (AC-26): a table keyed by the SHA-256 of each built-in file's
 bytes, holding what the strict loader reads from it; a broken shipped table names its file."""
 
 import hashlib

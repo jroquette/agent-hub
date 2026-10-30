@@ -1,4 +1,4 @@
-"""The built-in workflows, pre-parsed by the strict loader and shipped as package data (AGH-636).
+"""The built-in workflows, pre-parsed by the strict loader and shipped as package data.
 
 ``parsed_builtins.json`` sits next to this module, never under a folder seeded into hubs. It
 holds, for each pack-level built-in ``*.yaml``, what ``workflow_yaml.read_workflow_strictly``
