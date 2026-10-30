@@ -11,6 +11,7 @@ rebuilds that commit's synthetic workspace (nothing is copied from the hub's bra
 import datetime
 import json
 import os
+import stat
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -449,6 +450,77 @@ def test_writes_nothing_when_brief_runs(
     assert result.exit_code == 0, result.output
     assert tree_digest(brief_workspace.ws) == before
     assert [index.stat().st_mtime_ns for index in indexes] == stamps
+
+
+CACHE = ".hub-cache"
+
+
+def cache_lines(gitignore: Path) -> list[str]:
+    """The rules of ``gitignore``: its lines but blank ones and comments."""
+    lines = gitignore.read_text(encoding="utf-8").splitlines()
+    return [line for line in lines if line.strip() and not line.startswith("#")]
+
+
+def test_writes_cache_when_write_cache_given(
+    brief_workspace: Workspace, golden_sections: Callable[[Path], dict[str, bytes]]
+) -> None:
+    hub = brief_workspace.hub
+    assert not (hub / CACHE).exists()
+    assert brief_workspace.git("status", "--porcelain", cwd=hub) == ""
+    before = time.time()
+
+    result = run_brief(brief_workspace, "--write-cache")
+
+    after = time.time()
+    assert result.exit_code == 0, result.output
+    cache = hub / CACHE / "brief.json"
+    assert stat.S_ISREG(cache.lstat().st_mode)
+    assert stat.S_IMODE(cache.stat().st_mode) == 0o600
+    document = json.loads(cache.read_bytes())
+    assert sorted(document) == ["brief", "made_at"]
+    assert document["brief"] == golden_of("fresh_network", golden_sections)["stdout"].decode()
+    assert before <= document["made_at"] <= after
+    assert cache_lines(hub / CACHE / ".gitignore") == ["*"]
+    assert brief_workspace.git("status", "--porcelain", cwd=hub) == ""
+
+
+def test_refuses_cache_folder_when_it_is_a_link(brief_workspace: Workspace) -> None:
+    target = brief_workspace.root / "elsewhere" / "planted"
+    target.mkdir()
+    (brief_workspace.hub / CACHE).symlink_to(target)
+    assert list(target.iterdir()) == []
+
+    result = run_brief(brief_workspace, "--no-network", "--write-cache")
+
+    assert list(target.iterdir()) == []
+    assert (brief_workspace.hub / CACHE).is_symlink()
+    assert result.exit_code == 1, result.output
+    assert CACHE in result.stderr
+
+
+def test_replaces_cache_atomically_when_written_twice(brief_workspace: Workspace) -> None:
+    cache = brief_workspace.hub / CACHE / "brief.json"
+    first = run_brief(brief_workspace, "--no-network", "--write-cache")
+    assert first.exit_code == 0, first.output
+    old = json.loads(cache.read_bytes())
+    assert "Ship the cache." not in old["brief"]
+    brief_workspace.commit_hub(
+        {"brain/now.md": FRESH_NOW.replace("Ship the collector.", "Ship the cache.")}
+    )
+
+    # A reader that opened the first cache keeps a whole document: the file is replaced, not
+    # rewritten in place.
+    with cache.open("rb") as reader:
+        second = run_brief(brief_workspace, "--no-network", "--write-cache")
+        held = json.loads(reader.read())
+
+    assert second.exit_code == 0, second.output
+    assert held == old
+    new = json.loads(cache.read_bytes())
+    assert "Ship the cache." in new["brief"]
+    assert new["made_at"] >= old["made_at"]
+    assert stat.S_IMODE(cache.stat().st_mode) == 0o600
+    assert sorted(path.name for path in cache.parent.iterdir()) == [".gitignore", "brief.json"]
 
 
 def test_warns_undated_when_last_verified_invalid(brief_workspace: Workspace) -> None:
