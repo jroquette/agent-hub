@@ -25,6 +25,7 @@ SHIPPED_OUTPUT_SCHEMAS = (
     "agent_hub/core/features/preflight.v2.json",
 )
 GENERATOR_PACKAGE = "agent_hub.generator"
+SHIPPED_PARSED_BUILTINS = "agent_hub/generator/parsed_builtins.json"
 INSTALL_TIMEOUT_SECONDS = 300
 
 # Run by the scratch venv's python, from a cwd outside the repo: renders the demo config with the
@@ -110,6 +111,35 @@ def test_ships_every_template_when_generator_wheel_built(
     assert any(content == b"" for content in shipped.values())
     # agent_hub is an implicit namespace shared by every distribution.
     assert "agent_hub/__init__.py" not in names
+
+
+def test_ships_parsed_builtins_when_generator_wheel_built(
+    tmp_path: Path, run: Callable[..., CompletedProcess[str]]
+) -> None:
+    uv = _uv()
+    command = [
+        uv,
+        "build",
+        "--package",
+        "agent-hub-generator",
+        "--wheel",
+        "--out-dir",
+        str(tmp_path),
+    ]
+
+    result = run(command)
+
+    assert result.returncode == 0, result.stderr
+    [wheel] = tmp_path.glob("agent_hub_generator-*.whl")
+    with zipfile.ZipFile(wheel) as archive:
+        names = archive.namelist()
+        assert SHIPPED_PARSED_BUILTINS in names
+        shipped = archive.read(SHIPPED_PARSED_BUILTINS)
+    assert shipped == _source_bytes("parsed_builtins.json")
+    # Never under a folder seeded into hubs.
+    assert [name for name in names if name.endswith("/parsed_builtins.json")] == [
+        SHIPPED_PARSED_BUILTINS
+    ]
 
 
 def test_renders_same_files_when_installed_wheels_run_outside_repo(

@@ -5295,6 +5295,8 @@ ADAPTER_MODULES = frozenset(
         "finding_issues.py",
         # Reads the built-in packs and the skill templates, package data (AGH-495).
         "flow_catalog.py",
+        # Reads its shipped table of pre-parsed built-ins, package data (AGH-636).
+        "parsed_builtins.py",
     }
 )
 RENDERING_MODULES = frozenset(

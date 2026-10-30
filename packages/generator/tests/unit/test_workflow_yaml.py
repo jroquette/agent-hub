@@ -1,19 +1,23 @@
 """Strict workflow loader (AC-213.2): YAML through a refusing SafeLoader, JSON through core's
 strict reader; each key path's line recorded for the document model's errors (AC-213.1)."""
 
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
 from agent_hub.core.hub_config.versions import ECHO_LIMIT
 from agent_hub.generator import workflow_yaml
+from agent_hub.generator.workflow_discovery import BUILTIN_WORKFLOWS
 from agent_hub.generator.workflow_yaml import (
+    MAX_CACHED_BYTES,
     MAX_LINE_DEPTH,
     MAX_LINE_ENTRIES,
     MAX_WORKFLOW_BYTES,
     LoadedWorkflow,
     WorkflowFileError,
     load_workflow_bytes,
+    read_workflow_strictly,
 )
 
 
@@ -449,3 +453,77 @@ def test_drops_oldest_entry_when_cache_bound_is_reached(
     load_workflow_bytes(contents[-1], source=sources[-1])
 
     assert strict_reads == [*sources, sources[0]]
+
+
+# The pre-parsed built-ins (AGH-636, AC-26): a built-in's exact bytes skip the strict parse; any
+# other byte string, an edited built-in included, takes the strict path and gets its answer.
+
+
+def _builtin_files() -> list[Path]:
+    found = sorted(
+        path
+        for path in BUILTIN_WORKFLOWS.glob("*/*.yaml")
+        if not path.name.startswith(".") and not path.parent.name.startswith(".")
+    )
+    assert len(found) >= 20, found
+    return found
+
+
+def _evict_cached_files(strict_reads: list[str]) -> None:
+    """Fill the parse cache past its byte bound with unique files, so it holds no built-in."""
+    size = 250 * 1024
+    count = MAX_CACHED_BYTES // size + 1
+    run = uuid4().hex
+    for index in range(count):
+        head = f"# {run} {index}\nname: w\n".encode()
+        load_workflow_bytes(head + b"#" * (size - len(head) - 1) + b"\n", source=f"e{index}.yaml")
+    assert len(strict_reads) == count
+    strict_reads.clear()
+
+
+def test_skips_strict_parse_when_builtin_bytes_are_read(strict_reads: list[str]) -> None:
+    files = _builtin_files()
+    _evict_cached_files(strict_reads)
+
+    loaded = {
+        path: load_workflow_bytes(
+            path.read_bytes(), source=f"workflows/{path.parent.name}/{path.name}"
+        )
+        for path in files
+    }
+
+    assert strict_reads == []
+    for path, result in loaded.items():
+        strict = read_workflow_strictly(path.read_bytes(), source=path.name)
+        assert result.document == strict.document, path
+        assert dict(result.lines) == dict(strict.lines), path
+
+
+def test_takes_strict_path_when_edited_builtin_is_read(strict_reads: list[str]) -> None:
+    content = _unique((BUILTIN_WORKFLOWS / "issue-to-pr" / "issue-to-pr.yaml").read_bytes())
+
+    result = load_workflow_bytes(content, source="workflows/issue-to-pr/issue-to-pr.yaml")
+
+    assert strict_reads == ["workflows/issue-to-pr/issue-to-pr.yaml"]
+    strict = read_workflow_strictly(content, source="workflows/issue-to-pr/issue-to-pr.yaml")
+    assert result.document == strict.document
+    assert dict(result.lines) == dict(strict.lines)
+
+
+def test_refuses_as_strict_loader_when_edited_builtin_holds_anchor() -> None:
+    builtin = (BUILTIN_WORKFLOWS / "issue-to-pr" / "issue-to-pr.yaml").read_bytes()
+    assert builtin.endswith(b"\n")
+    content = builtin + b"zz_anchored: &a 1\n"
+    source = "workflows/issue-to-pr/issue-to-pr.yaml"
+    with pytest.raises(WorkflowFileError) as strict:
+        read_workflow_strictly(content, source=source)
+
+    refused = _refusal(content, source)
+
+    assert refused.line == content.count(b"\n")
+    assert "anchor" in refused.reason
+    assert (refused.source, refused.line, refused.reason) == (
+        strict.value.source,
+        strict.value.line,
+        strict.value.reason,
+    )
