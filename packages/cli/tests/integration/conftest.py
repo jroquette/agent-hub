@@ -16,17 +16,20 @@ logs each git call and runs the real git; ``env_traced_git`` logs the environmen
 too, and can hang on a clone or fetch. For ``hub setup``, a byte-exact text golden harness
 (``compare_text_golden``). For ``hub ship`` a scripted ``gh`` (``ship_workspace``), its tracker
 (``ship_tracker``), task worktrees (``make_task_worktree``) and a ``run_child`` spy
-(``child_calls``). For ``hub mcp``'s ``propose``, a ``knowledge_hub`` with a bare ``origin`` and
-a fake ``gh`` (``proposal_hub``).
+(``child_calls``), loading every cli module before a spy wraps names in them
+(``import_every_cli_module``). For ``hub mcp``'s ``propose``, a ``knowledge_hub`` with a bare
+``origin`` and a fake ``gh`` (``proposal_hub``).
 """
 
 import builtins
 import datetime
 import difflib
 import errno
+import importlib
 import io
 import json
 import os
+import pkgutil
 import re
 import shlex
 import shutil
@@ -2397,13 +2400,31 @@ class ChildCalls:
         return [call.argv[0] for call in self.calls]
 
 
+def _import_every_cli_module() -> None:
+    """Import every ``agent_hub.cli`` module but ``__main__`` (which would run the CLI), so a spy
+    that wraps names in the loaded modules also reaches the ones a command loads only when it runs
+    (AGH-636)."""
+    import agent_hub.cli  # noqa: PLC0415 - read when a spy fixture runs
+
+    for module in pkgutil.walk_packages(agent_hub.cli.__path__, prefix="agent_hub.cli."):
+        if module.name != "agent_hub.cli.__main__":
+            importlib.import_module(module.name)
+
+
+@pytest.fixture
+def import_every_cli_module() -> Callable[[], None]:
+    """The helper that loads every cli module, for the spy fixtures of the test modules."""
+    return _import_every_cli_module
+
+
 @pytest.fixture
 def child_calls(monkeypatch: pytest.MonkeyPatch) -> ChildCalls:
-    """Spy on ``run_child`` in every loaded ``agent_hub.cli`` module (each import holds its own
+    """Spy on ``run_child`` in every ``agent_hub.cli`` module (each import holds its own
     reference); a ``hub ship`` run's children are its calls."""
     from agent_hub.cli import command_table  # noqa: PLC0415 - read when the fixture runs
 
     command_table.import_all()  # loads every command module before patching
+    _import_every_cli_module()  # and the modules a command loads only when it runs
 
     return ChildCalls(monkeypatch)
 
