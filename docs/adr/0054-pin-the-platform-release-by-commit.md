@@ -1,6 +1,6 @@
 # 0054. Pin the platform release by commit
 
-- Status: proposed (accepted at merge)
+- Status: accepted
 - Date: 2026-10-29
 - Deciders: José Henrique Roquette
 - Partially supersedes: [ADR 0009](0009-hub-sync-by-file-ownership.md) (the release commit is a fourth input to the
