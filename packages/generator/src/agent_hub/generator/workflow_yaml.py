@@ -26,7 +26,9 @@ cached itself. Only a result that passed every check is stored, so refused bytes
 refused) again on every read. An entry holds the document as JSON text and a read-only line map,
 and each caller gets a document of its own, so no caller can change what the next one reads. The
 cache is bounded (``MAX_CACHED_WORKFLOWS`` entries and ``MAX_CACHED_BYTES`` of input bytes, oldest
-out first) and guarded by one lock, since ``hub web`` reads in worker threads.
+out first) and guarded by one lock, since ``hub web`` reads in worker threads. A YAML miss first
+asks ``parsed_builtins.lookup`` for the digest: the built-ins' exact bytes are shipped pre-parsed,
+and any other bytes, an edited built-in included, take the strict path.
 """
 
 import hashlib
@@ -48,6 +50,7 @@ from yaml.reader import ReaderError
 from agent_hub.core.hub_config.versions import cut_echo
 from agent_hub.core.json_form import InvalidJsonError, JsonValue, load_json_bytes
 from agent_hub.generator.errors import GeneratorError
+from agent_hub.generator.parsed_builtins import lookup
 
 MAX_WORKFLOW_BYTES: Final = 256 * 1024
 MAX_LINE_DEPTH: Final = 8
@@ -95,12 +98,20 @@ def load_workflow_bytes(content: bytes, *, source: str) -> LoadedWorkflow:
     if len(content) > MAX_WORKFLOW_BYTES:
         reason = f"the file is over {MAX_WORKFLOW_BYTES} bytes"
         raise WorkflowFileError(source=source, line=None, reason=reason)
-    key = (source.endswith(JSON_SUFFIX), hashlib.sha256(content).digest())
+    is_json = source.endswith(JSON_SUFFIX)
+    digest = hashlib.sha256(content).digest()
+    key = (is_json, digest)
     parsed = _CACHE.get(key)
     if parsed is None:
-        loaded = read_workflow_strictly(content, source=source)
-        _CACHE.put(key, loaded, size=len(content))
-        return loaded
+        builtin = None if is_json else lookup(digest)
+        if builtin is None:
+            loaded = read_workflow_strictly(content, source=source)
+            _CACHE.put(key, loaded, size=len(content))
+            return loaded
+        # The table's entry is shared: the caller gets a document of its own, from the cache.
+        parsed = _CACHE.put(
+            key, LoadedWorkflow(document=builtin.document, lines=builtin.lines), size=len(content)
+        )
     return LoadedWorkflow(document=json.loads(parsed.document_text), lines=parsed.lines)
 
 
@@ -147,13 +158,15 @@ class _ParseCache:
         with self._lock:
             return self._entries.get(key)
 
-    def put(self, key: _CacheKey, loaded: LoadedWorkflow, *, size: int) -> None:
+    def put(self, key: _CacheKey, loaded: LoadedWorkflow, *, size: int) -> _Parsed:
+        """Store ``loaded`` under ``key`` unless an entry is there, and return the stored entry."""
         # The loader's values are JSON's (no surrogate, no infinity, ints Python can read), so
         # the text reads back to an equal document.
         entry = _Parsed(json.dumps(loaded.document, allow_nan=False), loaded.lines, size)
         with self._lock:
-            if key in self._entries:
-                return
+            stored = self._entries.get(key)
+            if stored is not None:
+                return stored
             while self._entries and (
                 len(self._entries) >= MAX_CACHED_WORKFLOWS or self._bytes + size > MAX_CACHED_BYTES
             ):
@@ -161,6 +174,7 @@ class _ParseCache:
                 self._bytes -= dropped.size
             self._entries[key] = entry
             self._bytes += size
+        return entry
 
 
 _CACHE: Final = _ParseCache()

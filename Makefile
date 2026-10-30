@@ -48,7 +48,7 @@ LIVE_API_PORT ?= 7421
 .PHONY: help format lint typecheck layout lockstep test-fast check-fast test-integration test-e2e \
         test-e2e-parallel test-e2e-serial test-suite test-suite-serial pr-title \
         lane-checks-fast lane-checks lane-tests-fast lane-tests web-static web-test \
-        imports migrations coverage check llms-txt hub-schema output-schemas web-install web-fast web-build web-dist-check \
+        imports migrations coverage check llms-txt hub-schema parsed-builtins output-schemas web-install web-fast web-build web-dist-check \
         openapi openapi-check test-docker test-live run up down logs ps dev live playground playground-stop playground-export demo connect perf
 
 help: ## List the targets
@@ -163,6 +163,10 @@ llms-txt: ## regenerate the flow catalog in FLOWS.md, llms.txt and llms-full.txt
 # Not part of check: the drift tests in test-fast fail while the shipped file is stale.
 hub-schema: ## regenerate the shipped hub.json schema from HubConfig
 	$(RUN) python -m scripts.export_hub_schema
+
+# Not part of check: the drift test in test-fast fails while the table is stale.
+parsed-builtins: ## regenerate the generator's table of pre-parsed built-in workflows
+	$(RUN) python -m scripts.export_parsed_builtins
 
 # Not part of check: the drift tests in test-fast fail while either shipped file is stale.
 output-schemas: ## regenerate the shipped review, eval and preflight output schemas from their models
