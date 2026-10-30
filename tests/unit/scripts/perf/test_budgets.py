@@ -19,8 +19,6 @@ SHIPPED = Path(__file__).resolve().parents[4] / "scripts" / "perf" / "budgets.js
 PROPOSED = "AGH-601 proposed"
 # The source of an entry added after the seed, at a value ADR 0053 sets.
 ADR_SOURCE = "ADR 0053"
-# The milestone 1 gate (Q20): the cached SessionStart, tighter than ADR 0053's 1500 ms.
-MILESTONE_SOURCE = "AGH-612 milestone 1 gate"
 # The list-command rows, at ADR 0053's `every` cli ceiling of 300 ms rather than AGH-601's proposal.
 LIST_COMMAND_PATHS = (
     "hub repo list",
@@ -288,7 +286,7 @@ OWNER_TABLE: list[tuple[str, str, Budget | None]] = [
     (
         "hook",
         "session_start (local uvx stand-in)",
-        Budget(p95_ms=300, api_calls=None, rss_mb=None, source=MILESTONE_SOURCE),
+        Budget(p95_ms=300, api_calls=None, rss_mb=None, source=PROPOSED),
     ),
     *[
         ("route", route, Budget(p95_ms=150, api_calls=None, rss_mb=None, source=PROPOSED))

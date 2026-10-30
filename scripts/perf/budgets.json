@@ -15,7 +15,7 @@
     {"kind": "hook", "path": "readonly_gate (PreToolUse Bash)", "p95_ms": 80, "source": "AGH-601 proposed"},
     {"kind": "hook", "path": "session_end", "p95_ms": 80, "source": "AGH-601 proposed"},
     {"kind": "hook", "path": "stop_gate (no changes)", "p95_ms": 80, "source": "AGH-601 proposed"},
-    {"kind": "hook", "path": "session_start (local uvx stand-in)", "p95_ms": 1500, "source": "AGH-601 proposed"},
+    {"kind": "hook", "path": "session_start (local uvx stand-in)", "p95_ms": 300, "source": "AGH-601 proposed"},
     {"kind": "hook", "path": "pre_compact", "p95_ms": 80, "source": "AGH-601 proposed"},
     {"kind": "route", "path": "/api/v1/sessions", "p95_ms": 150, "source": "AGH-601 proposed"},
     {"kind": "route", "path": "/api/v1/sessions?issue=AGH-7", "p95_ms": 150, "source": "AGH-601 proposed"},
