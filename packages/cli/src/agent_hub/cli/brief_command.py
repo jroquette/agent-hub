@@ -10,6 +10,11 @@ deadline (a ``gh run list`` it ends shows ``CI: unknown (timeout)``), and stays 
 process group, so the SessionStart hook's kill reaches it; a failed, slow or missing tool only
 leaves its value out, as the old script did. The text itself is
 ``agent_hub.core.workspace.brief_text``.
+
+Plain ``hub brief`` writes nothing. ``--write-cache`` also writes the printed brief to
+``.hub-cache/brief.json`` for the SessionStart hook (ADR 0055): the folder is made when missing,
+with its own ``.gitignore`` (``*``) first, and refused when it is a link or not a folder; the file
+(mode 0600) is replaced atomically, so a reader never sees a partial write.
 """
 
 import datetime
@@ -27,11 +32,20 @@ from typing import Annotated, Final, NamedTuple
 import typer
 
 from agent_hub.cli.child_process import git_env, run_child
+from agent_hub.cli.command_exits import fail
 from agent_hub.cli.effective_config import load_effective_config_or_exit
 from agent_hub.cli.errors import ChildTimedOutError
+from agent_hub.cli.exclusive_write import write_exclusive, write_replacing
 from agent_hub.cli.hub_root import hub_root_or_exit
 from agent_hub.core.hub_config.effective_environments import effective_environments
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.workspace.brief_cache import (
+    CACHE_FILE,
+    CACHE_FOLDER,
+    GITIGNORE_FILE,
+    GITIGNORE_TEXT,
+    brief_cache_document,
+)
 from agent_hub.core.workspace.brief_text import (
     JOURNAL_MAX_AGE,
     BriefInputs,
@@ -50,6 +64,8 @@ MAX_WORKERS: Final = 8
 NOW_PATH: Final = "brain/now.md"
 JOURNAL_GLOB: Final = "brain/journal/[0-9]*/[0-9]*/[0-9][0-9].md"
 HUB_LINE_NAME: Final = "hub"
+CACHE_MODE: Final = 0o600
+CACHE_FOLDER_MODE: Final = 0o700
 _PR_QUERY: Final = '.[] | "#\\(.number) \\(.title)"'
 _FAILED_RUNS_QUERY: Final = '.[] | select(.conclusion=="failure") | .name'
 _STATUS: Final = ("status", "--porcelain")
@@ -83,6 +99,13 @@ def brief(
     no_network: Annotated[
         bool, typer.Option("--no-network", help="Make no gh call: no PR or CI lines.")
     ] = False,
+    write_cache: Annotated[
+        bool,
+        typer.Option(
+            "--write-cache",
+            help=f"Also write the brief to {CACHE_FOLDER}/{CACHE_FILE} for the SessionStart hook.",
+        ),
+    ] = False,
 ) -> None:
     """Print the session brief: now.md, the last journal days, each repo's git, PR and CI state."""
     root = hub_root_or_exit(os.environ, command=COMMAND)
@@ -98,7 +121,44 @@ def brief(
         network=not no_network,
         environments=brief_block(effective_environments(config, loaded.local)),
     )
-    typer.echo(brief_text(inputs))
+    printed = brief_text(inputs) + "\n"
+    typer.echo(printed, nl=False)
+    if write_cache:
+        _write_cache(root, printed)
+
+
+def _write_cache(root: Path, printed: str) -> None:
+    """Write ``printed`` to the cache file, or exit 1 with one stderr line naming the cause."""
+    folder = root / CACHE_FOLDER
+    problem = _cache_folder_problem(folder)
+    if problem is not None:
+        fail(f"{CACHE_FOLDER}: {problem}; cache not written")
+    document = brief_cache_document(printed, made_at=time.time())
+    try:
+        # The ignore rule comes first, so nothing in the folder ever shows in git status.
+        write_exclusive(folder, GITIGNORE_FILE, GITIGNORE_TEXT.encode(), mode=0o644)
+        write_replacing(folder, CACHE_FILE, document, mode=CACHE_MODE)
+    except OSError as error:
+        fail(f"{CACHE_FOLDER}: cannot write: {error.strerror or type(error).__name__}")
+
+
+def _cache_folder_problem(folder: Path) -> str | None:
+    """Make ``folder`` when missing; why it cannot hold the cache (a link, not a folder)."""
+    try:
+        os.mkdir(folder, CACHE_FOLDER_MODE)
+    except FileExistsError:
+        pass
+    except OSError as error:
+        return f"cannot create: {error.strerror or type(error).__name__}"
+    try:
+        mode = os.lstat(folder).st_mode
+    except OSError as error:
+        return f"cannot read: {error.strerror or type(error).__name__}"
+    if stat.S_ISLNK(mode):
+        return "is a symlink"
+    if not stat.S_ISDIR(mode):
+        return "is not a folder"
+    return None
 
 
 def _age_days(now_text: str, day: datetime.date) -> int | None:
