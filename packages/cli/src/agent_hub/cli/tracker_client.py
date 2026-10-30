@@ -4,13 +4,13 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Final, assert_never
 
+from agent_hub.cli.hidden_env import KEY_VARIABLE as KEY_VARIABLE
 from agent_hub.cli.hub_config_reader import FILE_LABEL
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.tracker.tracker_client import TrackerClient
 from agent_hub.tracker_linear.graphql import LinearGraphqlTrackerClient
 from agent_hub.tracker_linear.mcp import McpTrackerClient
 
-KEY_VARIABLE: Final = "LINEAR_API_KEY"
 _TRANSPORT_TEXTS: Final = {
     "api": 'tracker: Linear API (tracker.transport "api")',
     "mcp": 'tracker: Linear MCP via claude -p (tracker.transport "mcp")',
