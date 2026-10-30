@@ -1,6 +1,6 @@
 # 0055. SessionStart brief from a cache, refreshed in the background
 
-- Status: proposed (accepted at merge)
+- Status: accepted
 - Date: 2026-10-30
 - Deciders: José Henrique Roquette
 - Partially supersedes: [ADR 0012](0012-cli-subsumes-hub-scripts.md), only its SessionStart clause (the hook "calls

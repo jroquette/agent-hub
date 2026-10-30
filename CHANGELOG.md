@@ -11,6 +11,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-10-30
+
 ### Added
 
 - `hub.lock` records the commit of the pinned release: `platform_commit` and `platform_repository` ([ADR
@@ -1446,7 +1448,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.27.1...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.28.0...HEAD
+[0.28.0]: https://github.com/jroquette/agent-hub/compare/v0.27.1...v0.28.0
 [0.27.1]: https://github.com/jroquette/agent-hub/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/jroquette/agent-hub/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/jroquette/agent-hub/compare/v0.25.0...v0.26.0
