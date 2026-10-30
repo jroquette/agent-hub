@@ -99,3 +99,4 @@ License: Apache-2.0.
 - [0052. Syntax highlighting of every code and file the app shows](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0052-syntax-highlighting-across-the-app.md): `docs/adr/0052-syntax-highlighting-across-the-app.md`
 - [0053. Interactive-path latency budgets](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0053-interactive-path-latency-budgets.md): `docs/adr/0053-interactive-path-latency-budgets.md`
 - [0054. Pin the platform release by commit](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0054-pin-the-platform-release-by-commit.md): `docs/adr/0054-pin-the-platform-release-by-commit.md`
+- [0055. SessionStart brief from a cache, refreshed in the background](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0055-session-start-brief-from-a-cache.md): `docs/adr/0055-session-start-brief-from-a-cache.md`
