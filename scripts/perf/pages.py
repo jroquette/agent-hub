@@ -6,9 +6,9 @@ downloaded. ``page_env`` adds node's folder, the browsers and the server's URL a
 suite's child environment, and turns off npm's update check and registry access: with a fresh
 ``HOME`` and no ``CI``, npm would otherwise ask the registry for its latest version on every run.
 ``page_rows`` runs the spec once through ``npm exec --no`` (never installs from the registry) and
-reads back the JSON lines it appended to ``PERF_PAGES_OUT``. When Chromium, npm or the web
-dependencies are missing, every page row is skipped with the reason, and nothing is started: the
-other rows still run.
+reads back the JSON lines it appended to ``PERF_PAGES_OUT`` (``dom_nodes`` is optional there).
+When Chromium, npm or the web dependencies are missing, every page row is skipped with the reason,
+and nothing is started: the other rows still run.
 """
 
 import json
@@ -18,11 +18,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from scripts.perf.environment import Runner
-from scripts.perf.fixture import FEATURE_SLUG, PAGE_SESSION, PROJECT
+from scripts.perf.fixture import BRAIN_PAGE_NOTE, FEATURE_SLUG, PAGE_SESSION, PROJECT
 from scripts.perf.process_probes import SuiteError
 
 PAGE = "page"
-PAGE_PATHS = ("/", "/features", f"/features/{PROJECT}/{FEATURE_SLUG}", f"/sessions/{PAGE_SESSION}")
+PAGE_PATHS = (
+    "/",
+    "/features",
+    f"/features/{PROJECT}/{FEATURE_SLUG}",
+    f"/sessions/{PAGE_SESSION}",
+    "/sessions",
+    f"/projects/{PROJECT}/brain/{BRAIN_PAGE_NOTE}",
+)
 SPEC = "e2e/perf.spec.ts"
 
 
@@ -30,13 +37,16 @@ SPEC = "e2e/perf.spec.ts"
 class PageRow:
     """One page row's samples; ``reason`` is set only when the row is skipped.
 
-    ``api_calls`` is the most calls seen in one run, ``None`` when skipped."""
+    ``api_calls`` is the most calls seen in one run, ``None`` when skipped. ``dom_nodes`` is the
+    most elements seen in one run (a reported field, no budget), ``None`` when skipped or when the
+    spec's lines carry none."""
 
     kind: str
     path: str
     samples_ms: list[float] = field(default_factory=list)
     api_calls: int | None = None
     reason: str | None = None
+    dom_nodes: int | None = None
 
 
 def chromium_executable(environ: Mapping[str, str], *, web_dir: Path) -> str | None:
@@ -151,6 +161,7 @@ def _read(results: Path, pages: Sequence[str]) -> list[PageRow]:
     lines = results.read_text(encoding="utf-8").splitlines() if results.is_file() else []
     samples: dict[str, list[tuple[int, float]]] = {path: [] for path in pages}
     calls: dict[str, int] = {}
+    nodes: dict[str, int] = {}
     for line in filter(None, (text.strip() for text in lines)):
         item = json.loads(line)
         path = item["path"]
@@ -158,10 +169,16 @@ def _read(results: Path, pages: Sequence[str]) -> list[PageRow]:
             continue
         samples[path].append((int(item["run"]), float(item["ready_ms"])))
         calls[path] = max(calls.get(path, 0), int(item["api_calls"]))
+        if item.get("dom_nodes") is not None:
+            nodes[path] = max(nodes.get(path, 0), int(item["dom_nodes"]))
     rows = []
     for path in pages:
         if not samples[path]:
             raise SuiteError(f"{path}: the page spec wrote no result")
         ordered = [ready for _, ready in sorted(samples[path])]
-        rows.append(PageRow(PAGE, path, samples_ms=ordered, api_calls=calls[path]))
+        rows.append(
+            PageRow(
+                PAGE, path, samples_ms=ordered, api_calls=calls[path], dom_nodes=nodes.get(path)
+            )
+        )
     return rows

@@ -5,10 +5,11 @@ Every child the suite starts runs with ``child_env``: built from scratch, never 
 XDG folders sit under the temp root, and ``PATH`` is the root's ``bin/`` only. That bin
 (``make_tool_bin``) holds links to ``git``, ``python3`` and ``sh`` (``npm exec`` runs its command
 through ``sh``) and a ``uvx`` stand-in that runs the worktree's ``hub``, so ``./hub`` and
-``session_start`` do real work offline. ``create_hub`` makes
-a ``hub init`` hub under the root with the fixture's feature folder, a synthetic transcript, a
-release commit in its ``hub.lock`` (ADR 0054, so ``./hub`` takes the one-call commit path that a
-synced hub takes; the stand-in ignores ``--from``), and one commit by a made-up author.
+``session_start`` do real work offline. ``create_hub`` makes a ``hub init`` hub under the root
+with the fixture's feature folder, a brain of six folders of a hundred synthetic notes
+(``brain/tree-<n>/``), a synthetic transcript, a release commit in its ``hub.lock`` (ADR 0054, so
+``./hub`` takes the one-call commit path that a synced hub takes; the stand-in ignores
+``--from``), and one commit by a made-up author.
 """
 
 import json
@@ -22,10 +23,12 @@ from typing import Protocol, Self
 
 from agent_hub.core.hub_config.platform_repository import DEFAULT_PLATFORM_REPOSITORY
 from scripts.perf.fixture import (
+    BRAIN_FOLDERS,
     BRANCH_PREFIX,
     CWD,
     FEATURE_ISSUE,
     FEATURE_SLUG,
+    NOTES_PER_FOLDER,
     PAGE_SESSION,
     PROJECT,
     REPO,
@@ -166,6 +169,16 @@ def _feature_files(hub: Path) -> None:
     (folder / "features.json").write_text(json.dumps(record, indent=2) + "\n", "utf-8")
 
 
+def _brain_tree(hub: Path) -> None:
+    """``BRAIN_FOLDERS`` folders of ``NOTES_PER_FOLDER`` notes, each a heading and one line."""
+    for folder in range(1, BRAIN_FOLDERS + 1):
+        directory = hub / "brain" / f"tree-{folder}"
+        directory.mkdir(parents=True, exist_ok=True)
+        for note in range(1, NOTES_PER_FOLDER + 1):
+            text = f"# Note {folder}.{note:03d}\n\nA synthetic perf note in folder {folder}.\n"
+            (directory / f"note-{note:03d}.md").write_text(text, "utf-8")
+
+
 def transcript_path(env: Mapping[str, str]) -> Path:
     """The page session's synthetic transcript, in Claude Code's folder for the fixture's cwd."""
     return Path(env["AGENT_HUB_CLAUDE_PROJECTS"]) / CWD.replace("/", "-") / f"{PAGE_SESSION}.jsonl"
@@ -214,12 +227,13 @@ def create_hub(root: Path, *, runner: Runner, env: Mapping[str, str]) -> Path:
     """Make the temp hub under ``root`` and return its folder.
 
     ``hub init`` runs through the ``uvx`` stand-in on ``env``'s ``PATH``; then the lock gets its
-    release commit, the feature folder and the transcript are written, and ``git init``,
-    ``git add -A`` and one commit follow."""
+    release commit, the feature folder, the brain notes and the transcript are written, and
+    ``git init``, ``git add -A`` and one commit follow."""
     hub = root / HUB_DIR
     runner(["uvx", "hub", "init", PROJECT, *HUB_FLAGS, "--dir", str(hub)], cwd=root, env=env)
     _release_commit(hub)
     _feature_files(hub)
+    _brain_tree(hub)
     _transcript(env)
     git_env = {**env, **GIT_ISOLATION}
     identity = ["-c", f"user.name={AUTHOR_NAME}", "-c", f"user.email={AUTHOR_EMAIL}"]

@@ -3,8 +3,9 @@ import { appendFileSync } from "node:fs";
 import { test, type Page, type Request } from "@playwright/test";
 
 // `make perf` (scripts/perf/pages.py): opens each page of PERF_PAGES PERF_RUNS times and appends
-// one JSON line per run, {path, run, ready_ms, api_calls}, to PERF_PAGES_OUT. Without PERF_PAGES
-// it registers no test, so the smoke's count stays the same.
+// one JSON line per run, {path, run, ready_ms, api_calls, dom_nodes}, to PERF_PAGES_OUT. Without
+// PERF_PAGES it registers no test, so the smoke's count stays the same. `dom_nodes` (every element
+// on the page once it is ready) is a reported field only: no budget reads it.
 const pages: string[] = process.env.PERF_PAGES
   ? (JSON.parse(process.env.PERF_PAGES) as string[])
   : [];
@@ -69,7 +70,8 @@ test.describe("make perf pages", () => {
     for (let run = 0; run < runs; run += 1) {
       test(`measures ${path} run ${String(run)}`, async ({ page }) => {
         const { readyMs, apiCalls } = await measure(page, path);
-        const line = { path, run, ready_ms: readyMs, api_calls: apiCalls };
+        const domNodes = await page.evaluate(() => document.querySelectorAll("*").length);
+        const line = { path, run, ready_ms: readyMs, api_calls: apiCalls, dom_nodes: domNodes };
         appendFileSync(out, `${JSON.stringify(line)}\n`, "utf-8");
       });
     }

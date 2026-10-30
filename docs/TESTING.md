@@ -269,7 +269,8 @@ dev dependency of the workspace.
 
 `make perf` (`$R python -m scripts.perf.run_suite`, code in `scripts/perf/`) measures how long the interactive paths
 take on a synthetic 400,000-event database spread over 90 days. It builds or reuses the fixture, copies it into a fresh
-temp root, renders a synthetic hub there (`hub init`, `git init` and one commit), then measures, one at a time:
+temp root, renders a synthetic hub there (`hub init`, a brain of six folders of a hundred synthetic notes under
+`brain/tree-<n>/`, `git init` and one commit), then measures, one at a time:
 
 - `cli`: `hub --version`, `./hub --version (local uvx stand-in)`, `hub brief --no-network`, and the list commands
   `hub repo list`, `hub env list`, `hub action list`, `hub scenario list`, `hub workflow list`, run in the temp hub;
@@ -278,8 +279,11 @@ temp root, renders a synthetic hub there (`hub init`, `git init` and one commit)
   path (ADR 0055): building the probe runs `hub brief --write-cache` once in the temp hub, so every run reads a cache
   under the 5 min refresh floor, starts no refresh and runs no `uvx` in the foreground;
 - `route`: seven `hub web` routes (`/api/v1/sessions`, `/api/v1/features`, `/api/v1/search?q=make`, ...);
-- `page`: four pages in Playwright's Chromium (`apps/web/e2e/perf.spec.ts`), ready when no `/api/v1/` request is in
-  flight for 500 ms after `load`, with the number of API calls;
+- `page`: six pages in Playwright's Chromium (`apps/web/e2e/perf.spec.ts`): `/`, `/features`,
+  `/features/perf/search-index`, `/sessions/perf-00000`, `/sessions`, and the Brain note
+  `/projects/perf/brain/tree-3/note-050.md` (a note in a 100-note folder, so an open folder is measured). A page is
+  ready when no `/api/v1/` request is in flight for 500 ms after `load`; each row has the number of API calls and
+  `dom_nodes`, the most elements on the page in one run once it is ready;
 - `restart`: `hub web start → GET /` and `hub web start → /api/v1/sessions`, with peak RSS (Linux only, else `null`).
 
 These names are the canonical paths: the table, `perf.json` and the budgets all use the same strings. The child
@@ -294,8 +298,8 @@ the build. On a 4 vCPU Linux machine a first run takes about 7 minutes (the fixt
 one about 6.5.
 
 It prints one table and writes `perf.json`: a list of rows, each with `kind`, `path`, `runs`, `median_ms`, `p95_ms`,
-`budget`, `status` (`pass`, `over`, `no budget` or `skipped`, with a `reason`), `api_calls` (pages), `rss_mb`
-(restarts) and the run's `events`, `seed`, `commit` and `machine`. The budgets are data in `scripts/perf/budgets.json`,
+`budget`, `status` (`pass`, `over`, `no budget` or `skipped`, with a `reason`), `api_calls` (pages), `dom_nodes`
+(pages; a reported field only, with no budget and no table column, `null` elsewhere), `rss_mb` (restarts) and the run's `events`, `seed`, `commit` and `machine`. The budgets are data in `scripts/perf/budgets.json`,
 one entry per `(kind, path)` with `p95_ms`, `api_calls` or `rss_mb`; every entry's `source` is "AGH-601 proposed" until
 the ADR that sets them is accepted. A path with no entry shows `no budget`. Without npm, Chromium or
 `apps/web/node_modules`, the page rows are `skipped`; `make perf` itself runs `npm ci` first, so on a machine without

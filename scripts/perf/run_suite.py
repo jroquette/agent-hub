@@ -128,6 +128,7 @@ class Suite:
         api_calls: int | None = None,
         rss_mb: float | None = None,
         reason: str | None = None,
+        dom_nodes: int | None = None,
     ) -> Row:
         """A row not yet judged against its budget; no samples means skipped with ``reason``."""
         summary = summarize(samples) if samples else None
@@ -146,6 +147,7 @@ class Suite:
             seed=fixture.SEED,
             commit=self.commit,
             machine={"platform": sys.platform, "cpus": os.cpu_count() or 0},
+            dom_nodes=dom_nodes,
         )
 
 
@@ -337,7 +339,12 @@ def _page_rows(suite: Suite, *, url: str, token: str) -> list[Row]:
     )
     return [
         suite.row(
-            page.kind, page.path, page.samples_ms, api_calls=page.api_calls, reason=page.reason
+            page.kind,
+            page.path,
+            page.samples_ms,
+            api_calls=page.api_calls,
+            reason=page.reason,
+            dom_nodes=page.dom_nodes,
         )
         for page in found
     ]

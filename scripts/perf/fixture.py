@@ -51,6 +51,11 @@ FEATURE_EVERY = 10
 FAILURE_RATE = 0.05
 JITTER_SECONDS = 600
 FEATURE_SPEC = f"brain/features/{FEATURE_SLUG}/spec.md"
+# The temp hub's perf brain (AGH-614): ``brain/tree-<n>/note-<nnn>.md``, outside
+# ``brain/features/`` so no feature scan reads it, and the note the Brain page row opens.
+BRAIN_FOLDERS = 6
+NOTES_PER_FOLDER = 100
+BRAIN_PAGE_NOTE = "tree-3/note-050.md"
 WORDS = ("search", "index", "query", "cache", "events", "sessions", "report", "parser", "store")
 COMMANDS = ("make check-fast", "make test", "git status", "git diff")
 # Every word the fixture writes itself; the core builders add their own fixed ones.
