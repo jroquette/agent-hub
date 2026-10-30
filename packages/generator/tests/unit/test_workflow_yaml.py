@@ -11,6 +11,7 @@ from agent_hub.generator import workflow_yaml
 from agent_hub.generator.workflow_discovery import BUILTIN_WORKFLOWS
 from agent_hub.generator.workflow_yaml import (
     MAX_CACHED_BYTES,
+    MAX_CACHED_WORKFLOWS,
     MAX_LINE_DEPTH,
     MAX_LINE_ENTRIES,
     MAX_WORKFLOW_BYTES,
@@ -449,10 +450,16 @@ def test_drops_oldest_entry_when_cache_bound_is_reached(
         load_workflow_bytes(content, source=source)
     assert strict_reads == sources
 
-    load_workflow_bytes(contents[0], source=sources[0])
+    load_workflow_bytes(contents[1], source=sources[1])
     load_workflow_bytes(contents[-1], source=sources[-1])
+    load_workflow_bytes(contents[0], source=sources[0])
 
     assert strict_reads == [*sources, sources[0]]
+
+
+def test_holds_bounds_when_cache_limits_are_read() -> None:
+    assert MAX_CACHED_WORKFLOWS == 128
+    assert MAX_CACHED_BYTES == 1024 * 1024
 
 
 # The pre-parsed built-ins (AGH-636, AC-26): a built-in's exact bytes skip the strict parse; any

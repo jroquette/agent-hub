@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_hub.generator import parsed_builtins
 from agent_hub.generator.parsed_builtins import (
     TABLE_FILE,
     ParsedBuiltin,
@@ -98,3 +99,76 @@ def test_names_table_when_shipped_table_cannot_be_read(
         load_table(broken)
 
     assert TABLE_FILE in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [None, b'{"format": 2, "entries": []}\n'],
+    ids=["missing", "wrong_format"],
+)
+def test_raises_on_every_lookup_when_shipped_resource_is_broken(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, content: bytes | None
+) -> None:
+    if content is not None:
+        (tmp_path / TABLE_FILE).write_bytes(content)
+    loaded: list[object] = []
+    monkeypatch.setattr(parsed_builtins, "_loaded", loaded)
+    monkeypatch.setattr(parsed_builtins, "files", lambda package: tmp_path)
+    digest = hashlib.sha256(b"name: w\n").digest()
+
+    for _ in range(2):
+        with pytest.raises(ParsedBuiltinsError) as caught:
+            lookup(digest)
+        assert str(tmp_path / TABLE_FILE) in str(caught.value)
+
+    assert loaded == []
+
+
+def _valid_row() -> dict[str, object]:
+    return {
+        "sha256": hashlib.sha256(b"a").hexdigest(),
+        "source": "alpha/a.yaml",
+        "document": {"name": "a"},
+        "lines": [[[], 1], [["name"], 1]],
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        (None, None),
+        ("sha256", "ab"),
+        ("sha256", hashlib.sha256(b"a").hexdigest().upper()),
+        ("source", 3),
+        ("document", ["name", "a"]),
+        ("lines", {"name": 1}),
+        ("lines", [[["name"], 1, 2]]),
+        ("lines", [["name", 1]]),
+        ("lines", [[["name", 1.5], 1]]),
+        ("lines", [[["name"], True]]),
+    ],
+    ids=[
+        "not_a_mapping",
+        "short_digest",
+        "upper_case_digest",
+        "source_not_text",
+        "document_not_a_mapping",
+        "lines_not_a_list",
+        "pair_too_long",
+        "path_not_a_list",
+        "path_part_a_float",
+        "line_a_bool",
+    ],
+)
+def test_names_entry_when_table_entry_is_malformed(
+    tmp_path: Path, field: str | None, value: object
+) -> None:
+    row: object = "not an entry" if field is None else {**_valid_row(), field: value}
+    table = tmp_path / TABLE_FILE
+    table.write_text(json.dumps({"format": 1, "entries": [_valid_row(), row]}), encoding="utf-8")
+
+    with pytest.raises(ParsedBuiltinsError) as caught:
+        load_table(table)
+
+    assert TABLE_FILE in str(caught.value)
+    assert "entry 1 is not a valid entry" in str(caught.value)
