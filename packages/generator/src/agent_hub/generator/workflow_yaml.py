@@ -74,6 +74,11 @@ class WorkflowFileError(GeneratorError):
         super().__init__(f"{where}: {reason}")
 
 
+def read_workflow_strictly(content: bytes, *, source: str) -> LoadedWorkflow:
+    """The strict loader, never cached (AGH-636): a stub until its GREEN commit."""
+    raise NotImplementedError
+
+
 def load_workflow_bytes(content: bytes, *, source: str) -> LoadedWorkflow:
     """The mapping a workflow file holds, with its key lines; JSON when ``source`` ends in
     ``.json``, else YAML.

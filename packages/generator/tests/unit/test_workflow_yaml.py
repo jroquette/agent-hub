@@ -1,13 +1,17 @@
 """Strict workflow loader (AC-213.2): YAML through a refusing SafeLoader, JSON through core's
 strict reader; each key path's line recorded for the document model's errors (AC-213.1)."""
 
+from uuid import uuid4
+
 import pytest
 
 from agent_hub.core.hub_config.versions import ECHO_LIMIT
+from agent_hub.generator import workflow_yaml
 from agent_hub.generator.workflow_yaml import (
     MAX_LINE_DEPTH,
     MAX_LINE_ENTRIES,
     MAX_WORKFLOW_BYTES,
+    LoadedWorkflow,
     WorkflowFileError,
     load_workflow_bytes,
 )
@@ -328,3 +332,120 @@ def test_leaves_lines_empty_when_json_text_defeats_composer(odd: str) -> None:
 )
 def test_counts_breaks_as_marks_do_when_control_character_given(content: bytes, line: int) -> None:
     assert _refusal(content).line == line
+
+
+# The parse cache (AGH-636): every test builds bytes unique to the run, so the process-wide
+# cache never holds them from an earlier test, and counts the strict loader's calls.
+
+
+def _unique(body: bytes) -> bytes:
+    return f"# {uuid4().hex}\n".encode() + body
+
+
+@pytest.fixture
+def strict_reads(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The ``source`` of each call to the strict loader, in order, while the test runs."""
+    calls: list[str] = []
+    strict = workflow_yaml.read_workflow_strictly
+
+    def counting(content: bytes, *, source: str) -> LoadedWorkflow:
+        calls.append(source)
+        return strict(content, source=source)
+
+    monkeypatch.setattr(workflow_yaml, "read_workflow_strictly", counting)
+    return calls
+
+
+def test_parses_once_when_same_bytes_are_read_twice(strict_reads: list[str]) -> None:
+    content = _unique(b"version: 1\nname: w\nnodes:\n  - id: a\n    type: halt\n")
+
+    first = load_workflow_bytes(content, source="workflows/p/w.yaml")
+    second = load_workflow_bytes(content, source="workflows/p/w.yaml")
+
+    assert strict_reads == ["workflows/p/w.yaml"]
+    assert first.document == {"version": 1, "name": "w", "nodes": [{"id": "a", "type": "halt"}]}
+    assert second == first
+
+
+def test_parses_again_when_refused_bytes_are_read_twice(strict_reads: list[str]) -> None:
+    content = _unique(b"name: w\nschema: &shared {type: object}\n")
+
+    first = _refusal(content)
+    second = _refusal(content)
+
+    assert strict_reads == ["workflows/p/w.yaml", "workflows/p/w.yaml"]
+    assert (first.line, second.line) == (3, 3)
+    assert "anchor" in first.reason
+    assert second.reason == first.reason
+
+
+def test_returns_own_document_when_cached_bytes_are_read_again(strict_reads: list[str]) -> None:
+    content = _unique(
+        b"on: yes\nno_: off\nday: 2026-10-14\nlegacy_octal: 012\nhex: 0x1f\n"
+        b"time: 1:30\ninf: .inf\nflag: True\nnothing: null\nempty:\nratio: -1.5e3\nn: -7\n"
+    )
+    original = {
+        "on": "yes",
+        "no_": "off",
+        "day": "2026-10-14",
+        "legacy_octal": "012",
+        "hex": "0x1f",
+        "time": "1:30",
+        "inf": ".inf",
+        "flag": True,
+        "nothing": None,
+        "empty": None,
+        "ratio": -1500.0,
+        "n": -7,
+    }
+    first = load_workflow_bytes(content, source="w.yaml")
+    assert first.document == original
+    first.document["n"] = 0
+    first.document["extra"] = True
+    del first.document["on"]
+
+    second = load_workflow_bytes(content, source="w.yaml")
+
+    assert strict_reads == ["w.yaml"]
+    assert second.document == original
+    assert second.lines[("on",)] == 2
+    with pytest.raises(TypeError):
+        second.lines[("on",)] = 9  # type: ignore[index]
+
+
+def test_parses_each_format_when_same_bytes_are_read_as_json_and_yaml(
+    strict_reads: list[str],
+) -> None:
+    run = uuid4().hex
+    content = f'{{"a": 1, "run": "{run}"}}'.encode()
+
+    as_json = load_workflow_bytes(content, source="x.json")
+    as_yaml = load_workflow_bytes(content, source="x.yaml")
+
+    assert strict_reads == ["x.json", "x.yaml"]
+    assert as_json.document == {"a": 1, "run": run}
+    assert as_yaml.document == {"a": 1, "run": run}
+
+
+@pytest.mark.parametrize(
+    ("files", "size"),
+    [(129, 0), (5, 250 * 1024)],
+    ids=["entry_count", "input_bytes"],
+)
+def test_drops_oldest_entry_when_cache_bound_is_reached(
+    strict_reads: list[str], files: int, size: int
+) -> None:
+    run = uuid4().hex
+    heads = [f"# {run} {index}\nname: w\n".encode() for index in range(files)]
+    contents = [head + b"#" * max(size - len(head) - 1, 0) + b"\n" for head in heads]
+    assert len(set(contents)) == files
+    assert size == 0 or {len(content) for content in contents} == {size}
+    sources = [f"workflows/p/w{index}.yaml" for index in range(files)]
+    for content, source in zip(contents, sources, strict=True):
+        load_workflow_bytes(content, source=source)
+    assert strict_reads == sources
+
+    load_workflow_bytes(contents[0], source=sources[0])
+    load_workflow_bytes(contents[-1], source=sources[-1])
+
+    assert strict_reads == [*sources, sources[0]]
