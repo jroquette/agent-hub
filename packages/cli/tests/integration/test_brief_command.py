@@ -384,15 +384,20 @@ def test_shows_ci_unknown_when_gh_run_list_times_out(brief_workspace: Workspace)
     assert lines[api + 2] == "  CI: unknown (timeout)"
 
 
+@pytest.mark.serial
 def test_kills_gh_child_when_gh_run_list_times_out(brief_workspace: Workspace) -> None:
     pid_file = brief_workspace.root / "elsewhere" / "gh-pid"
     brief_workspace.answer(
         [BRIEF_RULES[0], {**CI_TIMEOUT_RULES[1], "pid_file": str(pid_file)}, BRIEF_RULES[2]]
     )
 
+    started = time.monotonic()
     result = run_brief(brief_workspace)
+    elapsed = time.monotonic() - started
 
     assert result.exit_code == 0, result.output
+    # A child left running would hold the brief until the fake's long sleep ends.
+    assert elapsed < brief_command.BRIEF_DEADLINE + 1, elapsed
     pid = int(pid_file.read_text())
     end = time.monotonic() + 2
     while time.monotonic() < end and process_exists(pid):
@@ -534,6 +539,7 @@ def test_prints_git_state_when_gh_hangs(
     assert time.monotonic() - started < brief_command.BRIEF_DEADLINE + 2
 
 
+@pytest.mark.serial
 def test_prints_git_state_when_hung_gh_fills_workers(
     brief_workspace: Workspace,
     golden_sections: Callable[[Path], dict[str, bytes]],
