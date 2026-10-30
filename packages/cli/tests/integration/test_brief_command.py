@@ -484,6 +484,22 @@ def test_writes_cache_when_write_cache_given(
     assert brief_workspace.git("status", "--porcelain", cwd=hub) == ""
 
 
+def test_repairs_ignore_rule_when_gitignore_is_empty(brief_workspace: Workspace) -> None:
+    # A run killed between creating .gitignore and writing it leaves it empty: the next one
+    # writes the rule whole, which also hides a killed run's temp.
+    hub = brief_workspace.hub
+    (hub / CACHE).mkdir()
+    (hub / CACHE / ".gitignore").write_bytes(b"")
+    (hub / CACHE / ".gitignore.hub-tmp-0000").write_bytes(b"")
+
+    result = run_brief(brief_workspace, "--no-network", "--write-cache")
+
+    assert result.exit_code == 0, result.output
+    assert cache_lines(hub / CACHE / ".gitignore") == ["*"]
+    assert stat.S_IMODE((hub / CACHE / ".gitignore").stat().st_mode) == 0o644
+    assert brief_workspace.git("status", "--porcelain", cwd=hub) == ""
+
+
 def test_refuses_cache_folder_when_it_is_a_link(brief_workspace: Workspace) -> None:
     target = brief_workspace.root / "elsewhere" / "planted"
     target.mkdir()

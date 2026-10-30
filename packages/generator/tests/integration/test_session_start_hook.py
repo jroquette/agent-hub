@@ -1,19 +1,20 @@
 """SessionStart through the rendered hook: the cached brief, else the mini brief, and the refresh.
 
-ADR 0055 (AGH-612): the hook never waits for the CLI. It injects ``.hub-cache/brief.json``
-headed with its age while the cache is under 12 h old, else the mini brief naming the cause
-(``no brief cache``, ``brief cache stale``, ``brief cache unreadable``, or the last refresh's
-cause from ``.hub-cache/refresh.json``). When the cache is missing, unreadable or at least 5 min
-old it starts one detached refresh (its own session, none of the hook's stdio, one at a time per
-hub through a ``flock`` on ``.hub-cache/refresh.lock``), which runs the pinned
+ADR 0055: the hook never waits for the CLI. It injects ``.hub-cache/brief.json`` headed with
+its age while the cache is under 12 h old, else the mini brief naming the cause (``brief cache
+folder is a link``, ``no brief cache``, ``brief cache stale``, ``brief cache unreadable``, or the
+last refresh's cause from ``.hub-cache/refresh.json``). When the cache is missing, unreadable or
+at least 5 min old it starts one detached refresh (its own session, none of the hook's stdio, one
+at a time per hub through a ``flock`` on ``.hub-cache/refresh.lock``), which runs the pinned
 ``hub brief --write-cache`` as AC-4.17 and AC-15.7 ran ``hub brief``: the resolve step
 (``hub --version``) then the brief on a tag, one call on a lock commit (ADR 0054), within one
 ``REFRESH_TIMEOUT``, its process group killed past it.
 
 A rendered demo hub at ``ws/demo-hub`` pins ``platform.version`` ``1.2.3``. The hook runs as
 Claude Code runs it, a file on ``hook_python`` with the event on stdin, in an environment built
-from scratch whose ``PATH`` holds only a test folder: the fake ``uvx`` (and a ``python3`` for the
-refresh) when a case installs it, so the real ``uv`` (and the network) is never reached. The fake
+from scratch whose ``PATH`` holds only a test folder: the fake ``uvx`` when a case installs it
+(the refresh runs on the hook's own interpreter), so the real ``uv`` (and the network) is never
+reached. The fake
 records each call's arguments, working directory and ``AGENT_HUB_ROOT`` (and its session, its
 parent and its parent's session, for the foreground and refresh checks), then answers the
 resolve step as ``FAKE_UVX_RESOLVE`` says (``ok``, ``fail``, ``slow``) and the brief as
@@ -31,6 +32,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import time
 from collections.abc import Callable, Iterator, Mapping
@@ -256,9 +258,7 @@ def uvx_log(tmp_path: Path) -> Path:
 
 
 def install_uvx(bin_dir: Path, *, python: str, log: Path, interpreter: str = "/bin/sh") -> None:
-    """The fake ``uvx`` in ``bin_dir``: a shell wrapper that execs ``FAKE_UVX`` on ``python``.
-
-    Also a ``python3`` there, as Claude Code's ``PATH`` has one, for the hook's refresh."""
+    """The fake ``uvx`` in ``bin_dir``: a shell wrapper that execs ``FAKE_UVX`` on ``python``."""
     script = bin_dir.parent / "fake_uvx.py"
     script.write_text(FAKE_UVX, encoding="utf-8")
     (bin_dir.parent / "holder.py").write_text(HOLDER, encoding="utf-8")
@@ -267,8 +267,6 @@ def install_uvx(bin_dir: Path, *, python: str, log: Path, interpreter: str = "/b
         f'#!{interpreter}\nexec "{python}" "{script}" "{log}" "$@"\n', encoding="utf-8"
     )
     wrapper.chmod(0o755)
-    (bin_dir / "python3").write_text(f'#!/bin/sh\nexec "{python}" "$@"\n', encoding="utf-8")
-    (bin_dir / "python3").chmod(0o755)
 
 
 def raw_calls(log: Path) -> list[dict[str, Any]]:
@@ -561,7 +559,7 @@ def git(hub: Path, *args: str, check: bool = True) -> subprocess.CompletedProces
 def test_leaves_hub_clean_when_session_start_refreshes(
     hub: Path, *, hook_python: str, run_hook_file: RunHook, bin_dir: Path, uvx_log: Path
 ) -> None:
-    # Review M1: the cache folder ignores itself, so no hub's .gitignore needs an edit.
+    # The cache folder ignores itself, so no hub's .gitignore needs an edit.
     install_uvx(bin_dir, python=hook_python, log=uvx_log)
     git(hub, "init", "-q", "-b", "main")
     git(hub, "add", "-A")
@@ -711,6 +709,88 @@ def test_shows_mini_brief_when_cache_is_malformed(
     assert context_of(completed) == expected_mini_brief("brief cache unreadable")
     assert refresh_ended(hub)
     assert len(brief_calls(uvx_log)) == 1
+
+
+def planted_folder_link(folder: Path) -> None:
+    target = folder.parent.parent / "planted-cache"
+    target.mkdir()
+    (target / "brief.json").write_bytes(fresh_document())
+    folder.symlink_to(target)
+
+
+# Each puts something other than a real folder at ``.hub-cache`` (a fresh cache behind the link),
+# and the cause the mini brief names.
+FOLDER_PROBLEMS: dict[str, tuple[Callable[[Path], object], str]] = {
+    "link": (planted_folder_link, "brief cache folder is a link"),
+    "file": (lambda folder: folder.write_bytes(b""), "brief cache folder is not a folder"),
+}
+
+
+def contents(folder: Path) -> dict[str, bytes]:
+    """Each file of ``folder`` (none when it is absent) and its bytes."""
+    return {path.name: path.read_bytes() for path in folder.iterdir()} if folder.is_dir() else {}
+
+
+@pytest.mark.parametrize("case", sorted(FOLDER_PROBLEMS))
+def test_names_cache_folder_when_it_is_not_a_folder(
+    case: str,
+    hub: Path,
+    *,
+    hook_python: str,
+    run_hook_file: RunHook,
+    bin_dir: Path,
+    uvx_log: Path,
+) -> None:
+    install_uvx(bin_dir, python=hook_python, log=uvx_log)
+    plant, cause = FOLDER_PROBLEMS[case]
+    plant(hub / CACHE_DIR)
+    planted = hub.parent / "planted-cache"
+    before = (stat.S_IFMT((hub / CACHE_DIR).lstat().st_mode), contents(planted))
+
+    completed, _ = start(hub, python=hook_python, run_hook_file=run_hook_file, bin_dir=bin_dir)
+
+    assert context_of(completed) == expected_mini_brief(cause)
+    assert not wait_until(lambda: raw_calls(uvx_log), NO_REFRESH_GRACE)
+    assert (stat.S_IFMT((hub / CACHE_DIR).lstat().st_mode), contents(planted)) == before
+
+
+def test_repairs_ignore_rule_when_gitignore_is_empty(
+    hub: Path, *, hook_python: str, run_hook_file: RunHook, bin_dir: Path, uvx_log: Path
+) -> None:
+    # A hook killed between creating .gitignore and writing it leaves it empty: the next one
+    # writes the rule whole, so the cache never shows in git status.
+    install_uvx(bin_dir, python=hook_python, log=uvx_log)
+    (hub / CACHE_DIR).mkdir()
+    (hub / CACHE_DIR / ".gitignore").write_bytes(b"")
+    (hub / CACHE_DIR / ".gitignore.partial-1").write_bytes(b"")  # a killed run's temp
+    git(hub, "init", "-q", "-b", "main")
+    git(hub, "add", "-A", ":!.hub-cache")
+    git(hub, "commit", "-q", "-m", "hub")
+
+    completed, _ = start(hub, python=hook_python, run_hook_file=run_hook_file, bin_dir=bin_dir)
+
+    assert context_of(completed) == expected_mini_brief("no brief cache")
+    assert refresh_ended(hub)
+    assert (hub / CACHE_DIR / ".gitignore").read_text(encoding="utf-8").splitlines()[-1] == "*"
+    assert cached_brief(hub) == BRIEF
+    assert git(hub, "status", "--porcelain", "--untracked-files=all").stdout == ""
+
+
+def test_shows_cached_brief_when_ignore_rule_cannot_be_written(
+    hub: Path, *, hook_python: str, run_hook_file: RunHook, bin_dir: Path, uvx_log: Path
+) -> None:
+    # A cache past the floor starts a refresh, but a folder at .gitignore stops the rule's write:
+    # the brief already read is still the context, and no refresh starts.
+    install_uvx(bin_dir, python=hook_python, log=uvx_log)
+    write_cache(hub, age=60 * 60, brief=OLD_BRIEF)
+    (hub / CACHE_DIR / ".gitignore").unlink()
+    (hub / CACHE_DIR / ".gitignore").mkdir()
+
+    completed, _ = start(hub, python=hook_python, run_hook_file=run_hook_file, bin_dir=bin_dir)
+
+    assert context_of(completed) == cached_context("1 h", OLD_BRIEF)
+    assert not wait_until(lambda: raw_calls(uvx_log), NO_REFRESH_GRACE)
+    assert sorted(path.name for path in (hub / CACHE_DIR).iterdir()) == [".gitignore", "brief.json"]
 
 
 def test_resolves_then_briefs_when_uvx_succeeds(

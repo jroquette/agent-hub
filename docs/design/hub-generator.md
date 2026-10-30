@@ -83,12 +83,14 @@ guard-file asks stay pinned to the hook root. Only SessionStart calls the CLI, a
 `platform.repository` or no `uvx` give the mini brief naming it (`no version`, `bad platform.repository`, `no uv`), with nothing written and no
 refresh; (2) it reads the brief cache `<hub>/.hub-cache/brief.json` through the stdlib reader (a regular file only, no
 link, at most 64 KiB, fields checked, the brief cut at 8000 characters); (3) when the cache is missing, unreadable or
-at least 5 min old, it writes `.hub-cache/.gitignore` (`*`) first, takes a non-blocking `flock` on
+at least 5 min old, it writes `.hub-cache/.gitignore` (`*`) first, whole through `os.replace` (an empty or changed one is
+rewritten), takes a non-blocking `flock` on
 `.hub-cache/refresh.lock` (held: no refresh starts) and starts the refresh; (4) a cache under 12 h old is the
 context, headed with its age (`brief from 3 min ago`), else the mini brief names why: the last failed refresh's cause
-from `.hub-cache/refresh.json`, else `no brief cache`, `brief cache stale` or `brief cache unreadable`; (5) after a
+from `.hub-cache/refresh.json`, else `brief cache folder is a link` (or `is not a folder`; then no refresh starts),
+`no brief cache`, `brief cache stale` or `brief cache unreadable`; (5) after a
 compaction, the pre-compact snapshot as before. The refresh is the same hook file run as
-`python3 session_start.py --refresh <hub>`, in its own session (`start_new_session`), stdio on `/dev/null` and only
+`session_start.py --refresh <hub>` on the hook's own interpreter, in its own session (`start_new_session`), stdio on `/dev/null` and only
 the lock's descriptor passed on, so it holds none of the hook's output, outlives the hook and its process-group kill,
 and holds the lock until it exits. It runs the pinned `hub brief --write-cache` from the hub with `AGENT_HUB_ROOT` set:
 when `hub.lock` records the release commit for the pin (`platform_commit`, read by the stdlib reader's

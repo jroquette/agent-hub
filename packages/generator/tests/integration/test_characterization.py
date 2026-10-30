@@ -364,7 +364,7 @@ def session_start_brief_crash_compact(*, ws: Any) -> Run:
 
 
 def session_start_cached_startup(*, ws: Any) -> Run:
-    # ADR 0055 (AGH-612): a hub pinned to a release with a cache made 200 s ago, under the 5 min
+    # ADR 0055: a hub pinned to a release with a cache made 200 s ago, under the 5 min
     # refresh floor. The cached brief, headed with its age, is the context; the fake uvx is on
     # PATH and never called, and nothing is written.
     ws.brief_workspace()
@@ -1046,7 +1046,7 @@ CASES: dict[str, Builder] = {
 # AGH-200's guard and stop_gate cases (E9).
 CASES_PER_FILE = {
     "post_edit": 11,
-    "session_start": 10,  # AGH-612: cached_startup
+    "session_start": 10,  # with cached_startup
     "session_end": 5,
     "pre_compact": 4,
     "retro_metrics": 7,

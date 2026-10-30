@@ -12,7 +12,8 @@ The hook never waits for the CLI (ADR 0055). In this order:
    hook's stdio and only the lock passed on, which it holds until it exits.
 4. A cache under SHOW_LIMIT old is the context, headed with its age (`(brief from 3 min ago)`);
    else the mini brief names why: the last failed refresh's cause from `.hub-cache/refresh.json`,
-   else no brief cache, brief cache stale or brief cache unreadable.
+   else brief cache folder is a link (or is not a folder), no brief cache, brief cache stale or
+   brief cache unreadable.
 5. After a compaction, the pre-compact snapshot, capped at 2500 characters.
 
 The refresh runs the pinned release's `hub brief --write-cache`, which writes the cache, resolved
@@ -216,9 +217,52 @@ def age_text(seconds: float) -> str:
     return f"{minutes // 60} h"
 
 
+def small_file(path: Path, limit: int) -> bytes | None:
+    """At most `limit` bytes of a regular file, never through a link or from a FIFO; None else."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return None
+        return os.read(descriptor, limit)
+    except OSError:
+        return None
+    finally:
+        os.close(descriptor)
+
+
+def write_ignore_rule(folder: Path) -> None:
+    """The folder's `.gitignore`, published whole with os.replace unless it already holds
+    CACHE_GITIGNORE, so it is never seen partial and an empty or changed one is repaired.
+
+    Only a run killed before the rule's first publish can leave its temp in git status; the next
+    run publishes the rule, which then hides that temp too. Raises OSError."""
+    rule = CACHE_GITIGNORE.encode()
+    if small_file(folder / ".gitignore", len(rule) + 1) == rule:
+        return
+    partial = folder / (".gitignore.partial-" + str(os.getpid()))
+    try:
+        os.unlink(partial)  # a killed run's, with the same pid
+    except FileNotFoundError:
+        pass
+    descriptor = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+    try:
+        with open(descriptor, "wb") as file:
+            file.write(rule)
+        os.replace(partial, folder / ".gitignore")
+    finally:
+        try:
+            os.unlink(partial)
+        except OSError:  # replaced: nothing left
+            pass
+
+
 def open_cache_folder(hub: Path) -> Path | None:
-    """`.hub-cache`, made when missing, with its `.gitignore` before anything else in it; None
-    when it is not a real folder (a link included) or cannot be made."""
+    """`.hub-cache`, made when missing, with its whole `.gitignore` before anything else in it;
+    None when it is not a real folder (a link included), cannot be made or cannot be written."""
     folder = hub / CACHE_FOLDER
     try:
         os.mkdir(folder, 0o700)
@@ -229,13 +273,9 @@ def open_cache_folder(hub: Path) -> Path | None:
     try:
         if not stat.S_ISDIR(os.lstat(folder).st_mode):
             return None
-        descriptor = os.open(folder / ".gitignore", os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
-    except FileExistsError:  # already there: kept as it is
-        return folder
+        write_ignore_rule(folder)
     except OSError:
         return None
-    with open(descriptor, "w", encoding="utf-8") as file:
-        file.write(CACHE_GITIGNORE)
     return folder
 
 
@@ -256,7 +296,7 @@ def start_refresh(hub: Path) -> None:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:  # a refresh is running
             return
-        python = sys.executable or shutil.which("python3")
+        python = sys.executable  # the hook's own interpreter
         if not python:
             return
         # Its own session: Claude Code's kill of the hook's group spares it. No stdio of the hook:
@@ -277,6 +317,19 @@ def start_refresh(hub: Path) -> None:
         os.close(lock)
 
 
+def folder_problem(hub: Path) -> str:
+    """Why `.hub-cache` can hold no cache (a link, not a folder), or "" when it can or is absent."""
+    try:
+        mode = os.lstat(hub / CACHE_FOLDER).st_mode
+    except OSError:
+        return ""
+    if stat.S_ISLNK(mode):
+        return "brief cache folder is a link"
+    if not stat.S_ISDIR(mode):
+        return "brief cache folder is not a folder"
+    return ""
+
+
 def cached_or_cause(hub: Path) -> tuple[str, str]:
     """(the context of a cache under SHOW_LIMIT old, "") or ("", the mini brief's cause); starts
     the refresh when the cache is missing, unreadable or at least REFRESH_FLOOR old."""
@@ -286,8 +339,11 @@ def cached_or_cause(hub: Path) -> tuple[str, str]:
     if cache is not None and age is not None and age < SHOW_LIMIT:
         found = f"(brief from {age_text(age)} ago)\n\n{cache.brief}", ""
     else:  # read before the refresh starts, which may write it
-        last = read_refresh_cause(hub, now)
-        if last:
+        folder = folder_problem(hub)
+        last = None if folder else read_refresh_cause(hub, now)
+        if folder:
+            found = "", folder
+        elif last:
             found = "", last
         elif cache is not None:
             found = "", "brief cache stale"

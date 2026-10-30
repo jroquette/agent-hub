@@ -13,8 +13,9 @@ leaves its value out, as the old script did. The text itself is
 
 Plain ``hub brief`` writes nothing. ``--write-cache`` also writes the printed brief to
 ``.hub-cache/brief.json`` for the SessionStart hook (ADR 0055): the folder is made when missing,
-with its own ``.gitignore`` (``*``) first, and refused when it is a link or not a folder; the file
-(mode 0600) is replaced atomically, so a reader never sees a partial write.
+with its own ``.gitignore`` (``*``) first (rewritten whole when it holds anything else), and
+refused when it is a link or not a folder; the file (mode 0600) is replaced atomically, so a
+reader never sees a partial write.
 """
 
 import datetime
@@ -35,7 +36,7 @@ from agent_hub.cli.child_process import git_env, run_child
 from agent_hub.cli.command_exits import fail
 from agent_hub.cli.effective_config import load_effective_config_or_exit
 from agent_hub.cli.errors import ChildTimedOutError
-from agent_hub.cli.exclusive_write import write_exclusive, write_replacing
+from agent_hub.cli.exclusive_write import write_replacing
 from agent_hub.cli.hub_root import hub_root_or_exit
 from agent_hub.core.hub_config.effective_environments import effective_environments
 from agent_hub.core.hub_config.model import HubConfig
@@ -135,11 +136,39 @@ def _write_cache(root: Path, printed: str) -> None:
         fail(f"{CACHE_FOLDER}: {problem}; cache not written")
     document = brief_cache_document(printed, made_at=time.time())
     try:
-        # The ignore rule comes first, so nothing in the folder ever shows in git status.
-        write_exclusive(folder, GITIGNORE_FILE, GITIGNORE_TEXT.encode(), mode=0o644)
+        _write_ignore_rule(folder)
         write_replacing(folder, CACHE_FILE, document, mode=CACHE_MODE)
     except OSError as error:
         fail(f"{CACHE_FOLDER}: cannot write: {error.strerror or type(error).__name__}")
+
+
+def _write_ignore_rule(folder: Path) -> None:
+    """The folder's ``.gitignore``, written first so its rule covers the cache.
+
+    Published whole with ``os.replace`` unless it already holds ``GITIGNORE_TEXT``, so it is
+    never seen partial and an empty or changed one (a killed hook's) is repaired. Only a run
+    killed before the rule's first publish can leave its temp in git status; the next run
+    publishes the rule, which then hides that temp too. Raises ``OSError``.
+    """
+    rule = GITIGNORE_TEXT.encode()
+    if _small_file(folder / GITIGNORE_FILE, len(rule) + 1) != rule:
+        write_replacing(folder, GITIGNORE_FILE, rule, mode=0o644)
+
+
+def _small_file(path: Path, limit: int) -> bytes | None:
+    """At most ``limit`` bytes of a regular file, never through a link or from a FIFO."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return None
+        return os.read(descriptor, limit)
+    except OSError:
+        return None
+    finally:
+        os.close(descriptor)
 
 
 def _cache_folder_problem(folder: Path) -> str | None:
