@@ -216,12 +216,28 @@ def test_fails_the_suite_when_a_command_exits_non_zero(tmp_path: Path) -> None:
         measure(probe, runs=3, runner=runner, clock=clock)
 
 
+class SeedingRunner(RecordingRunner):
+    """A ``RecordingRunner`` whose first call (the seed) writes ``cache``, as the real one does."""
+
+    def __init__(self, clock: FakeClock, steps: Sequence[float], *, cache: Path) -> None:
+        super().__init__(clock, steps)
+        self.cache = cache
+
+    def __call__(self, argv: Sequence[object], stdin: object = None, **_: object) -> Completed:
+        if not self.calls:
+            self.cache.parent.mkdir(exist_ok=True)
+            self.cache.write_text('{"made_at": 0, "brief": "# Brief"}', "utf-8")
+        return super().__call__(argv, stdin)
+
+
 def test_seeds_brief_cache_when_session_start_probe_is_built(tmp_path: Path) -> None:
     hub, transcript, _hub_bin = _layout(tmp_path)
     hooks = hook_probes(hub, transcript)
     probe = _probe(hooks, "session_start (local uvx stand-in)")
     clock = FakeClock()
-    runner = RecordingRunner(clock, [5.0, 0.010, 0.020, 0.030])
+    runner = SeedingRunner(
+        clock, [5.0, 0.010, 0.020, 0.030], cache=hub / ".hub-cache" / "brief.json"
+    )
 
     samples = measure(probe, runs=3, runner=runner, clock=clock)
 
@@ -235,3 +251,19 @@ def test_seeds_brief_cache_when_session_start_probe_is_built(tmp_path: Path) -> 
     assert [stdin for _argv, stdin in runner.calls] == [None, *[probe.stdin] * 3]
     assert list(samples) == pytest.approx([10.0, 20.0, 30.0])
     assert [p.path for p in hooks if p.seed is not None] == [probe.path]
+    assert probe.seeded == hub / ".hub-cache" / "brief.json"
+
+
+def test_fails_the_suite_when_seed_leaves_no_brief_cache(tmp_path: Path) -> None:
+    # A seed that exits 0 but writes no cache would time the no-cache path, starting refreshes.
+    hub, transcript, _hub_bin = _layout(tmp_path)
+    probe = _probe(hook_probes(hub, transcript), "session_start (local uvx stand-in)")
+    clock = FakeClock()
+    runner = RecordingRunner(clock, [5.0, 0.010, 0.020, 0.030])
+
+    with pytest.raises(
+        SuiteError, match=re.escape("session_start (local uvx stand-in): seed left")
+    ):
+        measure(probe, runs=3, runner=runner, clock=clock)
+
+    assert len(runner.calls) == 1

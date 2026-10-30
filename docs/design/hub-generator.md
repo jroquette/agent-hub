@@ -80,7 +80,7 @@ replace them, and `readable_env_files` is the hook root's only; for
 problem are added (in the plugin cache, the found file's `guard.infra` as is); the extension, `@hub/` anchors and
 guard-file asks stay pinned to the hook root. Only SessionStart calls the CLI, and never in the foreground
 ([ADR 0055](../adr/0055-session-start-brief-from-a-cache.md)). In a fixed order: (1) no version, a bad
-`platform.repository` or no `uvx` give the mini brief naming it (`no version`, `no uv`), with nothing written and no
+`platform.repository` or no `uvx` give the mini brief naming it (`no version`, `bad platform.repository`, `no uv`), with nothing written and no
 refresh; (2) it reads the brief cache `<hub>/.hub-cache/brief.json` through the stdlib reader (a regular file only, no
 link, at most 64 KiB, fields checked, the brief cut at 8000 characters); (3) when the cache is missing, unreadable or
 at least 5 min old, it writes `.hub-cache/.gitignore` (`*`) first, takes a non-blocking `flock` on

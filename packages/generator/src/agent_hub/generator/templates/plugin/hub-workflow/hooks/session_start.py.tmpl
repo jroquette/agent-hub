@@ -49,7 +49,6 @@ try:
     from hubhooks import Config, emit, load_config, read_input, run_hook
     from stdlib_reader import (
         BRIEF_CACHE_FILE,
-        CACHE_BRIEF_MAX_CHARS,
         CACHE_FOLDER,
         REFRESH_RECORD_FILE,
         PlatformSection,
@@ -66,7 +65,6 @@ except Exception as error:  # a partial install: skip, never error the session
 # from hub.json at run time.
 SOURCE = "@@{platform_repository}@v{version}#subdirectory=packages/agent-hub"
 REFRESH_TIMEOUT = 60  # seconds for the refresh's calls together; the hook itself waits on none
-BRIEF_CAP = CACHE_BRIEF_MAX_CHARS
 REFRESH_FLOOR = 5 * 60  # seconds: a younger cache starts no refresh
 SHOW_LIMIT = 12 * 60 * 60  # seconds: an older cache is not shown
 REFRESH_FLAG = "--refresh"
@@ -100,15 +98,16 @@ def unusable_pin(platform: PlatformSection) -> str:
     return ""
 
 
-def pinned_brief(hub: Path, platform: PlatformSection) -> tuple[str, str]:
-    """(the brief `hub brief --write-cache` printed, "") or ("", why it is missing)."""
+def pinned_brief(hub: Path, platform: PlatformSection) -> str:
+    """Run the pinned `hub brief --write-cache`, which writes the cache: "" when it did, else why
+    it did not (the cache itself is read back by the next session, never from its output)."""
     cause = unusable_pin(platform)
     if cause:
-        return "", cause
+        return cause
     version = platform.version
     uvx = shutil.which("uvx")
     if version is None or uvx is None:  # gone since unusable_pin looked
-        return "", "failed"
+        return "failed"
     env = dict(os.environ, AGENT_HUB_ROOT=str(hub))
     deadline = time.monotonic() + REFRESH_TIMEOUT
     commit_source = read_lock_source(hub, platform, SOURCE.split("@v", 1)[0])
@@ -118,18 +117,17 @@ def pinned_brief(hub: Path, platform: PlatformSection) -> tuple[str, str]:
         release = [uvx, "--from", release_source(platform.repository, version), "hub"]
         code, _, cause = run_call(release + ["--version"], hub, env, deadline)
         if cause:
-            return "", cause
+            return cause
         if code != 0:
-            return "", "resolve failed"
+            return "resolve failed"
     code, out, cause = run_call(release + ["brief", "--write-cache"], hub, env, deadline)
     if cause:
-        return "", cause
+        return cause
     if code != 0:
-        return "", f"failed (exit {code})"
-    brief = out.decode("utf-8", "replace").strip()[:BRIEF_CAP]
-    if not brief:
-        return "", "failed (no output)"
-    return brief, ""
+        return f"failed (exit {code})"
+    if not out.strip():
+        return "failed (no output)"
+    return ""
 
 
 def run_call(argv: list[str], hub: Path, env: dict[str, str], deadline: float) -> tuple[int, bytes, str]:
@@ -150,7 +148,11 @@ def run_call(argv: list[str], hub: Path, env: dict[str, str], deadline: float) -
 
 
 def stop(proc: subprocess.Popen) -> None:
-    """Kill the timed-out call's whole process group: uvx runs `hub` as its own child."""
+    """Kill the timed-out call's whole process group: uvx runs `hub` as its own child.
+
+    The group is the call's own, so a kill of the refresh alone (SIGKILL, an OOM kill) does not
+    reach it: the call then runs on without the limit and the lock is free, so a later refresh may
+    run beside it until it ends. Accepted: the limit holds for every refresh that is not killed."""
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except OSError:  # already gone
@@ -227,7 +229,7 @@ def open_cache_folder(hub: Path) -> Path | None:
     try:
         if not stat.S_ISDIR(os.lstat(folder).st_mode):
             return None
-        descriptor = os.open(folder / ".gitignore", os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        descriptor = os.open(folder / ".gitignore", os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
     except FileExistsError:  # already there: kept as it is
         return folder
     except OSError:
@@ -341,7 +343,7 @@ def refresh(hub: Path) -> None:
     """The detached refresh: the pinned `hub brief --write-cache` (which writes the cache), then
     refresh.json naming the cause when it failed, or removed when it did not."""
     try:
-        _, cause = pinned_brief(hub, load_config(str(hub)).hub_file.platform)
+        cause = pinned_brief(hub, load_config(str(hub)).hub_file.platform)
     except Exception:  # the next session names it
         cause = "failed"
     try:

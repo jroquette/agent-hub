@@ -6,13 +6,15 @@ that lock hand-edited). The source each case must run is written in the table: t
 ``<repository>@<commit>`` only when the lock's version and repository match ``hub.json`` and its
 commit is 40 lowercase hex, else today's tag source ``<repository>@v<version>``. Four readers
 must each run that source: the CLI (``read_hub_lock`` then ``kept_release``, what ``hub sync``
-keeps); the ``hub`` shim (``sh hub brief``); the SessionStart hook (on ``hook_python``); and
-cloud setup's warm-up (on bash). The rendered ones run from one demo render with ``PATH``
-holding only a test folder: a ``uvx`` that logs each call (``uvx <args>``) and answers, a
+keeps); the ``hub`` shim (``sh hub brief``); the SessionStart hook (on ``hook_python``), whose
+detached refresh runs ``hub brief --write-cache`` (ADR 0055) and is waited for until its lock
+is free; and cloud setup's warm-up (on bash). The rendered ones run from one demo render with
+``PATH`` holding only a test folder: a ``uvx`` that logs each call (``uvx <args>``) and answers, a
 ``python3`` link to ``hook_python``, and, for cloud setup only, a ``git`` that does nothing and
 exits 0 (its access check passes; only the warm-up is read). The shim and the hook must make one
 call at a commit and the resolve step then the call at a tag; cloud setup one warm-up; the hook
-exits 0 with nothing on stderr (it fails open).
+exits 0 with nothing on stderr (it fails open). Any refresh still running after a test is
+killed (``no_process_left``).
 
 The rendered readers check only the lock's ``platform_*`` fields, while the CLI validates the whole
 lock: a lock whose other fields are invalid runs the commit in the shim, hook and cloud setup, and
@@ -22,14 +24,18 @@ lock over 1 MiB keeps the tag, a lock of exactly 1 MiB is read (``hub sync`` has
 checks and refuses a lock that is not a regular file).
 """
 
+import fcntl
 import json
 import os
 import shutil
 import subprocess
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.hub_lock import HubLock, build_hub_lock, lock_bytes, read_hub_lock
@@ -54,6 +60,13 @@ case " $* " in *" --version "*) echo "hub {version}";; *) echo "# Brief";; esac
 exit 0
 """
 FAKE_GIT = "#!/bin/sh\nexit 0\n"
+# The SessionStart refresh's lock (ADR 0055), and how long a case waits for the refresh to end.
+REFRESH_LOCK = ".hub-cache/refresh.lock"
+REFRESH_WAIT = 10.0
+# The refresh's brief: it writes the cache instead of printing for the hook.
+REFRESH_BRIEF = "brief --write-cache"
+
+pytestmark = pytest.mark.usefixtures("no_process_left")
 
 type LockEdit = Callable[[dict[str, Any]], str | None]
 
@@ -219,6 +232,27 @@ def install(folder: Path, *, log: Path, python: str, git: bool) -> Path:
     return folder
 
 
+def refresh_ended(hub: Path) -> bool:
+    """True once the refresh lock exists and can be taken: the refresh that held it has ended."""
+    end = time.monotonic() + REFRESH_WAIT
+    lock_path = hub / REFRESH_LOCK
+    while not lock_path.exists():
+        if time.monotonic() > end:
+            return False
+        time.sleep(0.01)
+    with lock_path.open("r+") as lock:
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                if time.monotonic() > end:
+                    return False
+                time.sleep(0.01)
+            else:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+                return True
+
+
 def hook_verdict(lines: list[str], expected: list[str], completed: Any) -> str:
     """The hook must also fail open: exit 0, nothing on stderr, whatever the lock holds."""
     if (completed.returncode, completed.stderr) != (0, b""):
@@ -257,7 +291,11 @@ class RenderedReaders:
             cwd=self.hub.parent,
             env={"PATH": str(self.bin_dir), "HOME": str(self.home)},
         )
-        given["hook"] = hook_verdict(logged(self.log), calls_of(source, "brief"), hook)
+        # No brief cache: the hook starts its refresh, whose calls are read once it has ended.
+        if not refresh_ended(self.hub):
+            given["hook"] = "the refresh did not end"
+        else:
+            given["hook"] = hook_verdict(logged(self.log), calls_of(source, REFRESH_BRIEF), hook)
         cloud = run_tool(
             [which("bash"), str(self.hub / CLOUD_SETUP)],
             cwd=self.elsewhere,

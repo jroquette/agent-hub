@@ -14,10 +14,11 @@ A rendered demo hub at ``ws/demo-hub`` pins ``platform.version`` ``1.2.3``. The 
 Claude Code runs it, a file on ``hook_python`` with the event on stdin, in an environment built
 from scratch whose ``PATH`` holds only a test folder: the fake ``uvx`` (and a ``python3`` for the
 refresh) when a case installs it, so the real ``uv`` (and the network) is never reached. The fake
-records each call's arguments, working directory and ``AGENT_HUB_ROOT`` (and its session and
-parent, for the foreground and refresh checks), then answers the resolve step as
-``FAKE_UVX_RESOLVE`` says (``ok``, ``fail``, ``slow``) and the brief as ``FAKE_UVX_BRIEF`` says
-(``brief``, ``exit3``, ``empty``, ``slow``, ``sleep``, ``hang``, ``long``). Given
+records each call's arguments, working directory and ``AGENT_HUB_ROOT`` (and its session, its
+parent and its parent's session, for the foreground and refresh checks), then answers the
+resolve step as ``FAKE_UVX_RESOLVE`` says (``ok``, ``fail``, ``slow``) and the brief as
+``FAKE_UVX_BRIEF`` says (``brief``, ``exit3``, ``empty``, ``slow``, ``sleep``, ``hang``,
+``long``). Given
 ``--write-cache``, a brief it printed is also written to the cache, replaced whole, as the CLI
 does. Every process a case leaves behind (a refresh, the fake, its holders) is killed at
 teardown.
@@ -123,7 +124,7 @@ log, args = sys.argv[1], sys.argv[2:]
 kind = "resolve" if args[-1:] == ["--version"] else "brief"
 mode = os.environ.get("FAKE_UVX_" + kind.upper(), "ok" if kind == "resolve" else "brief")
 call = {"args": args, "cwd": os.getcwd(), "root": os.environ.get("AGENT_HUB_ROOT"),
-        "session": os.getsid(0), "parent": os.getppid()}
+        "session": os.getsid(0), "parent": os.getppid(), "parent_session": os.getsid(os.getppid())}
 with open(log, "a", encoding="utf-8") as fh:
     fh.write(json.dumps(call) + "\\n")
 text = ""
@@ -194,6 +195,8 @@ REFRESH_SLEEP = 3.0
 
 type RunHook = Callable[..., Any]
 
+pytestmark = pytest.mark.usefixtures("no_process_left")
+
 
 def expected_mini_brief(cause: str) -> str:
     assert not NOW_MD[NOW_CAP - 1].isspace()  # so the cut shows as it is, whitespace-stripped
@@ -252,15 +255,6 @@ def uvx_log(tmp_path: Path) -> Path:
     return tmp_path / "uvx-calls.jsonl"
 
 
-@pytest.fixture(autouse=True)
-def no_process_left(tmp_path: Path) -> Iterator[None]:
-    """After each case, kill whatever still runs from its folder: a refresh, the fake, a holder."""
-    yield
-    pkill = shutil.which("pkill")
-    assert pkill is not None, "pkill is needed to reap the detached refreshes"
-    subprocess.run([pkill, "-KILL", "-f", str(tmp_path)], check=False, capture_output=True)  # noqa: S603 - pkill from PATH, this case's own folder
-
-
 def install_uvx(bin_dir: Path, *, python: str, log: Path, interpreter: str = "/bin/sh") -> None:
     """The fake ``uvx`` in ``bin_dir``: a shell wrapper that execs ``FAKE_UVX`` on ``python``.
 
@@ -286,7 +280,11 @@ def raw_calls(log: Path) -> list[dict[str, Any]]:
 def calls(log: Path) -> list[dict[str, Any]]:
     """Each call's arguments, working directory and ``AGENT_HUB_ROOT``."""
     return [
-        {key: value for key, value in call.items() if key not in ("session", "parent")}
+        {
+            key: value
+            for key, value in call.items()
+            if key not in ("session", "parent", "parent_session")
+        }
         for call in raw_calls(log)
     ]
 
@@ -608,13 +606,23 @@ def test_keeps_refresh_alive_when_hook_group_is_killed(
     hub: Path, *, hook_python: str, bin_dir: Path, uvx_log: Path
 ) -> None:
     # AC-19: Claude Code kills the hook's process group; the refresh, in its own session, lives.
+    # The fake uvx writes the cache itself, so the refresh is checked directly: it is not in the
+    # hook's session, and only a refresh that lived to the end removes the recorded cause.
     install_uvx(bin_dir, python=hook_python, log=uvx_log)
     env = {"FAKE_UVX_BRIEF": "sleep", "FAKE_UVX_SLEEP": str(REFRESH_SLEEP)}
+    (hub / CACHE_DIR).mkdir()
+    (hub / REFRESH_RECORD).write_text(
+        json.dumps({"made_at": time.time() - 60, "cause": "timed out"}), encoding="utf-8"
+    )
 
     hook = open_hook(hub, python=hook_python, bin_dir=bin_dir, env=env, new_session=True)
     try:
         assert wait_until(lambda: brief_calls(uvx_log)), "no refresh started"
         assert not (hub / CACHE).exists()
+        # uvx's parent: the refresh that runs the call; the hook leads its own session.
+        refresh_pid = brief_calls(uvx_log)[0]["parent"]
+        assert refresh_pid not in (hook.pid, os.getpid(), 1)
+        assert os.getsid(refresh_pid) == refresh_pid != hook.pid
         with contextlib.suppress(ProcessLookupError):
             os.killpg(hook.pid, signal.SIGKILL)
     finally:
@@ -623,6 +631,7 @@ def test_keeps_refresh_alive_when_hook_group_is_killed(
 
     assert refresh_ended(hub, REFRESH_WAIT + REFRESH_SLEEP)
     assert cached_brief(hub) == BRIEF
+    assert not (hub / REFRESH_RECORD).exists()
 
 
 def test_runs_one_refresh_when_two_sessions_start_together(
@@ -1345,7 +1354,10 @@ def test_calls_no_network_tool_when_hook_runs_in_foreground(
     else:
         assert context == expected_mini_brief("no brief cache")
         assert refresh_ended(hub)
-    sessions = [call["session"] for call in raw_calls(uvx_log)]
-    assert len(sessions) == (0 if cache == "fresh" else 2)
-    assert os.getsid(0) not in sessions
+    # Each call's caller leads a session of its own: the detached refresh. The hook, run as a
+    # plain child of this test, is in this test's session.
+    callers = [(call["parent"], call["parent_session"]) for call in raw_calls(uvx_log)]
+    assert len(callers) == (0 if cache == "fresh" else 2)
+    for parent, parent_session in callers:
+        assert parent_session == parent != os.getsid(0)
     assert not network_log.exists()

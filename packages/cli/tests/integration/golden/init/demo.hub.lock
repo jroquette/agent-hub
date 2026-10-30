@@ -386,7 +386,7 @@
     "plugin/hub-workflow/hooks/session_start.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "d56047b30b66fcebece5e5dd440b1d1f53ced9d0a1123189991c99600eccaae9"
+      "sha256": "7c444219b074dc4b1acb41cc55a7ed09c277d8cf3b8828f27216d5b7b8d9b04c"
     },
     "plugin/hub-workflow/hooks/stdlib_reader.py": {
       "executable": false,
