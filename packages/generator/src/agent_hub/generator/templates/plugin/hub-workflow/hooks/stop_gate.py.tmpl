@@ -20,7 +20,10 @@ its output goes to a temp file, so a background child holding it open never hold
 A `check_stop` run gets HUB_CHANGED_FILES: the paths the session changed in that checkout, from its top,
 sorted, one per line, with no final newline. A path that exists counts when its mtime or its ctime, read
 with lstat so a link counts by its own dates, is at or after the session start (a plain mv keeps the mtime
-and sets the ctime); a deleted one, and both sides of a rename, whenever git lists them. The variable is
+and sets the ctime); an untracked one also when a folder between the top and it has its ctime there (a
+folder moved with mv keeps both dates of the files in it); a deleted one, and both sides of a rename,
+whenever git lists them. Only a rename or copy record is split at " -> ": before git 2.29, a space in an
+untracked name is printed unquoted, so a name may hold the arrow and is kept whole. The variable is
 unset when git quotes any path of the checkout (a quoted name cannot be listed whole), when git's status
 holds U+0085, U+2028 or U+2029 (raw in a name under core.quotePath=false, each splits that name's line
 for splitlines()), when the list is over CHANGED_FILES_MAX_BYTES, and on a second start after the first
@@ -147,9 +150,11 @@ def changed_code(top: Path, since: float, all_paths: bool = False) -> tuple[list
     """(the code files changed since `since`, every path changed since then), from one git status. Both are
     None when the budget is spent before git answers: git() reads a timeout as "", which is no clean tree. A
     git error or git's own GIT_TIMEOUT stays "no change". Every path, sorted, only with `all_paths` (for a
-    check_stop run): one that exists when written_since says so, a deleted one and both sides of a rename
-    always; None without `all_paths`, and when git quotes any path or the status holds one of
-    RAW_LINE_BREAKS, as a list without that name, or with pieces of it, would be wrong."""
+    check_stop run): one that exists when written_since says so, or, untracked, when in_changed_folder does;
+    a deleted one and both sides of a rename always. Only a rename or copy record is split at " -> ": before
+    git 2.29, a space in an untracked name is not quoted. None without `all_paths`, and when git quotes any
+    path or the status holds one of RAW_LINE_BREAKS, as a list without that name, or with pieces of it,
+    would be wrong."""
     cap = min(GIT_TIMEOUT, left())
     if cap <= 0:
         return None, None
@@ -158,8 +163,9 @@ def changed_code(top: Path, since: float, all_paths: bool = False) -> tuple[list
         return None, None
     out = []
     every = set() if all_paths and not any(c in status for c in RAW_LINE_BREAKS) else None
+    folders: dict[str, bool] = {}  # in_changed_folder's answers
     for line in status.splitlines():
-        sides = line[3:].split(" -> ")
+        sides = line[3:].split(" -> ") if "R" in line[:2] or "C" in line[:2] else [line[3:]]
         rel = sides[-1].strip('"')
         p = top / rel
         if (p.suffix in CODE_EXT or p.name in CODE_NAMES) and p.exists() and p.stat().st_mtime >= since:
@@ -167,7 +173,8 @@ def changed_code(top: Path, since: float, all_paths: bool = False) -> tuple[list
         if every is None or any(side.startswith('"') for side in sides):
             every = None
         else:
-            every.update(side for side in sides if len(sides) > 1 or written_since(os.path.join(top, side), since))
+            every.update(side for side in sides if len(sides) > 1 or written_since(os.path.join(top, side), since)
+                         or (line.startswith("??") and in_changed_folder(top, side, since, folders)))
     return out, None if every is None else sorted(every)
 
 
@@ -180,6 +187,27 @@ def written_since(path: str, since: float) -> bool:
     except OSError:
         return True
     return max(found.st_mtime, found.st_ctime) >= since
+
+
+def in_changed_folder(top: Path, rel: str, since: float, seen: dict[str, bool]) -> bool:
+    """Whether a folder between `top` (left out) and `rel` has its ctime at or after `since`, read with
+    lstat: a folder moved with a plain mv gets a new ctime and keeps both dates of the files in it. One that
+    cannot be read counts, as in written_since. `seen` keeps each folder's answer, so a deep tree costs one
+    lstat per folder."""
+    unread = []  # the folders above rel with no answer yet, nearest first
+    folder = os.path.dirname(rel)
+    while folder and folder not in seen:
+        unread.append(folder)
+        folder = os.path.dirname(folder)
+    changed = seen.get(folder, False)  # the top's ("") is never read
+    for name in reversed(unread):  # from the top down: a changed folder answers for each one below it
+        if not changed:
+            try:
+                changed = os.lstat(os.path.join(top, name)).st_ctime >= since
+            except OSError:
+                changed = True
+        seen[name] = changed
+    return changed
 
 
 def touched_paths(tp: str) -> tuple[set[str], str]:
