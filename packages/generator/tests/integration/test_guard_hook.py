@@ -4749,6 +4749,57 @@ def test_copies_lazy_pattern_as_itself_when_copied_or_pickled(
     assert found == {"fresh": same, "compiled": same, "half_built": False}
 
 
+# AGH-621 (AC-25): a pattern's first read compiles it and keeps what the hooks read on the
+# instance, so ``__getattr__`` runs once per pattern, never once per part, line or word: deciding
+# on a command twice as long makes as many calls. The child counts the calls while ``decide``
+# checks an allowed infra call followed by one-letter lines. argv: hub, the number of lines.
+# Prints [the verdict, the calls].
+PATTERN_LOOKUPS = r"""
+import json
+from pathlib import Path
+import guard
+from hubhooks import load_config
+from stdlib_reader import LazyPattern
+cfg = load_config(Path(sys.argv[1]))
+command = "aws s3 ls --profile demo-dev" + "\na" * int(sys.argv[2])
+calls = [0]
+lookup = LazyPattern.__getattr__
+
+
+def counted(self, name):
+    calls[0] += 1
+    return lookup(self, name)
+
+
+LazyPattern.__getattr__ = counted
+verdict = guard.decide({"tool_name": "Bash", "tool_input": {"command": command}}, cfg, None)
+print(json.dumps([verdict, calls[0]]))
+"""
+
+
+def test_looks_up_each_pattern_once_when_command_has_many_lines(
+    blocked_hub: Path, *, each_python: str, run_python: Callable[..., Any], tmp_path: Path
+) -> None:
+    write_hub_json(blocked_hub, with_infra_and_words(["prod"]))
+
+    found = [
+        run_python(
+            each_python,
+            PATTERN_LOOKUPS,
+            path=blocked_hub / HOOKS,
+            args=[str(blocked_hub), str(lines)],
+            cwd=tmp_path,
+            env={"HOME": str(tmp_path)},
+        )
+        for lines in (1000, 2000)
+    ]
+
+    assert [verdict for verdict, _ in found] == [None, None]
+    calls = [count for _, count in found]
+    assert calls[0] > 0
+    assert calls[0] == calls[1]
+
+
 # D-order (AC-277.17): the AGH-45 synthetic ``I`` (guard.infra) beside blocked words.
 def with_infra_and_words(words: Sequence[str]) -> dict[str, Any]:
     document = builders.an_environments_document()
