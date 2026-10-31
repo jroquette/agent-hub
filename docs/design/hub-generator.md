@@ -126,8 +126,9 @@ path, and it would change every repo's uv), and `sandbox.filesystem.allowWrite` 
 changed since the transcript's first timestamp (else its birth time, else 12 h ago), running the repo's `check_stop`, else
 its `check_fast`; in one 160 s budget each run gets
 `repos[].check_fast_timeout` (default 150 s), then its group is killed; a cut run says `not run`. A `check_stop` run
-gets the checkout's changed paths in `HUB_CHANGED_FILES`, one per line, unless git quotes one of them, the list is over
-64 KiB or the start fails with `E2BIG` (then it starts again without it); no check inherits the variable from the gate
+gets the checkout's changed paths in `HUB_CHANGED_FILES`, one per line, unless git quotes one of them, git's output
+holds U+0085, U+2028 or U+2029 (raw in a name under `core.quotePath=false`), the list is over 64 KiB or the start fails
+with `E2BIG` (then it starts again without it); no check inherits the variable from the gate
 ([project-config.md](project-config.md)). The summary names the kind of command the changed repos were given.
 The event sensor `event_sensor.py` (AGH-200) is registered beside them on eleven events (SessionStart,
 UserPromptSubmit, PreToolUse, PostToolUse and PostToolUseFailure with matcher `*`, Notification, Stop, SubagentStart,
