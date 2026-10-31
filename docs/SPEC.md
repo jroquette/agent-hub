@@ -1109,7 +1109,9 @@ The recommendations are a starting point.
 - The hub remains versioned files in git plus the pinned CLI, as in Layer 1. The hub repo is private and only the owners have access.
 - The generic templates (base workflow plugin, base rules, base hooks, brain skeleton) are the product: they live in agent-hub, which is public, and ship with the CLI. Only project-owned material (brain content, project rules, project workflows, project plugin) lives only in the hub. The code repos get the minimum: an `AGENTS.md` with basic commands and conventions.
 - Our agent receives the brain because it is launched from the hub (launcher with the repos attached, as today). Another agent that opens only the code repos does not receive that knowledge.
-- `hub doctor` checks that nothing from the brain was copied into the code repos.
+- `hub doctor` checks that nothing from the brain was copied into the code repos. The one exception is an ADR draft:
+  it is written to become an ADR, so its lines may reach a repo's `docs/adr/` folder; in any other repo file they are
+  still a leak.
 - Cloud sessions need access to the hub repo through the GitHub App, granted only on our account.
 - A hosted brain service waits until the platform becomes a product with customers.
 
