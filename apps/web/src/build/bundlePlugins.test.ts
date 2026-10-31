@@ -2,7 +2,9 @@
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { PluginOption } from "vite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import appConfig from "../../vite.config";
 import { compressPlugin } from "./bundlePlugins";
 
 let outDir: string;
@@ -52,5 +54,24 @@ describe("compressPlugin", () => {
     await expect(writeBundle(undefined, error)).rejects.toThrow("no output folder");
 
     expect(error).toHaveBeenCalledOnce();
+  });
+});
+
+// The names of the plugins a Vite config lists, nested lists included.
+function pluginNames(plugins: readonly PluginOption[]): string[] {
+  return plugins.flatMap((plugin) => {
+    if (Array.isArray(plugin)) return pluginNames(plugin);
+    return plugin !== null && typeof plugin === "object" && "name" in plugin ? [plugin.name] : [];
+  });
+}
+
+describe("the app's build", () => {
+  it("runs the size budget, then the Brotli variants, on every build", () => {
+    // Without them in vite.config.ts, no limit would stop a build, and no variant would be written.
+    const config = appConfig({ command: "build", mode: "production" });
+
+    const ours = pluginNames(config.plugins ?? []).filter((name) => name.startsWith("ah-"));
+
+    expect(ours).toEqual(["ah-bundle-budget", "ah-compress-assets"]);
   });
 });

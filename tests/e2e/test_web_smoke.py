@@ -45,14 +45,15 @@ runs (always live: ``hub web`` runs the installed hub as its child), approves th
 detail and cancels the resumed run there; the run ends cancelled and its gate approved, with no
 console error and no serious axe violation.
 
-AGH-614 (perf-smooth-web AC-1, AC-2, AC-5, AC-7): the committed build splits the app by route.
-Its Vite manifest gives every screen module ``routes.tsx`` loads through ``import()`` a chunk of
-its own, the entry chunk ``index.html`` loads stays under 400,000 B, and ``index.html`` links every
+AGH-614: the committed build splits the app by route. Its Vite manifest gives every screen module
+``routes.tsx`` loads through ``import()`` a chunk of its own, the entry chunk ``index.html`` loads
+stays under 400,000 B and the vendor chunk under 350,000 B, and ``index.html`` links every
 stylesheet, so each screen has the classes it borrows from another's styles. Its own test
 (``-k route_chunks``) runs ``apps/web/e2e/routes.spec.ts``: a first ``/sessions`` visit fetches
-only the entry, vendor, shared and Sessions chunks (its request log is in the output), every nav
-destination opens in the app, deep links open from a full load, and an aborted Sessions chunk
-shows "This page could not load" in the shell while the other routes still open.
+only the entry, vendor, shared and Sessions chunks (its request log is printed, which
+``pytest -rP -k route_chunks`` shows on a pass), every nav destination opens in the app, deep
+links open from a full load, and an aborted Sessions chunk shows "This page could not load" in the
+shell while the other routes still open.
 
 The page smoke runs every other test of ``smoke.spec.ts``.
 """
@@ -87,12 +88,15 @@ WEB_DIST = REPO_ROOT / "packages" / "api" / "src" / "agent_hub" / "api" / "web_d
 # AGH-614: the build's Vite manifest (which chunk holds each module), and the route table.
 MANIFEST = WEB_DIST / ".vite" / "manifest.json"
 ROUTES_SOURCE = WEB_DIR / "src" / "routes.tsx"
-# AC-1 (O4): one chunk per routed screen module, 31 today (42 ``*Screen`` names and
-# ``LegacyWorkflowRedirect``); the one screen import left static is a small helper, no screen.
+# One chunk per routed screen module, 31 today (42 ``*Screen`` names and
+# ``LegacyWorkflowRedirect``): Rolldown splits by module, and some modules hold several screens.
+# The one screen import left static is a small helper, no screen.
 SCREEN_MODULES = 31
 EAGER_SCREEN_IMPORTS = ["./screens/sessions-list/liveRedirect"]
-# AC-1 (O1): the limit of the entry chunk alone, raw.
+# The limits of the entry chunk alone and of the vendor chunk, raw: the same as the build's own
+# check (``apps/web/src/build/bundleBudget.ts``), so they hold even if that check stops running.
 ENTRY_LIMIT_BYTES = 400_000
+VENDOR_LIMIT_BYTES = 350_000
 PLAYWRIGHT_SECONDS = 300
 REQUEST_SECONDS = 10
 LONG_SESSION_EVENTS = 5_000
@@ -270,6 +274,10 @@ _LAZY_SCREEN = re.compile(r"""\bimport\(\s*["'](\./screens/[^"']+)["']\s*\)""")
 _EAGER_SCREEN = re.compile(r"""\b(?:from|import)\s*["'](\./screens/[^"']+)["']""")
 _MODULE_SCRIPT = re.compile(r'<script type="module"[^>]*\ssrc="/([^"]+)"')
 _STYLESHEET = re.compile(r'<link rel="stylesheet"[^>]*\shref="/([^"]+)"')
+# routes.spec.ts's request log of a first /sessions visit: a total, then one line per file.
+_FIRST_VISIT_LOG = re.compile(
+    r"First /sessions visit: \d+ scripts and styles, \d+ B on the wire\n(?:  assets/\S+ \d+ B\n?)+"
+)
 
 
 def bundle_urls(dist: Path) -> set[str]:
@@ -331,9 +339,9 @@ def _eager_files(manifest: Mapping[str, Mapping[str, Any]]) -> set[str]:
 
 
 def test_loads_each_route_screen_from_own_chunk_when_web_app_built() -> None:
-    """AC-1 (O4, Q-N1): each screen module ``routes.tsx`` loads through ``import()`` is a dynamic
-    entry of the committed build, in a chunk of its own: no other screen module's, not the
-    entry's and none a first load fetches. The only static screen import left is a helper."""
+    """Each screen module ``routes.tsx`` loads through ``import()`` is a dynamic entry of the
+    committed build, in a chunk of its own: no other screen module's, not the entry's and none a
+    first load fetches. The only static screen import left is a helper."""
     source = ROUTES_SOURCE.read_text(encoding="utf-8")
     lazy = sorted({_screen_module(specifier) for specifier in _LAZY_SCREEN.findall(source)})
     assert len(lazy) == SCREEN_MODULES, lazy
@@ -353,7 +361,7 @@ def test_loads_each_route_screen_from_own_chunk_when_web_app_built() -> None:
 
 
 def test_keeps_entry_chunk_under_budget_when_web_app_built() -> None:
-    """AC-1 (O1): the entry chunk the committed ``index.html`` loads is under 400,000 B raw."""
+    """The entry chunk the committed ``index.html`` loads is under 400,000 B raw."""
     scripts = _MODULE_SCRIPT.findall((WEB_DIST / "index.html").read_text(encoding="utf-8"))
     assert len(scripts) == 1, scripts
 
@@ -362,11 +370,24 @@ def test_keeps_entry_chunk_under_budget_when_web_app_built() -> None:
     assert size < ENTRY_LIMIT_BYTES, f"{scripts[0]}: {size:,} B, limit {ENTRY_LIMIT_BYTES:,} B"
 
 
+def test_keeps_vendor_chunk_under_budget_when_web_app_built() -> None:
+    """The vendor chunk of the committed build, the libraries every screen shares, which the
+    manifest names ``vendor``, is under 350,000 B raw."""
+    assert MANIFEST.is_file(), f"no {MANIFEST.relative_to(REPO_ROOT)}: the build has no chunks"
+    manifest: dict[str, dict[str, Any]] = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    vendor = [chunk["file"] for chunk in manifest.values() if chunk.get("name") == "vendor"]
+    assert len(vendor) == 1, vendor
+
+    size = (WEB_DIST / vendor[0]).stat().st_size
+
+    assert size < VENDOR_LIMIT_BYTES, f"{vendor[0]}: {size:,} B, limit {VENDOR_LIMIT_BYTES:,} B"
+
+
 def test_links_every_stylesheet_from_index_when_web_app_built() -> None:
-    """AC-5: every page has every screen's styles, as with one bundle. Screens use classes from
-    each other's stylesheets (the workflow graph on a run, the new feature form), so a stylesheet
-    that came only with its route's chunk would leave a deep-linked screen unstyled, and how a
-    page looked would hang on the screens opened before it."""
+    """Every page has every screen's styles, as with one bundle. Screens use classes from each
+    other's stylesheets (the workflow graph on a run, the new feature form), so a stylesheet that
+    came only with its route's chunk would leave a deep-linked screen unstyled, and how a page
+    looked would hang on the screens opened before it."""
     linked = _STYLESHEET.findall((WEB_DIST / "index.html").read_text(encoding="utf-8"))
     built = sorted(path.relative_to(WEB_DIST).as_posix() for path in WEB_DIST.glob("assets/*.css"))
 
@@ -388,7 +409,7 @@ def _rule_starts(sheet: str, selector: str) -> list[int]:
 
 
 def test_orders_base_styles_after_screen_styles_when_web_app_built() -> None:
-    """AC-5: the one stylesheet keeps the one-bundle build's order (``src/styles/cascade.ts``),
+    """The one stylesheet keeps the one-bundle build's order (``src/styles/cascade.ts``),
     whichever chunk a screen's code comes in. In a chunk's order, rules of the same specificity
     would swap winners on one element, as these pairs did."""
     linked = _STYLESHEET.findall((WEB_DIST / "index.html").read_text(encoding="utf-8"))
@@ -893,11 +914,11 @@ def test_loads_route_chunks_on_demand_when_built_app_served(
     tmp_path: Path,
     run: Callable[..., subprocess.CompletedProcess[str]],
 ) -> None:
-    """AGH-614 (AC-2, AC-5, AC-7): routes.spec.ts over the committed build. A first ``/sessions``
-    visit fetches only the entry, vendor, shared and Sessions chunks, and prints its request log;
-    every nav destination opens in the app and three deep links from a full load, each with its
-    heading, no console error and axe clean; an aborted Sessions chunk shows the route error in
-    the shell, and the other routes still open."""
+    """AGH-614: routes.spec.ts over the committed build. A first ``/sessions`` visit fetches only
+    the entry, vendor, shared and Sessions chunks, and prints its request log; every nav
+    destination opens in the app and three deep links from a full load, each with its heading, no
+    console error and axe clean; an aborted Sessions chunk shows the route error in the shell, and
+    the other routes still open."""
     result = _playwright(
         hub_web,
         installed_hub,
@@ -910,8 +931,11 @@ def test_loads_route_chunks_on_demand_when_built_app_served(
     assert result.returncode == 0, result.stdout + result.stderr
     assert re.search(r"\b4 passed\b", result.stdout), result.stdout
     assert "skipped" not in result.stdout, result.stdout
-    log = r"First /sessions visit: \d+ scripts and styles, \d+ B on the wire"
-    assert re.search(log, result.stdout), result.stdout
+    log = _FIRST_VISIT_LOG.search(result.stdout)
+    assert log is not None, result.stdout
+    # The request log, each script and style with its bytes on the wire, is the evidence of what a
+    # first visit costs: printed, so ``pytest -rP -k route_chunks`` shows it on a pass.
+    print(log.group(0))
 
 
 def test_shows_plan_notice_when_feature_tickets_opened(

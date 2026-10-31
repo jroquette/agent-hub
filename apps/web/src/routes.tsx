@@ -5,22 +5,27 @@ import { useApi } from "./lib/api";
 import { liveRedirectTarget } from "./screens/sessions-list/liveRedirect";
 import { AppShell } from "./shell/AppShell";
 import { RouteError } from "./shell/RouteError";
-import { lazyRedirect, lazyScreen, RouteSkeleton } from "./shell/routeLoading";
+import { lazyRedirect, lazyScreen, Redirect, RouteSkeleton } from "./shell/routeLoading";
 
 /**
  * With no registered hub every route but `/settings/*` (and `/welcome` itself) redirects to
- * `/welcome` (AC-200.54). While the hub list loads, or when it cannot be read, the page shows.
+ * `/welcome` (AC-200.54). While the hub list loads, or when it cannot be read, the page shows; it
+ * also stays drawn until `/welcome` lands, since Welcome's code may still be loading.
  */
 export function HubGate() {
   const hubs = useApi("/api/v1/hubs");
-  if (hubs.data?.items.length === 0) return <Navigate to="/welcome" replace />;
-  return <Outlet />;
+  return (
+    <>
+      <Outlet />
+      {hubs.data?.items.length === 0 && <Navigate to="/welcome" replace />}
+    </>
+  );
 }
 
 /** A `/live` bookmark opens the Sessions grid; a replace, so Back skips it (AC-234.2). */
 function LiveRedirect() {
   const { search } = useLocation();
-  return <Navigate to={liveRedirectTarget(search)} replace />;
+  return <Redirect to={liveRedirectTarget(search)} />;
 }
 
 /**
@@ -30,9 +35,10 @@ function LiveRedirect() {
  * `projects/:project/skills[/<kind>/<source>/<name>]` (AGH-164).
  *
  * Each screen's module loads on demand, in its own chunk; only the shell and the
- * redirects defined here are in the entry, and each redirect waits for its target screen's code.
- * Under the shell, a route whose code does not load, or whose screen throws, shows `RouteError`,
- * and a first load shows the page skeleton until its screen's code arrives.
+ * redirects defined here are in the entry, and each redirect waits for its target screen's code,
+ * as `/workflows`, a screen that only redirects, does. Under the shell, a route whose code does
+ * not load, or whose screen throws, shows `RouteError`, and a first load shows the page skeleton
+ * until its screen's code arrives.
  */
 export const appRoutes: RouteObject[] = [
   {
@@ -179,7 +185,7 @@ export const appRoutes: RouteObject[] = [
                 path: "knowledge",
                 ...lazyRedirect(
                   () => import("./screens/learnings"),
-                  <Navigate to="/knowledge/learnings" replace />,
+                  <Redirect to="/knowledge/learnings" />,
                 ),
               },
               {
@@ -226,7 +232,12 @@ export const appRoutes: RouteObject[] = [
               // Older links: Workflows moved into the Toolkit.
               {
                 path: "workflows",
-                ...lazyScreen(() => import("./screens/workflows"), "WorkflowsScreen"),
+                // It only redirects to the Toolkit, whose code loads with it.
+                ...lazyScreen(
+                  () => import("./screens/workflows"),
+                  "WorkflowsScreen",
+                  () => import("./screens/skills"),
+                ),
               },
               {
                 path: "workflows/new",
@@ -248,10 +259,7 @@ export const appRoutes: RouteObject[] = [
           },
           {
             path: "settings",
-            ...lazyRedirect(
-              () => import("./screens/settings"),
-              <Navigate to="/settings/hubs" replace />,
-            ),
+            ...lazyRedirect(() => import("./screens/settings"), <Redirect to="/settings/hubs" />),
           },
           {
             path: "settings/:section",

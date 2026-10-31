@@ -149,9 +149,9 @@ def test_ships_parsed_builtins_when_generator_wheel_built(
 def test_ships_every_web_dist_file_when_api_wheel_built(
     tmp_path: Path, run: Callable[..., CompletedProcess[str]]
 ) -> None:
-    """Q-N3 (AGH-614): the api wheel ships the committed web build whole, the Vite manifest in
-    the dot folder ``.vite/`` and the Brotli variants included, so an installed ``hub web``
-    serves the same files."""
+    """AGH-614: the api wheel ships the committed web build whole, the Vite manifest in the dot
+    folder ``.vite/`` and the Brotli variants included, so an installed ``hub web`` serves the
+    same files."""
     uv = _uv()
     committed = sorted(
         f"{SHIPPED_WEB_DIST}/{path.relative_to(WEB_DIST).as_posix()}"

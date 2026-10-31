@@ -1,7 +1,7 @@
 import "./Brain.css";
 
 import { useEffect, useRef } from "react";
-import { Navigate, useParams, useSearchParams } from "react-router";
+import { useParams, useSearchParams } from "react-router";
 
 import {
   Banner,
@@ -16,6 +16,7 @@ import {
 import { useScope } from "../../lib/scope";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
+import { Redirect } from "../../shell/routeLoading";
 import { CountCell, KnowledgeProjectIndex, PickFoot } from "../knowledge-index";
 import { useProjectNow } from "../project-overview/queries";
 import { BRAIN_NOTE_STARTERS } from "../learnings/discussLearning";
@@ -417,7 +418,7 @@ function FocusCell({ project }: { project: string }) {
  */
 export function BrainPickerScreen() {
   const [scope] = useScope();
-  if (scope !== null) return <Navigate to={brainHome(scope)} replace />;
+  if (scope !== null) return <Redirect to={brainHome(scope)} />;
   return (
     <KnowledgeProjectIndex
       title="Brain"

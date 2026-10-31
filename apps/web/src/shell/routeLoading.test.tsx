@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ComponentType } from "react";
-import { createMemoryRouter, Link, Navigate, RouterProvider } from "react-router";
+import { createMemoryRouter, Link, RouterProvider } from "react-router";
 import type { RouteObject } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -14,7 +14,7 @@ import {
 } from "../testing/builders";
 import { wholeText } from "../testing/text";
 import { AppShell } from "./AppShell";
-import { lazyRedirect, lazyScreen, RouteSkeleton } from "./routeLoading";
+import { lazyRedirect, lazyScreen, Redirect, RouteSkeleton } from "./routeLoading";
 
 // Spec 22 and ux-change-route-loading.md: nothing new for 300 ms, then the page skeleton (held at
 // least 300 ms), "Loading page" announced after 1 s, and a line under the skeleton after 10 s.
@@ -86,7 +86,7 @@ function sessionsRoutes(sessions: DeferredSessions): RouteObject[] {
       ),
     },
     // As routes.tsx's /live: a bookmark that opens the Sessions screen, by a replace.
-    { path: "live", ...lazyRedirect(sessions.load, <Navigate to="/sessions" replace />) },
+    { path: "live", ...lazyRedirect(sessions.load, <Redirect to="/sessions" />) },
     { path: "sessions", ...lazyScreen(sessions.load, "SessionsListScreen") },
   ]);
 }
@@ -194,21 +194,7 @@ describe("route loading", () => {
   it("keeps the previous screen and its address while a redirect's target code loads", async () => {
     vi.useFakeTimers();
     const sessions = deferredSessions();
-    const router = renderAt(
-      "/",
-      shellRoutes([
-        {
-          index: true,
-          ...lazyScreen(
-            () => Promise.resolve({ PortfolioScreen: PortfolioStandIn }),
-            "PortfolioScreen",
-          ),
-        },
-        // As routes.tsx's /live: a bookmark that opens the Sessions screen, by a replace.
-        { path: "live", ...lazyRedirect(sessions.load, <Navigate to="/sessions" replace />) },
-        { path: "sessions", ...lazyScreen(sessions.load, "SessionsListScreen") },
-      ]),
-    );
+    const router = renderAt("/", sessionsRoutes(sessions));
     await act(async () => {
       await Promise.resolve();
     });

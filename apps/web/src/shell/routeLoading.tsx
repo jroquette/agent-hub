@@ -1,7 +1,7 @@
-import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useState } from "react";
+import { createContext, useContext, useLayoutEffect, useMemo, useState } from "react";
 import type { ComponentType, ReactElement } from "react";
-import { Outlet, useNavigation } from "react-router";
-import type { RouteObject } from "react-router";
+import { Navigate, Outlet, useNavigation } from "react-router";
+import type { RouteObject, To } from "react-router";
 
 import { SKELETON_DELAY_MS, Skeleton, useDelayed, useSkeleton } from "../components/feedback";
 
@@ -10,8 +10,9 @@ import { SKELETON_DELAY_MS, Skeleton, useDelayed, useSkeleton } from "../compone
 
 /** "Loading page" is said only once a route's code has been loading this long (spec 22). */
 const ANNOUNCE_AFTER_MS = 1_000;
-/** From this long on, a line under the skeleton says the page is still loading. */
+/** From this long on, a line under the skeleton, and the status, say the page is still loading. */
 const STILL_LOADING_AFTER_MS = 10_000;
+const STILL_LOADING = "Still loading this page. Check that hub web is still running.";
 
 /** A routed screen's module that did not load: `RouteError` says the page could not load. */
 export class RouteCodeError extends Error {
@@ -33,16 +34,16 @@ function loadCode<Module>(load: () => Promise<Module>): Promise<Module> {
 export interface PageSkeleton {
   /** When the bars of the skeleton shown now appeared (`Date.now()`), or null while none show. */
   shownAt: number | null;
-  /** The skeleton's bars appear (true) or go away (false). */
-  setShown: (shown: boolean) => void;
-  /** "Loading page" is said (true) or taken back (false). */
-  setAnnounced: (announced: boolean) => void;
+  /** The skeleton's bars appeared at `shownAt`, or went away (null). */
+  setShownAt: (shownAt: number | null) => void;
+  /** What the status beside `main#main` says for the skeleton, "" for nothing. */
+  setStatus: (status: string) => void;
 }
 
 export const PageSkeletonContext = createContext<PageSkeleton>({
   shownAt: null,
-  setShown: () => undefined,
-  setAnnounced: () => undefined,
+  setShownAt: () => undefined,
+  setStatus: () => undefined,
 });
 
 /**
@@ -52,12 +53,9 @@ export const PageSkeletonContext = createContext<PageSkeleton>({
  */
 export function usePageSkeleton(): { page: PageSkeleton; busy: boolean; status: string } {
   const [shownAt, setShownAt] = useState<number | null>(null);
-  const [announced, setAnnounced] = useState(false);
-  const setShown = useCallback((shown: boolean) => {
-    setShownAt(shown ? Date.now() : null);
-  }, []);
-  const page = useMemo(() => ({ shownAt, setShown, setAnnounced }), [shownAt, setShown]);
-  return { page, busy: shownAt !== null, status: announced ? "Loading page" : "" };
+  const [status, setStatus] = useState("");
+  const page = useMemo(() => ({ shownAt, setShownAt, setStatus }), [shownAt]);
+  return { page, busy: shownAt !== null, status };
 }
 
 export interface RouteSkeletonProps {
@@ -74,21 +72,27 @@ export function RouteSkeleton({ waited = 0 }: RouteSkeletonProps): ReactElement 
   const shown = useDelayed(SKELETON_DELAY_MS - waited);
   const announced = useDelayed(ANNOUNCE_AFTER_MS - waited);
   const stillLoading = useDelayed(STILL_LOADING_AFTER_MS - waited);
-  const { setShown, setAnnounced } = useContext(PageSkeletonContext);
+  const { setShownAt, setStatus } = useContext(PageSkeletonContext);
   useLayoutEffect(() => {
     if (!shown) return undefined;
-    setShown(true);
+    // A page's bars appear the skeleton delay into its load. So bars that take over from others
+    // already shown, later into the load, go on with their time: the page after them then waits
+    // only for what is left of the 300 ms the user has seen.
+    setShownAt(Date.now() - Math.max(0, waited - SKELETON_DELAY_MS));
     return () => {
-      setShown(false);
+      setShownAt(null);
     };
-  }, [shown, setShown]);
+  }, [shown, waited, setShownAt]);
+  // "Loading page" after 1 s, then the line the skeleton shows after 10 s, which inside the busy
+  // `main` a screen reader would not read.
+  const status = stillLoading ? STILL_LOADING : announced ? "Loading page" : "";
   useLayoutEffect(() => {
-    if (!announced) return undefined;
-    setAnnounced(true);
+    if (status === "") return undefined;
+    setStatus(status);
     return () => {
-      setAnnounced(false);
+      setStatus("");
     };
-  }, [announced, setAnnounced]);
+  }, [status, setStatus]);
   return (
     <div className="ah-page">
       {shown && (
@@ -103,7 +107,7 @@ export function RouteSkeleton({ waited = 0 }: RouteSkeletonProps): ReactElement 
           </div>
           {stillLoading && (
             <p className="ah-small ah-muted" style={{ margin: 0 }}>
-              Still loading this page. Check that hub web is still running.
+              {STILL_LOADING}
             </p>
           )}
         </>
@@ -113,12 +117,13 @@ export function RouteSkeleton({ waited = 0 }: RouteSkeletonProps): ReactElement 
 }
 
 /**
- * A routed page: a screen, or a redirect to one. When it mounts while a page skeleton shows, it
- * keeps the skeleton until that has shown for the skeleton delay: on a first load the router
- * drops its fallback as soon as the page's code arrives, however briefly the fallback's bars have
- * shown. After a navigation `RouteOutlet` has already waited, so the page draws at once.
+ * A routed page: a screen, a redirect to one, or the error page of a route. When it mounts while
+ * a page skeleton shows, it keeps the skeleton until that has shown for the skeleton delay: on a
+ * first load the router drops its fallback as soon as the page's code arrives, or fails to,
+ * however briefly the fallback's bars have shown. After a navigation `RouteOutlet` has already
+ * waited, so the page draws at once.
  */
-function RoutedScreen({ page }: { page: ReactElement }): ReactElement {
+export function RoutedPage({ page }: { page: ReactElement }): ReactElement {
   const { shownAt } = useContext(PageSkeletonContext);
   // How long the skeleton has shown when the page mounts, or null when none shows.
   const [shownFor] = useState(() => (shownAt === null ? null : Date.now() - shownAt));
@@ -126,16 +131,44 @@ function RoutedScreen({ page }: { page: ReactElement }): ReactElement {
   return done ? page : <RouteSkeleton waited={SKELETON_DELAY_MS + (shownFor ?? 0)} />;
 }
 
-/** The route fields that load the screen `name` exports from the module `load` imports, on demand. */
+/**
+ * A page that only redirects: it goes to `to` in place of the current entry, as
+ * `<Navigate replace>` does. A page skeleton that shows as it is drawn stays until the router
+ * lands on `to`, whose code may still be loading: alone, the redirect would draw an empty
+ * `main#main` meanwhile. A page that shows something before it redirects keeps that drawn next to
+ * its `<Navigate>` instead.
+ */
+export function Redirect({ to }: { to: To }): ReactElement {
+  const { shownAt } = useContext(PageSkeletonContext);
+  // Read once, when drawn: from then on the skeleton kept is the redirect's own.
+  const [shownFor] = useState(() => (shownAt === null ? null : Date.now() - shownAt));
+  return (
+    <>
+      {shownFor !== null && <RouteSkeleton waited={SKELETON_DELAY_MS + shownFor} />}
+      <Navigate to={to} replace />
+    </>
+  );
+}
+
+/**
+ * The route fields that load the screen `name` exports from the module `load` imports, on demand.
+ * For a screen that only redirects to a screen of another module, `opens` imports that module too,
+ * so both are in before the route draws, and the previous screen stays until then.
+ */
 export function lazyScreen<Name extends string>(
   load: () => Promise<Record<Name, ComponentType>>,
   name: Name,
+  opens?: () => Promise<unknown>,
 ): Pick<RouteObject, "lazy"> {
   return {
     lazy: async () => {
-      const Screen: ComponentType = (await loadCode(load))[name];
+      const [screens] = await Promise.all([
+        loadCode(load),
+        opens === undefined ? undefined : loadCode(opens),
+      ]);
+      const Screen: ComponentType = screens[name];
       // One element for the route, so a new skeleton state never draws the screen again.
-      return { element: <RoutedScreen page={<Screen />} /> };
+      return { element: <RoutedPage page={<Screen />} /> };
     },
   };
 }
@@ -153,7 +186,7 @@ export function lazyRedirect(
   return {
     lazy: async () => {
       await loadCode(load);
-      return { element: <RoutedScreen page={redirect} /> };
+      return { element: <RoutedPage page={redirect} /> };
     },
   };
 }

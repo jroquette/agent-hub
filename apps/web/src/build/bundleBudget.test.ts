@@ -96,7 +96,7 @@ function code(size: number): string {
 // What `this.error` throws in a Rolldown plugin, which stops the build.
 class BuildStopped extends Error {}
 
-// The plugin's `this` in generateBundle: `error` throws, as Rolldown's does; the log calls print.
+// The plugin's `this` in writeBundle: `error` throws, as Rolldown's does; the log calls print.
 const bundler = {
   error(cause: string | { message: string }): never {
     throw new BuildStopped(typeof cause === "string" ? cause : cause.message);
@@ -106,7 +106,7 @@ const bundler = {
   debug: () => undefined,
 };
 
-// The output bundle Vite hands to generateBundle: the entry, the vendor chunk, a route chunk and the
+// The output bundle Vite hands to writeBundle: the entry, the vendor chunk, a route chunk and the
 // entry's styles.
 function outputBundle(sizes: { entry: number; vendor: number }) {
   const items = [
@@ -124,22 +124,22 @@ function outputBundle(sizes: { entry: number; vendor: number }) {
   return Object.fromEntries(items.map((item) => [item.fileName, item]));
 }
 
-// Runs the plugin's generateBundle hook as Vite does before it writes the build, with `log` as
-// the bundler's `this`.
-async function generateBundle(bundle: object, log: object = bundler): Promise<void> {
-  const hook = budgetPlugin().generateBundle;
+// Runs the plugin's writeBundle hook as Vite does once it has written the build, with `log` as the
+// bundler's `this`.
+async function writeBundle(bundle: object, log: object = bundler): Promise<void> {
+  const hook = budgetPlugin().writeBundle;
   const handler = typeof hook === "object" ? hook.handler : hook;
-  if (handler === undefined) throw new Error("the plugin has no generateBundle hook");
+  if (handler === undefined) throw new Error("the plugin has no writeBundle hook");
   const context = log as unknown as ThisParameterType<typeof handler>;
   const options = { dir: "web_dist" } as unknown as Parameters<typeof handler>[0];
-  await handler.call(context, options, bundle as unknown as Parameters<typeof handler>[1], true);
+  await handler.call(context, options, bundle as unknown as Parameters<typeof handler>[1]);
 }
 
 describe("budgetPlugin", () => {
   it("lets the build go on and prints the entry's and the vendor chunk's size when both are under their limits", async () => {
     const info = vi.fn<(line: string) => void>();
 
-    await generateBundle(outputBundle({ entry: 399_999, vendor: 349_999 }), { ...bundler, info });
+    await writeBundle(outputBundle({ entry: 399_999, vendor: 349_999 }), { ...bundler, info });
 
     const printed = info.mock.calls.map(([line]) => line).join("\n");
     expect(printed).toMatch(lineNaming(ENTRY, 399_999));
@@ -167,7 +167,7 @@ describe("budgetPlugin", () => {
       // Bytes, not characters: a size taken from the string's length would be under the limit.
       expect([Buffer.byteLength(code(size)), code(size).length]).toEqual([size, size - 2]);
 
-      const stopped = generateBundle(outputBundle(sizes));
+      const stopped = writeBundle(outputBundle(sizes));
 
       await expect(stopped).rejects.toThrow(BuildStopped);
       await expect(stopped).rejects.toThrow(lineNaming(file, size, limit));

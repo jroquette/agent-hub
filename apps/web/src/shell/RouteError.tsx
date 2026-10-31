@@ -4,7 +4,7 @@ import type { ReactElement } from "react";
 import { Link, useLocation, useRouteError } from "react-router";
 
 import { Button } from "../components/core";
-import { RouteCodeError } from "./routeLoading";
+import { RouteCodeError, RoutedPage } from "./routeLoading";
 
 // The page the shell shows in `main#main` when a route's code fails to load, or when its screen
 // throws while rendering.
@@ -52,8 +52,15 @@ function copyFor(error: unknown): RouteErrorCopy {
   };
 }
 
-/** The routes' error element: "This page could not load" or "This page could not be shown". */
+/**
+ * The routes' error element: "This page could not load" or "This page could not be shown". A page
+ * skeleton shown on a first load has its 300 ms first, as before a screen.
+ */
 export function RouteError(): ReactElement {
+  return <RoutedPage page={<RouteErrorPage />} />;
+}
+
+function RouteErrorPage(): ReactElement {
   const error = useRouteError();
   const { pathname, search } = useLocation();
   const copy = copyFor(error);

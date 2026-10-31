@@ -20,32 +20,31 @@ export function compressPlugin(): Plugin {
   };
 }
 
-// Stops the build when the entry chunk or the vendor chunk is over its size limit.
+// Stops the build when the entry chunk or the vendor chunk is over its size limit. It checks the
+// files once they are written: Vite empties the output folder before the build renders, so a check
+// that stopped the build any sooner would leave the committed web_dist empty, and hub web run from
+// the checkout with no app. Listed before compressPlugin, it also spares a failed build the Brotli
+// pass.
 export function budgetPlugin(): Plugin {
   return {
     name: "ah-bundle-budget",
     apply: "build",
-    generateBundle: {
-      // Last, because Vite's own generateBundle hooks still change chunk code (the lists of files
-      // to preload), so the sizes checked are those of the files written.
-      order: "post",
-      handler(_options, bundle) {
-        const chunks = Object.values(bundle)
-          .filter((output) => output.type === "chunk")
-          .map((chunk) => ({
-            fileName: chunk.fileName,
-            name: chunk.name,
-            isEntry: chunk.isEntry,
-            size: Buffer.byteLength(chunk.code),
-          }));
-        const check = checkBundle(chunks, { entry: ENTRY_LIMIT_BYTES, vendor: VENDOR_LIMIT_BYTES });
-        if (!check.ok) {
-          this.error(check.lines.join("\n"));
-        }
-        for (const line of check.lines) {
-          this.info(line);
-        }
-      },
+    writeBundle(_options, bundle) {
+      const chunks = Object.values(bundle)
+        .filter((output) => output.type === "chunk")
+        .map((chunk) => ({
+          fileName: chunk.fileName,
+          name: chunk.name,
+          isEntry: chunk.isEntry,
+          size: Buffer.byteLength(chunk.code),
+        }));
+      const check = checkBundle(chunks, { entry: ENTRY_LIMIT_BYTES, vendor: VENDOR_LIMIT_BYTES });
+      if (!check.ok) {
+        this.error(check.lines.join("\n"));
+      }
+      for (const line of check.lines) {
+        this.info(line);
+      }
     },
   };
 }

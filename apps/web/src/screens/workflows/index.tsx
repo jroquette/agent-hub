@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
-import { Link, Navigate, useLocation, useParams, useSearchParams } from "react-router";
+import { Link, useLocation, useParams, useSearchParams } from "react-router";
 
 import {
   AppLink,
@@ -18,6 +18,7 @@ import "../skills/Skills.css";
 import { skillsHome, SKILLS_PICKER, workflowHref, workflowsTab } from "../skills/routes";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
+import { Redirect } from "../../shell/routeLoading";
 import { HistoryPanel } from "../item-history";
 import { kindLabelOf, NodePanel, useNodeParam, WorkflowGraph } from "./WorkflowGraph";
 import {
@@ -74,13 +75,13 @@ export function StepChips({ types }: { types: Record<string, number> }) {
 /** `/workflows`, an older link: the Toolkit's Workflows tab of the project in scope, else the picker. */
 export function WorkflowsScreen() {
   const [scope] = useScope();
-  return <Navigate to={scope === null ? SKILLS_PICKER : workflowsTab(scope)} replace />;
+  return <Redirect to={scope === null ? SKILLS_PICKER : workflowsTab(scope)} />;
 }
 
 /** `/workflows/:project/:name`, an older link: the workflow's page in its project's Toolkit. */
 export function LegacyWorkflowRedirect() {
   const { project = "", name = "" } = useParams();
-  return <Navigate to={workflowHref({ project, name })} replace />;
+  return <Redirect to={workflowHref({ project, name })} />;
 }
 
 type WorkflowView = "graph" | "steps" | "document";
