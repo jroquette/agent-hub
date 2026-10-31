@@ -52,8 +52,12 @@
 .ah-brain-scroll {
   scroll-padding: 24px 0 var(--space-1);
 }
+/* The results have no sticky heading: a focused result's ring shows whole at either edge. */
+.ah-brain-results {
+  scroll-padding: var(--space-1) 0;
+}
 /* Stacked above the note, the card stays in the page: its rows at most half the screen high, and
-   at least 10 rows high. */
+   at least 240 px high (a group heading and about 8 rows). */
 @media (max-width: 900px) {
   .ah-brain-panel,
   .ah-shell:has(.ah-shell-banner > .ah-banner) .ah-brain-panel {

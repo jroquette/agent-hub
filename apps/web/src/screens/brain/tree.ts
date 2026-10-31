@@ -150,6 +150,41 @@ export function treeRows(root: BrainFolder, open: ReadonlySet<string>): TreeRow[
   ];
 }
 
+/** The section that lists a row, from its path alone. */
+function groupOf(path: string): TreeRow["group"] {
+  if (!path.includes("/")) return "start";
+  return path.startsWith(`${INBOX_FOLDER}/`) ? "inbox" : "folders";
+}
+
+const GROUP_ORDER: readonly TreeRow["group"][] = ["start", "folders", "inbox"];
+
+/**
+ * Whether the row of path `a` comes before the row of path `b` in the order `treeRows` lists
+ * them, even when one of them is not listed: by section; in "Start here" the start notes first;
+ * in a folder, its row, then its notes, then its folders, each in the listing's path order.
+ */
+export function comesBefore(a: string, b: string): boolean {
+  const sections = GROUP_ORDER.indexOf(groupOf(a)) - GROUP_ORDER.indexOf(groupOf(b));
+  if (sections !== 0) return sections < 0;
+  if (groupOf(a) === "start") {
+    const starts = Number(startName(b) !== undefined) - Number(startName(a) !== undefined);
+    return starts === 0 ? a < b : starts < 0;
+  }
+  const left = a.split("/");
+  const right = b.split("/");
+  for (let level = 0; level < Math.min(left.length, right.length); level += 1) {
+    const x = left[level] ?? "";
+    const y = right[level] ?? "";
+    // A folder's path ends with "/", so its last part is "": its row comes before its content.
+    if (x === "" || y === "") return x === "" && y !== "";
+    const xFolder = level < left.length - 1;
+    if (xFolder !== level < right.length - 1) return !xFolder;
+    // Folders sort as the listing's paths do, with their "/" ("a-b/" before "a/").
+    if (x !== y) return xFolder ? `${x}/` < `${y}/` : x < y;
+  }
+  return false;
+}
+
 /**
  * The folders a note sits in, as folder paths with their trailing `/`: the tree opens them for the
  * selected note.

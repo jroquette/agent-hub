@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import { aBrainTree, aBrainTreeOf } from "../../testing/builders";
-import { buildTree, countNotes, foldersOf, matchNotes, noteName, treeRows } from "./tree";
+import {
+  buildTree,
+  comesBefore,
+  countNotes,
+  foldersOf,
+  matchNotes,
+  noteName,
+  treeRows,
+} from "./tree";
 import type { TreeRow } from "./tree";
 
 describe("buildTree", () => {
@@ -288,5 +296,69 @@ describe("treeRows", () => {
       ["tree-6/", 101],
       ["_inbox/", 3],
     ]);
+  });
+});
+
+describe("comesBefore", () => {
+  /** Start and other root notes, folders whose names share a start, notes beside a subfolder. */
+  const TRICKY = buildTree(
+    [
+      "_inbox/a.md",
+      "_inbox/sub/b.md",
+      "a-b/x.md",
+      "a/b/c.md",
+      "a/b/d.md",
+      "a/y.md",
+      "a/z/w.md",
+      "glossary.md",
+      "index.md",
+      "now.md",
+      "zeta.md",
+    ].map((path) => ({ path, size: 1 })),
+  );
+  const OPEN = new Set(["_inbox/", "_inbox/sub/", "a-b/", "a/", "a/b/", "a/z/"]);
+
+  it("orders any two rows as treeRows lists them", () => {
+    const rows = treeRows(TRICKY, OPEN).map((row) => row.path);
+    expect(rows).toEqual([
+      "index.md",
+      "now.md",
+      "glossary.md",
+      "zeta.md",
+      "a-b/",
+      "a-b/x.md",
+      "a/",
+      "a/y.md",
+      "a/b/",
+      "a/b/c.md",
+      "a/b/d.md",
+      "a/z/",
+      "a/z/w.md",
+      "_inbox/",
+      "_inbox/a.md",
+      "_inbox/sub/",
+      "_inbox/sub/b.md",
+    ]);
+
+    rows.forEach((first, at) => {
+      expect(comesBefore(first, first)).toBe(false);
+      for (const later of rows.slice(at + 1)) {
+        expect([comesBefore(first, later), comesBefore(later, first)]).toEqual([true, false]);
+      }
+    });
+  });
+
+  it.each([
+    { path: "a/b/cc.md", after: "a/b/c.md", before: "a/b/d.md" },
+    { path: "a/x.md", after: "a/", before: "a/y.md" },
+    { path: "a/c/", after: "a/b/d.md", before: "a/z/" },
+    { path: "b/", after: "a/z/w.md", before: "_inbox/" },
+    { path: "help.md", after: "glossary.md", before: "zeta.md" },
+  ])("places $path, which the tree does not list, between $after and $before", (row) => {
+    const rows = treeRows(TRICKY, OPEN).map((listed) => listed.path);
+    const at = rows.indexOf(row.before);
+
+    expect(rows.indexOf(row.after)).toBe(at - 1);
+    expect(rows.filter((listed) => comesBefore(listed, row.path))).toEqual(rows.slice(0, at));
   });
 });

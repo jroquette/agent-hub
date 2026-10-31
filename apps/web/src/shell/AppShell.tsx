@@ -21,7 +21,7 @@ import { DiscussPanel, useDiscussWidth } from "./DiscussPanel";
 import { DiscussSelection } from "./DiscussSelection";
 import { ScreenDiscussFallback } from "./screenContext";
 import { GlobalStreamProvider, useGlobalStream } from "./GlobalStream";
-import { armGoSequence, clearGoSequence, goSequencePending, typingIn } from "./goSequence";
+import { GO, armGoSequence, clearGoSequence, goSequencePending, typingIn } from "./goSequence";
 import { OfflineBanner } from "./OfflineBanner";
 import { PageSkeletonContext, RouteOutlet, usePageSkeleton } from "./routeLoading";
 import { ShakeToSession } from "./ShakeToSession";
@@ -43,20 +43,6 @@ const ShellContext = createContext<ShellActions>({
 export function useShell(): ShellActions {
   return useContext(ShellContext);
 }
-
-/** `g` then a key goes to a destination (spec 01 keyboard map). */
-const GO: Record<string, string> = {
-  p: "/",
-  // Kept from the retired Live sessions (O-6).
-  l: "/sessions?view=grid",
-  s: "/sessions",
-  r: "/runs",
-  k: "/knowledge/learnings",
-  f: "/features",
-  h: "/health",
-  c: "/config",
-  ",": "/settings",
-};
 
 /** A modal the shell did not open (a Dialog, a confirmation): the shell's keys stay off under it. */
 function otherModalOpen(): boolean {

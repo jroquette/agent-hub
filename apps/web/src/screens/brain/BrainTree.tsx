@@ -1,13 +1,12 @@
 import { defaultRangeExtractor, observeElementRect, useVirtualizer } from "@tanstack/react-virtual";
-import type { Virtualizer } from "@tanstack/react-virtual";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, RefObject } from "react";
 import { flushSync } from "react-dom";
 
 import { AppLink, Icon } from "../../components";
-import { goSequencePending, typingIn } from "../../shell/goSequence";
+import { clearGoSequence, goSequenceTakes, typingIn } from "../../shell/goSequence";
 import { NoteLink } from "./NoteLink";
-import { buildTree, foldersOf, treeRows, type TreeRow } from "./tree";
+import { buildTree, comesBefore, foldersOf, treeRows, type TreeRow } from "./tree";
 
 // The Brain's tree renders only the rows in its box's view: a flat list of rows built from the
 // listing and the open folders, one Tab stop, and keys to move, open and close.
@@ -93,11 +92,14 @@ function parentOf(path: string): string {
 function rovingRow(layout: TreeLayout, current: string | null, selected: string): string | null {
   if (current !== null) {
     if (layout.place.has(current)) return current;
-    // Its row left the list (its folder closed, or a new listing dropped it): its nearest folder.
+    // Its row left the list (its folder closed, or a new listing dropped it): its nearest folder,
+    // else the row listed before it, never a row far from it such as the selected note.
     const folder = foldersOf(current)
       .reverse()
       .find((path) => layout.place.has(path));
     if (folder !== undefined) return folder;
+    const before = layout.rows.findLast((row) => comesBefore(row.path, current));
+    return (before ?? layout.rows[0])?.path ?? null;
   }
   if (layout.place.has(selected)) return selected;
   return layout.rows[0]?.path ?? null;
@@ -150,14 +152,15 @@ function keyMove(
  */
 function scrollToPart(
   box: HTMLElement | null,
-  virtualizer: Virtualizer<HTMLDivElement, Element>,
   { layout, part, center }: { layout: TreeLayout; part: number; center?: boolean },
 ) {
   if (box === null) return;
   const top = layout.tops[part] ?? 0;
   const bottom = top + (layout.parts[part]?.size ?? 0);
   const offset = box.scrollTop;
-  const height = virtualizer.scrollRect?.height ?? FALLBACK_RECT.height;
+  // The box's height now: a render that opens a folder can make it grow before the virtualizer
+  // measures it again.
+  const height = box.clientHeight || FALLBACK_RECT.height;
   if (top - SIZE.heading >= offset && bottom + SIZE.end <= offset + height) return;
   let next = bottom + SIZE.end - height;
   if (center === true) next = (top + bottom - height) / 2;
@@ -361,7 +364,8 @@ export function BrainTree({ project, entries, selected, state, field }: BrainTre
     (index: number) => layout.parts[index]?.size ?? SIZE.note,
     [layout],
   );
-  // The virtualizer is read during render only; nothing memoizes its functions.
+  // Only this render reads the virtualizer, for the rows in view, and nothing memoizes them: the
+  // effects and key handlers scroll the box itself.
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: layout.parts.length,
@@ -369,10 +373,6 @@ export function BrainTree({ project, entries, selected, state, field }: BrainTre
     estimateSize,
     getItemKey,
     overscan: 12,
-    paddingEnd: SIZE.end,
-    // A row the box scrolls to stays below its group's sticky heading, its focus ring in view.
-    scrollPaddingStart: SIZE.heading,
-    scrollPaddingEnd: SIZE.end,
     // Back from the search, the box opens where it was.
     initialOffset: offset,
     initialRect: FALLBACK_RECT,
@@ -397,11 +397,12 @@ export function BrainTree({ project, entries, selected, state, field }: BrainTre
     if (showed(selected)) return;
     markShown(selected);
     if (selectedPart === undefined) return;
-    scrollToPart(boxRef.current, virtualizer, { layout, part: selectedPart, center: true });
-  }, [selected, selectedPart, layout, showed, markShown, virtualizer]);
+    scrollToPart(boxRef.current, { layout, part: selectedPart, center: true });
+  }, [selected, selectedPart, layout, showed, markShown]);
 
   // The row that has focus. When it leaves the list (a new listing dropped it, or its folder
-  // closed), focus goes to the tree's current row, its folder first, never to the page.
+  // closed), focus goes to the tree's current row: its folder, else the row before it, never the
+  // page.
   const focusedRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
     const box = boxRef.current;
@@ -437,7 +438,7 @@ export function BrainTree({ project, entries, selected, state, field }: BrainTre
     const active = document.activeElement;
     if (active !== null && active !== document.body) return;
     if (roving === null || rovingPart === undefined) return;
-    scrollToPart(boxRef.current, virtualizer, { layout, part: rovingPart });
+    scrollToPart(boxRef.current, { layout, part: rovingPart });
     rowElement(boxRef.current, roving)?.focus({ preventScroll: true });
   });
 
@@ -449,18 +450,22 @@ export function BrainTree({ project, entries, selected, state, field }: BrainTre
     flushSync(() => {
       setCurrent(row.path);
     });
-    scrollToPart(boxRef.current, virtualizer, { layout, part });
+    scrollToPart(boxRef.current, { layout, part });
     rowElement(boxRef.current, row.path)?.focus({ preventScroll: true });
   };
 
   const onKey = (event: KeyboardEvent<HTMLElement>, row: TreeRow) => {
     if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
-    // A key typed into a field, or the second key of a `g` sequence, is not the tree's.
-    if (typingIn(event.target) || goSequencePending()) return;
+    // A key typed into a field, or the second key of a `g` sequence (`g k`, `g o`), is not the
+    // tree's.
+    if (typingIn(event.target) || goSequenceTakes(event.key)) return;
     const at = layout.place.get(row.path);
     const move = at === undefined ? null : keyMove(event.key, at, layout, open);
     if (move === null) return;
     event.preventDefault();
+    // The shell skips a key the tree takes, so the tree ends a waiting `g` sequence itself, as
+    // the shell does on any key after `g`.
+    clearGoSequence();
     if ("to" in move) goTo(move.to);
     else if ("toggle" in move) toggle(row.path);
     else if ("open" in move) event.currentTarget.click();

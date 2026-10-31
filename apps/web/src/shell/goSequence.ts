@@ -20,6 +20,34 @@ export function goSequencePending(now = Date.now()): boolean {
   return armedAt !== 0 && now - armedAt < SEQUENCE_MS;
 }
 
+/** `g` then a key goes to a destination (spec 01 keyboard map). */
+export const GO: Readonly<Record<string, string>> = {
+  p: "/",
+  // Kept from the retired Live sessions (O-6).
+  l: "/sessions?view=grid",
+  s: "/sessions",
+  r: "/runs",
+  k: "/knowledge/learnings",
+  f: "/features",
+  h: "/health",
+  c: "/config",
+  ",": "/settings",
+};
+
+/**
+ * The second keys of spec 01's other `g` sequences: `g o` (project switcher), `g u` (up one
+ * crumb), Session detail's `g g`, and destinations not built yet.
+ */
+const OTHER_SEQUENCE_KEYS: ReadonlySet<string> = new Set(["w", "m", "b", "t", "o", "u", "g"]);
+
+/**
+ * Whether `key` is the second key of a `g` sequence that waits for it. A screen whose keys are
+ * also arrows or other letters (a tree's `↓`, `j`) leaves only these to the shell.
+ */
+export function goSequenceTakes(key: string, now = Date.now()): boolean {
+  return goSequencePending(now) && (Object.hasOwn(GO, key) || OTHER_SEQUENCE_KEYS.has(key));
+}
+
 /** A key typed into a field or a dialog is not a shortcut, the shell's or a screen's. */
 export function typingIn(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;

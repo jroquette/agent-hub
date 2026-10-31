@@ -1563,7 +1563,7 @@ describe("BrainScreen tree", () => {
         ["{Home}", "Index"],
         // No g sequence ends with j (spec 01).
         ["j", "Now"],
-      ]) {
+      ] as const) {
         armGoSequence();
         await user.keyboard(key);
         expectFocusOn(nav, row);
