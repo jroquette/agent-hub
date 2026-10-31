@@ -1,5 +1,7 @@
 """Output references, canonical value text and single-pass substitution (AC-213.5)."""
 
+import gc
+
 import pytest
 
 import agent_hub.core.workflows.substitution as substitution
@@ -335,6 +337,25 @@ def test_checks_in_linear_time_when_argv_repeats_c_clusters() -> None:
 def test_classifies_in_linear_time_when_cluster_is_long_and_not_a_flag() -> None:
     assert check_argv(["sh", "-" + "c" * 200_000 + "1", "$INPUTS.issue"]) == []
     assert check_argv(["sh", "--" + "c" * 200_000, "$INPUTS.issue"]) == []
+
+
+def errors_alive() -> int:
+    return sum(isinstance(item, SubstitutionError) for item in gc.get_objects())
+
+
+def test_leaves_no_error_alive_when_argv_reference_is_malformed() -> None:
+    # With the collector off, as `hub workflow list` runs, a cycle through a kept error's
+    # traceback keeps the frames that checked argv alive, which piles up workflow after workflow.
+    gc.disable()
+    try:
+        before = errors_alive()
+        messages = [str(problem.error) for problem in check_argv(["echo", "$INPUTS"])]
+        left = errors_alive() - before
+    finally:
+        gc.enable()
+
+    assert messages == ['"$INPUTS": malformed reference']
+    assert left == 0
 
 
 def test_resolves_ctx_when_run_context_captured_upstream() -> None:
