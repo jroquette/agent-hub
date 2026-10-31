@@ -15,8 +15,7 @@ from pathlib import Path
 from typing import Final
 
 from agent_hub.core.hub_config.problems import ROOT_PATH
-from agent_hub.core.workflows.catalog import LoadProblem, WorkflowFile
-from agent_hub.core.workflows.workflow_reads import SourceStat
+from agent_hub.core.workflows.catalog import LoadProblem, SourceStat, WorkflowFile
 from agent_hub.generator.workflow_discovery import (
     BUILTIN_WORKFLOWS,
     HUB_WORKFLOWS,
