@@ -35,8 +35,11 @@ neither refused nor recorded, and it leaves no marker. Nor does the probe see a 
 socket calls, ``sendmsg`` or ``getnameinfo``, a tool other than the stand-ins that ignores the
 proxy variables, or a call made after the logs are read: when a case does not wait, or by a
 process the wait cannot find, one whose command line does not name the case's folder and that has
-not loaded the probe (a detached shell or git, a Python child still starting). Standard library
-only; ``SITECUSTOMIZE`` runs inside the child, so it stays Python 3.9 code.
+logged no marker (a detached shell or git). A Python child detached as a process's last act
+(from ``atexit``, say), whose command line does not name the folder (``python -c``,
+``python -m``), is usually missed too: the wait ends at its first pass that finds nothing, which
+mostly comes before that child has logged its marker. Standard library only; ``SITECUSTOMIZE``
+runs inside the child, so it stays Python 3.9 code.
 """
 
 import contextlib
@@ -277,7 +280,9 @@ def processes_left(folder: Path, case: Path, *, timeout: float) -> list[str]:
 
     A case's processes: each one whose command line names ``case``, the case's own folder
     (``pgrep -f``), and each Python child the probe at ``folder`` loaded in, whatever its command
-    line. A zombie has ended.
+    line. A zombie has ended. The wait ends at its first pass that finds nothing, so a child that
+    has not logged its marker yet, and whose command line does not name ``case``, is not waited
+    for (the module's docstring).
     """
     end = time.monotonic() + timeout
     while True:
