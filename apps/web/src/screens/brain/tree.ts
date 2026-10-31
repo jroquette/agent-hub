@@ -36,9 +36,20 @@ export function noteName(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1);
 }
 
-/** How many notes a folder holds, its subfolders included. */
+/**
+ * Each folder's count, kept with the folder object: the tree's rows are listed again on every open
+ * and close, while a listing's folders never change once built. A new listing has new folders.
+ */
+const noteCounts = new WeakMap<BrainFolder, number>();
+
+/** How many notes a folder holds, its subfolders included, counted once per folder of a listing. */
 export function countNotes(folder: BrainFolder): number {
-  return folder.notes.length + folder.folders.reduce((sum, child) => sum + countNotes(child), 0);
+  let count = noteCounts.get(folder);
+  if (count === undefined) {
+    count = folder.notes.length + folder.folders.reduce((sum, child) => sum + countNotes(child), 0);
+    noteCounts.set(folder, count);
+  }
+  return count;
 }
 
 /** The root notes every brain starts from, by the name the tree shows them under. */
@@ -58,7 +69,7 @@ export function matchNotes<T extends { path: string }>(entries: readonly T[], qu
     : entries.filter((entry) => entry.path.toLowerCase().includes(needle));
 }
 
-/** One row of the Brain tree, in the flat list the virtual tree renders (AGH-617). */
+/** One row of the Brain tree, in the flat list the virtual tree renders. */
 export interface TreeRow {
   kind: "note" | "folder";
   /** A note's path, or a folder's path with its trailing `/`. */
@@ -73,8 +84,52 @@ export interface TreeRow {
   setSize: number;
   /** The row's place among them, from 1. */
   posInSet: number;
-  /** A folder's notes, its subfolders' included. */
+  /** A folder's notes, its subfolders' included; 0 on a note's row. */
   count: number;
+}
+
+/** The name a root note is shown under in "Start here", when it is one of the start notes. */
+function startName(path: string): string | undefined {
+  return Object.hasOwn(START_NOTES, path) ? START_NOTES[path] : undefined;
+}
+
+/** Notes and folders that share a parent: an open folder's content, or a section's top rows. */
+interface Siblings {
+  notes: readonly BrainEntry[];
+  folders: readonly BrainFolder[];
+}
+
+/** The siblings' rows at one level: the notes, then the folders, each open folder with its rows. */
+function siblingRows(
+  siblings: Siblings,
+  open: ReadonlySet<string>,
+  level: Pick<TreeRow, "group" | "depth">,
+): TreeRow[] {
+  const setSize = siblings.notes.length + siblings.folders.length;
+  const rows = siblings.notes.map((note, index): TreeRow => ({
+    kind: "note",
+    path: note.path,
+    name: startName(note.path) ?? noteName(note.path),
+    ...level,
+    setSize,
+    posInSet: index + 1,
+    count: 0,
+  }));
+  siblings.folders.forEach((folder, index) => {
+    rows.push({
+      kind: "folder",
+      path: folder.path,
+      name: folder.name,
+      ...level,
+      setSize,
+      posInSet: siblings.notes.length + index + 1,
+      count: countNotes(folder),
+    });
+    if (open.has(folder.path)) {
+      rows.push(...siblingRows(folder, open, { group: level.group, depth: level.depth + 1 }));
+    }
+  });
+  return rows;
 }
 
 /**
@@ -82,7 +137,17 @@ export interface TreeRow {
  * subfolders.
  */
 export function treeRows(root: BrainFolder, open: ReadonlySet<string>): TreeRow[] {
-  throw new Error(`treeRows is not implemented yet (${root.path}, ${String(open.size)} open)`);
+  const start = [
+    ...root.notes.filter((note) => startName(note.path) !== undefined),
+    ...root.notes.filter((note) => startName(note.path) === undefined),
+  ];
+  const folders = root.folders.filter((folder) => folder.name !== INBOX_FOLDER);
+  const inbox = root.folders.filter((folder) => folder.name === INBOX_FOLDER);
+  return [
+    ...siblingRows({ notes: start, folders: [] }, open, { group: "start", depth: 0 }),
+    ...siblingRows({ notes: [], folders }, open, { group: "folders", depth: 0 }),
+    ...siblingRows({ notes: [], folders: inbox }, open, { group: "inbox", depth: 0 }),
+  ];
 }
 
 /**
@@ -90,5 +155,9 @@ export function treeRows(root: BrainFolder, open: ReadonlySet<string>): TreeRow[
  * selected note.
  */
 export function foldersOf(path: string): string[] {
-  throw new Error(`foldersOf is not implemented yet (${path})`);
+  const folders: string[] = [];
+  for (let end = path.indexOf("/"); end !== -1; end = path.indexOf("/", end + 1)) {
+    folders.push(path.slice(0, end + 1));
+  }
+  return folders;
 }
