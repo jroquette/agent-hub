@@ -150,7 +150,6 @@ def _usage(uses: Sequence[_Use]) -> Usage:
 
 
 def _windows(uses: Sequence[_Use], now: datetime) -> UsageWindows:
-    # Each window's edge once per call, not once per use: every read counts all the cached uses.
     edges = [now - timedelta(days=days) for days in USAGE_WINDOWS]
     runs = [sum(1 for use in uses if use.at >= edge) for edge in edges]
     runs_7d, runs_30d, runs_90d = runs

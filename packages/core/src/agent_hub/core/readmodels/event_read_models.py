@@ -412,7 +412,8 @@ class FoldedEventReadModels:
         # that date's midnight minus 90 days; each read counts them at its own ``now`` (P2).
         # 64 entries, so every registered hub keeps one: Home's usage table reads each project
         # on every request, and with fewer entries than hubs the LRU would fold them all each
-        # time. An entry is one project's 90-day use times; past days' entries leave by LRU.
+        # time. An entry is one project's 90-day use times; past days' entries stay until 64 are
+        # kept, so the memo holds at most 64 such entries, and past 64 hubs each read refolds.
         self._usage: FoldMemo[tuple[str, date], SkillUses] = FoldMemo(max_entries=64)
 
     # Loading and folding
