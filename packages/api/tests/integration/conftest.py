@@ -167,7 +167,7 @@ def composed(open_composed: Callable[..., Composed]) -> Composed:
 @dataclass
 class SqlCounts:
     """What ``counted_sql`` saw: statements sent through a cursor (``BEGIN`` included) and new
-    DB-API connections opened (with ``NullPool``, one per connection checkout)."""
+    DB-API connections a pool opened (none on a warm route, served by idle pooled ones)."""
 
     statements: int = 0
     connections: int = 0

@@ -9,8 +9,8 @@ fix. Each read also checks one value of the response at each size, so a route th
 the sessions fails rather than passing with fewer queries. A bad status or value fails through
 ``pytest.fail``, outside the xfails' ``raises=AssertionError``: only the count check can be the
 expected failure.
-A statement is anything sent through a cursor, ``BEGIN`` included; the store's engines have no
-pool (``NullPool``), so every checkout opens a new connection.
+A statement is anything sent through a cursor, ``BEGIN`` included; a connection is a new DB-API
+connection a pool opens, so a warm route, served by its engines' idle connections, opens none.
 """
 
 from collections.abc import Callable
@@ -154,7 +154,7 @@ LISTED_N_PLUS_ONE = pytest.mark.xfail(
 ROUTES = [
     pytest.param(
         "/api/v1/projects",
-        Counts(2, 1),
+        Counts(2, 0),
         lambda body: body["items"][0]["live_sessions"],
         Seen(7, 67),
         id="projects",
@@ -199,7 +199,7 @@ ROUTES = [
         marks=LISTED_N_PLUS_ONE,
     ),
     pytest.param(
-        "/api/v1/projects/demo/skills", Counts(2, 1), _skill_uses, Seen(20, 200), id="skills"
+        "/api/v1/projects/demo/skills", Counts(2, 0), _skill_uses, Seen(20, 200), id="skills"
     ),
     pytest.param(
         "/api/v1/doctor/findings?project=demo",
