@@ -1,4 +1,4 @@
-import { Navigate, Outlet, useLocation } from "react-router";
+import { Outlet, useLocation } from "react-router";
 import type { RouteObject } from "react-router";
 
 import { useApi } from "./lib/api";
@@ -9,17 +9,16 @@ import { lazyRedirect, lazyScreen, Redirect, RouteSkeleton } from "./shell/route
 
 /**
  * With no registered hub every route but `/settings/*` (and `/welcome` itself) redirects to
- * `/welcome` (AC-200.54). While the hub list loads, or when it cannot be read, the page shows; it
- * also stays drawn until `/welcome` lands, since Welcome's code may still be loading.
+ * `/welcome` (AC-200.54). While the hub list loads, or when it cannot be read, the page shows.
+ * Once the list comes back empty only the redirect is drawn, so the page's own empty state never
+ * stands in for Welcome, and a page skeleton shown by then stays until Welcome renders. It
+ * redirects again from each page it lands on: a later navigation cancels the one before.
  */
 export function HubGate() {
   const hubs = useApi("/api/v1/hubs");
-  return (
-    <>
-      <Outlet />
-      {hubs.data?.items.length === 0 && <Navigate to="/welcome" replace />}
-    </>
-  );
+  const { key } = useLocation();
+  if (hubs.data?.items.length === 0) return <Redirect key={key} to="/welcome" />;
+  return <Outlet />;
 }
 
 /** A `/live` bookmark opens the Sessions grid; a replace, so Back skips it (AC-234.2). */
