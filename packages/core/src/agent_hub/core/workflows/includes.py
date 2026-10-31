@@ -29,7 +29,7 @@ from typing import Final
 
 from pydantic import JsonValue
 
-from agent_hub.core.features.output_shape import output_path
+from agent_hub.core.features.output_paths import output_path
 from agent_hub.core.workflows.conditions import ConditionParseError, parse_condition
 from agent_hub.core.workflows.document import (
     Loc,
