@@ -296,3 +296,11 @@ export function ConfirmDialog({
     </Dialog>
   );
 }
+
+/**
+ * Whether the loading skeleton shows: only once `pending` has lasted the skeleton delay, then for
+ * at least that long, so a fast answer never flashes it and a slow one never blinks it away.
+ */
+export function useSkeleton(pending: boolean): boolean {
+  throw new Error(`useSkeleton is not implemented yet (${String(pending)})`);
+}
