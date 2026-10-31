@@ -6,7 +6,8 @@ recording proxy (``recording_proxy``) and runs a child (a rendered hook, a ``hub
 child, points every proxy variable at the recorder and puts stand-ins for gh, uv, uvx, claude,
 curl, wget, ssh and git's proxy command first on ``PATH``. Apart from the ``PATH`` the test
 passes, nothing of its own environment reaches the child: no proxy setting, ``NO_PROXY``, git
-config or token.
+config or token. A call is logged when it is made, so before the recorder closes the test waits
+until nothing the child started still runs, detached processes included (``processes_left``).
 
 Once the recorder has closed, ``outbound_calls`` lists what the child tried, one line each:
 
@@ -27,11 +28,14 @@ appends that marker (``pid``, ``ppid``, ``argv``) to ``<folder>/loaded.jsonl``, 
 check that the probe ran in the process it started. Loopback connects and ``localhost`` lookups
 pass untouched.
 
-What the probe cannot see: a Python child run with ``-I``, ``-E`` or ``-S`` never loads the
-sitecustomize, so its own socket calls are neither refused nor recorded, and it leaves no marker.
-Nor does the probe see a C extension's socket calls, ``sendmsg`` or ``getnameinfo``, or a tool
-other than the stand-ins that ignores the proxy variables. Standard library only;
-``SITECUSTOMIZE`` runs inside the child, so it stays Python 3.9 code.
+What the probe cannot see: a Python child run with ``-I``, ``-E`` or ``-S``, or in an environment
+without the probe's ``PYTHONPATH``, never loads the sitecustomize, so its own socket calls are
+neither refused nor recorded, and it leaves no marker. Nor does the probe see a C extension's
+socket calls, ``sendmsg`` or ``getnameinfo``, a tool other than the stand-ins that ignores the
+proxy variables, or a call made after the logs are read: when a case does not wait, or by a
+process the wait cannot find, one whose command line does not name the case's folder and that has
+not loaded the probe (a detached shell or git, a Python child still starting). Standard library
+only; ``SITECUSTOMIZE`` runs inside the child, so it stays Python 3.9 code.
 """
 
 import contextlib
@@ -40,8 +44,10 @@ import os
 import shlex
 import socket
 import socketserver
+import subprocess
 import threading
-from collections.abc import Iterator
+import time
+from collections.abc import Collection, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -261,6 +267,54 @@ def outbound_env(folder: Path, port: int, path: str) -> dict[str, str]:
         # recorder; the user's is under HOME, which is the probe's.
         "GIT_CONFIG_NOSYSTEM": "1",
     } | dict.fromkeys(PROXY_VARIABLES, proxy)
+
+
+def processes_left(folder: Path, case: Path, *, timeout: float) -> list[str]:
+    """Wait, at most ``timeout`` seconds, until nothing a case started still runs; return what
+    still runs then, ``<pid> <command line>`` each (empty once all have ended).
+
+    A case's processes: each one whose command line names ``case``, the case's own folder
+    (``pgrep -f``), and each Python child the probe at ``folder`` loaded in, whatever its command
+    line. A zombie has ended.
+    """
+    end = time.monotonic() + timeout
+    while True:
+        loaded = [marker["pid"] for marker in _json_lines(folder.absolute() / LOADED_LOG)]
+        left = _running({*_named(case), *loaded})
+        if not left or time.monotonic() > end:
+            return left
+        time.sleep(POLL_INTERVAL)
+
+
+def _named(case: Path) -> list[int]:
+    """The process ids whose command line names ``case`` (``pgrep -f``)."""
+    found = subprocess.run(  # noqa: S603 - pgrep with a fixed option and a path
+        ["pgrep", "-f", str(case)],  # noqa: S607 - pgrep from PATH
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if found.returncode > 1:  # 1: no process matched
+        raise RuntimeError(f"pgrep -f {case} failed: {found.stderr.strip()}")
+    return [int(pid) for pid in found.stdout.split()]
+
+
+def _running(pids: Collection[int]) -> list[str]:
+    """``<pid> <command line>`` of each of ``pids`` that ``ps`` lists and is no zombie."""
+    if not pids:
+        return []
+    ids = ",".join(str(pid) for pid in sorted(pids))
+    listed = subprocess.run(  # noqa: S603 - ps with fixed options and process ids
+        ["ps", "-o", "pid=,stat=,args=", "-p", ids],  # noqa: S607 - ps from PATH
+        capture_output=True,
+        text=True,
+        errors="replace",
+        check=False,
+    )
+    if listed.returncode and listed.stderr:  # exit 1 with no message: none of them runs
+        raise RuntimeError(f"ps failed: {listed.stderr.strip()}")
+    rows = [line.split(None, 2) for line in listed.stdout.splitlines()]
+    return [" ".join([row[0], *row[2:]]) for row in rows if not row[1].startswith("Z")]
 
 
 def outbound_calls(folder: Path) -> list[str]:

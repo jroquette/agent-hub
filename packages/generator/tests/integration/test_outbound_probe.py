@@ -6,13 +6,14 @@ the file on an interpreter, the event on stdin), on this interpreter and on a re
 test process keeps a way out of its own (``host_network``): proxy variables at a loopback port,
 a ``NO_PROXY`` that exempts every host, a git URL rewrite, GitHub tokens and git limited to
 ``file`` remotes. A probe that let any of them reach the child would lose the record a case
-expects, or hand the child a credential.
+expects, or hand the child a credential; one case pins the variables the child gets.
 """
 
 import contextlib
 import errno
 import json
 import os
+import re
 import socket
 import subprocess
 from collections.abc import Callable, Iterator
@@ -118,6 +119,92 @@ finally:
 print(json.dumps(seen))
 """
 
+# The start of a hook that makes one call of CAUGHT_CALLS, written after it: refused() and
+# unreachable() exit 1 unless the probe refused the call with ENETUNREACH (raised, or returned by
+# connect_ex); git() runs git ls-remote, which fails once the stand-in it reaches exits 1.
+CALL_HOOK = """\
+import errno
+import socket
+import subprocess
+import sys
+
+sys.stdin.read()
+socket.setdefaulttimeout(5)
+
+
+def unreachable(code):
+    if code != errno.ENETUNREACH:
+        sys.exit("not refused: %r" % (code,))
+
+
+def refused(call, *args):
+    try:
+        call(*args)
+    except OSError as error:
+        unreachable(error.errno)
+    else:
+        sys.exit("not refused: %s" % call.__name__)
+
+
+def git(url):
+    subprocess.run(
+        ["git", "ls-remote", url],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=30,
+        check=False,
+    )
+
+
+"""
+# The calls the other cases leave out: each socket call the probe refuses beside connect, and git
+# over ssh:// and git://, which reach the ssh stand-in and git's proxy command. Each with its line
+# in outbound_calls: a socket call names the hook; git loads no probe, so a stand-in it runs is
+# named by git's process id, which changes each run (``<pid>``).
+CAUGHT_CALLS = [
+    pytest.param(
+        'refused(socket.getaddrinfo, "example.invalid", 443)',
+        "getaddrinfo example.invalid:443 by {hook}",
+        id="getaddrinfo",
+    ),
+    pytest.param(
+        'refused(socket.gethostbyname, "example.invalid")',
+        "gethostbyname example.invalid by {hook}",
+        id="gethostbyname",
+    ),
+    pytest.param(
+        'refused(socket.gethostbyname_ex, "example.invalid")',
+        "gethostbyname_ex example.invalid by {hook}",
+        id="gethostbyname_ex",
+    ),
+    pytest.param(
+        'refused(socket.gethostbyaddr, "192.0.2.1")',
+        "gethostbyaddr 192.0.2.1 by {hook}",
+        id="gethostbyaddr",
+    ),
+    pytest.param(
+        'unreachable(socket.socket().connect_ex(("192.0.2.1", 443)))',
+        "connect_ex 192.0.2.1:443 by {hook}",
+        id="connect_ex",
+    ),
+    # With flags, the address is the third argument.
+    pytest.param(
+        'refused(socket.socket(type=socket.SOCK_DGRAM).sendto, b"x", 0, ("192.0.2.1", 53))',
+        "sendto 192.0.2.1:53 by {hook}",
+        id="sendto",
+    ),
+    pytest.param(
+        'git("ssh://git@example.invalid/x.git")',
+        "ssh -o SendEnv=GIT_PROTOCOL git@example.invalid git-upload-pack '/x.git' by process <pid>",
+        id="git-ssh",
+    ),
+    pytest.param(
+        'git("git://example.invalid/x.git")',
+        "git-proxy-command example.invalid 9418 by process <pid>",
+        id="git-protocol",
+    ),
+]
+
 
 @pytest.fixture(autouse=True)
 def host_network(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -177,6 +264,21 @@ def test_names_script_when_hook_opens_outbound_socket(
     assert missing == [], calls[0]
 
 
+@pytest.mark.parametrize(("call", "record"), CAUGHT_CALLS)
+def test_records_call_when_hook_calls_out(
+    call: str, record: str, *, each_python: str, run_hook_file: RunHook, tmp_path: Path
+) -> None:
+    hook = write_hook(tmp_path, "call_hook.py", f"{CALL_HOOK}{call}\n")
+    folder = tmp_path / "probe"
+
+    with probed(folder) as env:
+        completed = run_hook_file(each_python, hook, stdin=NO_EVENT, cwd=tmp_path, env=env)
+    calls = [re.sub(r"process \d+$", "process <pid>", line) for line in outbound_calls(folder)]
+
+    assert completed.returncode == 0, completed.stderr
+    assert calls == [record.format(hook=hook)]
+
+
 def test_records_proxy_request_when_child_uses_https(
     *, each_python: str, run_hook_file: RunHook, tmp_path: Path
 ) -> None:
@@ -208,6 +310,16 @@ def test_records_tool_when_hook_runs_gh(
     missing = [part for part in ("gh pr list --state open", "gh_hook.py") if part not in calls[0]]
     assert missing == [], calls[0]
     assert HOST_TOKEN not in env.values()
+
+
+def test_builds_env_from_scratch_when_host_has_network_settings(tmp_path: Path) -> None:
+    folder = tmp_path / "probe"
+
+    env = outbound_env(folder, 0, os.defpath)
+
+    probe_variables = {"PATH", "HOME", "PYTHONPATH", "GIT_PROXY_COMMAND", "GIT_CONFIG_NOSYSTEM"}
+    assert set(env) == probe_variables | set(PROXY_VARIABLES)
+    assert folder in Path(env["HOME"]).parents
 
 
 def test_records_nothing_when_connect_is_loopback(
