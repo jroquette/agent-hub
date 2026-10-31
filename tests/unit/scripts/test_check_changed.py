@@ -8,6 +8,7 @@ too. git and every step are fakes: no process starts.
 
 import itertools
 import re
+import shlex
 import threading
 import time
 from collections.abc import Mapping, Sequence
@@ -38,6 +39,8 @@ PLAYGROUND = "tests/unit/scripts/test_playground_export.py"
 STORAGE_DB = "packages/storage/src/agent_hub/storage/db.py"
 CORE_ERRORS = "packages/core/src/agent_hub/core/errors.py"
 HUB_GIT_SOURCE = "packages/hub_git/src/agent_hub/hub_git/git_runner.py"
+CLI_SOURCE = "packages/cli/src/agent_hub/cli/main.py"
+MCP_SERVER_SOURCE = "packages/mcp_server/src/agent_hub/mcp_server/server.py"
 FLAKY_SCRIPT = f"{BUILTIN}/flaky/scripts/repeat.py"
 WEB_COMPONENT = "apps/web/src/components/Dialog.tsx"
 
@@ -199,6 +202,30 @@ def test_runs_storage_dependents_when_storage_source_changes_in_repo() -> None:
     assert (plan.full, plan.web, plan.ignores) == (False, False, ())
 
 
+# api and the repo's scripts name agent_hub.cli only in the commands they start, which is no
+# import; cli imports mcp_server only inside its functions, which is one.
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        pytest.param(CLI_SOURCE, ("packages/cli/tests/unit", *SCAN_FILES), id="cli"),
+        pytest.param(
+            MCP_SERVER_SOURCE,
+            ("packages/mcp_server/tests/unit", "packages/cli/tests/unit", *SCAN_FILES),
+            id="mcp-server",
+        ),
+    ],
+)
+def test_runs_only_importers_tests_when_cli_or_mcp_server_source_changes_in_repo(
+    path: str, expected: tuple[str, ...]
+) -> None:
+    assert [target for target in expected if not (REPO_ROOT / target).exists()] == []
+
+    plan = plan_change([path], import_graph(REPO_ROOT), read_tree(REPO_ROOT))
+
+    assert sorted(plan.tests) == sorted(expected)
+    assert (plan.full, plan.openapi, plan.web, plan.ignores) == (False, False, False, ())
+
+
 @pytest.mark.parametrize(
     ("path", "missing"),
     [
@@ -342,6 +369,24 @@ def test_plans_full_when_path_is_unknown(path: str) -> None:
     assert [reason for reason in plan.reasons if path in reason] != []
 
 
+# The most characters of a path that a reason line shows.
+SHOWN_CHARACTERS = 200
+
+
+@pytest.mark.parametrize(
+    ("path", "shown"),
+    [
+        pytest.param("n" * SHOWN_CHARACTERS, "n" * SHOWN_CHARACTERS, id="at-limit"),
+        pytest.param("n" * (SHOWN_CHARACTERS + 1), f"{'n' * SHOWN_CHARACTERS}…", id="long"),
+        pytest.param("notes/\x1b[2J.txt", "notes/…", id="escape"),
+    ],
+)
+def test_cuts_path_in_reason_when_path_is_long_or_unprintable(path: str, shown: str) -> None:
+    plan = plan_change([path], GRAPH, TREE)
+
+    assert plan.reasons == (f"full: unknown path {shown}",)
+
+
 @pytest.mark.parametrize(
     "path",
     [
@@ -437,6 +482,10 @@ class SourceCase:
         pytest.param(
             SourceCase((), {"HUB_CHANGED_FILES": ""}, "git", GIT_PATHS), id="empty-changed-files"
         ),
+        pytest.param(
+            SourceCase((), {"HUB_CHANGED_FILES": "\n \n"}, "git", GIT_PATHS),
+            id="blank-changed-files",
+        ),
         pytest.param(SourceCase((), {}, "git", GIT_PATHS), id="git"),
     ],
 )
@@ -495,6 +544,8 @@ HOSTILE = "$(touch x).py;rm -rf y"
 NO_STEP = "no-such-step"
 FAILED_OUTPUT = "output of the step that failed"
 PASSED_OUTPUT = "output of the step that passed"
+# How the output's last line starts when a step failed; the failed step's argv follows.
+FAILED_LINE = "check-changed: failed: "
 LANE_WAIT_S = 2.0
 
 
@@ -572,6 +623,7 @@ class RunCase:
     tests: tuple[str, ...]
     openapi: bool
     web: bool
+    ignores: tuple[str, ...] = ()
 
 
 @pytest.mark.parametrize(
@@ -580,6 +632,16 @@ class RunCase:
         pytest.param(RunCase(STORAGE_DB, STORAGE_PLAN, openapi=True, web=False), id="storage"),
         pytest.param(RunCase(FLAKY_SCRIPT, FLAKY_PLAN, openapi=False, web=False), id="pack"),
         pytest.param(RunCase(WEB_COMPONENT, (), openapi=False, web=True), id="web"),
+        pytest.param(
+            RunCase(
+                CORE_ERRORS,
+                (*EVERY_FAST_DIR, *SCAN_FILES),
+                openapi=True,
+                web=False,
+                ignores=(PACK_TESTS,),
+            ),
+            id="core",
+        ),
     ],
 )
 def test_runs_checks_on_whole_tree_when_plan_runs(case: RunCase) -> None:
@@ -589,6 +651,7 @@ def test_runs_checks_on_whole_tree_when_plan_runs(case: RunCase) -> None:
 
     openapi = [call for call in start.calls if _names(call, "scripts.export_openapi")]
     tests = [_pytest_view(call) for call in start.calls if _is_pytest(call)]
+    ignores = [arg for call in start.calls if _is_pytest(call) for arg in call if "ignore" in arg]
     assert code == 0
     assert _make_words(start.calls) >= CHECKS
     assert [call for call in start.calls if any(case.path in arg for arg in call)] == []
@@ -597,6 +660,7 @@ def test_runs_checks_on_whole_tree_when_plan_runs(case: RunCase) -> None:
     assert tests == ([(["unit or contract"], [], frozenset(case.tests))] if case.tests else [])
     assert _make_words(start.calls) & WEB_STEPS == (WEB_STEPS if case.web else set())
     assert _names(start.calls[0], "web-install") is case.web
+    assert ignores == [f"--ignore={path}" for path in case.ignores]
 
 
 @pytest.mark.parametrize(
@@ -610,14 +674,19 @@ def test_runs_checks_on_whole_tree_when_plan_runs(case: RunCase) -> None:
         pytest.param(WEB_COMPONENT, "web-test", id="web-test"),
     ],
 )
-def test_exits_non_zero_when_a_step_fails(path: str, failing: str) -> None:
+def test_exits_non_zero_when_a_step_fails(
+    path: str, failing: str, capsys: pytest.CaptureFixture[str]
+) -> None:
     start = FakeStart(failing=failing)
 
     code = main([path], environ={}, start=start, git=FakeGit({}))
 
     fails = failing != NO_STEP
+    last = capsys.readouterr().out.splitlines()[-1]
     assert any(_names(call, failing) for call in start.calls) is fails
     assert (code != 0) is fails
+    assert last.startswith(FAILED_LINE) is fails
+    assert _names(shlex.split(last.removeprefix(FAILED_LINE)), failing) is fails
 
 
 @pytest.mark.parametrize(
@@ -647,6 +716,23 @@ def test_prints_plan_and_runs_nothing_when_plan_flag_given(
     out = capsys.readouterr().out
     assert (code, start.calls) == (0, [])
     assert [target for target in STORAGE_PLAN if target not in out] == []
+
+
+# The most reason lines the printed plan holds; one more line counts the rest.
+REASONS_SHOWN = 20
+
+
+def test_prints_capped_reasons_when_many_paths_unknown(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    paths = [f"notes/{index:02}.txt" for index in range(REASONS_SHOWN + 1)]
+
+    main(["--plan", *paths], environ={}, start=FakeStart(), git=FakeGit({}))
+
+    out = capsys.readouterr().out
+    hidden = len(paths) - REASONS_SHOWN
+    assert len([path for path in paths if path in out]) == REASONS_SHOWN
+    assert len([line for line in out.splitlines() if f"{hidden} more" in line]) == 1
 
 
 @pytest.mark.parametrize(
