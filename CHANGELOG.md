@@ -19,6 +19,17 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `python -m scripts.check_changed --plan <paths>` prints the plan without running it. A build file, or a path it
   cannot place, runs every fast test. `make check` stays the gate before a PR and in CI (AGH-620).
 
+### Changed
+
+- `hub workflow list` starts faster. With exactly these arguments, the installed `hub` lists the workflows on a path of
+  its own: it loads neither Typer nor the `hub.json` models, and it turns the garbage collector off. The other
+  `hub workflow` commands load less code too (AGH-638).
+  - Any other arguments, or a shell completion request, run the Typer app as before.
+  - In three cases the listing hands over to the Typer app before it prints anything. These are a workflow with a
+    problem, a description with an escape sequence, and text the output's encoding cannot hold. The output and the
+    exit code stay the same.
+  - The `hub` script now runs `agent_hub.cli.console:main`. `python -m agent_hub.cli` still runs the Typer app.
+
 ### Fixed
 
 - `hub doctor` no longer reports `brain.leak` errors for the lines of an ADR draft that reached a repo's `docs/adr/`
