@@ -25,10 +25,7 @@ import agent_hub.core.workflows.includes as includes_module
 from agent_hub.cli import console
 from agent_hub.core.workflows.catalog import check_workflows
 from agent_hub.core.workflows.document import WorkflowDocument
-from agent_hub.core.workflows.rewrite import RewriteError
-from agent_hub.core.workflows.substitution import SubstitutionError
 from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
-from agent_hub.generator.workflow_yaml import WorkflowFileError
 
 ENTRY = "from agent_hub.cli.console import main\n"
 # Only stops a child that hangs: no run comes near it.
@@ -464,14 +461,12 @@ BROKEN_FILES = [
 ]
 
 # What a cycle through a broken file's leftovers (an error kept with its traceback, a parse left
-# half done) keeps alive: its YAML parse tree, the planned documents, the errors and the include
-# resolver.
+# half done) keeps alive: its YAML parse tree, the planned documents, the include resolver, and
+# any error, whatever its class, since a kept traceback may stop short of the documents.
 KEPT_ALIVE = (
     Node,
     WorkflowDocument,
-    SubstitutionError,
-    RewriteError,
-    WorkflowFileError,
+    BaseException,
     includes_module._Resolver,
 )
 
