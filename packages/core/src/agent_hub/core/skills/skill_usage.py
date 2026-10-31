@@ -81,7 +81,8 @@ class _Tally:
 @dataclass(frozen=True, slots=True)
 class SkillUses:
     """Each skill's and agent's uses by bare name: when, and whether a person typed it (never
-    for an agent). Nothing in it depends on ``now``, so ``usage_at`` counts it at any later one."""
+    for an agent). ``usage_at`` is exact at any ``now`` whose 90-day edge is at or after the
+    ``start`` it was folded from, but for an invocation at that edge (module docstring)."""
 
     skills: Mapping[str, tuple[_Use, ...]]
     agents: Mapping[str, tuple[_Use, ...]]
@@ -149,9 +150,9 @@ def _usage(uses: Sequence[_Use]) -> Usage:
 
 
 def _windows(uses: Sequence[_Use], now: datetime) -> UsageWindows:
-    runs = [
-        sum(1 for use in uses if use.at >= now - timedelta(days=days)) for days in USAGE_WINDOWS
-    ]
+    # Each window's edge once per call, not once per use: every read counts all the cached uses.
+    edges = [now - timedelta(days=days) for days in USAGE_WINDOWS]
+    runs = [sum(1 for use in uses if use.at >= edge) for edge in edges]
     runs_7d, runs_30d, runs_90d = runs
     return UsageWindows(
         runs_7d=runs_7d,
