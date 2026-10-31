@@ -1,0 +1,232 @@
+"""The outbound probe's own checks: what it records, what it refuses and what it lets through.
+
+Each case writes a small hook script and runs it as Claude Code runs a hook (``run_hook_file``:
+the file on an interpreter, the event on stdin), on this interpreter and on a real 3.9
+(``each_python``), in the probe's environment (``agent_hub.core.testing.outbound_probe``). This
+test process keeps a way out of its own (``host_network``): proxy variables at a loopback port,
+a ``NO_PROXY`` that exempts every host, a git URL rewrite, GitHub tokens and git limited to
+``file`` remotes. A probe that let any of them reach the child would lose the record a case
+expects, or hand the child a credential.
+"""
+
+import contextlib
+import errno
+import json
+import os
+import socket
+import subprocess
+from collections.abc import Callable, Iterator
+from pathlib import Path
+
+import pytest
+
+from agent_hub.core.testing.loopback import closed_url
+from agent_hub.core.testing.outbound_probe import (
+    outbound_calls,
+    outbound_env,
+    recording_proxy,
+    write_stubs,
+)
+
+type RunHook = Callable[..., subprocess.CompletedProcess[bytes]]
+
+# Both spellings of the proxy variables that curl, git and Python's urllib read.
+PROXY_VARIABLES = (
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+)
+# A made-up token in this process's environment, which no probed child may get.
+HOST_TOKEN = "host-token-for-no-child"  # noqa: S105 - made up, never a real credential
+# An empty event: the scripts below read stdin as a hook does, and ignore it.
+NO_EVENT = b"{}"
+
+# Opens a socket to a TEST-NET-1 address (RFC 5737: no host answers there) and, failing open as
+# a hook does, prints the errno it got.
+BAD_HOOK = """\
+import json
+import socket
+import sys
+
+sys.stdin.read()
+attempt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+attempt.settimeout(5)
+try:
+    attempt.connect(("192.0.2.1", 443))
+    print(json.dumps({"errno": None}))
+except OSError as error:
+    print(json.dumps({"errno": error.errno}))
+finally:
+    attempt.close()
+"""
+
+# Runs git against an https remote whose name never resolves (``.invalid``, RFC 2606), so the
+# only way git can try it is through a proxy.
+GIT_HOOK = """\
+import subprocess
+import sys
+
+sys.stdin.read()
+subprocess.run(
+    ["git", "ls-remote", "https://example.invalid/x.git"],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+    timeout=30,
+)
+"""
+
+# Runs gh itself, with no shell between, so gh's parent is this hook.
+GH_HOOK = """\
+import subprocess
+import sys
+
+sys.stdin.read()
+subprocess.run(
+    ["gh", "pr", "list", "--state", "open"],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+    timeout=30,
+)
+"""
+
+# Connects to the loopback port given on stdin and looks ``localhost`` up twice; then, as the
+# control that shows the probe is live in this process, opens a socket to TEST-NET-1. Prints
+# what each step gave.
+LOOPBACK_HOOK = """\
+import json
+import socket
+import sys
+
+port = json.load(sys.stdin)["port"]
+seen = {}
+with socket.create_connection(("127.0.0.1", port), timeout=5):
+    seen["connect"] = "connected"
+socket.getaddrinfo("localhost", port, type=socket.SOCK_STREAM)
+seen["lookup"] = socket.gethostbyname("localhost")
+attempt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+attempt.settimeout(5)
+try:
+    attempt.connect(("192.0.2.1", 443))
+    seen["outbound"] = None
+except OSError as error:
+    seen["outbound"] = error.errno
+finally:
+    attempt.close()
+print(json.dumps(seen))
+"""
+
+
+@pytest.fixture(autouse=True)
+def host_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """This process's own network settings, which a probed child must never inherit.
+
+    A cloud container's proxy is itself a loopback address, so a child that kept the proxy
+    variables would turn a real call into an allowed loopback connect: here they point at a
+    loopback port that refuses connections. ``NO_PROXY`` would skip the recorder, the git config
+    would send the remote of ``GIT_HOOK`` to that port, ``GIT_ALLOW_PROTOCOL=file`` would stop git
+    before it tries, and the tokens are credentials.
+    """
+    host_proxy = closed_url()
+    for name in PROXY_VARIABLES:
+        monkeypatch.setenv(name, host_proxy)
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.setenv(name, "*")
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", f"url.{host_proxy}/.insteadOf")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "https://example.invalid/")
+    monkeypatch.setenv("GIT_ALLOW_PROTOCOL", "file")
+    for name in ("GH_TOKEN", "GITHUB_TOKEN"):
+        monkeypatch.setenv(name, HOST_TOKEN)
+
+
+@contextlib.contextmanager
+def probed(folder: Path) -> Iterator[dict[str, str]]:
+    """The probe's environment for a child, with its recorder serving until the block ends."""
+    folder.mkdir()
+    write_stubs(folder)
+    with recording_proxy(folder) as port:
+        yield outbound_env(folder, port, os.environ.get("PATH", os.defpath))
+
+
+def write_hook(folder: Path, name: str, text: str) -> Path:
+    hook = folder / name
+    hook.write_text(text, encoding="utf-8")
+    return hook
+
+
+def test_names_script_when_hook_opens_outbound_socket(
+    *, each_python: str, run_hook_file: RunHook, tmp_path: Path
+) -> None:
+    hook = write_hook(tmp_path, "bad_hook.py", BAD_HOOK)
+    folder = tmp_path / "probe"
+
+    with probed(folder) as env:
+        completed = run_hook_file(each_python, hook, stdin=NO_EVENT, cwd=tmp_path, env=env)
+    calls = outbound_calls(folder)
+
+    assert completed.returncode == 0, completed.stderr
+    # Refused by the probe before any packet leaves, whatever the network would have answered.
+    assert json.loads(completed.stdout) == {"errno": errno.ENETUNREACH}
+    assert len(calls) == 1, calls
+    missing = [
+        part for part in ("bad_hook.py", "connect", "192.0.2.1", "443") if part not in calls[0]
+    ]
+    assert missing == [], calls[0]
+
+
+def test_records_proxy_request_when_child_uses_https(
+    *, each_python: str, run_hook_file: RunHook, tmp_path: Path
+) -> None:
+    hook = write_hook(tmp_path, "git_hook.py", GIT_HOOK)
+    folder = tmp_path / "probe"
+
+    with probed(folder) as env:
+        completed = run_hook_file(each_python, hook, stdin=NO_EVENT, cwd=tmp_path, env=env)
+    calls = outbound_calls(folder)
+
+    assert completed.returncode == 0, completed.stderr
+    assert len(calls) == 1, calls
+    assert "CONNECT example.invalid:443" in calls[0]
+
+
+def test_records_tool_when_hook_runs_gh(
+    *, each_python: str, run_hook_file: RunHook, tmp_path: Path
+) -> None:
+    hook = write_hook(tmp_path, "gh_hook.py", GH_HOOK)
+    folder = tmp_path / "probe"
+
+    with probed(folder) as env:
+        completed = run_hook_file(each_python, hook, stdin=NO_EVENT, cwd=tmp_path, env=env)
+    calls = outbound_calls(folder)
+
+    assert completed.returncode == 0, completed.stderr
+    assert len(calls) == 1, calls
+    # The stand-in's arguments, and the hook named as the process that ran it.
+    missing = [part for part in ("gh pr list --state open", "gh_hook.py") if part not in calls[0]]
+    assert missing == [], calls[0]
+    assert HOST_TOKEN not in env.values()
+
+
+def test_records_nothing_when_connect_is_loopback(
+    *, each_python: str, run_hook_file: RunHook, tmp_path: Path
+) -> None:
+    hook = write_hook(tmp_path, "loopback_hook.py", LOOPBACK_HOOK)
+    folder = tmp_path / "probe"
+
+    with socket.create_server(("127.0.0.1", 0)) as listener, probed(folder) as env:
+        stdin = json.dumps({"port": listener.getsockname()[1]}).encode()
+        completed = run_hook_file(each_python, hook, stdin=stdin, cwd=tmp_path, env=env)
+    calls = outbound_calls(folder)
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "connect": "connected",
+        "lookup": "127.0.0.1",
+        "outbound": errno.ENETUNREACH,
+    }
+    # Only the control: the loopback connect and both lookups left no record.
+    assert len(calls) == 1, calls
+    assert "192.0.2.1" in calls[0]
