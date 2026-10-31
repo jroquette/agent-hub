@@ -6,16 +6,20 @@ a fresh interpreter with an environment built from nothing, so whatever the run 
 switches off stays in that child.
 """
 
+import errno
+import gc
 import itertools
 import json
 import os
 import subprocess
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, NoReturn
 
 import pytest
+
+from agent_hub.cli import console
 
 ENTRY = "from agent_hub.cli.console import main\n"
 # Only stops a child that hangs: no run comes near it.
@@ -185,3 +189,218 @@ def test_loads_no_typer_or_read_models_when_fast_path_runs(tmp_path: Path) -> No
     assert (run.code, CHECK_LINE in run.stdout) == (0, True), run.stderr
     assert seen.pop("self-check import") == sorted(NOT_FOR_LISTING)
     assert seen == {"list": []}
+
+
+# The cases below call ``main`` in this process, with a stand-in for the Typer app, so that
+# coverage measures its branches: it does not follow the children above.
+
+
+def one_node_workflow(name: str, description: str) -> str:
+    """The text of a workflow file ``<name>.json`` of one node, with ``description``."""
+    nodes = [{"id": "a", "type": "halt", "reason": "x"}]
+    document = {"version": 1, "name": name, "revision": 1, "description": description}
+    return json.dumps({**document, "nodes": nodes})
+
+
+class FakeStdout:
+    """Stands in for ``sys.stdout``: keeps what is written; ``flush`` raises ``failure``."""
+
+    def __init__(
+        self, *, encoding: str = "utf-8", failure: BaseException | None = None, descriptor: int = -1
+    ) -> None:
+        self.encoding = encoding
+        self.failure = failure
+        self.descriptor = descriptor
+        self.written: list[str] = []
+
+    def write(self, text: str) -> int:
+        self.written.append(text)
+        return len(text)
+
+    def flush(self) -> None:
+        if self.failure is not None:
+            raise self.failure
+
+    def fileno(self) -> int:
+        return self.descriptor
+
+
+@pytest.fixture
+def typer_app_runs(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[bool]]:
+    """Stands in for the Typer app: each run notes whether the garbage collector was on.
+
+    No hub root or completion variable comes from the test's own environment, and the collector
+    is turned back on afterwards, since the listing path leaves it off.
+    """
+    runs: list[bool] = []
+    monkeypatch.setattr("agent_hub.cli.main.app", lambda: runs.append(gc.isenabled()))
+    monkeypatch.delenv("AGENT_HUB_ROOT", raising=False)
+    monkeypatch.delenv("_HUB_COMPLETE", raising=False)
+    enabled = gc.isenabled()
+    yield runs
+    if enabled:
+        gc.enable()
+
+
+def raise_bug(source: object) -> NoReturn:
+    raise RuntimeError("a bug in the catalog")
+
+
+def raise_interrupt(source: object) -> NoReturn:
+    raise KeyboardInterrupt
+
+
+class HandOver(NamedTuple):
+    """An in-process run that ``main`` hands to the Typer app."""
+
+    args: tuple[str, ...] = ("workflow", "list")
+    env: tuple[tuple[str, str], ...] = ()
+    # More files in the hub, by path.
+    files: tuple[tuple[str, str], ...] = ()
+    # Whether it runs in the hub, or in a folder beside it with no hub.json.
+    in_hub: bool = True
+    # The encoding of the stand-in stdout.
+    encoding: str = "utf-8"
+    # Whether building the catalog raises an error.
+    catalog_fails: bool = False
+
+
+HAND_OVERS = [
+    pytest.param(HandOver(args=("workflow", "validate")), id="other-arguments"),
+    pytest.param(HandOver(env=(("_HUB_COMPLETE", "complete_bash"),)), id="completion-variable"),
+    pytest.param(HandOver(in_hub=False), id="outside-a-hub"),
+    pytest.param(
+        HandOver(files=(("workflows/demo/broken.yaml", BROKEN_YAML),)), id="workflow-problem"
+    ),
+    pytest.param(
+        HandOver(files=(("workflows/demo/zz-esc.json", one_node_workflow("zz-esc", "\x1b[0m")),)),
+        id="escape-in-description",
+    ),
+    pytest.param(
+        HandOver(
+            files=(("workflows/demo/zz-cafe.json", one_node_workflow("zz-cafe", "Café")),),
+            encoding="ascii",
+        ),
+        id="ascii-stdout-accented-description",
+    ),
+    pytest.param(HandOver(catalog_fails=True), id="catalog-error"),
+]
+
+
+@pytest.mark.parametrize("case", HAND_OVERS)
+def test_runs_typer_app_with_nothing_printed_when_listing_not_clean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, typer_app_runs: list[bool], *, case: HandOver
+) -> None:
+    hub = write_hub(tmp_path)
+    for relative, text in case.files:
+        (hub / relative).write_text(text, encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(hub if case.in_hub else elsewhere)
+    for name, value in case.env:
+        monkeypatch.setenv(name, value)
+    if case.catalog_fails:
+        monkeypatch.setattr("agent_hub.core.workflows.catalog.check_workflows", raise_bug)
+    stdout = FakeStdout(encoding=case.encoding)
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(sys, "argv", ["hub", *case.args])
+
+    console.main()
+
+    # The Typer app ran once, with the collector on, and nothing was printed before it.
+    assert (typer_app_runs, stdout.written) == ([True], [])
+
+
+@pytest.mark.parametrize("named_by_variable", [False, True], ids=["cwd-is-hub", "hub-in-variable"])
+def test_prints_listing_with_collector_off_when_hub_lists_cleanly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    typer_app_runs: list[bool],
+    *,
+    capsys: pytest.CaptureFixture[str],
+    named_by_variable: bool,
+) -> None:
+    hub = write_hub(tmp_path)
+    if named_by_variable:
+        # The cwd is a hub with no workflow of its own: the variable wins over it.
+        other = tmp_path / "other-hub"
+        other.mkdir()
+        (other / "hub.json").write_text("{}\n", encoding="utf-8")
+        monkeypatch.chdir(other)
+        monkeypatch.setenv("AGENT_HUB_ROOT", str(hub))
+    else:
+        monkeypatch.chdir(hub)
+    monkeypatch.setattr(sys, "argv", ["hub", "workflow", "list"])
+
+    console.main()
+
+    collector_on = gc.isenabled()
+    printed = capsys.readouterr().out.splitlines(keepends=True)
+    assert (typer_app_runs, collector_on) == ([], False)
+    assert CHECK_LINE.decode() in printed
+
+
+def test_exits_like_typer_when_listing_interrupted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    typer_app_runs: list[bool],
+    *,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(write_hub(tmp_path))
+    monkeypatch.setattr("agent_hub.core.workflows.catalog.check_workflows", raise_interrupt)
+    monkeypatch.setattr(sys, "argv", ["hub", "workflow", "list"])
+
+    with pytest.raises(SystemExit) as stop:
+        console.main()
+
+    assert (stop.value.code, typer_app_runs, capsys.readouterr().out) == (130, [], "")
+
+
+@pytest.mark.parametrize(
+    ("failure", "code"),
+    [
+        pytest.param(KeyboardInterrupt(), 130, id="interrupted"),
+        pytest.param(BrokenPipeError(errno.EPIPE, "Broken pipe"), 1, id="pipe-closed"),
+    ],
+)
+def test_exits_like_typer_when_print_interrupted_or_pipe_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    typer_app_runs: list[bool],
+    *,
+    failure: BaseException,
+    code: int,
+) -> None:
+    monkeypatch.chdir(write_hub(tmp_path))
+    # A file of the test's own stands in for fd 1, which a closed pipe sends to /dev/null.
+    descriptor = os.open(tmp_path / "stdout", os.O_WRONLY | os.O_CREAT, 0o600)
+    stdout = FakeStdout(failure=failure, descriptor=descriptor)
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(sys, "argv", ["hub", "workflow", "list"])
+
+    try:
+        with pytest.raises(SystemExit) as stop:
+            console.main()
+        to_null = os.path.samestat(os.fstat(descriptor), os.stat(os.devnull))
+    finally:
+        os.close(descriptor)
+
+    # The whole listing went out in one write, and no run was handed to the Typer app.
+    assert (stop.value.code, len(stdout.written), typer_app_runs) == (code, 1, [])
+    assert CHECK_LINE.decode() in stdout.written[0].splitlines(keepends=True)
+    assert to_null == (code == 1)
+
+
+def test_raises_when_print_fails_without_closed_pipe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, typer_app_runs: list[bool]
+) -> None:
+    monkeypatch.chdir(write_hub(tmp_path))
+    monkeypatch.setattr(sys, "stdout", FakeStdout(failure=OSError(errno.EIO, "I/O error")))
+    monkeypatch.setattr(sys, "argv", ["hub", "workflow", "list"])
+
+    with pytest.raises(OSError, match="I/O error") as raised:
+        console.main()
+
+    # As under Typer, any other error is raised; once printing started, nothing is handed over.
+    assert (raised.value.errno, typer_app_runs) == (errno.EIO, [])
