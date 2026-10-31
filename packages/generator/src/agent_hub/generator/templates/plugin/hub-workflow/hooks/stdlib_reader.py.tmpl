@@ -107,6 +107,18 @@ from dataclasses import dataclass, field
 
 # ``re.compile`` as it was when this module loaded: what ``LazyPattern`` compiles with.
 _compile = re.compile
+# The attributes of a compiled pattern that the hooks read: ``LazyPattern`` keeps each one.
+KEPT_ATTRIBUTES = (
+    "search",
+    "match",
+    "fullmatch",
+    "finditer",
+    "findall",
+    "split",
+    "sub",
+    "pattern",
+    "flags",
+)
 
 
 class LazyPattern:
@@ -114,27 +126,36 @@ class LazyPattern:
 
     Reading any attribute (``search``, ``finditer``, ``pattern``) compiles the pattern once, so
     loading a hook compiles none of its patterns, only the ones a call uses. It is not a
-    ``re.Pattern``: call its methods, never pass it to ``re.search`` and the like. Each such read
-    costs a method call: a loop that runs one per word binds the method once, before it. Like a
-    ``re.Pattern`` it never changes, so a copy or a deep copy is the pattern itself, and a pickle
-    loads back as a pattern of the same arguments.
+    ``re.Pattern``: call its methods, never pass it to ``re.search`` and the like. The compile
+    also sets each of ``KEPT_ATTRIBUTES`` on the instance, so a later read of one is a plain
+    attribute read, as cheap in a loop over words as outside it; only a first read, or a read of
+    another attribute, goes through ``__getattr__``. Like a ``re.Pattern`` it never changes, so a
+    copy or a deep copy is the pattern itself, and a pickle holds only the arguments: it loads
+    back as a pattern of the same arguments.
     """
 
-    __slots__ = ("_args", "_compiled")
+    __slots__ = ("_args", "_compiled", *KEPT_ATTRIBUTES)
 
     def __init__(self, *args: object) -> None:
         self._args = args
         self._compiled: re.Pattern[str] | None = None
 
     def __getattr__(self, name: str) -> object:
-        # Only a name the instance lacks gets here. A name with a leading underscore is never the
-        # pattern's: copy and pickle look up dunders on an instance whose slots are not set yet,
-        # and reading the unset _compiled for them would call this method without end.
+        # Only a name the instance lacks gets here: any name before the first compile, then only
+        # a name it does not keep. A name with a leading underscore is never the pattern's: on an
+        # instance whose slots are not set yet (made by __new__ alone), reading the unset
+        # _compiled for a dunder lookup would call this method without end.
         if name.startswith("_"):
             raise AttributeError(name)
         if self._compiled is None:
-            self._compiled = _compile(*self._args)
+            self._compiled = compiled = _compile(*self._args)
+            for kept in KEPT_ATTRIBUTES:
+                setattr(self, kept, getattr(compiled, kept))
         return getattr(self._compiled, name)
+
+    def __reduce__(self) -> tuple[type[LazyPattern], tuple[object, ...]]:
+        # the arguments only: the kept attributes are the compiled pattern's bound methods
+        return LazyPattern, self._args
 
     def __copy__(self) -> LazyPattern:
         return self
