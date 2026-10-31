@@ -259,7 +259,9 @@ def _whole_references(
         try:
             tokens = _scan(element, scenario=scenario)
         except SubstitutionError as malformed:
-            problems.append(ArgvProblem(index, malformed))
+            # Kept without its traceback: that holds this frame, whose problems hold the error, a
+            # cycle that piles up while `hub workflow list` runs with the collector off.
+            problems.append(ArgvProblem(index, malformed.with_traceback(None)))
             continue
         refs = [(start, end) for start, end, ref in tokens if ref is not None]
         if refs and (len(tokens) > 1 or refs[0] != (0, len(element))):
