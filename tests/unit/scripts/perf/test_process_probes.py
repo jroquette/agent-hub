@@ -46,6 +46,10 @@ HOOK_ROWS = (
     ("stop_gate (no changes)", "stop_gate", "Stop", None),
     ("session_start (local uvx stand-in)", "session_start", "SessionStart", None),
     ("pre_compact", "pre_compact", "PreCompact", None),
+    # AGH-621 (Q15): the one PreToolUse hook, on three tools.
+    ("pre_tool_use (PreToolUse Bash)", "pre_tool_use", "PreToolUse", "Bash"),
+    ("pre_tool_use (PreToolUse Read)", "pre_tool_use", "PreToolUse", "Read"),
+    ("pre_tool_use (PreToolUse Edit)", "pre_tool_use", "PreToolUse", "Edit"),
 )
 # The builders' default transcript lives under this made-up home; no probe input may name it.
 BUILDER_HOME = "/home/dev"
@@ -146,7 +150,7 @@ def test_lists_the_canonical_cli_and_hook_paths_when_probes_are_built(tmp_path: 
         assert argv[1] == str(hub / "plugin" / "hub-workflow" / "hooks" / f"{script}.py")
 
 
-@pytest.mark.parametrize("row", HOOK_ROWS, ids=[row[1] for row in HOOK_ROWS])
+@pytest.mark.parametrize("row", HOOK_ROWS, ids=[row[0] for row in HOOK_ROWS])
 def test_feeds_hook_inputs_from_the_temp_hub_when_a_hook_runs(
     tmp_path: Path, row: tuple[str, str, str, str | None]
 ) -> None:
