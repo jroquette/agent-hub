@@ -690,3 +690,84 @@ def test_keeps_paths_out_of_recipe_when_makefile_read() -> None:
 
     assert "scripts.check_changed" in recipe
     assert "PATHS" not in recipe
+
+
+DOCS_TESTS = (
+    "tests/unit/scripts/test_build_llms_txt.py",
+    "tests/unit/scripts/test_build_flow_catalog.py",
+    "tests/unit/scripts/perf/test_budgets.py",
+)
+BUMP_TEST = f"{PACK_TESTS}/release/scripts/test_bump.py"
+OPENAPI_TEST = "tests/unit/scripts/test_export_openapi.py"
+RETRO_TESTS = f"{PACK_TESTS}/retro"
+# The small tree, plus the test files and the retro pack that the rows below name.
+ROW_TREE = Tree(
+    paths=TREE.paths | {*DOCS_TESTS, BUMP_TEST, OPENAPI_TEST, RETRO_TESTS},
+    packs=TREE.packs | {"retro"},
+)
+
+
+@dataclass(frozen=True)
+class RowCase:
+    path: str
+    tests: tuple[str, ...] = ()
+    ignores: tuple[str, ...] = ()
+    openapi: bool = False
+    reason: bool = False
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(RowCase("docs/TESTING.md", DOCS_TESTS), id="docs"),
+        pytest.param(RowCase("docs/adr/0053-budgets.md", DOCS_TESTS), id="adr"),
+        pytest.param(RowCase("CHANGELOG.md", DOCS_TESTS), id="root-markdown"),
+        pytest.param(RowCase("README.md", (*DOCS_TESTS, BUMP_TEST)), id="readme"),
+        pytest.param(RowCase("llms.txt", DOCS_TESTS), id="llms"),
+        pytest.param(RowCase("llms-full.txt", DOCS_TESTS), id="llms-full"),
+        pytest.param(
+            RowCase("packages/api/openapi.json", (OPENAPI_TEST,), openapi=True), id="openapi"
+        ),
+        pytest.param(RowCase("scripts/seed_demo.py", ("tests/unit",)), id="script"),
+        pytest.param(RowCase("scripts/perf/budgets.json", ("tests/unit",)), id="script-data"),
+        pytest.param(
+            RowCase("tests/unit/scripts/test_seed_demo.py", ("tests/unit",)), id="root-unit-test"
+        ),
+        pytest.param(
+            RowCase("packages/storage/tests/integration/test_event_queries.py", reason=True),
+            id="integration-test",
+        ),
+        pytest.param(
+            RowCase(
+                "packages/generator/tests/integration/golden/retro_metrics/full.golden",
+                (RETRO_TESTS,),
+            ),
+            id="retro-golden",
+        ),
+        # A core change, plus that pack's tests: the other packs' folders are ignored one by
+        # one, since pytest drops a target that lies under an ignored folder.
+        pytest.param(
+            RowCase(
+                f"{BUILTIN}/flaky/flaky.yaml",
+                (*FAST_DIRS, *SCAN_FILES, f"{PACK_TESTS}/flaky"),
+                ignores=(f"{PACK_TESTS}/release", RETRO_TESTS),
+                openapi=True,
+            ),
+            id="pack-definition",
+        ),
+        pytest.param(RowCase("tests/e2e/test_demo_seed.py", reason=True), id="e2e-test"),
+        pytest.param(RowCase("Dockerfile", reason=True), id="dockerfile"),
+        pytest.param(RowCase("compose.yaml", reason=True), id="compose"),
+        pytest.param(RowCase("docker/no-build-ca.pem", reason=True), id="docker"),
+        pytest.param(RowCase(".gitattributes", reason=True), id="gitattributes"),
+        pytest.param(RowCase(".gitignore", reason=True), id="gitignore"),
+        pytest.param(RowCase(".importlinter", reason=True), id="importlinter"),
+    ],
+)
+def test_plans_table_row_when_path_matches_it(case: RowCase) -> None:
+    plan = plan_change([case.path], GRAPH, ROW_TREE)
+
+    assert (plan.full, plan.web) == (False, False)
+    assert sorted(plan.tests) == sorted(case.tests)
+    assert (plan.ignores, plan.openapi) == (case.ignores, case.openapi)
+    assert any(case.path in reason for reason in plan.reasons) is case.reason
