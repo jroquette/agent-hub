@@ -1090,11 +1090,12 @@ def function_imports(module: ast.Module) -> Iterator[tuple[str, int]]:
 # inside a function would reach 3.9 untested. The exceptions, closed, each run on 3.9 by the hook
 # tests: the extension runner imports its sibling reader inside `answer`, so a missing or broken
 # reader ends the run with exit 3 and a one-line cause (its docstring's protocol), and the guard
-# extension tests run that path; the guard loads the sensor only in `record`, on a deny or an ask,
-# and the sensor imports `socket` only when it sends (AGH-621), which the sensor tests run.
+# extension tests run that path; the guard imports the runner only in the child it forks for the
+# extension, which those tests run too, and loads the sensor only in `record`, on a deny or an
+# ask; the sensor imports `socket` only when it sends (AGH-621), which the sensor tests run.
 FUNCTION_IMPORTS = {
     EXTENSION_RUNNER: ["from stdlib_reader import load_hub_file"],
-    GUARD_HOOK: ["from event_sensor import send_decision"],
+    GUARD_HOOK: ["import project_guard_runner", "from event_sensor import send_decision"],
     "plugin/hub-workflow/hooks/event_sensor.py": ["import socket"],
 }
 

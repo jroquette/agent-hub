@@ -57,8 +57,9 @@ hint is the developer's: hub.local.json, else hub.json, else the local part of g
 (git runs only on that deny); with none, the hint has no prefix. A list entry `@hub/<path>` is <path> in the hub that holds this file; with no such hub (plugin cache) it is skipped.
 Then, for Bash and the file tools (EXTENSION_TOOLS) and unless the verdict is deny (final), the project's extension plugin/<project>/hooks/project_guard.py
 of the hub that holds this file (never one found from $CLAUDE_PROJECT_DIR, the cwd or the tool input;
-none in the plugin cache) runs in a child, project_guard_runner.py, with a 3 s timeout that kills its
-whole process group. When that hub.json names no project (unreadable, or no project.name), the one
+none in the plugin cache) runs in a child, project_guard_runner.py's main in a fork of this hook (no
+new interpreter), with a 3 s timeout that kills the child's whole process group (no fork: an ask
+naming the cause). When that hub.json names no project (unreadable, or no project.name), the one
 plugin/*/hooks/project_guard.py there is, if exactly one, runs. It only tightens: its ask or deny
 replaces a weaker verdict, and anything else it does (another answer, extra output, a crash, the
 timeout, a file that resolves outside the hub) is an ask naming the cause, added to a base ask's reason.
@@ -76,13 +77,14 @@ from __future__ import annotations
 
 import bisect
 import glob
+import io
 import itertools
 import json
 import os
 import re
+import select
 import signal
 import stat
-import subprocess
 import sys
 import tempfile
 import time
@@ -2115,37 +2117,127 @@ def _tail(fh: IO[bytes]) -> str:
     return fh.read().decode("utf-8", "replace")
 
 
+def _runner_child(fds: tuple[int, int, int], argv: list[str], event: bytes) -> None:
+    """The forked runner; it never returns into the hook. fds: the pipe's read and write ends and
+    the stderr file. It leads a session of its own, reads the event on stdin, writes its stdout
+    to the pipe and its stderr to the file, and calls project_guard_runner's unchanged main with
+    argv as sys.argv. It always ends with os._exit (main's exit code; 1, with one cause line on
+    stderr, when it fails before or after main), so a batch of events run in one process gets
+    each verdict once."""
+    read_end, write_end, err = fds
+    code = 1
+    try:
+        os.dup2(err, 2)
+        os.setsid()
+        os.dup2(write_end, 1)
+        os.close(write_end)
+        os.close(read_end)
+        null = os.open(os.devnull, os.O_RDONLY)
+        os.dup2(null, 0)
+        os.close(null)
+        sys.stdin = io.TextIOWrapper(io.BytesIO(event), encoding="utf-8")
+        sys.stdout = stdout = open(1, "w", encoding="utf-8", closefd=False)
+        # line-buffered, as a new interpreter's stderr: a line is written before an os._exit
+        sys.stderr = stderr = open(
+            2, "w", encoding="utf-8", errors="backslashreplace", buffering=1, closefd=False
+        )
+        sys.argv = argv
+        import project_guard_runner
+
+        try:
+            project_guard_runner.main()
+            code = 0
+        except SystemExit as stop:  # the runner's own exit, read as Python reads it
+            code = 0 if stop.code is None else stop.code if isinstance(stop.code, int) else 1
+        stdout.flush()
+        stderr.flush()
+    except BaseException as error:  # whatever happens, the child ends in os._exit
+        code = 1
+        cause = " ".join(f"{type(error).__name__}: {error}".split())
+        os.write(2, (cause + "\n").encode("utf-8", "replace"))
+    finally:
+        os._exit(code)
+
+
+def _fork_runner(argv: list[str], event: bytes, err: int) -> tuple[int, int]:
+    """(the forked runner's pid, the read end of its stdout); an OSError when the pipe or the fork
+    fails. The child runs _runner_child and never returns here. The hook starts no thread, so the
+    child, which copies only the calling thread, holds no lock another thread took."""
+    read_end, write_end = os.pipe()
+    try:
+        pid = os.fork()
+    except OSError:
+        os.close(read_end)
+        os.close(write_end)
+        raise
+    if pid == 0:
+        _runner_child((read_end, write_end, err), argv, event)
+    os.close(write_end)
+    return pid, read_end
+
+
+def _output_by(fd: int, deadline: float) -> bytes | None:
+    """All the runner writes to fd, up to EOF; None when the deadline comes first."""
+    chunks = []
+    while True:
+        left = deadline - time.monotonic()
+        if left <= 0 or not select.select([fd], [], [], left)[0]:
+            return None
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
+def _status_by(pid: int, deadline: float) -> int | None:
+    """The runner's wait status once it has ended; None when the deadline comes first. Polled as
+    subprocess waits: 1 ms, doubled up to 50 ms."""
+    delay = 0.0005
+    while True:
+        done, status = os.waitpid(pid, os.WNOHANG)
+        if done:
+            return status
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return None
+        delay = min(delay * 2, left, 0.05)
+        time.sleep(delay)
+
+
+def _kill_runner(pid: int) -> None:
+    """SIGKILL the runner's whole process group, then reap the runner."""
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:  # no such group yet: the child has not left the hook's, so it alone
+        os.kill(pid, signal.SIGKILL)
+    os.waitpid(pid, 0)
+
+
 def run_extension(path: str, data: dict, cfg: Config) -> tuple[Verdict, bool]:
     """(the extension's verdict on the event, whether it failed). A failure is an ask naming the
-    cause. The runner gets its own session, so a timeout kills every process it started."""
+    cause. The runner runs in a forked child of this hook that leads its own session, so a
+    timeout kills every process it started."""
     unusable = _unusable(path, cfg)
     if unusable:
         return _failed(unusable)
-    hub_json = os.path.join(str(cfg.root), "hub.json")
+    argv = [RUNNER, path, os.path.join(str(cfg.root), "hub.json")]
     with tempfile.TemporaryFile() as err:
+        sys.stdout.flush()  # nothing unwritten is copied into the child
+        sys.stderr.flush()
         try:
-            proc = subprocess.Popen(
-                [sys.executable, RUNNER, path, hub_json],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=err,
-                start_new_session=True,
-            )
-        except (OSError, ValueError) as error:
+            pid, read_end = _fork_runner(argv, json.dumps(data).encode("utf-8"), err.fileno())
+        except OSError as error:
             return _failed(f"could not start ({type(error).__name__})")
+        deadline = time.monotonic() + EXTENSION_TIMEOUT
         try:
-            stdout, _ = proc.communicate(json.dumps(data).encode("utf-8"), timeout=EXTENSION_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            try:
-                proc.communicate(timeout=1)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+            stdout = _output_by(read_end, deadline)
+        finally:
+            os.close(read_end)
+        status = None if stdout is None else _status_by(pid, deadline)
+        if status is None:
+            _kill_runner(pid)
             return _failed(f"timed out after {EXTENSION_TIMEOUT} s")
-        cause = _extension_cause(proc.returncode, stdout, _tail(err))
+        cause = _extension_cause(os.waitstatus_to_exitcode(status), stdout, _tail(err))
     if cause:
         return _failed(cause)
     answer = json.loads(stdout.decode("utf-8").strip())

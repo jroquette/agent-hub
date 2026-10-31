@@ -346,7 +346,7 @@
     "plugin/hub-workflow/hooks/guard.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "bc3c25dacae16a9194f006e43add41e417a6a0da4f6ecea45c8a3df0836ada1a"
+      "sha256": "6759590062ea3d8fe3a8a91508d2f5a34c44d90dc79204a2f15ff7a27620bedb"
     },
     "plugin/hub-workflow/hooks/hooks.json": {
       "executable": false,
@@ -371,7 +371,7 @@
     "plugin/hub-workflow/hooks/project_guard_runner.py": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "fe50e04fe056020dbd3b72050b17019b31a25118bc922583dc6d33130b83350c"
+      "sha256": "76c7b2d46d3054123b17dab78b3a76deed60a2c69d5ae81699f48816914c849c"
     },
     "plugin/hub-workflow/hooks/readonly_gate.py": {
       "executable": true,

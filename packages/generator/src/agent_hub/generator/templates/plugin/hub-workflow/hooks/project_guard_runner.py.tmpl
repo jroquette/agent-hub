@@ -1,5 +1,7 @@
 """Runs the project's guard extension for guard.py, in a child process (Python 3.9+, stdlib only).
 
+guard.py forks itself and calls main() in the child (no new interpreter), with sys.argv and the
+standard streams as a run of this file as a script would have them: the contract is the same.
 argv: the extension file (plugin/<project>/hooks/project_guard.py of the hub holding the hooks)
 and that hub's hub.json. stdin: the PreToolUse event, a JSON object. The runner reads the config
 with stdlib_reader.load_hub_file, so the extension gets a HubFile read by attribute
