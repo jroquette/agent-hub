@@ -13,13 +13,22 @@ import json
 import os
 import subprocess
 import sys
+from collections import Counter
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import NamedTuple, NoReturn
 
 import pytest
+from yaml.nodes import Node
 
+import agent_hub.core.workflows.includes as includes_module
 from agent_hub.cli import console
+from agent_hub.core.workflows.catalog import check_workflows
+from agent_hub.core.workflows.document import WorkflowDocument
+from agent_hub.core.workflows.rewrite import RewriteError
+from agent_hub.core.workflows.substitution import SubstitutionError
+from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
+from agent_hub.generator.workflow_yaml import WorkflowFileError
 
 ENTRY = "from agent_hub.cli.console import main\n"
 # Only stops a child that hangs: no run comes near it.
@@ -414,3 +423,88 @@ def test_raises_when_print_fails_without_closed_pipe(
     # Any other error is raised as under Typer, with the same exit code and last line, but shown
     # as a plain traceback, not Typer's boxed one; once printing started, nothing is handed over.
     assert (raised.value.errno, typer_app_runs) == (errno.EIO, [])
+
+
+def broken_node(*lines: str) -> str:
+    """The text of a workflow file ``broken.yaml`` whose one node ``a`` holds ``lines``."""
+    head = "version: 1\nname: broken\nrevision: 1\nnodes:\n  - id: a\n"
+    return head + "".join(f"    {line}\n" for line in lines)
+
+
+# One broken workflow file of each kind, with the one problem the listing hands over for it: a
+# key the YAML loader refuses at the top or nested after a list, an include of no workflow, a
+# malformed reference in argv or in a when, and a key the model refuses.
+BROKEN_FILES = [
+    pytest.param(BROKEN_YAML, 'the key "name" appears more than once', id="top-level-repeated-key"),
+    pytest.param(
+        "version: 1\nname: broken\nnodes:\n  - id: a\nextra:\n  k: 1\n  k: 2\n",
+        'the key "k" appears more than once',
+        id="repeated-key-nested-after-list",
+    ),
+    pytest.param(
+        broken_node("type: include", "include: nowhere"),
+        'no workflow is named "nowhere"',
+        id="include-of-no-workflow",
+    ),
+    pytest.param(
+        broken_node("type: shell", 'command: [echo, "$INPUTS"]'),
+        '"$INPUTS": malformed reference',
+        id="malformed-argv-reference",
+    ),
+    pytest.param(
+        broken_node("type: shell", "command: [make]", "bogus: 1"),
+        "unknown key",
+        id="refused-by-model",
+    ),
+    pytest.param(
+        broken_node("type: shell", "command: [make]", "when: \"$INPUTS == 'x'\""),
+        '"$INPUTS": malformed reference',
+        id="malformed-reference-in-when",
+    ),
+]
+
+# What a cycle through a broken file's leftovers (an error kept with its traceback, a parse left
+# half done) keeps alive: its YAML parse tree, the planned documents, the errors and the include
+# resolver.
+KEPT_ALIVE = (
+    Node,
+    WorkflowDocument,
+    SubstitutionError,
+    RewriteError,
+    WorkflowFileError,
+    includes_module._Resolver,
+)
+
+
+def kept_alive() -> dict[str, int]:
+    """How many objects of each ``KEPT_ALIVE`` type (or of a subtype) the process holds."""
+    by_type = Counter(type(item) for item in gc.get_objects())
+    return {
+        kind.__name__: sum(count for cls, count in by_type.items() if kind in cls.__mro__)
+        for kind in KEPT_ALIVE
+    }
+
+
+@pytest.mark.parametrize(("content", "problem"), BROKEN_FILES)
+def test_leaves_nothing_alive_when_listing_hands_over_a_broken_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, content: str, problem: str
+) -> None:
+    hub = write_hub(tmp_path)
+    (hub / "workflows" / "demo" / "broken.yaml").write_text(content, encoding="utf-8")
+    monkeypatch.setenv("AGENT_HUB_ROOT", str(hub))
+
+    # With the collector off, as `main` lists, such a cycle would pile up file after file until
+    # the hand-over.
+    gc.disable()
+    try:
+        before = kept_alive()
+        text = console._listing_text()
+        after = kept_alive()
+    finally:
+        gc.enable()
+
+    catalog = check_workflows(DiscoveredWorkflowSource(hub))
+    # Self-check: the listing was handed over, for the one problem the case is named after.
+    assert (text, [found.message for found in catalog.problems]) == (None, [problem])
+    left = {name: after[name] - count for name, count in before.items()}
+    assert left == dict.fromkeys(left, 0)
