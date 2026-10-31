@@ -300,8 +300,8 @@ def _load(pack_root: Path, path: Path) -> LoadedWorkflow | WorkflowFileError:
         return load_workflow_bytes(content, source=str(path))
     except WorkflowFileError as error:
         # A new error with the same problem, but no traceback or context: kept as a value, the
-        # caught one holds the parse's frames and nodes in a cycle, which stays until exit when
-        # the collector is off (`hub workflow list`).
+        # caught one holds the parse's frames and nodes in a cycle, which piles up file after file
+        # while `hub workflow list` runs with the collector off.
         return WorkflowFileError(source=error.source, line=error.line, reason=error.reason)
 
 

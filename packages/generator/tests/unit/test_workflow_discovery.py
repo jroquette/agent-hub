@@ -129,8 +129,8 @@ def test_leaves_no_parse_tree_alive_when_loader_refuses_file(
 ) -> None:
     _write(hub / "workflows/p/bad.yaml", content)
 
-    # With the collector off, as `hub workflow list` runs, a cycle through the refused file's error
-    # would keep its YAML nodes alive until the process ends.
+    # With the collector off, as `hub workflow list` runs, a cycle through the refused file's
+    # error or the loader's generators keeps its YAML nodes alive: they pile up file after file.
     gc.disable()
     try:
         before = _nodes_alive()
