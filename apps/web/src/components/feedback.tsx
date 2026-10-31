@@ -299,9 +299,10 @@ export function ConfirmDialog({
 
 /**
  * Whether the loading skeleton shows: only once `pending` has lasted the skeleton delay, then for
- * at least that long, so a fast answer never flashes it and a slow one never blinks it away.
+ * at least that long, so a fast answer never flashes it and a slow one never blinks it away. A
+ * skeleton that took over bars shown earlier, since `shownSince`, holds that long from them.
  */
-export function useSkeleton(pending: boolean): boolean {
+export function useSkeleton(pending: boolean, shownSince: number | null = null): boolean {
   const [shownAt, setShownAt] = useState<number | null>(null);
   useEffect(() => {
     if (pending && shownAt === null) {
@@ -313,17 +314,18 @@ export function useSkeleton(pending: boolean): boolean {
       };
     }
     if (!pending && shownAt !== null) {
+      const since = Math.min(shownAt, shownSince ?? shownAt);
       const timer = setTimeout(
         () => {
           setShownAt(null);
         },
-        Math.max(0, shownAt + SKELETON_DELAY_MS - Date.now()),
+        Math.max(0, since + SKELETON_DELAY_MS - Date.now()),
       );
       return () => {
         clearTimeout(timer);
       };
     }
     return undefined;
-  }, [pending, shownAt]);
+  }, [pending, shownAt, shownSince]);
   return shownAt !== null;
 }

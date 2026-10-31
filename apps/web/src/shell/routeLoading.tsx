@@ -62,7 +62,7 @@ export interface RouteSkeletonProps {
   /**
    * How long the route's code has been loading when the skeleton mounts, in milliseconds. A first
    * load's fallback mounts at once and waits the skeleton delay itself; `RouteOutlet` mounts it
-   * once a navigation has lasted that delay.
+   * once a navigation has lasted that delay, or later into a load whose bars a redirect showed.
    */
   waited?: number;
 }
@@ -192,11 +192,27 @@ export function lazyRedirect(
 }
 
 /**
+ * The page skeleton of a navigation that has lasted the skeleton delay. When it takes over bars
+ * that already show, a redirect's drawn while its target's code loads, it goes on with their time:
+ * "Loading page" and the 10 s line come when they would have.
+ */
+function NavigationSkeleton(): ReactElement {
+  const { shownAt } = useContext(PageSkeletonContext);
+  // Read once, as it takes over: from then on the bars are its own.
+  const [waited] = useState(() =>
+    shownAt === null ? SKELETON_DELAY_MS : SKELETON_DELAY_MS + Date.now() - shownAt,
+  );
+  return <RouteSkeleton waited={waited} />;
+}
+
+/**
  * The routed screen. While a navigation loads the next screen's code, the previous screen stays
- * for the skeleton delay, then the page skeleton takes its place, for at least as long.
+ * for the skeleton delay, then the page skeleton takes its place, for at least as long, counted
+ * from the first bars when it took over others.
  */
 export function RouteOutlet(): ReactElement {
   const navigating = useNavigation().state !== "idle";
-  const skeleton = useSkeleton(navigating);
-  return skeleton ? <RouteSkeleton waited={SKELETON_DELAY_MS} /> : <Outlet />;
+  const { shownAt } = useContext(PageSkeletonContext);
+  const skeleton = useSkeleton(navigating, shownAt);
+  return skeleton ? <NavigationSkeleton /> : <Outlet />;
 }
