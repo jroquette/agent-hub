@@ -272,6 +272,34 @@ def test_answers_not_found_when_variant_requested_by_own_name(
     assert "immutable" not in response.headers.get("cache-control", "")
 
 
+# A case-insensitive disk, as macOS's default is, finds a file under any case of its name. This
+# disk tells cases apart, so the test writes the variant under each spelling it asks for.
+@pytest.mark.usefixtures("compressed_dist")
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param(f"{SCRIPT}.BR", id="variant-ending"),
+        pytest.param("/ASSETS/app-AbCd1234.js.br", id="assets-folder"),
+        pytest.param("/Assets/app-AbCd1234.js.Br", id="both"),
+    ],
+)
+@pytest.mark.parametrize("accept_encoding", ["br", "identity"])
+def test_answers_not_found_when_variant_requested_by_own_name_in_another_case(
+    client: Any, web_dist: Path, *, path: str, accept_encoding: str
+) -> None:
+    spelling = web_dist / path.lstrip("/")
+    spelling.parent.mkdir(exist_ok=True)
+    spelling.write_bytes(SCRIPT_BR_BYTES)
+
+    response, body = _fetch(client, path, accept_encoding=accept_encoding)
+
+    assert response.status_code == 404
+    assert response.headers.get("content-type") == "application/problem+json"
+    assert response.headers.get("content-encoding") is None
+    assert "immutable" not in response.headers.get("cache-control", "")
+    assert SCRIPT_BR_BYTES not in body
+
+
 @pytest.mark.usefixtures("compressed_dist")
 def test_answers_identity_range_when_range_requested(client: Any) -> None:
     response, body = _fetch(client, SCRIPT, accept_encoding="br", headers={"Range": "bytes=0-6"})
