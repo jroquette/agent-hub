@@ -30,13 +30,9 @@ def create_sqlite_engine(path: Path, *, busy_timeout_ms: int = BUSY_TIMEOUT_MS) 
 
     A connection waits up to ``busy_timeout_ms`` for a lock another connection holds.
     """
-    # A pool, so a read reuses a connection instead of opening one: configure_connection sets
-    # the PRAGMAs and isolation_level = None once per DB-API connection, and they stay across
-    # checkouts. The pool rolls back each connection it takes back, so an idle one holds no
-    # snapshot, and write_lock belongs to one `with` block's Connection, not to the pooled one.
-    # No overflow cap, so a read never waits for a connection (a capped pool waits 30 s, then
-    # fails as "cannot read", not "busy"); at most POOL_SIZE stay open when idle, until the
-    # store's owner calls close().
+    # Pooled: the connect listener's settings stay per DB-API connection, the pool rolls back
+    # each returned connection so an idle one holds no snapshot, and write_lock is per Connection.
+    # No overflow cap, so a read never waits: a capped pool fails as "cannot read", not "busy".
     # URL.create, not a "sqlite:///..." string: "?" and "%XX" in a path are file name characters,
     # which URL parsing would read as a query string and escapes.
     # hide_parameters: an error must never carry event payloads into messages or logs.
