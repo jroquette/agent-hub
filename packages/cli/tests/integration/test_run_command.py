@@ -3411,7 +3411,7 @@ class TestHubHooks:
         result = live(run_command, workspace)
 
         assert result.exit_code == 0, result.output
-        decision, reason = hook_decision(hook_run(run_workspace, "guard.py"))
+        decision, reason = hook_decision(hook_run(run_workspace, "pre_tool_use.py"))
         assert decision == "deny"
         assert "prod" in reason
 
@@ -3431,7 +3431,7 @@ class TestHubHooks:
         result = live(run_command, workspace)
 
         assert result.exit_code == 0, result.output
-        decision, reason = hook_decision(hook_run(run_workspace, "guard.py"))
+        decision, reason = hook_decision(hook_run(run_workspace, "pre_tool_use.py"))
         assert decision == "deny"
         assert "pushing to main" in reason
 
@@ -3460,7 +3460,7 @@ class TestHubHooks:
 
     @pytest.mark.parametrize("live_run", [True, False], ids=["live", "dry"])
     @pytest.mark.parametrize(
-        "missing", [".claude/settings.json", "plugin/hub-workflow/hooks/guard.py"]
+        "missing", [".claude/settings.json", "plugin/hub-workflow/hooks/pre_tool_use.py"]
     )
     def test_refuses_run_without_claude_when_hub_hooks_missing(
         self,
