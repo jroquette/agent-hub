@@ -80,3 +80,56 @@ def test_loads_no_run_machinery_when_workflow_list_runs(tmp_path: Path) -> None:
     assert any(line.startswith("issue-to-pr  ") for line in seen.pop("output").splitlines())
     assert seen.pop("self-check import") == sorted(RUN_CHAIN)
     assert seen == {"list": []}
+
+
+# What `hub workflow list` must not load through the Typer app either (AC-33; `typer` itself is
+# allowed there): the read models behind the hub, feature and item-version views, and the chain
+# that reads hub.json and hub.local.json for the commands that start something.
+READ_MODELS_AND_CONFIG_CHAIN = (
+    "agent_hub.core.workflows.workflow_reads",
+    "agent_hub.core.item_versions.capture_item_versions",
+    "agent_hub.core.hubs.hub_registry",
+    "agent_hub.core.features.output_models",
+    "agent_hub.cli.hub_config_reader",
+    "agent_hub.core.hub_config.effective_environments",
+    "agent_hub.core.hub_config.local_config",
+)
+
+
+def test_loads_no_read_model_or_config_chain_when_workflow_list_runs(tmp_path: Path) -> None:
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    (hub / "hub.json").write_text("{}\n")
+    code = (
+        "import importlib, json, sys\n"
+        f"CHAIN = {READ_MODELS_AND_CONFIG_CHAIN!r}\n"
+        "def loaded():\n"
+        "    return sorted(m for m in CHAIN if m in sys.modules)\n"
+        "from typer.testing import CliRunner\n"
+        "import agent_hub.cli.main\n"
+        "env = {'AGENT_HUB_ROOT': sys.argv[1]}\n"
+        "result = CliRunner().invoke(agent_hub.cli.main.app, ['workflow', 'list'], env=env)\n"
+        "assert result.exit_code == 0, result.output\n"
+        "seen = {'output': result.stdout, 'list': loaded()}\n"
+        "for name in CHAIN:\n"
+        "    importlib.import_module(name)\n"
+        "seen['self-check import'] = loaded()\n"
+        "print(json.dumps(seen))\n"
+    )
+
+    result = subprocess.run(  # noqa: S603 - this interpreter, a fixed script
+        [sys.executable, "-c", code, str(hub)],
+        env=fixed_env(),
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    seen = json.loads(result.stdout.splitlines()[-1])
+    # Self-check: the Typer app listed the built-ins, and the probe sees each name of the chain
+    # once it is imported (so a misspelt name cannot pass as "not loaded").
+    assert any(line.startswith("issue-to-pr  ") for line in seen.pop("output").splitlines())
+    assert seen.pop("self-check import") == sorted(READ_MODELS_AND_CONFIG_CHAIN)
+    assert seen == {"list": []}
