@@ -278,8 +278,9 @@ def test_answers_not_found_when_variant_requested_by_own_name(
     assert "immutable" not in response.headers.get("cache-control", "")
 
 
-# A case-insensitive disk, as macOS's default is, finds a file under any case of its name. This
-# disk tells cases apart, so the test writes the variant under each spelling it asks for.
+# A case-insensitive disk, as macOS's default is, finds a file under any case of its name. So that
+# a disk that tells cases apart finds one too, the test writes the variant under each spelling it
+# asks for; on a case-insensitive disk that write lands on the fixture's own variant.
 @pytest.mark.usefixtures("compressed_dist")
 @pytest.mark.parametrize(
     "path",
