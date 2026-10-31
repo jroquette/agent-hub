@@ -43,7 +43,7 @@
     ".claude/settings.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "c703b025b4dbaf06317305459913f76b9cf6097dc90da49ea8089fcba2ee6854"
+      "sha256": "ac58d9bf1d2760ed92ba9fe171c2a8833e7f121462439144625c8cc36a224724"
     },
     ".claude/settings.project.json": {
       "ownership": "seeded"
@@ -341,17 +341,17 @@
     "plugin/hub-workflow/hooks/event_sensor.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "1927880ec63c5abfc9c92666d7b29317971cf8ca30d5dbdc7f1c2fc5bed87c79"
+      "sha256": "7f35221e775e749a16432715675fa13f2f3ac7039669fc5b97f1cea37b811563"
     },
     "plugin/hub-workflow/hooks/guard.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "6759590062ea3d8fe3a8a91508d2f5a34c44d90dc79204a2f15ff7a27620bedb"
+      "sha256": "9cf5f46e6040bf2a43eb7d39aeff287ee6b52947132b7f7e360050e4fd9d6e16"
     },
     "plugin/hub-workflow/hooks/hooks.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "d99120854c13b461e636d60eaf98baf505bf67485cb4f839ee7a3742b26ac843"
+      "sha256": "916c1dd264cbc9287d0d6df20e8918f25c83947f76a8be497b4441ec2d1addb0"
     },
     "plugin/hub-workflow/hooks/hubhooks.py": {
       "executable": false,
@@ -367,6 +367,11 @@
       "executable": true,
       "ownership": "managed",
       "sha256": "9005d66b0022e0bfd61faf61ca19dc9086116a8a9d5fede61d3c62c88b017345"
+    },
+    "plugin/hub-workflow/hooks/pre_tool_use.py": {
+      "executable": true,
+      "ownership": "managed",
+      "sha256": "b31c912573ebc4282958c364ced5d7bf65f3db45a8220f2f7f737e829aa001ae"
     },
     "plugin/hub-workflow/hooks/project_guard_runner.py": {
       "executable": false,

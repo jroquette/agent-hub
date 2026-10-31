@@ -1093,11 +1093,14 @@ def function_imports(module: ast.Module) -> Iterator[tuple[str, int]]:
 # reader ends the run with exit 3 and a one-line cause (its docstring's protocol), and the guard
 # extension tests run that path; the guard imports the runner only in the child it forks for the
 # extension, which those tests run too, and loads the sensor only in `record`, on a deny or an
-# ask; the sensor imports `socket` only when it sends (AGH-621), which the sensor tests run.
+# ask; the sensor imports `socket` only when it sends (AGH-621), which the sensor tests run; and
+# `pre_tool_use.py` imports the guard only for a call it hands to it and the sensor only after the
+# verdict, so a missing or broken one is answered there (AGH-621), which its hook tests run.
 FUNCTION_IMPORTS = {
     EXTENSION_RUNNER: ["from stdlib_reader import load_hub_file"],
     GUARD_HOOK: ["import project_guard_runner", "from event_sensor import send_decision"],
     "plugin/hub-workflow/hooks/event_sensor.py": ["import socket"],
+    "plugin/hub-workflow/hooks/pre_tool_use.py": ["import guard", "import event_sensor"],
 }
 
 

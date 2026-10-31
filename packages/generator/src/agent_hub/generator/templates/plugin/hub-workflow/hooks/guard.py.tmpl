@@ -71,6 +71,8 @@ sensor's send_decision (event_sensor.py beside it): the hook input, its content 
 (reduce_hook: no file content or edit strings leave the machine), with
 decision {by: guard, kind, rule}, rule a stable id read from the reason (RULE_IDS). The send is
 bounded by the sensor's 0.5 s, prints nothing and never changes the decision or the exit code.
+Claude Code runs pre_tool_use.py on PreToolUse, which imports this module, prints answer's verdict
+and sends the same decision itself; run alone, this file still prints and sends it (main).
 """
 
 from __future__ import annotations
@@ -2296,15 +2298,15 @@ def rule_of(reason: str) -> str | None:
     return None
 
 
-def record(data: dict, decision: str, reason: str) -> None:
-    """Send the printed verdict to the control plane; never raises, never prints. The sensor is
-    loaded here, so a call the guard lets through never loads it; without it (a partial install),
-    decisions are simply not recorded."""
+def record(hook: dict, decision: dict) -> None:
+    """Send a printed verdict's decision (answer's) to the control plane; never raises, never
+    prints. The sensor is loaded here, so a call the guard lets through never loads it; without it
+    (a partial install), decisions are simply not recorded."""
     try:
         sys.stdout.flush()
         from event_sensor import send_decision
 
-        send_decision(data, {"by": "guard", "kind": decision, "rule": rule_of(reason)})
+        send_decision(hook, decision)
     except Exception:
         pass
 
@@ -2319,26 +2321,28 @@ def in_auto_mode(verdict: tuple[str, str], data: dict) -> tuple[str, str]:
     return verdict
 
 
-def _print_verdict(data: dict, verdict: tuple[str, str]) -> None:
-    """Print the verdict as the hook's output, then record it."""
+def _print_verdict(data: dict, verdict: tuple[str, str]) -> tuple[dict, dict]:
+    """Print the verdict as the hook's output; return the hook input and the decision to record."""
     decision, reason = in_auto_mode(verdict, data)
     emit({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
                                  "permissionDecisionReason": f"[hub guard] {reason}"}})
-    record(data, decision, reason)
+    return data, {"by": "guard", "kind": decision, "rule": rule_of(reason)}
 
 
-def main() -> None:
-    data, unreadable = read_event()
+def answer(data: dict, unreadable: bool) -> tuple[dict, dict] | None:
+    """Print the verdict on one event, as read_event gives it, and return what record sends: the
+    hook input and the decision; None, with nothing printed, when the call goes through.
+    pre_tool_use.py calls it on the event it read and sends the decision itself."""
     if unreadable:  # not a JSON object: the words cannot be checked, so ask while they are in effect
         cfg = load_config(None)
         if cfg.blocked_words or cfg.blocked_problem:
-            _print_verdict({}, ("ask", BLOCKED_UNCHECKED_REASON.format(BLOCKED_UNREADABLE)))
-        elif cfg.env_files:
-            _print_verdict({}, ("ask", ENV_FILE_UNCHECKED_REASON.format("this call", BLOCKED_UNREADABLE)))
-        return
+            return _print_verdict({}, ("ask", BLOCKED_UNCHECKED_REASON.format(BLOCKED_UNREADABLE)))
+        if cfg.env_files:
+            return _print_verdict({}, ("ask", ENV_FILE_UNCHECKED_REASON.format("this call", BLOCKED_UNREADABLE)))
+        return None
     tool = _str(data.get("tool_name"))
     if tool not in EXTENSION_TOOLS and not _input_tool(tool):
-        return
+        return None
     cfg = load_config(data.get("cwd"))
     verdict = decide(data, cfg, dict(os.environ))
     # a deny is final, and an input tool gets the blocked-word rule only: no extension for either
@@ -2347,8 +2351,13 @@ def main() -> None:
         if path:
             extra, failed = run_extension(path, data, cfg)
             verdict = tighten(verdict, extra, failed)
-    if verdict:
-        _print_verdict(data, verdict)
+    return _print_verdict(data, verdict) if verdict else None
+
+
+def main() -> None:
+    answered = answer(*read_event())
+    if answered:
+        record(*answered)
 
 
 def ask_on_error(kind: str) -> None:

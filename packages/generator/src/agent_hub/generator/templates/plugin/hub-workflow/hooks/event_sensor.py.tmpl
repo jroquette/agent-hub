@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Hook sensor: send each Claude Code hook input to the local control plane (`hub web`).
 
-Registered for eleven events (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse,
-PostToolUseFailure, Notification, Stop, SubagentStart, SubagentStop, PreCompact, SessionEnd). It
-reads the input (at most MAX_STDIN bytes) and reduces what would carry content (reduce_hook): the
+Registered for ten events (SessionStart, UserPromptSubmit, PostToolUse, PostToolUseFailure,
+Notification, Stop, SubagentStart, SubagentStop, PreCompact, SessionEnd); on PreToolUse,
+pre_tool_use.py imports it and sends the input after the guard's verdict, the same way. It reads
+the input (at most MAX_STDIN bytes) and reduces what would carry content (reduce_hook): the
 prompt becomes prompt_chars and prompt_slash_command (its leading /name, if any); a Write's
 content, an Edit's or a MultiEdit edit's old_string and new_string become <key>_lines (line counts;
 a Write under brain/_inbox/ keeps its first markdown heading as content_heading); tool_response

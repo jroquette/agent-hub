@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+"""PreToolUse hook: the guard's verdict, then the event sensor's sends, in one process.
+
+Claude Code runs it on every tool call (matcher *, 10 s), in place of guard.py on the guarded
+tools and event_sensor.py on every tool; both files stay, and each still runs alone. It reads
+stdin once. A call the guard checks (a tool GUARDED_TOOLS matches, or stdin that is not a JSON
+object, whatever the tool) gets guard.py's output byte for byte: the guard module is imported and
+answers here, so the verdict and the partial-install ask are its own. When guard.py itself is
+missing, cannot be imported or fails while it checks, this file prints the guard's ask, naming
+the error: the call is never let through unchecked. Any other call prints nothing.
+Once the verdict is flushed, the sensor part sends what guard.py and event_sensor.py send for the
+event: the guard's decision first when it printed one, then the event's envelope, both within one
+deadline of the sensor's TIMEOUT. Nothing there prints or changes the verdict, a missing or broken
+sensor included, and the exit code is always 0.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# The calls the guard checks: the anchored matcher that started guard.py before this hook (these
+# names exactly, and every MCP tool), searched with re.search as Claude Code read it.
+GUARDED_TOOLS = "^(Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch|Task|Agent|SendMessage)$|^mcp__"
+
+
+def read_stdin() -> bytes | None:
+    """The bytes on stdin; None when it cannot be read (a closed stdin)."""
+    try:
+        return sys.stdin.buffer.read()
+    except (OSError, ValueError):
+        return None
+
+
+def parse_event(raw: bytes | None) -> tuple[dict, bool]:
+    """The event in raw and whether it is unreadable, by the rules of the guard's read_event: blank
+    gives ({}, False); unread, not UTF-8, not JSON, too deep or not an object gives ({}, True)."""
+    if raw is None:
+        return {}, True
+    if not raw.strip():
+        return {}, False
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (ValueError, RecursionError):
+        return {}, True
+    if not isinstance(data, dict):
+        return {}, True
+    return data, False
+
+
+def guarded(data: dict, unreadable: bool) -> bool:
+    """Whether the guard checks the call: an unreadable event, or a tool GUARDED_TOOLS matches."""
+    tool = data.get("tool_name")
+    return unreadable or (isinstance(tool, str) and re.search(GUARDED_TOOLS, tool) is not None)
+
+
+def ask(kind: str) -> None:
+    """guard.py's ask when it cannot check a call (its partial-install ask and its ask on a crash
+    print the same bytes), naming the exception's type."""
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
+                                             "permissionDecisionReason": f"[hub guard] could not check this call ({kind}); confirm"}}))
+
+
+def check(data: dict, unreadable: bool) -> tuple[dict, dict] | None:
+    """Print the guard's verdict on the call; return the hook input and the decision it printed,
+    for the sensor part to send, or None."""
+    try:
+        import guard
+    except SystemExit:  # guard.py's own partial-install branch printed its ask, then exited
+        return None
+    except Exception as error:  # guard.py missing or broken: the same ask
+        ask(type(error).__name__)
+        return None
+    try:
+        return guard.answer(data, unreadable)
+    except Exception as error:  # a crash asks, as guard.py's run_hook makes it
+        ask(type(error).__name__)  # this file's copy: a guard.py cut short has no ask_on_error
+        return None
+
+
+def send(raw: bytes, answered: tuple[dict, dict] | None) -> None:
+    """Post the guard's decision, when there is one, then the event's envelope, as guard.py and
+    event_sensor.py post them, within one deadline of the sensor's TIMEOUT."""
+    import event_sensor
+
+    deadline = time.monotonic() + event_sensor.TIMEOUT
+    if answered is not None:
+        envelope = event_sensor.build_envelope(*answered)
+        if envelope is not None:
+            event_sensor.post_envelope(envelope, deadline - time.monotonic())
+    hook = event_sensor.parse_hook(raw)
+    envelope = None if hook is None else event_sensor.build_envelope(hook)
+    if envelope is not None:
+        event_sensor.post_envelope(envelope, deadline - time.monotonic())
+
+
+def main() -> None:
+    raw = read_stdin()
+    data, unreadable = parse_event(raw)
+    answered = check(data, unreadable) if guarded(data, unreadable) else None
+    try:
+        sys.stdout.flush()  # the whole verdict is out before anything is sent
+        send(raw or b"", answered)
+    except BaseException:  # noqa: B036 - the sensor part never prints or changes the exit code
+        pass
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()
