@@ -1851,16 +1851,20 @@ The stop gate sets this variable for a `check_stop` run only, so that the comman
 changed. It holds the checkout's changed paths, relative to its top, `/`-separated, sorted and unique, one per line
 with no newline after the last (Python's `splitlines()` reads it; a shell `while IFS= read -r` loop gets the last line
 too when fed by a here-string, `<<<`). A path that exists counts when its mtime or its ctime falls in the session, read
-without following a symlink: so a new link to an older file counts, and so does the new name of a file moved with a
-plain `mv`, which keeps the file's mtime but sets its ctime (until the move is staged, git lists it as a deleted file
-and an untracked one). A deleted path, and both the old and the new name of a rename, count whenever `git status`
-lists them. Any file counts, not only code. The variable is left unset, and the command finds the changes itself,
-when git prints any path of the checkout in quotes (git quotes, for example, a name with a space, a quote or a
-control character, and by default a non-ASCII one), when git's output holds U+0085, U+2028 or U+2029 (with
-`core.quotePath=false` git prints them raw inside a name, and `splitlines()` would cut that name in two), when the
-list is over 65,536 bytes, and when the command fails to start with it (`E2BIG`: the gate starts it once more without
-it). A `HUB_CHANGED_FILES` in the gate's own environment reaches no check, `check_fast` included. The paths travel as
-data: the gate never puts them in a command line.
+without following a symlink, so a new link to an older file counts. A plain `mv` keeps a file's mtime but sets its
+ctime, so a moved file counts under its new name (until the move is staged, git lists a deleted file and an untracked
+one). Moving a folder with `mv` sets the folder's ctime only: the files in it keep both dates. So an untracked file also
+counts when a folder between the checkout's top and the file (not the top itself) has its ctime in the session. Every
+file of a moved folder then counts under its new name, and so can an older untracked file in a folder that gained or
+lost an entry. A deleted path counts whenever `git status` lists it, and so do both names of a rename, even one staged
+before the session. Git before 2.29 prints a space in an untracked name without quotes, so the gate splits only a rename
+or copy line at its `->`: a new name that holds `->` stays whole. Any file counts, not only code. The variable is left
+unset, and the command finds the changes itself, when git prints any path of the checkout in quotes (git quotes, for
+example, a name with a space, a quote or a control character, and by default a non-ASCII one), when git's output holds
+U+0085, U+2028 or U+2029 (with `core.quotePath=false` git prints them raw inside a name, and `splitlines()` would cut
+that name in two), when the list is over 65,536 bytes, and when the command fails to start with it (`E2BIG`: the gate
+starts it once more without it). A `HUB_CHANGED_FILES` in the gate's own environment reaches no check, `check_fast`
+included. The paths travel as data: the gate never puts them in a command line.
 
 ### Tracker
 
