@@ -12,12 +12,18 @@ The brain is the hub's private memory, so its text must not land in a code repo.
   way; one equal to a brain line is an error at ``../<dir>/<path>:<line>``, naming the first
   brain line (in listing order). A missing checkout is skipped (the runner reports it, Q-9),
   and so is one that could not be listed (E36).
+- One exception: an ADR draft (``is_adr_draft``) is written to become an ADR, so its lines are
+  no leak in a repo file under ``docs/adr/``, whatever the ADR's number (drafts are renumbered
+  when they land). There a line counts only when another brain file holds it, and the error
+  names that file. Anywhere else in a repo, a draft's line is a leak like any other.
 
-Scale: the brain lines go into a dict once per run, and each file is split once, so a run is
-linear in the total size of the brain and the repos (a lookup hashes the line once), never
-brain lines × repo lines. A message names the brain path and line, never the leaked line.
+Scale: the brain lines go into two dicts once per run (every line, and the lines of the files
+that are no ADR draft), and each file is split once, so a run is linear in the total size of
+the brain and the repos (a lookup hashes the line once), never brain lines × repo lines. A
+message names the brain path and line, never the leaked line.
 """
 
+import re
 from collections.abc import Iterator, Mapping
 from typing import Final
 
@@ -29,39 +35,58 @@ from agent_hub.core.hub_config.versions import cut_echo
 
 DEFAULT_MIN_LINE_LENGTH: Final = 60
 BRAIN_FOLDER: Final = "brain/"
+# Where a repo keeps its ADRs, from its root: an ADR draft's lines may land there.
+ADR_FOLDER: Final = "docs/adr/"
 LEAK_FIX: Final = "reword or remove the line here, or reword the brain note if it quotes this file"
 
+# An ADR draft's brain path: `adr-drafts/<n>-<slug>.md`, `adr-draft.md`, `adr-draft-<slug>.md`
+# or `adr-<n>-draft.md`, as a whole path segment (`my-adr-draft.md` is no draft).
+_ADR_DRAFT: Final = re.compile(r"(?:^|/)adr-(?:\d+-)?draft")
 _TABLE_ROW: Final = "|"
 
 # A trimmed brain line → the first brain path and line that holds it.
 type BrainLines = Mapping[str, tuple[str, int]]
 
 
+def is_adr_draft(path: str) -> bool:
+    """Whether the brain file at ``path`` drafts an ADR, so its lines may land in ``docs/adr/``."""
+    return _ADR_DRAFT.search(path) is not None
+
+
 def _brain_leak(snapshot: DoctorSnapshot) -> Iterator[Finding]:
     settings = snapshot.hub_config.doctor.rules.brain_leak
     length = None if settings is None else settings.min_line_length
-    brain = _brain_lines(snapshot.hub, min_length=length or DEFAULT_MIN_LINE_LENGTH)
-    if not brain:
+    every, notes = _brain_lines(snapshot.hub, min_length=length or DEFAULT_MIN_LINE_LENGTH)
+    if not every:
         return
     for repo in snapshot.repos:
         # A checkout that could not be listed is skipped like a missing one (E36).
         if repo.files is not None and repo.files.problem is None:
-            yield from _repo_findings(repo.files, brain=brain, shown_as=f"../{repo.dir}/")
+            yield from _repo_findings(
+                repo.files, every=every, notes=notes, shown_as=f"../{repo.dir}/"
+            )
 
 
-def _brain_lines(hub: HubFiles, *, min_length: int) -> dict[str, tuple[str, int]]:
-    lines: dict[str, tuple[str, int]] = {}
+def _brain_lines(
+    hub: HubFiles, *, min_length: int
+) -> tuple[dict[str, tuple[str, int]], dict[str, tuple[str, int]]]:
+    """Every brain line, and apart the lines of the brain files that are no ADR draft."""
+    every: dict[str, tuple[str, int]] = {}
+    notes: dict[str, tuple[str, int]] = {}
     for path in hub.listed:
         if not path.startswith(BRAIN_FOLDER):
             continue
         text = text_of(hub.entries.get(path))
         if text is None:
             continue
+        draft = is_adr_draft(path)
         for number, line in prose_lines(text_lines(text)):
             trimmed = line.strip()
             if len(trimmed) >= min_length:
-                lines.setdefault(trimmed, (path, number))
-    return lines
+                every.setdefault(trimmed, (path, number))
+                if not draft:
+                    notes.setdefault(trimmed, (path, number))
+    return every, notes
 
 
 def prose_lines(lines: tuple[str, ...]) -> Iterator[tuple[int, str]]:
@@ -81,11 +106,15 @@ def frontmatter_end(lines: tuple[str, ...]) -> int:
     )
 
 
-def _repo_findings(files: HubFiles, *, brain: BrainLines, shown_as: str) -> Iterator[Finding]:
+def _repo_findings(
+    files: HubFiles, *, every: BrainLines, notes: BrainLines, shown_as: str
+) -> Iterator[Finding]:
     for path in files.listed:
         text = text_of(files.entries.get(path))
         if text is None:
             continue
+        # In docs/adr/ an ADR draft's lines are where they belong: only the other notes count.
+        brain = notes if path.startswith(ADR_FOLDER) else every
         for number, line in enumerate(text_lines(text), start=1):
             found = brain.get(line.strip())
             if found is not None:
@@ -106,8 +135,3 @@ BRAIN_LEAK: Final = Rule(
     reads=frozenset({Read.HUB_LISTING, Read.REPOS}),
     check=_brain_leak,
 )
-
-
-def is_adr_draft(path: str) -> bool:
-    """Whether the brain file at ``path`` is an ADR draft (a stub until the rule learns it)."""
-    raise NotImplementedError

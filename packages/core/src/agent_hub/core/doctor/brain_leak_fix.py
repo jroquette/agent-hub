@@ -14,6 +14,10 @@ The brain and repo lines are read exactly as the rule reads them (``brain_leak_r
 trimming, same minimum length, frontmatter, fences and table rows skipped on the brain side. A
 file's line endings and its final newline are kept. Pure: it returns the new texts; the caller
 writes them.
+
+An ADR draft (``brain_leak_rule.is_adr_draft``) whose lines a repo holds under ``docs/adr/`` is
+no leak, as the rule says, so only the repo files outside that folder count for it: a draft that
+became an ADR is left as it is.
 """
 
 from collections import Counter
@@ -22,9 +26,11 @@ from dataclasses import dataclass
 from typing import Final
 
 from agent_hub.core.doctor.brain_leak_rule import (
+    ADR_FOLDER,
     BRAIN_FOLDER,
     DEFAULT_MIN_LINE_LENGTH,
     frontmatter_end,
+    is_adr_draft,
     prose_lines,
 )
 from agent_hub.core.doctor.config_lint import text_lines
@@ -66,8 +72,8 @@ def brain_leak_edits(snapshot: DoctorSnapshot) -> tuple[BrainEdit, ...]:
     min_length = (None if settings is None else settings.min_line_length) or (
         DEFAULT_MIN_LINE_LENGTH
     )
-    repo = _repo_lines(snapshot, min_length=min_length)
-    if not repo:
+    every, outside_adr = _repo_lines(snapshot, min_length=min_length)
+    if not every:
         return ()
     edits = []
     for path in snapshot.hub.listed:
@@ -76,14 +82,17 @@ def brain_leak_edits(snapshot: DoctorSnapshot) -> tuple[BrainEdit, ...]:
         text = text_of(snapshot.hub.entries.get(path))
         if text is None:
             continue
+        repo = outside_adr if is_adr_draft(path) else every
         edit = _rewrite(path, text, repo=repo, min_length=min_length)
         if edit is not None:
             edits.append(edit)
     return tuple(edits)
 
 
-def _repo_lines(snapshot: DoctorSnapshot, *, min_length: int) -> RepoLines:
-    lines: RepoLines = {}
+def _repo_lines(snapshot: DoctorSnapshot, *, min_length: int) -> tuple[RepoLines, RepoLines]:
+    """Every repo line, and apart the lines of the repo files outside ``docs/adr/``."""
+    every: RepoLines = {}
+    outside_adr: RepoLines = {}
     for checkout in snapshot.repos:
         files = checkout.files
         if files is None or files.problem is not None:
@@ -92,11 +101,15 @@ def _repo_lines(snapshot: DoctorSnapshot, *, min_length: int) -> RepoLines:
             text = text_of(files.entries.get(path))
             if text is None:
                 continue
+            in_adr = path.startswith(ADR_FOLDER)
             for number, line in enumerate(text_lines(text), start=1):
                 trimmed = line.strip()
                 if len(trimmed) >= min_length:
-                    lines.setdefault(trimmed, (f"../{checkout.dir}/{path}", number))
-    return lines
+                    found = (f"../{checkout.dir}/{path}", number)
+                    every.setdefault(trimmed, found)
+                    if not in_adr:
+                        outside_adr.setdefault(trimmed, found)
+    return every, outside_adr
 
 
 def _rewrite(path: str, text: str, *, repo: RepoLines, min_length: int) -> BrainEdit | None:
