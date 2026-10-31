@@ -4648,6 +4648,42 @@ def test_matches_regex_when_scanning_secret_tokens(
     assert run_python(hook_python, SCAN_AS_REGEX, path=blocked_hub / HOOKS) == []
 
 
+# AGH-621 (AC-25): `import guard` compiles no pattern of the guard, its reader or its helpers; a
+# pattern compiles when first used, once, and keeps its name. ``re.compile`` is wrapped before the
+# import, and each call logs the file of its caller. argv: none.
+COMPILES_ON_IMPORT = r"""
+import json, os, re
+OWN_FILES = ("guard.py", "stdlib_reader.py", "hubhooks.py")
+callers = []
+real_compile = re.compile
+
+
+def logging_compile(*args, **kwargs):
+    callers.append(os.path.basename(sys._getframe(1).f_code.co_filename))
+    return real_compile(*args, **kwargs)
+
+
+re.compile = logging_compile
+import guard
+at_import = [name for name in callers if name in OWN_FILES]
+logged = len(callers)
+matches = [[m.group(0) for m in guard.SECRET_TOKEN.finditer(" .env ")] for _ in range(2)]
+on_use = [name for name in callers[logged:] if name in OWN_FILES]
+print(json.dumps({"at_import": at_import, "matches": matches, "on_use": on_use}))
+"""
+
+
+def test_compiles_no_pattern_when_guard_and_reader_imported(
+    blocked_hub: Path, *, each_python: str, run_python: Callable[..., Any], tmp_path: Path
+) -> None:
+    found = run_python(each_python, COMPILES_ON_IMPORT, path=blocked_hub / HOOKS, cwd=tmp_path)
+
+    assert found["at_import"] == []
+    # two searches, one compile: the second search reuses the pattern the first compiled
+    assert found["matches"] == [[".env"], [".env"]]
+    assert len(found["on_use"]) == 1
+
+
 # D-order (AC-277.17): the AGH-45 synthetic ``I`` (guard.infra) beside blocked words.
 def with_infra_and_words(words: Sequence[str]) -> dict[str, Any]:
     document = builders.an_environments_document()
