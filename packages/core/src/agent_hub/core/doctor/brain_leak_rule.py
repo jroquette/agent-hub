@@ -106,3 +106,8 @@ BRAIN_LEAK: Final = Rule(
     reads=frozenset({Read.HUB_LISTING, Read.REPOS}),
     check=_brain_leak,
 )
+
+
+def is_adr_draft(path: str) -> bool:
+    """Whether the brain file at ``path`` is an ADR draft (a stub until the rule learns it)."""
+    raise NotImplementedError
