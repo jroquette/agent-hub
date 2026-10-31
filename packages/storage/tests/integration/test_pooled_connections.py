@@ -1,22 +1,26 @@
 """The stores' SQLite connections, reused across reads (AGH-609, AC-1 to AC-3, Q1, Q2).
 
-Reads one after another open at most ``POOL_SIZE`` connections, so the connect listener's
-PRAGMAs run that often; eight readers and one writer share an engine with no lock error, and a
-read started after an append returns sees it; a connection that wrote, then went back to the
-pool, starts its next read deferred and holds no snapshot; and a closed store leaves its file
-alone, so leaving WAL succeeds and only the database file is left. No time is asserted.
+An engine's pool keeps five idle connections and has no cap: sixteen held at once all open,
+and once they are back five stay idle and eleven close. Reads one after another open at most
+``POOL_SIZE`` connections, so the connect listener's PRAGMAs run that often; eight readers and
+one writer share an engine with no lock error, and a read started after an append returns sees
+it; a connection that wrote, then went back to the pool, starts its next read deferred and
+holds no snapshot; and a closed store leaves its file alone, so leaving WAL succeeds and only
+the database file is left. Each test closes the stores and engines it opens. No time is
+asserted.
 """
 
 import sqlite3
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing
+from contextlib import ExitStack, closing
 from pathlib import Path
 from typing import Final
 
 import pytest
 from sqlalchemy import event
+from sqlalchemy.pool import QueuePool
 
 from agent_hub.core.events.event_query import EventQuery
 from agent_hub.core.testing.builders import an_event
@@ -79,6 +83,40 @@ def _read_while_writing(store: SqliteEventStore, read: Callable[[int], None]) ->
         return [reader.result(timeout=WAIT_SECONDS) for reader in readers]
 
 
+def test_keeps_five_idle_connections_per_engine_when_pool_size_read() -> None:
+    """Spec Q1 and NFR: at most five idle SQLite connections per engine."""
+    assert engine.POOL_SIZE == 5
+
+
+def test_opens_every_connection_and_keeps_five_idle_when_sixteen_overlap(tmp_path: Path) -> None:
+    """Q1: no cap on open connections, five kept idle. Sixteen is SQLAlchemy's default cap
+    (5 idle + 10 overflow) plus one, the first a capped pool refuses (``TimeoutError``)."""
+    path = tmp_path / "events.db"
+    upgrade_to_head(path)
+    store_engine = engine.create_sqlite_engine(path)
+    pool = store_engine.pool
+    connects: list[int] = []
+    closes: list[int] = []
+
+    def connected(dbapi_connection: object, *_: object) -> None:
+        connects.append(id(dbapi_connection))
+
+    def closed(dbapi_connection: object, *_: object) -> None:
+        closes.append(id(dbapi_connection))
+
+    event.listen(pool, "connect", connected)
+    event.listen(pool, "close", closed)
+    try:
+        with ExitStack() as held:
+            for _ in range(16):
+                held.enter_context(store_engine.connect())
+        assert (len(connects), len(closes)) == (16, 11)
+        assert isinstance(pool, QueuePool)
+        assert pool.checkedin() == 5
+    finally:
+        store_engine.dispose()
+
+
 def test_opens_at_most_pool_size_connections_when_reads_run_in_sequence(tmp_path: Path) -> None:
     """AC-1: the connect listener runs once per new connection, not once per read."""
     path = tmp_path / "events.db"
@@ -90,11 +128,10 @@ def test_opens_at_most_pool_size_connections_when_reads_run_in_sequence(tmp_path
         connects.append(id(dbapi_connection))
 
     event.listen(store_engine, "connect", count)
-    store = SqliteEventStore(store_engine)
-
-    for _ in range(READS):
-        store.high_water_mark()
-        store.query(EventQuery(limit=10))
+    with closing(SqliteEventStore(store_engine)) as store:
+        for _ in range(READS):
+            store.high_water_mark()
+            store.query(EventQuery(limit=10))
 
     assert connects, "the counter saw no connection, so the bound below proves nothing"
     assert len(connects) <= engine.POOL_SIZE
@@ -110,7 +147,10 @@ def test_reads_without_lock_error_when_eight_readers_and_one_writer_share_engine
         store.high_water_mark()
         store.query(EventQuery(limit=10))
 
-    last_reads = _read_while_writing(store, read)
+    try:
+        last_reads = _read_while_writing(store, read)
+    finally:
+        store.close()
 
     assert last_reads == [APPENDED] * READERS
 
@@ -118,13 +158,16 @@ def test_reads_without_lock_error_when_eight_readers_and_one_writer_share_engine
 def test_sees_append_on_every_thread_when_read_starts_after_it(tmp_path: Path) -> None:
     """AC-3: a read started after an append returned sees its events, on any thread."""
     store = open_event_store(tmp_path / "events.db")
-    # A fresh file: the ids count up from 1, so n appended events put the mark at n or more.
-    assert store.high_water_mark() == 0
+    try:
+        # A fresh file: the ids count up from 1, so n appended events put the mark at n or more.
+        assert store.high_water_mark() == 0
 
-    def read(appended: int) -> None:
-        assert store.high_water_mark() >= appended
+        def read(appended: int) -> None:
+            assert store.high_water_mark() >= appended
 
-    last_reads = _read_while_writing(store, read)
+        last_reads = _read_while_writing(store, read)
+    finally:
+        store.close()
 
     assert last_reads == [APPENDED] * READERS
 
@@ -140,12 +183,12 @@ def test_begins_deferred_when_pooled_connection_wrote_before(tmp_path: Path) -> 
         statements.append(statement)
 
     event.listen(store_engine, "before_cursor_execute", record)
-    store = SqliteEventStore(store_engine)
-    store.append([an_event()])
-    assert statements[:1] == ["BEGIN IMMEDIATE"], statements
-    statements.clear()
+    with closing(SqliteEventStore(store_engine)) as store:
+        store.append([an_event()])
+        assert statements[:1] == ["BEGIN IMMEDIATE"], statements
+        statements.clear()
 
-    store.high_water_mark()
+        store.high_water_mark()
 
     assert statements[:1] == ["BEGIN"], statements
 
@@ -153,40 +196,37 @@ def test_begins_deferred_when_pooled_connection_wrote_before(tmp_path: Path) -> 
 def test_holds_no_snapshot_when_read_connection_returns_to_pool(tmp_path: Path) -> None:
     """A connection back in the pool has ended its read: a checkpoint passes, new rows show."""
     path = tmp_path / "events.db"
-    store = open_event_store(path)
-    store.append([an_event()])
-    first = store.high_water_mark()
-    with closing(sqlite3.connect(path, timeout=OTHER_TIMEOUT_SECONDS)) as other:
-        assert other.execute("PRAGMA journal_mode").fetchone() == ("wal",)
-        busy, _, _ = other.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-    open_event_store(path).append([an_event()])
+    with closing(open_event_store(path)) as store:
+        store.append([an_event()])
+        first = store.high_water_mark()
+        with closing(sqlite3.connect(path, timeout=OTHER_TIMEOUT_SECONDS)) as other:
+            assert other.execute("PRAGMA journal_mode").fetchone() == ("wal",)
+            busy, _, _ = other.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        with closing(open_event_store(path)) as writer:
+            writer.append([an_event()])
 
-    assert busy == 0
-    assert store.high_water_mark() > first
+        assert busy == 0
+        assert store.high_water_mark() > first
 
 
 def _read_and_close_event_store(path: Path) -> None:
-    store = open_event_store(path)
-    store.high_water_mark()
-    store.close()
+    with closing(open_event_store(path)) as store:
+        store.high_water_mark()
 
 
 def _read_and_close_agent_session_store(path: Path) -> None:
-    store = open_agent_session_store(path)
-    store.list()
-    store.close()
+    with closing(open_agent_session_store(path)) as store:
+        store.list()
 
 
 def _read_and_close_item_version_store(path: Path) -> None:
-    store = open_item_version_store(path)
-    store.last("demo", "plugin/demo/agents/reviewer.md")
-    store.close()
+    with closing(open_item_version_store(path)) as store:
+        store.last("demo", "plugin/demo/agents/reviewer.md")
 
 
 def _read_and_close_knowledge_index(path: Path) -> None:
-    index = open_knowledge_index(path)
-    index.stored("/hubs/demo")
-    index.close()
+    with closing(open_knowledge_index(path)) as index:
+        index.stored("/hubs/demo")
 
 
 @pytest.mark.parametrize(
