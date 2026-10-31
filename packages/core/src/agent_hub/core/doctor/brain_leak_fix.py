@@ -17,7 +17,7 @@ writes them.
 
 An ADR draft (``brain_leak_rule.is_adr_draft``) is judged only by the repo files outside
 ``docs/adr/``, as the rule judges it: a draft line that only ``docs/adr/`` holds is kept, unless
-most of the draft was copied elsewhere and the whole draft becomes a stub.
+half or more of the draft was copied elsewhere and the whole draft becomes a stub.
 """
 
 from collections import Counter
