@@ -4684,6 +4684,71 @@ def test_compiles_no_pattern_when_guard_and_reader_imported(
     assert len(found["on_use"]) == 1
 
 
+# AGH-621 (AC-25): every pattern the guard and its reader build at import compiles, so none can
+# first fail while a verdict is printed. ``gc`` finds them all, in tuples, dicts and objects too.
+# argv: none.
+COMPILES_EVERY_PATTERN = r"""
+import gc, json
+import guard
+from stdlib_reader import LazyPattern
+patterns = [found for found in gc.get_objects() if type(found) is LazyPattern]
+failed = []
+for pattern in patterns:
+    try:
+        pattern.pattern
+    except Exception as error:
+        failed.append([repr(pattern._args), type(error).__name__])
+rules = [rule for _, rule in guard.RULE_IDS]
+print(json.dumps({
+    "found": len(patterns),
+    "rules_found": all(any(rule is found for found in patterns) for rule in rules),
+    "rules": len(rules),
+    "failed": failed,
+}))
+"""
+
+
+def test_compiles_every_lazy_pattern_when_guard_imported(
+    blocked_hub: Path, *, each_python: str, run_python: Callable[..., Any], tmp_path: Path
+) -> None:
+    found = run_python(each_python, COMPILES_EVERY_PATTERN, path=blocked_hub / HOOKS, cwd=tmp_path)
+
+    assert found["failed"] == []
+    assert found["rules_found"] is True
+    assert found["found"] > found["rules"]
+
+
+# AGH-621 (AC-25): a pattern is a value that never changes, as a re.Pattern is: a copy or a deep
+# copy is the pattern itself, a pickle loads back as a pattern that finds the same match, compiled
+# or not, and a half-built one (no slots set) has no attribute rather than recursing. argv: none.
+COPIES_LAZY_PATTERN = r"""
+import copy, json, pickle
+from stdlib_reader import LazyPattern
+found = {}
+for state in ("fresh", "compiled"):
+    pattern = LazyPattern(r"a+b", 0)
+    if state == "compiled":
+        pattern.search("")
+    loaded = pickle.loads(pickle.dumps(pattern))
+    found[state] = {
+        "copy": copy.copy(pattern) is pattern,
+        "deepcopy": copy.deepcopy([pattern])[0] is pattern,
+        "loaded": [type(loaded).__name__, loaded.search("xaab").group(0)],
+    }
+found["half_built"] = hasattr(LazyPattern.__new__(LazyPattern), "search")
+print(json.dumps(found))
+"""
+
+
+def test_copies_lazy_pattern_as_itself_when_copied_or_pickled(
+    blocked_hub: Path, *, each_python: str, run_python: Callable[..., Any], tmp_path: Path
+) -> None:
+    found = run_python(each_python, COPIES_LAZY_PATTERN, path=blocked_hub / HOOKS, cwd=tmp_path)
+
+    same = {"copy": True, "deepcopy": True, "loaded": ["LazyPattern", "aab"]}
+    assert found == {"fresh": same, "compiled": same, "half_built": False}
+
+
 # D-order (AC-277.17): the AGH-45 synthetic ``I`` (guard.infra) beside blocked words.
 def with_infra_and_words(words: Sequence[str]) -> dict[str, Any]:
     document = builders.an_environments_document()

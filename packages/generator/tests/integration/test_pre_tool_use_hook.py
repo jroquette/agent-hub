@@ -44,7 +44,9 @@ START_WAIT = 10.0
 VERDICT_WAIT = 0.2
 ATTRIBUTION = "git commit -m 'feat: x\n\nCo-Authored-By: Claude Opus <noreply@anthropic.com>'"
 
-type RunHook = Callable[..., subprocess.CompletedProcess[bytes]]
+type Completed = subprocess.CompletedProcess[bytes]
+type RunHook = Callable[..., Completed]
+type RunDriver = Callable[..., Completed]
 type Stdin = Callable[[Path], bytes]
 
 
@@ -236,6 +238,104 @@ def test_prints_guard_verdict_when_event_runs(
     assert (completed.returncode, completed.stdout) == expected
 
 
+# A step of the guard that fails once the guard has loaded. argv: none. Makes one step raise
+# RuntimeError ($BREAK: hubhooks' load_config, or the guard's rule_of; each call is logged to
+# $CALLS first), then runs $HOOK_FILE: guard.py as its __main__ block runs it, the hook as __main__.
+GUARD_STEP_RAISES = """
+import os, runpy, sys
+hook = os.environ["HOOK_FILE"]
+sys.path.insert(0, os.path.dirname(hook))
+import hubhooks
+
+
+def raising(*args):
+    with open(os.environ["CALLS"], "a", encoding="utf-8") as fh:
+        fh.write(repr(args) + "\\n")
+    raise RuntimeError("broken step")
+
+
+if os.environ["BREAK"] == "load_config":
+    hubhooks.load_config = raising
+import guard
+if os.environ["BREAK"] == "rule_of":
+    guard.rule_of = raising
+sys.argv = [hook]
+if os.path.basename(hook) == "guard.py":
+    guard.run_hook(guard.main, guard.ask_on_error)
+runpy.run_path(hook, run_name="__main__")
+"""
+
+
+@pytest.fixture
+def run_driver(hub: Path, *, hook_python: str, run_hook_file: RunHook, tmp_path: Path) -> RunDriver:
+    """Run a driver (its source) with an event on stdin, for the hook file ``script`` of ``hub``
+    ($HOOK_FILE) and with more variables."""
+
+    def run(source: str, script: str, stdin: bytes, **env: str) -> Completed:
+        driver = tmp_path / "support" / "driver.py"
+        driver.parent.mkdir(exist_ok=True)
+        driver.write_text(source, encoding="utf-8")
+        variables = home_env(tmp_path) | {"HOOK_FILE": str(hub / script)} | env
+        return run_hook_file(hook_python, driver, stdin=stdin, cwd=hub, env=variables)
+
+    return run
+
+
+# AC-20: the guard loads, then fails while it checks the call; the hook asks naming the error
+# (the crash ask has the partial-install ask's bytes), as guard.py's run_hook does.
+def test_asks_with_crash_cause_when_guard_raises_while_checking(
+    hub: Path, run_driver: RunDriver, tmp_path: Path
+) -> None:
+    calls = tmp_path / "calls.txt"
+
+    completed = run_driver(
+        GUARD_STEP_RAISES, HOOK, bash("ls")(hub), BREAK="load_config", CALLS=str(calls)
+    )
+
+    crash_ask = partial_install_ask("RuntimeError")
+    assert calls.is_file()
+    assert (completed.returncode, completed.stdout, completed.stderr) == (0, crash_ask, b"")
+
+
+# What a hook may inherit from the process that starts it. argv: none. Replaces this process with
+# $HOOK_FILE on this interpreter, after one change ($INHERITS) that survives exec: no stdin (fd 0
+# closed), or none.
+EXEC_HOOK = """
+import os, sys
+inherits = os.environ["INHERITS"]
+if inherits == "no-stdin":
+    os.close(0)
+os.execv(sys.executable, [sys.executable, os.environ["HOOK_FILE"]])
+"""
+
+
+# AC-20, AC-38: with no stdin at all (sys.stdin is None), the hook asks naming the error, as
+# guard.py does, and never exits with a traceback, which would let the call through unchecked.
+def test_asks_with_crash_cause_when_stdin_closed(run_driver: RunDriver) -> None:
+    reference = run_driver(EXEC_HOOK, GUARD, b"", INHERITS="no-stdin")
+    assert (reference.returncode, reference.stdout) == (0, partial_install_ask("AttributeError"))
+
+    completed = run_driver(EXEC_HOOK, HOOK, b"", INHERITS="no-stdin")
+
+    assert (completed.returncode, completed.stdout, completed.stderr) == (0, reference.stdout, b"")
+
+
+# AC-20, AC-21: the rule id only labels the decision sent after the verdict; when finding it
+# fails, the verdict is printed as it is, and nothing follows it.
+@pytest.mark.parametrize("script", [GUARD, HOOK], ids=["guard", "pre_tool_use"])
+def test_prints_one_verdict_when_rule_id_raises(
+    script: str, hub: Path, *, run_driver: RunDriver, tmp_path: Path
+) -> None:
+    stdin, calls = bash("git push --force origin jdoe/dem-1-x")(hub), tmp_path / "calls.txt"
+    verdict = run_driver(EXEC_HOOK, GUARD, stdin, INHERITS="nothing").stdout
+    assert decision_of(verdict) == "deny"
+
+    completed = run_driver(GUARD_STEP_RAISES, script, stdin, BREAK="rule_of", CALLS=str(calls))
+
+    assert len(calls.read_text(encoding="utf-8").splitlines()) == 1
+    assert (completed.returncode, completed.stdout, completed.stderr) == (0, verdict, b"")
+
+
 # AC-21: (the call, how many POSTs guard.py and event_sensor.py make for it together).
 ENVELOPE_CALLS: dict[str, tuple[Stdin, int]] = {
     "allowed": (bash("ls"), 1),
@@ -408,10 +508,12 @@ def test_exits_zero_when_server_closed(
     assert (completed.returncode, completed.stdout, completed.stderr) == (0, verdict, b"")
 
 
-# AC-22 (Q16): the sensor part fails anywhere, even with a SystemExit: the verdict stands alone.
+# AC-22 (Q16): the sensor part fails anywhere, even with a SystemExit, or after writing to
+# stdout: the verdict stands alone.
 SENSOR_FAILURES = {
     "runtime-error": 'raise RuntimeError("sensor broken")\n',
     "system-exit": "raise SystemExit(3)\n",
+    "after-writing": 'import os\nprint("printed")\nos.write(1, b"written\\n")\nraise SystemExit\n',
 }
 
 
