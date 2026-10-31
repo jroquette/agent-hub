@@ -36,6 +36,10 @@ export default defineConfig(({ command, mode }) => ({
     // `.vite/manifest.json` names the chunk file of the entry and of each module loaded on demand;
     // the route chunk tests read it.
     manifest: true,
+    // One stylesheet, which index.html links: screens use classes from each other's stylesheets,
+    // so a stylesheet per route chunk would leave a deep-linked screen unstyled, and a page's look
+    // would hang on the screens opened before it.
+    cssCodeSplit: false,
     rolldownOptions: {
       output: {
         codeSplitting: {

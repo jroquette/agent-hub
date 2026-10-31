@@ -227,6 +227,8 @@ test("Route chunks: a failed chunk shows This page could not load in the shell, 
   await expect(main.getByRole("button", { name: "Reload page" })).toBeVisible();
   await expect(main.getByRole("link", { name: "Go to Portfolio" })).toBeVisible();
   await expect(main.getByText(`Requested: /sessions · file ${sessionsFile}`)).toBeVisible();
+  await settle(page);
+  await expectAccessible(page);
   await expect(nav).toBeVisible();
   await nav.getByRole("link", { name: /^Features/ }).click();
   await expect(

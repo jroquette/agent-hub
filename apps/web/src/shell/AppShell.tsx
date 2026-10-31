@@ -23,7 +23,7 @@ import { ScreenDiscussFallback } from "./screenContext";
 import { GlobalStreamProvider, useGlobalStream } from "./GlobalStream";
 import { armGoSequence, clearGoSequence, goSequencePending, typingIn } from "./goSequence";
 import { OfflineBanner } from "./OfflineBanner";
-import { PageBusyContext, RouteOutlet } from "./routeLoading";
+import { PageSkeletonContext, RouteOutlet, usePageSkeleton } from "./routeLoading";
 import { ShakeToSession } from "./ShakeToSession";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { Sidebar } from "./Sidebar";
@@ -125,15 +125,21 @@ function useGlobalKeys(actions: {
 /**
  * `main#main`: the page passed in, else the routed screen. Busy while the page skeleton shows, a
  * state of its own so the loading states re-render only the page, never the sidebar or top bar.
+ * "Loading page" is said beside it, outside the busy element.
  */
 function ShellMain({ children }: { children?: ReactNode }) {
-  const [busy, setBusy] = useState(false);
+  const { page, busy, status } = usePageSkeleton();
   return (
-    <main className="ah-shell-main" id="main" aria-busy={busy || undefined}>
-      <PageBusyContext.Provider value={setBusy}>
-        {children ?? <RouteOutlet />}
-      </PageBusyContext.Provider>
-    </main>
+    <>
+      <main className="ah-shell-main" id="main" aria-busy={busy || undefined}>
+        <PageSkeletonContext.Provider value={page}>
+          {children ?? <RouteOutlet />}
+        </PageSkeletonContext.Provider>
+      </main>
+      <div className="ah-sr" role="status">
+        {status}
+      </div>
+    </>
   );
 }
 

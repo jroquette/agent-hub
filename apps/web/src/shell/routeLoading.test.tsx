@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ComponentType } from "react";
-import { createMemoryRouter, Link, RouterProvider } from "react-router";
+import { createMemoryRouter, Link, Navigate, RouterProvider } from "react-router";
 import type { RouteObject } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -14,7 +14,7 @@ import {
 } from "../testing/builders";
 import { wholeText } from "../testing/text";
 import { AppShell } from "./AppShell";
-import { lazyScreen, RouteSkeleton } from "./routeLoading";
+import { lazyRedirect, lazyScreen, RouteSkeleton } from "./routeLoading";
 
 // Spec 22 and ux-change-route-loading.md: nothing new for 300 ms, then the page skeleton (held at
 // least 300 ms), "Loading page" announced after 1 s, and a line under the skeleton after 10 s.
@@ -97,6 +97,7 @@ function renderAt(path: string, routes: RouteObject[]) {
       <RouterProvider router={router} />
     </TestProviders>,
   );
+  return router;
 }
 
 const main = () => screen.getByRole("main");
@@ -170,9 +171,54 @@ describe("route loading", () => {
     expect(main()).not.toHaveAttribute("aria-busy", "true");
   });
 
-  it("keeps the page skeleton at least 300 ms once shown", async () => {
+  it("keeps the previous screen and its address while a redirect's target code loads", async () => {
+    vi.useFakeTimers();
     const sessions = deferredSessions();
-    await startLoading("an in-app navigation", sessions);
+    const router = renderAt(
+      "/",
+      shellRoutes([
+        {
+          index: true,
+          ...lazyScreen(
+            () => Promise.resolve({ PortfolioScreen: PortfolioStandIn }),
+            "PortfolioScreen",
+          ),
+        },
+        // As routes.tsx's /live: a bookmark that opens the Sessions screen, by a replace.
+        { path: "live", ...lazyRedirect(sessions.load, <Navigate to="/sessions" replace />) },
+        { path: "sessions", ...lazyScreen(sessions.load, "SessionsListScreen") },
+      ]),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Portfolio stand-in" }),
+    ).toBeInTheDocument();
+
+    act(() => {
+      void router.navigate("/live");
+    });
+    wait(299);
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Portfolio stand-in" }),
+    ).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/");
+
+    await sessions.arrive();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Sessions stand-in" }),
+    ).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/sessions");
+    expect(router.state.historyAction).toBe("REPLACE");
+  });
+
+  it.each(ENTRIES)("keeps the page skeleton at least 300 ms once shown (%s)", async (entry) => {
+    const sessions = deferredSessions();
+    await startLoading(entry, sessions);
     wait(300);
     expect(skeleton()).not.toBeNull();
 
@@ -199,6 +245,9 @@ describe("route loading", () => {
     wait(1);
     const said = screen.getByText(wholeText("Loading page"));
     expect(said.closest("[role='status'], [aria-live='polite']")).not.toBeNull();
+    // A screen reader may hold back what changes inside a busy element until it is no longer busy.
+    expect(main()).toHaveAttribute("aria-busy", "true");
+    expect(said.closest("[aria-busy='true']")).toBeNull();
   });
 
   it.each(ENTRIES)("says the page is still loading after 10 s (%s)", async (entry) => {

@@ -5,7 +5,7 @@ import { useApi } from "./lib/api";
 import { liveRedirectTarget } from "./screens/sessions-list/liveRedirect";
 import { AppShell } from "./shell/AppShell";
 import { RouteError } from "./shell/RouteError";
-import { lazyScreen, RouteSkeleton } from "./shell/routeLoading";
+import { lazyRedirect, lazyScreen, RouteSkeleton } from "./shell/routeLoading";
 
 /**
  * With no registered hub every route but `/settings/*` (and `/welcome` itself) redirects to
@@ -30,9 +30,9 @@ function LiveRedirect() {
  * `projects/:project/skills[/<kind>/<source>/<name>]` (AGH-164).
  *
  * Each screen's module loads on demand, in its own chunk (AGH-614); only the shell and the
- * redirects defined here are in the entry. Under the shell, a route whose code does not load, or
- * whose screen throws, shows `RouteError`, and a first load shows the page skeleton until its
- * screen's code arrives.
+ * redirects defined here are in the entry, and each redirect waits for its target screen's code.
+ * Under the shell, a route whose code does not load, or whose screen throws, shows `RouteError`,
+ * and a first load shows the page skeleton until its screen's code arrives.
  */
 export const appRoutes: RouteObject[] = [
   {
@@ -134,7 +134,10 @@ export const appRoutes: RouteObject[] = [
                 path: "projects/:project/skills/:kind/:source/:name/edit",
                 ...lazyScreen(() => import("./screens/skills/Studio"), "EditDraftScreen"),
               },
-              { path: "live", element: <LiveRedirect /> },
+              {
+                path: "live",
+                ...lazyRedirect(() => import("./screens/sessions-list"), <LiveRedirect />),
+              },
               {
                 path: "sessions",
                 ...lazyScreen(() => import("./screens/sessions-list"), "SessionsListScreen"),
@@ -172,7 +175,13 @@ export const appRoutes: RouteObject[] = [
                 path: "scenarios/:project/:name/runs/:runId",
                 ...lazyScreen(() => import("./screens/scenarios"), "ScenarioRunScreen"),
               },
-              { path: "knowledge", element: <Navigate to="/knowledge/learnings" replace /> },
+              {
+                path: "knowledge",
+                ...lazyRedirect(
+                  () => import("./screens/learnings"),
+                  <Navigate to="/knowledge/learnings" replace />,
+                ),
+              },
               {
                 path: "knowledge/learnings",
                 ...lazyScreen(() => import("./screens/learnings"), "LearningsScreen"),
@@ -237,7 +246,13 @@ export const appRoutes: RouteObject[] = [
               },
             ],
           },
-          { path: "settings", element: <Navigate to="/settings/hubs" replace /> },
+          {
+            path: "settings",
+            ...lazyRedirect(
+              () => import("./screens/settings"),
+              <Navigate to="/settings/hubs" replace />,
+            ),
+          },
           {
             path: "settings/:section",
             ...lazyScreen(() => import("./screens/settings"), "SettingsScreen"),

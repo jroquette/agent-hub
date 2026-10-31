@@ -46,7 +46,7 @@ export function featureTicketHref(row: TicketRow, doc = "tickets"): string | nul
   return `${base}?${query.toString()}`;
 }
 
-/** One ticket:the code its sessions changed, each session, and its feature's records. */
+/** One ticket: the code its sessions changed, each session, and its feature's records. */
 export function TicketDetailScreen() {
   const { project = "", issue: rawIssue = "" } = useParams();
   const issue = rawIssue.toUpperCase();

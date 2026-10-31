@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { checkBundle } from "./bundleBudget";
 import { budgetPlugin } from "./bundlePlugins";
 
@@ -120,17 +120,28 @@ function outputBundle(sizes: { entry: number; vendor: number }) {
   return Object.fromEntries(items.map((item) => [item.fileName, item]));
 }
 
-// Runs the plugin's generateBundle hook as Vite does before it writes the build.
-async function generateBundle(bundle: object): Promise<void> {
+// Runs the plugin's generateBundle hook as Vite does before it writes the build, with `log` as
+// the bundler's `this`.
+async function generateBundle(bundle: object, log: object = bundler): Promise<void> {
   const hook = budgetPlugin().generateBundle;
   const handler = typeof hook === "object" ? hook.handler : hook;
   if (handler === undefined) throw new Error("the plugin has no generateBundle hook");
-  const context = bundler as unknown as ThisParameterType<typeof handler>;
+  const context = log as unknown as ThisParameterType<typeof handler>;
   const options = { dir: "web_dist" } as unknown as Parameters<typeof handler>[0];
   await handler.call(context, options, bundle as unknown as Parameters<typeof handler>[1], true);
 }
 
 describe("budgetPlugin", () => {
+  it("lets the build go on and prints the entry's and the vendor chunk's size when both are under their limits", async () => {
+    const info = vi.fn<(line: string) => void>();
+
+    await generateBundle(outputBundle({ entry: 399_999, vendor: 349_999 }), { ...bundler, info });
+
+    const printed = info.mock.calls.map(([line]) => line).join("\n");
+    expect(printed).toMatch(lineNaming(ENTRY, 399_999));
+    expect(printed).toMatch(lineNaming(VENDOR, 349_999));
+  });
+
   it.each([
     {
       culprit: "the entry",

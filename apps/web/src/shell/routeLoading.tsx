@@ -1,4 +1,4 @@
-import { createContext, useContext, useLayoutEffect } from "react";
+import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useState } from "react";
 import type { ComponentType, ReactElement } from "react";
 import { Outlet, useNavigation } from "react-router";
 import type { RouteObject } from "react-router";
@@ -6,7 +6,7 @@ import type { RouteObject } from "react-router";
 import { SKELETON_DELAY_MS, Skeleton, useDelayed, useSkeleton } from "../components/feedback";
 
 // Each routed screen loads on demand, in its own chunk; while its code loads, `main#main` shows the
-// page skeleton after 300 ms (AGH-614, AC-1, AC-6).
+// page skeleton after 300 ms, and once shown, for at least 300 ms (AGH-614, AC-1, AC-6).
 
 /** "Loading page" is said only once a route's code has been loading this long (spec 22). */
 const ANNOUNCE_AFTER_MS = 1_000;
@@ -22,23 +22,43 @@ export class RouteCodeError extends Error {
   }
 }
 
-/** The route fields that load the screen `name` exports from the module `load` imports, on demand. */
-export function lazyScreen<Name extends string>(
-  load: () => Promise<Record<Name, ComponentType>>,
-  name: Name,
-): Pick<RouteObject, "lazy"> {
-  return {
-    lazy: async () => {
-      const screens = await load().catch((error: unknown) => {
-        throw new RouteCodeError(error);
-      });
-      return { Component: screens[name] };
-    },
-  };
+/** The module `load` imports; a failure to fetch it is a `RouteCodeError`. */
+function loadCode<Module>(load: () => Promise<Module>): Promise<Module> {
+  return load().catch((error: unknown) => {
+    throw new RouteCodeError(error);
+  });
 }
 
-/** Marks `main#main` busy while a page skeleton's bars show in it (`aria-busy`). */
-export const PageBusyContext = createContext<(busy: boolean) => void>(() => undefined);
+/** What `main#main` knows of the page skeleton in it, and how a skeleton tells it. */
+export interface PageSkeleton {
+  /** When the bars of the skeleton shown now appeared (`Date.now()`), or null while none show. */
+  shownAt: number | null;
+  /** The skeleton's bars appear (true) or go away (false). */
+  setShown: (shown: boolean) => void;
+  /** "Loading page" is said (true) or taken back (false). */
+  setAnnounced: (announced: boolean) => void;
+}
+
+export const PageSkeletonContext = createContext<PageSkeleton>({
+  shownAt: null,
+  setShown: () => undefined,
+  setAnnounced: () => undefined,
+});
+
+/**
+ * `main#main`'s side of the page skeleton: `page` for the skeletons in it, `busy` while their bars
+ * show, and `status`, what to say outside `main`, since a screen reader may hold back what changes
+ * inside a busy element.
+ */
+export function usePageSkeleton(): { page: PageSkeleton; busy: boolean; status: string } {
+  const [shownAt, setShownAt] = useState<number | null>(null);
+  const [announced, setAnnounced] = useState(false);
+  const setShown = useCallback((shown: boolean) => {
+    setShownAt(shown ? Date.now() : null);
+  }, []);
+  const page = useMemo(() => ({ shownAt, setShown, setAnnounced }), [shownAt, setShown]);
+  return { page, busy: shownAt !== null, status: announced ? "Loading page" : "" };
+}
 
 export interface RouteSkeletonProps {
   /**
@@ -54,14 +74,21 @@ export function RouteSkeleton({ waited = 0 }: RouteSkeletonProps): ReactElement 
   const shown = useDelayed(SKELETON_DELAY_MS - waited);
   const announced = useDelayed(ANNOUNCE_AFTER_MS - waited);
   const stillLoading = useDelayed(STILL_LOADING_AFTER_MS - waited);
-  const setBusy = useContext(PageBusyContext);
+  const { setShown, setAnnounced } = useContext(PageSkeletonContext);
   useLayoutEffect(() => {
     if (!shown) return undefined;
-    setBusy(true);
+    setShown(true);
     return () => {
-      setBusy(false);
+      setShown(false);
     };
-  }, [shown, setBusy]);
+  }, [shown, setShown]);
+  useLayoutEffect(() => {
+    if (!announced) return undefined;
+    setAnnounced(true);
+    return () => {
+      setAnnounced(false);
+    };
+  }, [announced, setAnnounced]);
   return (
     <div className="ah-page">
       {shown && (
@@ -81,11 +108,54 @@ export function RouteSkeleton({ waited = 0 }: RouteSkeletonProps): ReactElement 
           )}
         </>
       )}
-      <span className="ah-sr" role="status">
-        {announced ? "Loading page" : ""}
-      </span>
     </div>
   );
+}
+
+/**
+ * A routed screen. When it mounts while a page skeleton shows, it keeps the skeleton until that has
+ * shown for the skeleton delay: on a first load the router drops its fallback as soon as the
+ * screen's code arrives, however briefly the fallback's bars have shown. After a navigation
+ * `RouteOutlet` has already waited, so the screen draws at once.
+ */
+function RoutedScreen({ screen: Screen }: { screen: ComponentType }): ReactElement {
+  const { shownAt } = useContext(PageSkeletonContext);
+  // How long the skeleton has shown when the screen mounts, or null when none shows.
+  const [shownFor] = useState(() => (shownAt === null ? null : Date.now() - shownAt));
+  const done = useDelayed(shownFor === null ? 0 : SKELETON_DELAY_MS - shownFor);
+  // The same element each time, so a new skeleton state never draws the screen again.
+  const page = useMemo(() => <Screen />, [Screen]);
+  return done ? page : <RouteSkeleton waited={SKELETON_DELAY_MS + (shownFor ?? 0)} />;
+}
+
+/** The route fields that load the screen `name` exports from the module `load` imports, on demand. */
+export function lazyScreen<Name extends string>(
+  load: () => Promise<Record<Name, ComponentType>>,
+  name: Name,
+): Pick<RouteObject, "lazy"> {
+  return {
+    lazy: async () => {
+      const screens = await loadCode(load);
+      return { element: <RoutedScreen screen={screens[name]} /> };
+    },
+  };
+}
+
+/**
+ * The route fields of a redirect to a screen that loads on demand: `redirect` draws only once the
+ * module `load` imports, the target screen's, has arrived. Drawn at once, it would empty
+ * `main#main`, and move the address and the nav, while the target's code still loads.
+ */
+export function lazyRedirect(
+  load: () => Promise<unknown>,
+  redirect: ReactElement,
+): Pick<RouteObject, "lazy"> {
+  return {
+    lazy: async () => {
+      await loadCode(load);
+      return { element: redirect };
+    },
+  };
 }
 
 /**

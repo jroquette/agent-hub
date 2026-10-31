@@ -1,6 +1,6 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, configure, getConfig, render, screen } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { App } from "./App";
 import { appRoutes } from "./routes";
@@ -38,6 +38,17 @@ const withHub: ApiRoutes = {
     }),
 };
 const noHub: ApiRoutes = { "/api/v1/hubs": aPage([]), "/api/v1/projects": aPage([]) };
+
+// Each route's screen loads on demand. In a busy test run a screen's first import can take most of
+// findBy's default second, and once the page skeleton has shown it stays 300 ms (spec 22), so this
+// file waits longer for each page. What every test asserts is unchanged.
+const { asyncUtilTimeout } = getConfig();
+beforeAll(() => {
+  configure({ asyncUtilTimeout: 3_000 });
+});
+afterAll(() => {
+  configure({ asyncUtilTimeout });
+});
 
 function renderAt(path: string, routes: ApiRoutes) {
   stubApi(routes);

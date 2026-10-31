@@ -1,0 +1,1 @@
+import{er as e}from"./components-gjpi0J9J.js";function t(t){return e(`/api/v1/workflows`,{query:{project:t}})}function n(t,n,r=!0){return e(`/api/v1/workflows/{project}/{name}`,{path:{project:t,name:n}},{enabled:r})}export{t as n,n as t};

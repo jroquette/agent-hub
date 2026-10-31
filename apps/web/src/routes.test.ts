@@ -17,8 +17,8 @@ function routeName(route: RouteObject): string {
 // `settings` (Navigate). LegacyWorkflowRedirect is not one of them: it lives in screens/workflows.
 const OWN_REDIRECTS = ["live", "knowledge", "settings"];
 
-// 48 routes have a path or an index at v0.28.0: the 3 redirects, and 45 routed screens (42 screens
-// and LegacyWorkflowRedirect, with LearningsScreen and NewWorkflowScreen on two paths each).
+// 48 routes have a path or an index: the 3 redirects, and 45 routed screens (42 screens and
+// LegacyWorkflowRedirect, with LearningsScreen and NewWorkflowScreen on two paths each).
 const ROUTED_SCREENS = 45;
 
 describe("appRoutes", () => {
@@ -36,5 +36,20 @@ describe("appRoutes", () => {
         route.lazy === undefined || route.element !== undefined || route.Component !== undefined,
     );
     expect(eager.map(routeName)).toEqual([]);
+  });
+
+  it("loads each redirect's target code before it redirects", () => {
+    // A redirect drawn at once would empty main#main, and move the address and the nav, while
+    // the target screen's code still loads.
+    const redirects = allRoutes(appRoutes).filter((route) =>
+      OWN_REDIRECTS.includes(route.path ?? ""),
+    );
+
+    expect(redirects.map(routeName)).toEqual(OWN_REDIRECTS);
+    const atOnce = redirects.filter(
+      (route) =>
+        route.lazy === undefined || route.element !== undefined || route.Component !== undefined,
+    );
+    expect(atOnce.map(routeName)).toEqual([]);
   });
 });

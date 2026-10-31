@@ -280,10 +280,12 @@ dev dependency of the workspace.
   a Brain note, a session and a settings section open from a full page load; and with the Sessions chunk's request
   aborted, "This page could not load" shows inside the shell while the other routes still open. The in-app and
   full-load pages pass the page run's checks (`watch` and `expectAccessible`, shared through
-  `apps/web/e2e/pageChecks.ts`). The test reads
+  `apps/web/e2e/pageChecks.ts`), and the failed-chunk page the axe one. The test reads
   the committed Vite manifest (`web_dist/.vite/manifest.json`) for the chunk files, as do two tests that need no
   browser: each screen module `routes.tsx` loads with `import()` has a chunk of its own that a first load does not
-  fetch (`-k own_chunk`), and the entry chunk `index.html` loads is under 400,000 B (`-k entry_chunk`).
+  fetch (`-k own_chunk`), and the entry chunk `index.html` loads is under 400,000 B (`-k entry_chunk`). A third one
+  checks that `index.html` links every stylesheet of the build (`-k every_stylesheet`), so a deep-linked screen
+  has the classes it borrows from another screen's styles.
   `tests/e2e/test_package_data.py -k web_dist` builds the api wheel and checks that it ships every `web_dist` file,
   the manifest and the `.br` variants included.
 - The same module checks the committed bundle for absolute URLs (AC-200.56): only an exact list of inert strings is

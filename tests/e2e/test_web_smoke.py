@@ -47,7 +47,8 @@ console error and no serious axe violation.
 
 AGH-614 (perf-smooth-web AC-1, AC-2, AC-5, AC-7): the committed build splits the app by route.
 Its Vite manifest gives every screen module ``routes.tsx`` loads through ``import()`` a chunk of
-its own, and the entry chunk ``index.html`` loads stays under 400,000 B. Its own test
+its own, the entry chunk ``index.html`` loads stays under 400,000 B, and ``index.html`` links every
+stylesheet, so each screen has the classes it borrows from another's styles. Its own test
 (``-k route_chunks``) runs ``apps/web/e2e/routes.spec.ts``: a first ``/sessions`` visit fetches
 only the entry, vendor, shared and Sessions chunks (its request log is in the output), every nav
 destination opens in the app, deep links open from a full load, and an aborted Sessions chunk
@@ -268,6 +269,7 @@ _ABSOLUTE_URL = re.compile(r"https?://[A-Za-z0-9.\-\[\]:]+(?:/[A-Za-z0-9._~/\-]*
 _LAZY_SCREEN = re.compile(r"""\bimport\(\s*["'](\./screens/[^"']+)["']\s*\)""")
 _EAGER_SCREEN = re.compile(r"""\b(?:from|import)\s*["'](\./screens/[^"']+)["']""")
 _MODULE_SCRIPT = re.compile(r'<script type="module"[^>]*\ssrc="/([^"]+)"')
+_STYLESHEET = re.compile(r'<link rel="stylesheet"[^>]*\shref="/([^"]+)"')
 
 
 def bundle_urls(dist: Path) -> set[str]:
@@ -358,6 +360,18 @@ def test_keeps_entry_chunk_under_budget_when_web_app_built() -> None:
     size = (WEB_DIST / scripts[0]).stat().st_size
 
     assert size < ENTRY_LIMIT_BYTES, f"{scripts[0]}: {size:,} B, limit {ENTRY_LIMIT_BYTES:,} B"
+
+
+def test_links_every_stylesheet_from_index_when_web_app_built() -> None:
+    """AC-5: every page has every screen's styles, as with one bundle. Screens use classes from
+    each other's stylesheets (the workflow graph on a run, the new feature form), so a stylesheet
+    that came only with its route's chunk would leave a deep-linked screen unstyled, and how a
+    page looked would hang on the screens opened before it."""
+    linked = _STYLESHEET.findall((WEB_DIST / "index.html").read_text(encoding="utf-8"))
+    built = sorted(path.relative_to(WEB_DIST).as_posix() for path in WEB_DIST.glob("assets/*.css"))
+
+    assert built != []
+    assert sorted(linked) == built
 
 
 @dataclass(frozen=True)
