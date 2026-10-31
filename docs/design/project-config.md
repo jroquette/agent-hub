@@ -41,8 +41,9 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `repos[].dir` | one path segment (Rendered values), unique across `repos` ignoring case | req. | the sibling directory next to the hub |
 | `repos[].github` | `owner/name` | req. | cloud setup, `hub run`, `hub setup` (clone URL over the scheme of the hub's `origin`) |
 | `repos[].role` | free string; `app` is the only known value | `app` | templates may branch on known roles |
-| `repos[].check_fast`, `repos[].check` | shell commands; `check_fast` may be absent, empty or blank (no Stop gate: `config.stop_gate` warns); `check` holds a non-space character | `check` req. | stop gate (`check_fast`), `hub run` (`check`, also step 3 when there is no `check_fast`), `hub doctor` (`repos.agents` fix, escaped) |
-| `repos[].check_fast_timeout` | strict integer 1–160 (seconds), within the stop gate's 160 s budget | 150 | stop gate |
+| `repos[].check_fast`, `repos[].check` | shell commands; `check_fast` may be absent, empty or blank (with no `check_stop` either, no Stop gate: `config.stop_gate` warns); `check` holds a non-space character | `check` req. | stop gate (`check_fast`, when no `check_stop` is set), `hub run` (`check`, also step 3 when there is no `check_fast`), `hub doctor` (`repos.agents` fix, escaped) |
+| `repos[].check_fast_timeout` | strict integer 1–160 (seconds), within the stop gate's 160 s budget | 150 | stop gate: the limit of the command it runs, `check_stop` or `check_fast` |
+| `repos[].check_stop` | shell command with a non-space character and no control character; the hooks' reader takes any other value as absent | absent: the stop gate runs `check_fast` | stop gate: run in place of `check_fast`, with `HUB_CHANGED_FILES` (below); `hub repo` and hub web's repo editor do not set it yet, and `hub repo set` keeps one written by hand. A hub sets it only once its pin carries the key (`extra="forbid"`) |
 | `repos[].conventions` | like `project.conventions`; a project `pr_title` its `commit_title` cannot fill is reported at `project.conventions.pr_title`, naming each such `repos[<i>].conventions.commit_title` | per key the project's, else today's shape; `pr_title`, else the repo's effective `commit_title` | as `project.conventions`, for the repo; `AGENTS.md` names the repo, not its patterns |
 | `repos[].default_branch` | like `project.default_branch` | `project.default_branch` | `hub worktree`, `hub run` (base, `--base`), `hub start`, `hub brief`, retro CI, guard (union of `main`, `master` and every configured default branch, plus the root `hub.json`'s when `$HUB_CONFIG` points elsewhere, from any cwd); `AGENTS.md` names it only when set |
 | `repos[].services` | object keyed by service name (`S`, ≤ 40): `kind`, `description`, `endpoints` per declared environment ([environments.md](environments.md)) | `{}` | `hub brief`, `AGENTS.md` (service names); no hook reads it |
@@ -121,7 +122,7 @@ retype); brain frontmatter lists repo dirs unquoted (no type resolution). A safe
   `tracker.team` and each `tracker.teams` item: `^[A-Za-z0-9]+$`. `project.author_email`:
   `^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$`. Other free text has no control character (`\x00-\x1f`, `\x7f`); `author_name`
   is rendered only with format quoting (`shlex.quote`, JSON encoder, escaped YAML scalar), never into a Makefile;
-  `check_fast` and `check` are read at run time, never rendered.
+  `check_fast`, `check_stop` and `check` are read at run time, never rendered.
 - Model names (`models.tiers.*`): `^[A-Za-z0-9._-]{1,64}$`, the same pattern `hub run --model` takes, rendered
   unquoted into the agents' YAML frontmatter (`model: opus`), so a hub without `models` keeps its bytes. Aliases
   (`haiku`, `sonnet`, `opus`, `inherit`) and full model ids (`claude-opus-4-1-20250805`) fit; `[1m]` variants and ids
@@ -178,6 +179,19 @@ benchmark) and `marketplace` (plugin marketplace) take `{}` only; `contract-sync
   unusable item or an unknown key sets `InfraSection.problem`). A bad `repos[].default_branch` inherits; a bad
   `tracker.teams` (not a non-empty list of non-empty strings) counts as absent. No hook reads `conventions` or
   `models`.
+
+### `HUB_CHANGED_FILES`
+
+The stop gate sets this variable for a `check_stop` run only, so that the command can test just what the session
+changed. It holds the checkout's changed paths, relative to its top, `/`-separated, sorted and unique, one per line
+with no newline after the last (Python's `splitlines()` reads it; a shell `while IFS= read -r` loop gets the last line
+too when fed by a here-string, `<<<`). A path that exists counts when its mtime falls in the session; a deleted path,
+and both the old and the new name of a rename, count whenever `git status` lists them. Any file counts, not only code.
+The variable is left unset, and the command finds the changes itself, when git prints any path of the checkout in
+quotes (git quotes, for example, a name with a space, a quote or a control character, and by default a non-ASCII
+one), when the list is over 65,536 bytes, and when the command fails to start with it (`E2BIG`: the gate starts it
+once more without it). A `HUB_CHANGED_FILES` in the gate's own environment reaches no check, `check_fast` included.
+The paths travel as data: the gate never puts them in a command line.
 
 ### Tracker
 

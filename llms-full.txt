@@ -961,7 +961,8 @@ Hooks are small scripts Claude Code runs on its own at fixed moments; you never 
 - **After each edit** (`PostToolUse`) of a file in a repo, the repo's own formatter and linter run on it (they tidy the
   code and point out mistakes: ruff for Python, prettier and eslint for JavaScript and TypeScript, when the repo has
   them installed), and any problem left over goes back to the agent.
-- **When the agent wants to finish** (`Stop`), the *stop gate* runs `check_fast` in each repo checkout whose code
+- **When the agent wants to finish** (`Stop`), the *stop gate* runs the repo's `check_stop`, or its `check_fast` when
+  it has none, in each repo checkout whose code
   changed during the session: the checkout holding the session's folder, then each one holding a file that the session
   or one of its subagents edited (read from the session's transcripts; never the hub). The session starts at the
   transcript's first timestamp; when none can be read (or it lies in the future), at the transcript file's creation
@@ -972,8 +973,10 @@ Hooks are small scripts Claude Code runs on its own at fixed moments; you never 
   `check_fast_timeout` (150 s if unset), capped by the time left, and is stopped together with everything it started. A
   repo whose check timed out or did not get to run prints a `not run` line instead: it never blocks, and it is never
   silently counted as passing; transcripts read only in part (out of time, or past the newest 1,024 subagent files) add
-  a note. A repo without `check_fast` has no Stop gate: when it changed, the gate names it (`no check_fast configured`)
-  and never blocks; `hub doctor` warns.
+  a note. A repo with neither command has no Stop gate: when it changed, the gate names it (`no check_fast configured`)
+  and never blocks; `hub doctor` warns. A `check_stop` gets the paths the session changed in that checkout in
+  `HUB_CHANGED_FILES`, one per line, so it can test only those (in agent-hub, `make check-changed` does); when the gate
+  cannot hand over the whole list, it leaves the variable unset and the command works out the changes itself.
 - **Before Claude Code shortens a long conversation to free memory** (`PreCompact`), a snapshot (your last request, and
   the branch and changed files of each checkout) is saved to `brain/auto/workspace/session-snapshot.md` (your personal
   memory folder, gitignored) and put back in the context afterwards.
@@ -1284,8 +1287,9 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `repos[].dir` | yes | | Folder name of the repo, next to the hub |
 | `repos[].github` | yes | | GitHub `owner/name` |
 | `repos[].role` | no | `app` | Free string; `app` is the only known value |
-| `repos[].check_fast` | no | | The repo's fast gate command, run by the Stop hook; unset or blank, the repo has no Stop gate |
-| `repos[].check_fast_timeout` | no | `150` | Seconds the Stop hook gives `check_fast` (1–160, within its 160 s budget) |
+| `repos[].check_fast` | no | | The repo's fast gate command, run by the Stop hook when there is no `check_stop`; unset or blank, and no `check_stop`, the repo has no Stop gate |
+| `repos[].check_fast_timeout` | no | `150` | Seconds the Stop hook gives the command it runs, `check_stop` or `check_fast` (1–160, within its 160 s budget) |
+| `repos[].check_stop` | no | | A narrower command the Stop hook runs instead of `check_fast` (not blank), with the paths the session changed in `HUB_CHANGED_FILES` ([project-config.md](docs/design/project-config.md)); `hub repo` does not set it yet |
 | `repos[].check` | yes | | The repo's full gate command (not blank), run before a PR |
 | `repos[].default_branch` | no | `project.default_branch` | Base of the repo's worktrees and PRs; the guard blocks pushes to it |
 | `repos[].conventions` | no | | Overrides `project.conventions` for this repo, key by key |
@@ -1321,7 +1325,7 @@ Example (synthetic project):
     {
       "dir": "backend",                         // cloned at ../backend
       "github": "acme/backend",
-      "check_fast": "make check-fast",          // the Stop hook runs this
+      "check_fast": "make check-fast",          // the Stop hook runs this, unless check_stop is set
       "check_fast_timeout": 120,                // seconds the Stop hook gives it (1–160)
       "check": "make check"                     // the full gate before a PR
     }
@@ -1702,8 +1706,9 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `repos[].dir` | one path segment (Rendered values), unique across `repos` ignoring case | req. | the sibling directory next to the hub |
 | `repos[].github` | `owner/name` | req. | cloud setup, `hub run`, `hub setup` (clone URL over the scheme of the hub's `origin`) |
 | `repos[].role` | free string; `app` is the only known value | `app` | templates may branch on known roles |
-| `repos[].check_fast`, `repos[].check` | shell commands; `check_fast` may be absent, empty or blank (no Stop gate: `config.stop_gate` warns); `check` holds a non-space character | `check` req. | stop gate (`check_fast`), `hub run` (`check`, also step 3 when there is no `check_fast`), `hub doctor` (`repos.agents` fix, escaped) |
-| `repos[].check_fast_timeout` | strict integer 1–160 (seconds), within the stop gate's 160 s budget | 150 | stop gate |
+| `repos[].check_fast`, `repos[].check` | shell commands; `check_fast` may be absent, empty or blank (with no `check_stop` either, no Stop gate: `config.stop_gate` warns); `check` holds a non-space character | `check` req. | stop gate (`check_fast`, when no `check_stop` is set), `hub run` (`check`, also step 3 when there is no `check_fast`), `hub doctor` (`repos.agents` fix, escaped) |
+| `repos[].check_fast_timeout` | strict integer 1–160 (seconds), within the stop gate's 160 s budget | 150 | stop gate: the limit of the command it runs, `check_stop` or `check_fast` |
+| `repos[].check_stop` | shell command with a non-space character and no control character; the hooks' reader takes any other value as absent | absent: the stop gate runs `check_fast` | stop gate: run in place of `check_fast`, with `HUB_CHANGED_FILES` (below); `hub repo` and hub web's repo editor do not set it yet, and `hub repo set` keeps one written by hand. A hub sets it only once its pin carries the key (`extra="forbid"`) |
 | `repos[].conventions` | like `project.conventions`; a project `pr_title` its `commit_title` cannot fill is reported at `project.conventions.pr_title`, naming each such `repos[<i>].conventions.commit_title` | per key the project's, else today's shape; `pr_title`, else the repo's effective `commit_title` | as `project.conventions`, for the repo; `AGENTS.md` names the repo, not its patterns |
 | `repos[].default_branch` | like `project.default_branch` | `project.default_branch` | `hub worktree`, `hub run` (base, `--base`), `hub start`, `hub brief`, retro CI, guard (union of `main`, `master` and every configured default branch, plus the root `hub.json`'s when `$HUB_CONFIG` points elsewhere, from any cwd); `AGENTS.md` names it only when set |
 | `repos[].services` | object keyed by service name (`S`, ≤ 40): `kind`, `description`, `endpoints` per declared environment ([environments.md](environments.md)) | `{}` | `hub brief`, `AGENTS.md` (service names); no hook reads it |
@@ -1782,7 +1787,7 @@ retype); brain frontmatter lists repo dirs unquoted (no type resolution). A safe
   `tracker.team` and each `tracker.teams` item: `^[A-Za-z0-9]+$`. `project.author_email`:
   `^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$`. Other free text has no control character (`\x00-\x1f`, `\x7f`); `author_name`
   is rendered only with format quoting (`shlex.quote`, JSON encoder, escaped YAML scalar), never into a Makefile;
-  `check_fast` and `check` are read at run time, never rendered.
+  `check_fast`, `check_stop` and `check` are read at run time, never rendered.
 - Model names (`models.tiers.*`): `^[A-Za-z0-9._-]{1,64}$`, the same pattern `hub run --model` takes, rendered
   unquoted into the agents' YAML frontmatter (`model: opus`), so a hub without `models` keeps its bytes. Aliases
   (`haiku`, `sonnet`, `opus`, `inherit`) and full model ids (`claude-opus-4-1-20250805`) fit; `[1m]` variants and ids
@@ -1839,6 +1844,19 @@ benchmark) and `marketplace` (plugin marketplace) take `{}` only; `contract-sync
   unusable item or an unknown key sets `InfraSection.problem`). A bad `repos[].default_branch` inherits; a bad
   `tracker.teams` (not a non-empty list of non-empty strings) counts as absent. No hook reads `conventions` or
   `models`.
+
+### `HUB_CHANGED_FILES`
+
+The stop gate sets this variable for a `check_stop` run only, so that the command can test just what the session
+changed. It holds the checkout's changed paths, relative to its top, `/`-separated, sorted and unique, one per line
+with no newline after the last (Python's `splitlines()` reads it; a shell `while IFS= read -r` loop gets the last line
+too when fed by a here-string, `<<<`). A path that exists counts when its mtime falls in the session; a deleted path,
+and both the old and the new name of a rename, count whenever `git status` lists them. Any file counts, not only code.
+The variable is left unset, and the command finds the changes itself, when git prints any path of the checkout in
+quotes (git quotes, for example, a name with a space, a quote or a control character, and by default a non-ASCII
+one), when the list is over 65,536 bytes, and when the command fails to start with it (`E2BIG`: the gate starts it
+once more without it). A `HUB_CHANGED_FILES` in the gate's own environment reaches no check, `check_fast` included.
+The paths travel as data: the gate never puts them in a command line.
 
 ### Tracker
 
@@ -2745,7 +2763,7 @@ functions registered when the module ships.
 | `bench.tasks` | error | module `bench`, snapshot only (no git, no process): listed `brain/workflow/bench/tasks.json` is a strict JSON list (at most 1 MiB, 200 cases; absent or `[]` is clean); each case an object with `id` (`[A-Za-z0-9._-]{1,64}`, unique ignoring case), `repo` (a `repos[].dir` unless `excluded`), `merge` (a 7–40 hex sha), `prompt` (1–20 000 characters, not starting with `-`), `hidden_tests` (1–100 literal relative paths of at most 1 024 characters: no glob or `\`, no leading `/`, `-` or `:` (pathspec magic), no empty, `.`, `..` or `.git` segment in any case, no control, format or surrogate character), `test_cmd` (1–32 non-empty strings of at most 1 024 characters); optional `setup_cmd` (at most 4 096 characters), `env` (at most 32 keys `[A-Za-z_][A-Za-z0-9_]*`, values string, number or boolean), `excluded` (boolean); no NUL in a string a process gets; one finding per problem | module `bench` |
 | `config.identity` | info | the branch prefix this developer gets when no file sets one: derived from the effective email (named with its source); can be disabled, cannot be retuned (a `severity` is a `config.schema` error), so every developer's run exits alike | AGH-65 |
 | `repos.agents` | warning | each checked-out repo's root holds `AGENTS.md` as the repo rules list it (a file or a link, not followed; empty passes; a gitignored or deleted file does not count, an unreadable one does; `CLAUDE.md`, a nested or differently cased name do not count); the fix names the hub's seeded `docs/app-repo-AGENTS.md` and the repo's `check_fast` (unless absent or blank) and `check` (escaped, cut); missing or unlistable checkouts are the runner's | AGH-76 |
-| `config.stop_gate` | warning | each repo whose `check_fast` is absent, empty or blank: `no Stop gate for <dir>` at `repos[<i>].check_fast`; can be disabled, cannot be retuned (a `severity` is a `config.schema` error) | AGH-52 |
+| `config.stop_gate` | warning | each repo with no `check_stop` whose `check_fast` is absent, empty or blank: `no Stop gate for <dir>` at `repos[<i>].check_fast`; can be disabled, cannot be retuned (a `severity` is a `config.schema` error) | AGH-52, AGH-619 |
 | `repos.ui_paths` | warning | each glob of a repo's `ui_paths` matches at least one path of its checkout's listing (as the repo rules list it: a gitignored file does not count), matched from the checkout root as [project-config.md](project-config.md) states; one finding per glob that matches nothing, at `hub.json`, message `repos[<i>].ui_paths[<j>]: <glob> matches no file in ../<dir>` (glob cut); a repo without the key gives none; missing or unlistable checkouts are the runner's (it reads the checkouts even when no repo sets the key, so with the other repo rules off it carries the runner's checkout findings) | AGH-474 |
 | `environments.production` | warning | one finding per production environment (the `production` flag, never a name) of `hub.json` and `hub.local.json`, at its source (the file its effective `access` comes from), message `production environment: <name> (access <a>, <source>)`: a warning for `write` or `ask` (ending `; actions: writes and destroys are denied there`, the access policy of [scenarios.md](scenarios.md)), an info for `read`; a local file `config.schema` refuses adds nothing; an ordinary `doctor.rules` entry (disabled or retuned like the others) | [environments.md](environments.md) |
 | `environments.env_file` | warning | each env file a declared environment or endpoint names (`credentials.env_file`, both files), at the file that declares it: `env file <path> of <env> is missing`, `is outside the hub and every declared repo` (by real path: a link leading out of them is outside), `is not ignored by git in <dir>` (`git check-ignore` in that checkout; a tracked file is never ignored), or `is reached through a link` (a link on its path below the hub's or repo's folder it names, which `hub action run` refuses to follow); no finding without a declared env file | [scenarios.md](scenarios.md) |

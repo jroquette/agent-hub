@@ -177,6 +177,12 @@ The drift tests (in `make check-fast`) fail while the file differs from the expo
 `make hub-schema` leaves `git status --porcelain` empty. A Pydantic upgrade that changes the export needs the same
 regeneration in its PR.
 
+A new optional key changes three things in one PR: the model, the hooks' stdlib reader
+(`plugin/hub-workflow/hooks/stdlib_reader.py.tmpl` in the generator's templates) when a hook reads the key, and the
+path lists of `packages/generator/tests/integration/test_hub_json_reader.py`, which say how the reader treats each
+optional key (read as the model reads it, ignored, or read with the hook's own default).
+`test_lists_every_optional_field_when_model_inspected` fails until the key is in one of them.
+
 The agent output schemas `review.v1.json`, `eval.v1.json` and `eval.v2.json` (ADR 0028) are exported the same way
 from `ReviewOutput`, `EvalOutput` and `EvalOutputV2` and ship beside them (`packages/core/src/agent_hub/core/features/`).
 After any change to a model, run `make output-schemas` and commit the files. Two drift tests fail while a file differs from the export:

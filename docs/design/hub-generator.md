@@ -73,7 +73,7 @@ the stop gate does not block if it cannot save its counter. `hub.json` is the on
 else the hook root's (the hub or hub worktree holding the hook files; a worktree reads its own `hub.json`, but the hub
 is its main checkout and the workspace that checkout's parent), else (plugin cache) the first found walking up from the
 start, a sibling hub only if the start is in it or a repo it lists. That file gives every value (repos, the stop gate's
-`check_fast`, SessionStart's `platform.version`, default branch, branch prefix, hub, workspace), except that
+`check_stop` and `check_fast`, SessionStart's `platform.version`, default branch, branch prefix, hub, workspace), except that
 `$HUB_CONFIG`'s `ask_before_edit`, `deny_paths`, `deny_hosts` and `secret_env_files` are added to the hook root's, never
 replace them, and `readable_env_files` is the hook root's only; for
 `guard.infra`, the mode and `allow` are the hook root's only and `$HUB_CONFIG`'s `prod_markers` and unusable-value
@@ -123,8 +123,12 @@ uv's cache and tool folders to `<hub>/.hub-uv/` (which ignores itself) only when
 path, and it would change every repo's uv), and `sandbox.filesystem.allowWrite` on `~/.cache/uv` or
 `~/.local/share/uv` would let a sandboxed agent plant code that later runs unsandboxed (uv tools on `PATH`).
 `hub doctor`'s `sandbox.workflow` checks the exclusions. The stop gate checks the checkouts holding cwd or a file the session or its subagents edited,
-changed since the transcript's first timestamp (else its birth time, else 12 h ago); in one 160 s budget each run gets
-`repos[].check_fast_timeout` (default 150 s), then its group is killed; a cut run says `not run`.
+changed since the transcript's first timestamp (else its birth time, else 12 h ago), running the repo's `check_stop`, else
+its `check_fast`; in one 160 s budget each run gets
+`repos[].check_fast_timeout` (default 150 s), then its group is killed; a cut run says `not run`. A `check_stop` run
+gets the checkout's changed paths in `HUB_CHANGED_FILES`, one per line, unless git quotes one of them, the list is over
+64 KiB or the start fails with `E2BIG` (then it starts again without it); no check inherits the variable from the gate
+([project-config.md](project-config.md)). The summary names the kind of command the changed repos were given.
 The event sensor `event_sensor.py` (AGH-200) is registered beside them on eleven events (SessionStart,
 UserPromptSubmit, PreToolUse, PostToolUse and PostToolUseFailure with matcher `*`, Notification, Stop, SubagentStart,
 SubagentStop, PreCompact, SessionEnd; timeout 5 s): it reads the input (at most 16 MiB), reduces each body to its size

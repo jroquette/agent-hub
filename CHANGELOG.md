@@ -18,6 +18,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   It takes the paths from `PATHS="<paths>"`, `HUB_CHANGED_FILES` or git against `origin/main`, and
   `python -m scripts.check_changed --plan <paths>` prints the plan without running it. A build file, or a path it
   cannot place, runs every fast test. `make check` stays the gate before a PR and in CI (AGH-620).
+- `repos[].check_stop` in `hub.json`: a narrower command the Stop hook runs instead of `check_fast`, with the paths the
+  session changed in that checkout in `HUB_CHANGED_FILES`, one per line (in agent-hub, `make check-changed` reads
+  them). When the list is too long or git quotes one of the paths, the variable stays unset and the command finds the
+  changes itself. `check_fast_timeout` limits whichever command runs, and no check gets a `HUB_CHANGED_FILES` the hook
+  inherited. Set the key only after bumping `platform.version` to a release that has it (AGH-619).
 
 ### Fixed
 

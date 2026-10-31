@@ -277,7 +277,8 @@ today), and the CLI's model and the hooks' stdlib reader accept it in the same c
 | Key | Meaning | When absent | Issue |
 | --- | --- | --- | --- |
 | `repos[].default_branch` | The repo's default branch: worktree and PR base, push guard | `project.default_branch` | AGH-46 |
-| `repos[].check_fast_timeout` | Seconds the Stop gate gives the repo's `check_fast`, within the gate's total budget; `check_fast` itself becomes optional | The gate's default | AGH-52 |
+| `repos[].check_fast_timeout` | Seconds the Stop gate gives the command it runs for the repo (`check_stop`, else `check_fast`), within the gate's total budget; `check_fast` itself becomes optional | The gate's default | AGH-52 |
+| `repos[].check_stop` | A command the Stop gate runs for the repo in place of `check_fast` (not blank, no control character; the hooks read a bad value as absent). That run alone gets `HUB_CHANGED_FILES`: the paths the session changed in the checkout, relative to its top, sorted, one per line with no final newline (a file that exists counts when written during the session; a deleted file and both names of a rename count whenever git lists them). The gate leaves the variable unset when git prints a path of the checkout in quotes, when the list is over 65,536 bytes, and when the command can only start without it (`E2BIG`); no check gets the variable from the gate's own environment. In agent-hub, `make check-changed` reads it | `check_fast` | AGH-619 |
 | `tracker.teams` | Several tracker team keys, the first being the default; never set together with `tracker.team` | `[tracker.team]` | AGH-56 |
 | `tracker.blocked_label` | The label `hub run` adds when its session stops for a human (ADR 0030); not settable in `hub.local.json`; the hooks do not read it | `tracker.failed_label` | AGH-178 |
 | `models` | Model tiers (`small`, `medium`, `large`) mapped to model names, and per-agent tier overrides for the plugin's agents; `hub run` uses `medium` | Each agent's template tier, with `haiku`, `sonnet`, `opus` | AGH-180 |
@@ -1031,7 +1032,8 @@ ceiling. The live values are in [`scripts/perf/budgets.json`](../scripts/perf/bu
 than the ADR, never looser, and a `check-fast` test enforces it. `make perf` measures them on the reference machine
 (Linux, 4 vCPU, Python 3.14, warm uv cache); CI enforces them through AGH-602. Not allowed on an interactive path: a
 network call with no cache, a new database connection per query, a full scan of the event log, the doctor rules, or a
-full test suite.
+full test suite. The Stop gate's 30 s is the time of the command it runs for a changed repo, `check_stop` when the repo
+sets one, else `check_fast`: a repo whose `check_fast` runs a whole suite sets a narrower `check_stop`.
 
 ## MVP and phases
 
