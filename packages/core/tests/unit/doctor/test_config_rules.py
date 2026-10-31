@@ -128,6 +128,25 @@ def test_reports_reader_problem_when_hub_json_unreadable(snapshot_of: SnapshotFa
 
 
 @pytest.mark.parametrize(
+    ("index", "value", "problem"),
+    [
+        pytest.param(0, 5, "Input should be a valid string", id="number"),
+        pytest.param(1, "  ", "must hold a non-space character", id="blank"),
+    ],
+)
+def test_reports_schema_error_at_check_stop_when_value_wrong(
+    snapshot_of: SnapshotFactory, *, index: int, value: object, problem: str
+) -> None:
+    def edit(document: dict[str, Any]) -> None:
+        document["repos"].append(a_second_repo())
+        document["repos"][index]["check_stop"] = value
+
+    snapshot = snapshot_of(config=failure_of(document_bytes(edit)))
+
+    assert findings_of(snapshot) == [schema_finding(f"repos[{index}].check_stop: {problem}")]
+
+
+@pytest.mark.parametrize(
     "schema_version", [pytest.param(1, id="schema-ok"), pytest.param(7, id="schema-wrong")]
 )
 def test_reports_pin_only_when_pin_differs(
@@ -499,3 +518,23 @@ def test_reports_no_stop_gate_when_config_failed(snapshot_of: SnapshotFactory) -
     )
 
     assert stop_gate_findings(snapshot_of(config=failure)) == []
+
+
+@pytest.mark.parametrize("check_fast", [None, "", "  "], ids=["absent", "empty", "blank"])
+def test_warns_stop_gate_only_when_check_stop_and_check_fast_empty(
+    snapshot_of: SnapshotFactory, check_fast: str | None
+) -> None:
+    # demo-api stops on its check_stop, whatever its check_fast; demo-web has neither command.
+    def edit(document: dict[str, Any]) -> None:
+        document["repos"].append(a_second_repo())
+        api, web = document["repos"]
+        api["check_stop"] = "make check-changed"
+        del api["check_fast"]
+        if check_fast is not None:
+            api["check_fast"] = check_fast
+        del web["check_fast"]
+
+    config = config_state(document_bytes(edit), running_version=RUNNING_VERSION)
+
+    assert isinstance(config, HubConfig), config
+    assert stop_gate_findings(snapshot_of(config=config)) == [stop_gate_finding(1, "demo-web")]

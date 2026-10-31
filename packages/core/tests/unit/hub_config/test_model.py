@@ -1127,6 +1127,38 @@ def test_states_check_fast_timeout_cap_when_module_read() -> None:
     assert MAX_CHECK_FAST_TIMEOUT == 160
 
 
+def test_reads_check_stop_when_repo_sets_it() -> None:
+    # Through the checked read, so a model without the key fails the assert, not the call.
+    checked = check_hub_document(
+        with_value(("repos", 0, "check_stop"), "make check-changed"), running_version="0.2.0"
+    )
+
+    assert isinstance(checked, HubConfig), checked
+    assert checked.repos[0].check_stop == "make check-changed"
+    assert HubConfig.model_validate(a_hub_document()).repos[0].check_stop is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(5, id="number"),
+        pytest.param(True, id="boolean"),
+        pytest.param([], id="list"),
+        pytest.param({}, id="object"),
+        pytest.param("", id="empty"),
+        pytest.param("  ", id="blank"),
+        pytest.param("make\x07check-changed", id="control"),
+    ],
+)
+def test_rejects_check_stop_when_value_not_a_command(value: object) -> None:
+    document = with_value(("repos", 0, "check_stop"), value)
+
+    [(loc, kind)] = error_types(document)
+    assert loc == ("repos", 0, "check_stop")
+    # A wrong value of a known key, not the key itself refused.
+    assert kind != "extra_forbidden"
+
+
 def test_reports_other_errors_when_object_has_null_value() -> None:
     document = with_value(("project", "name"), None)
     document["project"]["hub_repo"] = "bad"

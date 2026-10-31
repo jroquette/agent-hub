@@ -414,6 +414,17 @@ def test_reports_repo_branch_problem_when_value_invalid(
     ]
 
 
+def test_exits_one_with_schema_error_when_check_stop_wrong(
+    tmp_path: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["repos"][0]["check_stop"] = 5
+    root = config_only_hub(tmp_path, dump_json(demo_document))
+
+    lines = lines_of(run_doctor(root), exit_code=1)
+
+    assert lines == [schema_line("repos[0].check_stop: Input should be a valid string"), ONE_ERROR]
+
+
 def test_passes_config_schema_when_hub_sets_conventions(
     demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
 ) -> None:
