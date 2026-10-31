@@ -15,6 +15,7 @@ import contextlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 from collections.abc import Iterator, Mapping, Sequence
@@ -61,6 +62,22 @@ SIMPLE_COMMANDS = [
     pytest.param(("scenario", "list"), None, "demo-service-up", id="scenario-list"),
     pytest.param(("workflow", "list"), None, "issue-to-pr", id="workflow-list"),
 ]
+
+pytestmark = pytest.mark.usefixtures("no_process_left")
+
+
+@pytest.fixture
+def no_process_left(tmp_path: Path) -> Iterator[None]:
+    """After the case, kill what it left running, as ``processes_left`` finds it (each process
+    whose command line names the case's folder, each Python child the probe loaded in), then wait
+    until all of it has gone: a failing case leaves nothing behind."""
+    yield
+    folder = tmp_path / "probe"
+    for left in processes_left(folder, tmp_path, timeout=0):
+        with contextlib.suppress(ProcessLookupError):  # it ended on its own meanwhile
+            os.kill(int(left.split(" ", 1)[0]), signal.SIGKILL)
+    still = processes_left(folder, tmp_path, timeout=EXIT_WAIT)
+    assert still == [], "still running after the kill:\n" + "\n".join(still)
 
 
 @pytest.fixture
