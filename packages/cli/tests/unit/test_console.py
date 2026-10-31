@@ -411,5 +411,6 @@ def test_raises_when_print_fails_without_closed_pipe(
     with pytest.raises(OSError, match="I/O error") as raised:
         console.main()
 
-    # As under Typer, any other error is raised; once printing started, nothing is handed over.
+    # Any other error is raised as under Typer, with the same exit code and last line, but shown
+    # as a plain traceback, not Typer's boxed one; once printing started, nothing is handed over.
     assert (raised.value.errno, typer_app_runs) == (errno.EIO, [])
