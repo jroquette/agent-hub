@@ -1,7 +1,7 @@
 """How often a project's skills and agents were used, folded from its events (AGH-164, D6, S8, L7).
 
-A pure fold over the sessions of an event snapshot: names, counts and times only, never a
-prompt, an argument or any other payload text (ADR 0019).
+A pure fold over sessions of stored events: names, counts and times only, never a prompt, an
+argument or any other payload text (ADR 0019).
 
 - **Skills.** A signal is a user ``message`` with ``slash_command``, or a ``tool.call`` of the
   ``Skill`` tool with ``skill``. One typed prompt is stored twice (by the hook and by the
@@ -13,13 +13,22 @@ prompt, an argument or any other payload text (ADR 0019).
   ``resolve_facts`` winners (hook and transcript share ``tool_use_id``), each one a ``model``
   use; no window.
 
-Names are normalised by ``bare_name``. The fold reads the signals at or after ``now`` minus the
-longest of ``USAGE_WINDOWS`` (90 days). ``by_skill`` and ``by_agent`` count only the uses at or
-after ``now - USAGE_DAYS`` (the Toolkit's 30 days); ``windows_by_skill`` and ``windows_by_agent``
-give every name used in 90 days its runs over 7, 30 and 90 days (each window inclusive of its
-edge) and its last use (AGH-482). At most ``MAX_USAGE_NAMES`` names per kind are kept, the most
-used first (then by name): the 30-day maps by 30-day uses (past that ``truncated`` is set), the
-windows by 90-day uses (past that ``windows_truncated`` is set).
+Names are normalised by ``bare_name``. ``fold_skill_uses`` reads the signals at or after a
+``start`` into each name's uses (``SkillUses``); ``usage_at`` counts them at a ``now``, keeping
+the uses at or after ``now - LONGEST_WINDOW`` (the longest of ``USAGE_WINDOWS``, 90 days);
+``fold_skill_usage`` is both, from ``start = now - LONGEST_WINDOW``. ``by_skill`` and
+``by_agent`` count only the uses at or after ``now - USAGE_DAYS`` (the Toolkit's 30 days);
+``windows_by_skill`` and ``windows_by_agent`` give every name used in 90 days its runs over 7,
+30 and 90 days (each window inclusive of its edge) and its last use (AGH-482). At most
+``MAX_USAGE_NAMES`` names per kind are kept, the most used first (then by name): the 30-day
+maps by 30-day uses (past that ``truncated`` is set), the windows by 90-day uses (past that
+``windows_truncated`` is set).
+
+The read model folds the uses once per UTC date and store mark, from that date's midnight minus
+90 days, and counts the windows at each read (AGH-611). That equals a fold at the read's ``now``
+but for an invocation within ``DEDUPE_WINDOW`` (5 s) of the 90-day edge, which may count
+differently: its signals are deduplicated, and its facts resolved, with the ones just before
+the edge.
 """
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -40,6 +49,8 @@ from agent_hub.core.skills.skill_view import (
 )
 
 DEDUPE_WINDOW: Final = timedelta(seconds=5)
+# How far back from its ``now`` a usage read counts.
+LONGEST_WINDOW: Final = timedelta(days=max(USAGE_WINDOWS))
 MAX_USAGE_NAMES: Final = 500
 SKILL_TOOL: Final = "Skill"
 AGENT_TOOLS: Final = frozenset({"Agent", "Task"})
@@ -66,8 +77,14 @@ class _Tally:
     def add(self, *, typed: bool, at: datetime) -> None:
         self.uses.append(_Use(at, typed))
 
-    def since(self, start: datetime) -> list[_Use]:
-        return [use for use in self.uses if use.at >= start]
+
+@dataclass(frozen=True, slots=True)
+class SkillUses:
+    """Each skill's and agent's uses by bare name: when, and whether a person typed it (never
+    for an agent). Nothing in it depends on ``now``, so ``usage_at`` counts it at any later one."""
+
+    skills: Mapping[str, tuple[_Use, ...]]
+    agents: Mapping[str, tuple[_Use, ...]]
 
 
 def _name(value: object) -> str | None:
@@ -117,6 +134,10 @@ def _close(name: str, invocation: Sequence[_Signal], skills: dict[str, _Tally]) 
     tally.add(typed=typed, at=max(signal.at for signal in invocation))
 
 
+def _since(uses: Iterable[_Use], start: datetime) -> list[_Use]:
+    return [use for use in uses if use.at >= start]
+
+
 def _usage(uses: Sequence[_Use]) -> Usage:
     user_count = sum(1 for use in uses if use.typed)
     return Usage(
@@ -140,7 +161,7 @@ def _windows(uses: Sequence[_Use], now: datetime) -> UsageWindows:
     )
 
 
-def _ranked(tallies: Mapping[str, list[_Use]]) -> tuple[list[tuple[str, list[_Use]]], bool]:
+def _ranked(tallies: Mapping[str, Sequence[_Use]]) -> tuple[list[tuple[str, Sequence[_Use]]], bool]:
     """The ``MAX_USAGE_NAMES`` most used names (then by name) that have a use, sorted by name,
     and whether any was cut."""
     used = [(name, uses) for name, uses in tallies.items() if uses]
@@ -149,24 +170,28 @@ def _ranked(tallies: Mapping[str, list[_Use]]) -> tuple[list[tuple[str, list[_Us
 
 
 def _kept(
-    tallies: Mapping[str, _Tally], *, since: datetime, now: datetime
+    uses: Mapping[str, Sequence[_Use]], *, since: datetime, now: datetime
 ) -> tuple[dict[str, Usage], bool, dict[str, UsageWindows], bool]:
-    """The 30-day usage, capped on the 30-day ranking (the Toolkit's), and the windows, capped
-    on the 90-day ranking, each with its own cut flag."""
-    recent, recent_cut = _ranked({name: tally.since(since) for name, tally in tallies.items()})
-    every, every_cut = _ranked({name: tally.uses for name, tally in tallies.items()})
-    usage = {name: _usage(uses) for name, uses in recent}
-    windows = {name: _windows(uses, now) for name, uses in every}
+    """Of the uses at or after ``now - LONGEST_WINDOW``: the 30-day usage, capped on the 30-day
+    ranking (the Toolkit's), and the windows, capped on the 90-day ranking, each with its own
+    cut flag."""
+    kept = {name: _since(found, now - LONGEST_WINDOW) for name, found in uses.items()}
+    recent, recent_cut = _ranked({name: _since(found, since) for name, found in kept.items()})
+    every, every_cut = _ranked(kept)
+    usage = {name: _usage(found) for name, found in recent}
+    windows = {name: _windows(found, now) for name, found in every}
     return usage, recent_cut, windows, every_cut
 
 
-def fold_skill_usage(
-    sessions: Mapping[str, Sequence[StoredEvent]], *, project: str, now: datetime
-) -> SkillUsage:
-    """The usage of ``project``'s skills and agents in ``sessions`` (session id -> its events,
-    any order) over the ``USAGE_DAYS`` before ``now``, and its 7/30/90-day windows."""
-    since = now - timedelta(days=USAGE_DAYS)
-    start = now - timedelta(days=max(USAGE_WINDOWS))
+def _frozen(tallies: Mapping[str, _Tally]) -> dict[str, tuple[_Use, ...]]:
+    return {name: tuple(tally.uses) for name, tally in tallies.items()}
+
+
+def fold_skill_uses(
+    sessions: Mapping[str, Sequence[StoredEvent]], *, project: str, start: datetime
+) -> SkillUses:
+    """The uses of ``project``'s skills and agents in ``sessions`` (session id -> its events,
+    any order), from the signals at or after ``start``."""
     skills: dict[str, _Tally] = {}
     agents: dict[str, _Tally] = {}
     for group in sessions.values():
@@ -183,8 +208,19 @@ def fold_skill_usage(
             name = _agent_name(event)
             if name is not None:
                 agents.setdefault(name, _Tally()).add(typed=False, at=event.timestamp)
-    by_skill, skills_cut, windows_by_skill, skill_windows_cut = _kept(skills, since=since, now=now)
-    by_agent, agents_cut, windows_by_agent, agent_windows_cut = _kept(agents, since=since, now=now)
+    return SkillUses(skills=_frozen(skills), agents=_frozen(agents))
+
+
+def usage_at(uses: SkillUses, *, now: datetime) -> SkillUsage:
+    """The usage of ``uses`` over the ``USAGE_DAYS`` before ``now``, and its 7/30/90-day
+    windows, counting only the uses at or after ``now - LONGEST_WINDOW``."""
+    since = now - timedelta(days=USAGE_DAYS)
+    by_skill, skills_cut, windows_by_skill, skill_windows_cut = _kept(
+        uses.skills, since=since, now=now
+    )
+    by_agent, agents_cut, windows_by_agent, agent_windows_cut = _kept(
+        uses.agents, since=since, now=now
+    )
     return SkillUsage(
         since=since,
         by_skill=by_skill,
@@ -194,3 +230,12 @@ def fold_skill_usage(
         windows_by_agent=windows_by_agent,
         windows_truncated=skill_windows_cut or agent_windows_cut,
     )
+
+
+def fold_skill_usage(
+    sessions: Mapping[str, Sequence[StoredEvent]], *, project: str, now: datetime
+) -> SkillUsage:
+    """The usage of ``project``'s skills and agents in ``sessions`` (session id -> its events,
+    any order) over the ``USAGE_DAYS`` before ``now``, and its 7/30/90-day windows."""
+    uses = fold_skill_uses(sessions, project=project, start=now - LONGEST_WINDOW)
+    return usage_at(uses, now=now)

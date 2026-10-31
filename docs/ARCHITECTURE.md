@@ -251,7 +251,8 @@ Phase 2 adds the read side and the live ingestion, all in core, with no I/O:
   `read_skill_file` (one bounded file, never through a link), implemented in `generator/skill_files.py`. Everything
   else is pure core in `core/skills/`: the path rule and limits (`skill_sources.py`), frontmatter, structure,
   diagnostics, hooks and external plugins, the catalog fold (`skill_catalog.py`) and the usage fold over the event
-  snapshot (`skill_usage.py`, `EventReadModels.skill_usage`), which `HubFilesReadModels` joins (`usage=`).
+  index (`skill_usage.py`, `EventReadModels.skill_usage`: each project's uses kept per UTC day and store mark, its
+  windows counted at read), which `HubFilesReadModels` joins (`usage=`).
   With `capture=` (AGH-295), the catalog and the detail hand each unit they show, with its stat fingerprint, to
   `CaptureItemVersions` (`item_versions/capture_item_versions.py`), which reads a changed unit whole through
   `HubFileReader.read_unit` and appends an `external` version to the `ItemVersionStore`; `build_app` opens the

@@ -26,7 +26,7 @@ import bisect
 import threading
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
 from urllib.parse import quote
@@ -103,7 +103,7 @@ from agent_hub.core.sessions.session_files import fold_session_files
 from agent_hub.core.sessions.session_label import LabelRules, with_issue, with_prompt_issue
 from agent_hub.core.sessions.session_status import clock_phase
 from agent_hub.core.sessions.session_summary import summarize_session
-from agent_hub.core.skills.skill_usage import fold_skill_usage
+from agent_hub.core.skills.skill_usage import LONGEST_WINDOW, SkillUses, fold_skill_uses, usage_at
 from agent_hub.core.skills.skill_view import SkillUsage
 
 type SortKey = tuple[CursorKeyPart, ...]
@@ -408,8 +408,9 @@ class FoldedEventReadModels:
         # A session's timeline depends only on its events, so it lives as long as the mark: the
         # pages of one long session (a 5,000-event one is 25 pages) build it once.
         self._timelines: FoldMemo[str, _SortedTimeline] = FoldMemo(max_entries=32)
-        # Skill usage per (mark, second of ``now``, project), folded from that snapshot (P2).
-        self._usage: FoldMemo[tuple[int, datetime, str], SkillUsage] = FoldMemo(max_entries=8)
+        # Skill and agent uses per (project, UTC date of ``now``) at the store's mark, folded from
+        # that date's midnight minus 90 days; each read counts them at its own ``now`` (P2).
+        self._usage: FoldMemo[tuple[str, date], SkillUses] = FoldMemo(max_entries=8)
 
     # Loading and folding
 
@@ -899,17 +900,34 @@ class FoldedEventReadModels:
 
     def skill_usage(self, project: str) -> SkillUsage:
         """How often each skill and agent of ``project`` was used over the last ``USAGE_DAYS``
-        of the snapshot's ``now``, and its 7/30/90-day windows: names, counts and times only
-        (L7 dedupe in the fold, AGH-482)."""
-        snapshot = self._snapshot()
-        key = (snapshot.hwm, snapshot.now.replace(microsecond=0), project)
-        return self._usage.get(
-            key,
-            hwm=snapshot.hwm,
-            compute=lambda: fold_skill_usage(
-                snapshot.by_session, project=project, now=snapshot.now
-            ),
+        before ``now``, and its 7/30/90-day windows: names, counts and times only (L7 dedupe
+        in the fold, AGH-482). The uses are folded once per UTC date and store mark, without
+        the snapshot, and counted at each read (AGH-611)."""
+        hwm = self._reader.high_water_mark()
+        now = self._now()
+        day = now.astimezone(UTC).date()
+        uses = self._usage.get(
+            (project, day), hwm=hwm, compute=lambda: self._skill_uses(project, day=day, hwm=hwm)
         )
+        return usage_at(uses, now=now)
+
+    def _skill_uses(self, project: str, *, day: date, hwm: int) -> SkillUses:
+        """``project``'s uses from ``day``'s UTC midnight minus 90 days, in the events up to
+        ``hwm`` or later. Only the copy of the session groups holds ``_folding``, so the session
+        routes' ``_fold`` never waits for the skill fold."""
+        with self._folding:
+            if self._index.hwm > hwm:
+                # Another read loaded past this mark: fold at the store's mark rather than copy
+                # the index up to this one (``up_to``). The memo keeps these uses under the older
+                # mark, so a read at the newer one folds again.
+                hwm = self._reader.high_water_mark()
+            index, _ = self._index_at(hwm)
+            # Copied: ``apply`` replaces groups and adds sessions while the fold runs.
+            sessions = {
+                session_id: index.by_session[session_id] for session_id in index.live_sessions
+            }
+        midnight = datetime(day.year, day.month, day.day, tzinfo=UTC)
+        return fold_skill_uses(sessions, project=project, start=midnight - LONGEST_WINDOW)
 
 
 # Labels and tile fields at read time
