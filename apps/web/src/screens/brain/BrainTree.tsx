@@ -1,5 +1,6 @@
 import { defaultRangeExtractor, observeElementRect, useVirtualizer } from "@tanstack/react-virtual";
-import { useCallback, useMemo, useRef, useState } from "react";
+import type { Virtualizer } from "@tanstack/react-virtual";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, RefObject } from "react";
 import { flushSync } from "react-dom";
 
@@ -137,6 +138,29 @@ function keyMove(
   return null;
 }
 
+/**
+ * Scrolls the box, at once, so the part shows whole below its group's sticky heading: by the least
+ * distance, or with the part in the middle (`center`). Nothing moves when it shows already. The
+ * box is scrolled itself, not through the virtualizer, which would keep steering towards the
+ * part's index for a while, wherever the rows have moved since.
+ */
+function scrollToPart(
+  box: HTMLElement | null,
+  virtualizer: Virtualizer<HTMLDivElement, Element>,
+  { layout, part, center }: { layout: TreeLayout; part: number; center?: boolean },
+) {
+  if (box === null) return;
+  const top = layout.tops[part] ?? 0;
+  const bottom = top + (layout.parts[part]?.size ?? 0);
+  const offset = box.scrollTop;
+  const height = virtualizer.scrollRect?.height ?? FALLBACK_RECT.height;
+  if (top - SIZE.heading >= offset && bottom + SIZE.end <= offset + height) return;
+  let next = bottom + SIZE.end - height;
+  if (center === true) next = (top + bottom - height) / 2;
+  else if (top - SIZE.heading < offset) next = top - SIZE.heading;
+  box.scrollTop = Math.max(0, next);
+}
+
 /** The rendered row element of `path` in the box, if it is rendered. */
 function rowElement(box: HTMLElement | null, path: string): HTMLElement | undefined {
   return [...(box?.querySelectorAll<HTMLElement>("[data-tree-row]") ?? [])].find(
@@ -160,13 +184,33 @@ function placeRows(layout: TreeLayout, shown: readonly number[], span: GroupSpan
   return { rows, below: end - cursor };
 }
 
-/** The open folders and the current row, which the tree keeps while it is shown. */
-function useTreeState(selected: string) {
+/** What the tree keeps while the Brain screen shows a project, the search's turns included. */
+export interface BrainTreeState {
+  /** The open folders, as paths with their trailing `/`. */
+  open: ReadonlySet<string>;
+  /** Opens a closed folder, closes an open one. */
+  toggle: (folder: string) => void;
+  /** The row last focused or picked, the tree's current row; null until one is. */
+  current: string | null;
+  setCurrent: (path: string) => void;
+  /** Where the box was scrolled to when it last showed (px), so it comes back there. */
+  offset: () => number;
+  keepOffset: (offset: number) => void;
+  /** Whether the box already showed the note: it scrolled to it, or the note was picked in it. */
+  showed: (path: string) => boolean;
+  markShown: (path: string) => void;
+}
+
+/**
+ * The tree's state, kept above the tree so the search replacing it loses nothing: the selected
+ * note's folders open (a new selection opens its own, nothing closes by itself), the current row
+ * and the scroll position. The screen keys it by project, so another project starts afresh.
+ */
+export function useBrainTreeState(selected: string): BrainTreeState {
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set(foldersOf(selected)));
   const [seeded, setSeeded] = useState(selected);
   if (seeded !== selected) {
-    // A new selection opens its folders; nothing closes by itself (state adjusted while
-    // rendering, not in an effect).
+    // State adjusted while rendering, not in an effect: the new note's row is listed at once.
     setSeeded(selected);
     setOpen((was) => {
       const closed = foldersOf(selected).filter((folder) => !was.has(folder));
@@ -181,7 +225,24 @@ function useTreeState(selected: string) {
       return next;
     });
   }, []);
-  return { open, toggle, current, setCurrent };
+  const offsetRef = useRef(0);
+  const shownRef = useRef<string | null>(null);
+  const offset = useCallback(() => offsetRef.current, []);
+  const keepOffset = useCallback((value: number) => {
+    offsetRef.current = value;
+  }, []);
+  const showed = useCallback((path: string) => shownRef.current === path, []);
+  const markShown = useCallback((path: string) => {
+    shownRef.current = path;
+  }, []);
+  return { open, toggle, current, setCurrent, offset, keepOffset, showed, markShown };
+}
+
+/** Moves focus to the tree's current row inside `panel` (↓ from the empty search field). */
+export function focusTreeRow(panel: HTMLElement | null): boolean {
+  const row = panel?.querySelector<HTMLElement>("[data-tree-row][tabindex='0']");
+  row?.focus();
+  return row !== undefined && row !== null;
 }
 
 interface TreeItemProps {
@@ -193,8 +254,10 @@ interface TreeItemProps {
   opened: boolean;
   /** It is the tree's one Tab stop. */
   current: boolean;
-  /** The row takes focus or is picked: it becomes the tree's current row. */
+  /** The row takes focus or is clicked: it becomes the tree's current row. */
   onUse: (path: string) => void;
+  /** The note is opened from the tree. */
+  onPick: (path: string) => void;
   onToggle: (path: string) => void;
   onKey: (event: KeyboardEvent<HTMLElement>, row: TreeRow) => void;
 }
@@ -208,6 +271,7 @@ function TreeItem({
   opened,
   current,
   onUse,
+  onPick,
   onToggle,
   onKey,
 }: TreeItemProps) {
@@ -253,7 +317,7 @@ function TreeItem({
           label={row.name}
           treeRow={row.path}
           onOpen={() => {
-            onUse(row.path);
+            onPick(row.path);
           }}
           {...own}
         />
@@ -267,6 +331,8 @@ export interface BrainTreeProps {
   entries: readonly { path: string; size: number }[];
   /** The open note's path. */
   selected: string;
+  /** What the tree keeps while the search replaces it (`useBrainTreeState`). */
+  state: BrainTreeState;
   /** The search field above the tree: `↑` on the first row goes back to it. */
   field: RefObject<HTMLInputElement | null>;
 }
@@ -276,8 +342,8 @@ export interface BrainTreeProps {
  * ones in view rendered. Folders open and close in place, notes are links, and the tree is one
  * Tab stop whose rows the arrows, `j`/`k`, `Home`/`End`, `Enter`/`o` and `Space` work.
  */
-export function BrainTree({ project, entries, selected, field }: BrainTreeProps) {
-  const { open, toggle, current, setCurrent } = useTreeState(selected);
+export function BrainTree({ project, entries, selected, state, field }: BrainTreeProps) {
+  const { open, toggle, current, setCurrent, offset, keepOffset, showed, markShown } = state;
   const root = useMemo(() => buildTree(entries), [entries]);
   const layout = useMemo(() => layOut(treeRows(root, open)), [root, open]);
   const roving = rovingRow(layout, current, selected);
@@ -300,6 +366,8 @@ export function BrainTree({ project, entries, selected, field }: BrainTreeProps)
     // A row the box scrolls to stays below its group's sticky heading, its focus ring in view.
     scrollPaddingStart: SIZE.heading,
     scrollPaddingEnd: SIZE.end,
+    // Back from the search, the box opens where it was.
+    initialOffset: offset,
     initialRect: FALLBACK_RECT,
     observeElementRect: (instance, report) =>
       observeElementRect(instance, (rect) => {
@@ -314,6 +382,17 @@ export function BrainTree({ project, entries, selected, field }: BrainTreeProps)
   });
   const shown = virtualizer.getVirtualItems().map((item) => item.index);
 
+  // On a deep link, and when the note changes from outside the tree (a link in the note, Linked
+  // from, Back), the box shows the selected row at once, and focus stays where it is. A note
+  // picked in the tree is in view already.
+  const selectedPart = layout.partOf.get(selected);
+  useLayoutEffect(() => {
+    if (showed(selected)) return;
+    markShown(selected);
+    if (selectedPart === undefined) return;
+    scrollToPart(boxRef.current, virtualizer, { layout, part: selectedPart, center: true });
+  }, [selected, selectedPart, layout, showed, markShown, virtualizer]);
+
   /** Goes to the row at `at`: it renders as the current row, the box scrolls, then it takes focus. */
   const goTo = (at: number) => {
     const row = layout.rows[at];
@@ -322,7 +401,7 @@ export function BrainTree({ project, entries, selected, field }: BrainTreeProps)
     flushSync(() => {
       setCurrent(row.path);
     });
-    virtualizer.scrollToIndex(part);
+    scrollToPart(boxRef.current, virtualizer, { layout, part });
     rowElement(boxRef.current, row.path)?.focus({ preventScroll: true });
   };
 
@@ -341,7 +420,13 @@ export function BrainTree({ project, entries, selected, field }: BrainTreeProps)
   };
 
   return (
-    <div ref={boxRef} className="ah-brain-scroll">
+    <div
+      ref={boxRef}
+      className="ah-brain-scroll"
+      onScroll={(event) => {
+        keepOffset(event.currentTarget.scrollTop);
+      }}
+    >
       {layout.groups.map((span) => {
         const { rows, below } = placeRows(layout, shown, span);
         return (
@@ -363,6 +448,10 @@ export function BrainTree({ project, entries, selected, field }: BrainTreeProps)
                   opened={open.has(row.path)}
                   current={row.path === roving}
                   onUse={setCurrent}
+                  onPick={(path) => {
+                    setCurrent(path);
+                    markShown(path);
+                  }}
                   onToggle={toggle}
                   onKey={onKey}
                 />

@@ -3,7 +3,16 @@ import "./Brain.css";
 import { useEffect, useRef } from "react";
 import { Navigate, useParams, useSearchParams } from "react-router";
 
-import { Banner, Button, EmptyState, Icon, ProblemError, Skeleton } from "../../components";
+import {
+  Banner,
+  Button,
+  EmptyState,
+  Icon,
+  ProblemError,
+  Skeleton,
+  useDelayed,
+  useSkeleton,
+} from "../../components";
 import { useScope } from "../../lib/scope";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
@@ -11,7 +20,7 @@ import { CountCell, KnowledgeProjectIndex, PickFoot } from "../knowledge-index";
 import { useProjectNow } from "../project-overview/queries";
 import { BRAIN_NOTE_STARTERS } from "../learnings/discussLearning";
 import { BrainSearch, NOTE_PATH_ID, focusFirstResult, useSearchTerm } from "./BrainSearch";
-import { BrainTree } from "./BrainTree";
+import { BrainTree, focusTreeRow, useBrainTreeState } from "./BrainTree";
 import { LINKED_FROM_ID, LinkedFrom, linkedFromLabel } from "./LinkedFrom";
 import { NOTE_ORIGIN_ID, NoteOrigin, originFields } from "./NoteOrigin";
 import { NoteView } from "./NoteView";
@@ -51,9 +60,48 @@ function useBrainQuery(): [string, (value: string) => void] {
 
 /** The search field's bound: the knowledge route's longest query. */
 const MAX_QUERY_CHARS = 500;
+/** "Loading brain notes" is said only once the listing has been loading this long (spec 22). */
+const SAY_LOADING_MS = 1_000;
+/** The skeleton's row bars, as wide as notes and folders tend to be. */
+const SKELETON_ROWS = ["40%", "55%", "70%", "45%", "60%", "35%", "65%", "50%", "40%", "55%"];
+
+/**
+ * The panel while the listing loads: after the skeleton delay its shape (the field, a group
+ * heading and 10 rows), and after a second "Loading brain notes", said outside the busy part.
+ */
+function TreeLoading({ shown }: { shown: boolean }) {
+  const said = useDelayed(SAY_LOADING_MS);
+  return (
+    <div className="ah-stack" style={{ gap: 12 }}>
+      {shown && (
+        <div className="ah-stack" style={{ gap: 12 }} aria-busy="true">
+          <Skeleton height={32} radius={6} delay={0} />
+          <div className="ah-brain-skeleton">
+            <Skeleton width={80} height={10} delay={0} style={{ margin: "5px 6px 9px" }} />
+            {SKELETON_ROWS.map((width, row) => (
+              <Skeleton
+                key={row}
+                width={width}
+                height={12}
+                delay={0}
+                style={{ margin: "7px 6px" }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+      <span className="ah-sr" aria-live="polite">
+        {said ? "Loading brain notes" : ""}
+      </span>
+    </div>
+  );
+}
 
 function BrainTreePanel({ project, selected }: { project: string; selected: string }) {
   const tree = useBrainTree(project);
+  const skeleton = useSkeleton(tree.isPending);
+  // Above the tree and the search that replaces it, so a search turn loses nothing.
+  const treeState = useBrainTreeState(selected);
   const [query, setQuery] = useBrainQuery();
   const [term, searchNow] = useSearchTerm(query.trim());
   const fieldRef = useRef<HTMLInputElement>(null);
@@ -80,13 +128,7 @@ function BrainTreePanel({ project, selected }: { project: string; selected: stri
       />
     );
   }
-  if (tree.isPending) {
-    return (
-      <div aria-busy="true">
-        <Skeleton lines={8} />
-      </div>
-    );
-  }
+  if (tree.isPending || skeleton) return <TreeLoading shown={skeleton} />;
   const { entries, truncated, skipped } = tree.data;
   if (entries.length === 0) {
     return (
@@ -118,7 +160,13 @@ function BrainTreePanel({ project, selected }: { project: string; selected: stri
             } else if (event.key === "Enter") {
               event.preventDefault();
               searchNow();
-            } else if (event.key === "ArrowDown" && focusFirstResult(panelRef.current)) {
+            } else if (
+              event.key === "ArrowDown" &&
+              // An empty field goes to the tree's current row, a query to its first result.
+              (query.trim() === ""
+                ? focusTreeRow(panelRef.current)
+                : focusFirstResult(panelRef.current))
+            ) {
               event.preventDefault();
             }
           }}
@@ -132,20 +180,28 @@ function BrainTreePanel({ project, selected }: { project: string; selected: stri
         </Banner>
       )}
       {query.trim() === "" ? (
-        <BrainTree project={project} entries={entries} selected={selected} field={fieldRef} />
-      ) : (
-        <BrainSearch
+        <BrainTree
           project={project}
           entries={entries}
-          query={query}
-          term={term}
           selected={selected}
+          state={treeState}
           field={fieldRef}
-          onClear={() => {
-            setQuery("");
-            fieldRef.current?.focus();
-          }}
         />
+      ) : (
+        <div className="ah-brain-results">
+          <BrainSearch
+            project={project}
+            entries={entries}
+            query={query}
+            term={term}
+            selected={selected}
+            field={fieldRef}
+            onClear={() => {
+              setQuery("");
+              fieldRef.current?.focus();
+            }}
+          />
+        </div>
       )}
     </div>
   );
@@ -224,8 +280,9 @@ export function BrainScreen() {
         </p>
       </div>
       <div className="ah-brain-layout">
-        <nav aria-label="Brain notes" className="ah-card ah-pad">
-          <BrainTreePanel project={project} selected={path} />
+        <nav aria-label="Brain notes" className="ah-card ah-pad ah-brain-panel">
+          {/* Keyed by project: another project's tree starts with its own folders and rows. */}
+          <BrainTreePanel key={project} project={project} selected={path} />
         </nav>
         <article
           aria-label={path}

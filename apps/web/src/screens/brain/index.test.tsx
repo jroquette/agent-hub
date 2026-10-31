@@ -74,6 +74,8 @@ describe("BrainScreen", () => {
       "aria-current",
       "page",
     );
+    // decisions/index.md is listed once its folder is open: it is not the open note.
+    await userEvent.click(within(tree).getByRole("button", { name: "decisions, 1 note" }));
     expect(within(tree).getByRole("link", { name: "index.md" })).not.toHaveAttribute(
       "aria-current",
     );

@@ -18,16 +18,59 @@
 .ah-brain-tree[data-root] {
   padding-left: 0;
 }
-/* The tree's own scroll box (AGH-617): only the rows in its view are in the page. Its inline
-   padding keeps a row's focus ring inside it, and the negative margin keeps the rows where the
-   card puts them; a row it scrolls to stays below its group's sticky heading. */
-.ah-brain-scroll {
-  max-height: calc(100dvh - var(--topbar) - 240px);
+/* The tree card stays under the top bar while a long note scrolls. It is at most the
+   visible part of main under the page header (the breadcrumb, title and purpose with their gaps,
+   132 px, and the page's bottom padding), so all of it shows at first paint; inside it the search
+   field and the listing banner stay put while the rows, or the search's results, scroll. */
+.ah-brain-panel {
+  position: sticky;
+  top: var(--space-4);
+  z-index: var(--z-sticky);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - var(--topbar) - 156px);
+}
+/* The collector's offline banner takes its height from main. */
+.ah-shell:has(.ah-shell-banner > .ah-banner) .ah-brain-panel {
+  max-height: calc(100dvh - var(--topbar) - 200px);
+}
+.ah-brain-panel > .ah-stack {
+  min-height: 0;
+}
+/* The tree's own scroll box: only the rows in its view are in the page. Its inline padding keeps
+   a row's focus ring inside it, and the negative margin keeps the rows where the card puts them;
+   a row it scrolls to stays below its group's sticky heading. The search's results scroll in the
+   same place when they replace the tree. */
+.ah-brain-scroll,
+.ah-brain-results {
+  min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
   margin: 0 calc(-1 * var(--space-1));
   padding: 0 var(--space-1) var(--space-1);
+}
+.ah-brain-scroll {
   scroll-padding: 24px 0 var(--space-1);
+}
+/* Stacked above the note, the card stays in the page: its rows at most half the screen high, and
+   at least 10 rows high. */
+@media (max-width: 900px) {
+  .ah-brain-panel,
+  .ah-shell:has(.ah-shell-banner > .ah-banner) .ah-brain-panel {
+    position: static;
+    max-height: none;
+  }
+  .ah-brain-scroll {
+    max-height: max(240px, 50dvh);
+  }
+  .ah-brain-results {
+    overflow: visible;
+  }
+}
+/* The loading panel's group heading and 10 rows, at the tree's row heights. */
+.ah-brain-skeleton {
+  display: flex;
+  flex-direction: column;
 }
 .ah-brain-scroll .ah-brain-group {
   display: block;
