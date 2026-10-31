@@ -251,6 +251,11 @@ dev dependency of the workspace.
 - Every screen has a `-t states` test (loading skeleton after 300 ms, empty copy, a region-scoped problem with "Try
   again", stale and offline) and a `-t a11y` test (no `axe-core` violation of impact serious or critical,
   `src/testing/axe.ts`). Fixtures come only from `src/testing/builders.ts`; ESLint refuses a `*.json` import in a test.
+- A test that holds a module's code with an async `vi.mock` factory (it awaits a promise the test resolves) imports
+  that module once per test file. While the factory waits, Vitest's mocker can give a second import of the same
+  module the real one at once, past the hold, so such a test passes or fails by timing. `routes.studioNew.test.ts`
+  and `routes.studioEdit.test.ts` each open one Studio route for this reason; a file of its own also means no other
+  test has loaded the module first.
 - Coverage: Vitest with V8, 80% of lines and of branches over `src/` (the generated `schema.d.ts`, `main.tsx` and
   `src/testing/` excluded), in `web-fast`.
 - The build plugins' tests (`src/build/*.test.ts`) run in Vitest's node environment (`// @vitest-environment node`),
