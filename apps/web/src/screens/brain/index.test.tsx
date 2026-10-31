@@ -1459,7 +1459,14 @@ describe("BrainScreen tree", () => {
       return offset;
     };
 
+    // The far note's row as the tree lays it out: Start here's heading and its two notes, the
+    // folders' heading with the gap above it, six folder rows, then tree-6's 89 notes before it.
+    const rowTop = 24 + 2 * 26 + (24 + 24) + 6 * 28 + 89 * 26;
+    const rowMiddle = rowTop + 26 / 2;
+
     const measuredAtItsHeight = await offsetAfterLink();
+    // Centred on the box as it is: the row's middle halfway down its 518 px.
+    expect(measuredAtItsHeight).toBe(rowMiddle - GROWN / 2);
     // With every folder closed the box was shorter when the tree measured it, and it grew when
     // the link opened tree-6.
     measured = 400;
