@@ -10,7 +10,6 @@ import {
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router";
 
-import { useApi } from "../lib/api";
 import { usePreferences } from "../lib/preferences";
 import { useScope } from "../lib/scope";
 import { useFeaturesNeedingYou } from "../screens/features/queries";
@@ -221,11 +220,6 @@ function ShellLayout({ children }: { children?: ReactNode }) {
 /** The frame every screen sits in: sidebar, top bar, offline banner, palette and shortcuts. */
 export function AppShell({ children }: { children?: ReactNode }) {
   const [scope] = useScope();
-  // The hub gate's list (routes.tsx), asked for as the shell mounts, not with the page: on a first
-  // load it is then usually in before the page's code, so with no hub registered the gate draws
-  // only its redirect to Welcome, never the page. It is the gate's query, so no second request;
-  // the shell draws nothing from it, so its answers do not draw the shell again.
-  useApi("/api/v1/hubs", undefined, { notifyOnChangeProps: [] });
   return (
     <GlobalStreamProvider project={scope}>
       <DiscussProvider>

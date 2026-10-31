@@ -18,7 +18,7 @@ import {
   TestProviders,
   type ApiRoutes,
 } from "./testing/builders";
-import { appRoutes, HubGate } from "./routes";
+import { appRoutes, askForHubList, HubGate } from "./routes";
 
 // The screen modules the redirects open a screen of, noted when their code first loads.
 const loaded = vi.hoisted(() => new Set<string>());
@@ -338,12 +338,16 @@ describe("HubGate", () => {
       },
     });
     const welcome = heldModule({ WelcomeScreen: standIn("Welcome stand-in") });
+    // As the app does, the hub list is asked for before the router starts loading the page's code.
+    const client = testQueryClient();
+    askForHubList(client);
     const router = openAt(
       gatedRoutes(
         [{ index: true, ...lazyScreen(portfolio.load, "PortfolioScreen") }],
         welcome.load,
       ),
       "/",
+      client,
     );
     // The shell is drawn, and the empty list is in, while the Portfolio's code loads.
     await settle();

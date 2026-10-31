@@ -1,11 +1,22 @@
+import type { QueryClient } from "@tanstack/react-query";
 import { Outlet, useLocation } from "react-router";
 import type { RouteObject } from "react-router";
 
-import { useApi } from "./lib/api";
+import { apiQuery, useApi } from "./lib/api";
 import { liveRedirectTarget } from "./screens/sessions-list/liveRedirect";
 import { AppShell } from "./shell/AppShell";
 import { RouteError } from "./shell/RouteError";
 import { lazyRedirect, lazyScreen, Redirect, RouteSkeleton } from "./shell/routeLoading";
+
+/**
+ * Asks `client` for the hub gate's list at once. The app does it before its router starts loading
+ * the first page's code: on a first run the list is then in when the gate first draws, so the gate
+ * draws only its redirect to Welcome, never the page under it.
+ */
+export function askForHubList(client: QueryClient): void {
+  // The gate reads a failure as it reads the query: the page shows.
+  client.query(apiQuery("/api/v1/hubs")).catch(() => undefined);
+}
 
 /**
  * With no registered hub every route but `/settings/*` (and `/welcome` itself) redirects to
