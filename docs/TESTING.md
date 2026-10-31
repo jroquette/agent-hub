@@ -262,9 +262,15 @@ dev dependency of the workspace.
   file, its size and the limit when one is 1 B over, fails when the bundle has no entry chunk, and its plugin stops
   the build with `this.error` when the check fails. `vite build` runs that plugin on every build, so `make web-build`,
   `make web-dist-check` (in `make check`), CI's `web` job and the image all fail over the budget.
-- The variants' bytes also depend on the Brotli encoder that Node bundles (`node -p process.versions.brotli`). If a
-  Node update changes it, `make web-dist-check` fails on the `.br` files until `make web-build` is run and `web_dist/`
-  is committed.
+- The variants' bytes also depend on the Brotli encoder that Node bundles (`node -p process.versions.brotli`), and two
+  Node builds check them against the committed `web_dist/`: CI's `web` job runs `make web-dist-check` on the 22.x that
+  `actions/setup-node` picks for `apps/web/.node-version` (`22`), and the `docker` job's
+  `test_serves_committed_web_app_when_image_built` compares `web_dist/` with the image's own build, made on the Node
+  of the `Dockerfile`'s `NODE_IMAGE` digest. If a Node update changes the encoder, the two builds write different
+  `.br` bytes, and a rebuild on one fails the other. Then, in one PR, make both bundle the same Brotli: move
+  `NODE_IMAGE` to a `node:22-slim` digest whose `docker run --rm <image> node -p process.versions.brotli` matches
+  CI's Node (or pin `apps/web/.node-version` to the image's exact Node), run `make web-build` on a Node with that
+  Brotli, and commit `web_dist/`.
 - The smoke: `tests/e2e/test_web_smoke.py` installs `hub`, starts `hub web` on a temp database and registry, registers
   two synthetic hubs (`hub init`), ingests a synthetic scenario (two projects, one live session with a guard denial,
   one session waiting on a guard ask, one failed run, one 5,000-event session) through `POST /events/hooks` and
