@@ -105,6 +105,9 @@ CHECKED_ELSEWHERE_FILES = frozenset(
 )
 # The most characters of a path that a reason line shows.
 SHOWN_LIMIT = 200
+# The most reason lines the printed plan holds, then one line counts the rest: HUB_CHANGED_FILES
+# alone may name thousands of paths.
+REASONS_SHOWN = 20
 # The three import statements that name an agent_hub package, at any indent.
 IMPORT = re.compile(
     r"^[ \t]*(?:import[ \t]+agent_hub\.(\w+)|from[ \t]+agent_hub\.(\w+)"
@@ -392,10 +395,12 @@ def _parser() -> argparse.ArgumentParser:
 def _described(source: str, paths: Sequence[str] | None, plan: Plan) -> str:
     """The plan as lines: how many paths and from where, why, the pytest targets, the steps."""
     count = "unknown" if paths is None else str(len(set(paths)))
+    hidden = len(plan.reasons) - REASONS_SHOWN
     lines = [
         f"check-changed: changed paths from {source}: {count}",
         f"  plan: {'full' if plan.full else 'narrowed'}",
-        *(f"  reason: {reason}" for reason in plan.reasons),
+        *(f"  reason: {reason}" for reason in plan.reasons[:REASONS_SHOWN]),
+        *([f"  reason: … and {hidden} more"] if hidden > 0 else []),
         *(f"  test: {target}" for target in plan.tests or ("none",)),
         *(f"  ignore: {path}" for path in plan.ignores),
         f"  openapi check: {'yes' if plan.openapi else 'no'}",
