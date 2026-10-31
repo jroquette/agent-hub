@@ -21,6 +21,9 @@ this reader falls back instead.
   it also sets ``has_bad_repository``, which the hook reports instead of using the default.
 - ``repos[].check_fast_timeout`` counts only as a JSON integer from 1 to 160; anything else is
   ``None``, the gate's default.
+- ``repos[].check_stop`` is the string as written when it holds no control character and is
+  UTF-8 text (``FREE_STRING``); anything else is ``""``, and the Stop gate runs ``check_fast``.
+  A blank string is kept as it is: the gate strips it.
 - A repo's ``default_branch`` is its effective value: its own when it is a string matching the
   model's branch pattern, else the ``project`` section's ``default_branch`` (it inherits).
 - ``guard.readable_env_files`` keeps only the names that match the model's ``EnvFileName``
@@ -261,6 +264,7 @@ class RepoEntry:
     role: str = "app"
     check_fast: str = ""
     check_fast_timeout: int | None = None
+    check_stop: str = ""
     check: str = ""
     default_branch: str = "main"
 
@@ -958,6 +962,7 @@ def _repos(value: object, project_branch: str) -> tuple[RepoEntry, ...]:
             check_fast_timeout=_bounded_int(
                 repo, "check_fast_timeout", CHECK_FAST_TIMEOUT_MIN, CHECK_FAST_TIMEOUT_MAX
             ),
+            check_stop=_matching(repo, "check_stop", FREE_STRING),
             check=_text(repo, "check", ""),
             default_branch=_branch(repo, project_branch),
         )
