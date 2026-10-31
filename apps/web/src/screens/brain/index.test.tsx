@@ -18,7 +18,7 @@ import {
   type ApiRoutes,
 } from "../../testing/builders";
 import { SEARCH_DEBOUNCE_MS } from "../../lib/search";
-import { armGoSequence, clearGoSequence } from "../../shell/goSequence";
+import { armGoSequence, clearGoSequence, goSequencePending } from "../../shell/goSequence";
 import { BrainPickerScreen, BrainScreen, brainHome } from "./index";
 
 const TREE = "/api/v1/projects/agent-hub/brain";
@@ -1228,6 +1228,52 @@ describe("BrainScreen tree", () => {
     expectFocusOn(nav, "tree-2, 99 notes");
   });
 
+  it.each([
+    {
+      lost: "a note at the root",
+      // glossary.md lists after the start notes, in path order as the API lists them.
+      entries: [...aBrainTreeOf(600).entries, { path: "glossary.md", size: 90 }].sort((a, b) =>
+        a.path < b.path ? -1 : 1,
+      ),
+      keys: "{Home}{ArrowDown}{ArrowDown}",
+      row: "glossary.md",
+      dropped: (path: string) => path === "glossary.md",
+      before: "Now",
+    },
+    {
+      lost: "a top folder",
+      entries: aBrainTreeOf(600).entries,
+      keys: "{End}{ArrowUp}{ArrowUp}",
+      row: "tree-5, 100 notes",
+      dropped: (path: string) => path.startsWith("tree-5/"),
+      before: "tree-4, 100 notes",
+    },
+  ])(
+    "moves focus to the row before it when a new listing drops a focused row with no folder listed ($lost)",
+    async ({ entries, keys, row, dropped, before }) => {
+      const user = userEvent.setup();
+      let listing = aBrainTree({ entries });
+      const { queryClient } = open(MIDDLE_NOTE, { [TREE]: () => listing });
+      const nav = brainNotes();
+      await within(nav).findByRole("region", { name: "Folders" }, { timeout: 5_000 });
+      await selectedRow(nav);
+      await user.keyboard("/{ArrowDown}");
+      expectFocusOn(nav, "note-050.md");
+      await user.keyboard(keys);
+      expectFocusOn(nav, row);
+
+      listing = { ...listing, entries: entries.filter((entry) => !dropped(entry.path)) };
+      await act(() => queryClient.invalidateQueries());
+
+      await vi.waitFor(() => {
+        expect(within(nav).queryByRole("link", { name: row })).toBeNull();
+        expect(queryFolderRow(nav, row)).toBeNull();
+      });
+      // Not the open note, a hundred rows away: the row that came before it.
+      expectFocusOn(nav, before);
+    },
+  );
+
   it("keeps the tree one Tab stop, entering on the selected note", async () => {
     const user = userEvent.setup();
     const { nav } = await openTree(MIDDLE_NOTE);
@@ -1378,6 +1424,49 @@ describe("BrainScreen tree", () => {
     expect(nav.contains(document.activeElement)).toBe(false);
   });
 
+  it("centres the selected row on the box's height now, though the box has grown since it was measured", async () => {
+    const GROWN = 518;
+    const isBox = (element: Element) => element.classList.contains("ah-brain-scroll");
+    vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(function (this: Element) {
+      if (isBox(this)) return GROWN;
+      return this.closest("nav[aria-label='Brain notes']") !== null ? BOX : 0;
+    });
+    // jsdom has no ResizeObserver: the box keeps the size the tree measured on its first render.
+    let measured = GROWN;
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return isBox(this) ? measured : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return isBox(this) ? 280 : 0;
+    });
+    const user = userEvent.setup();
+    /** Where the box is scrolled to once a link in index.md opens tree-6/note-090.md. */
+    const offsetAfterLink = async () => {
+      const shown = await openTree("/projects/agent-hub/brain", aBrainTreeOf(600), {
+        [NOTE]: notesLinkingTo("tree-6/note-090.md"),
+      });
+      await selectedRow(shown.nav);
+      await user.click(await screen.findByRole("link", { name: "the far note" }));
+      await vi.waitFor(() => {
+        expect(noteLink(shown.nav, "tree-6/note-090.md")).toHaveAttribute("aria-current", "page");
+      });
+      const offset = treeBox(shown.nav).scrollTop;
+      shown.unmount();
+      return offset;
+    };
+
+    const measuredAtItsHeight = await offsetAfterLink();
+    // With every folder closed the box was shorter when the tree measured it, and it grew when
+    // the link opened tree-6.
+    measured = 400;
+
+    expect(await offsetAfterLink()).toBe(measuredAtItsHeight);
+  });
+
   it.each([
     { keys: "o", key: "o" },
     { keys: "Enter", key: "{Enter}" },
@@ -1455,6 +1544,31 @@ describe("BrainScreen tree", () => {
         await user.keyboard(key);
         expectFocusOn(nav, "note-051.md");
         expect(router.state.location.pathname).toBe("/projects/agent-hub/brain/tree-3/note-050.md");
+      }
+    } finally {
+      clearGoSequence();
+    }
+  });
+
+  it("moves with the arrows, Home, End and j while a g sequence waits, and ends the sequence", async () => {
+    const user = userEvent.setup();
+    const { nav } = await openTree(MIDDLE_NOTE);
+    await user.click(await selectedRow(nav));
+
+    try {
+      for (const [key, row] of [
+        ["{ArrowDown}", "note-051.md"],
+        ["{ArrowUp}", "note-050.md"],
+        ["{End}", "_inbox, 3 notes"],
+        ["{Home}", "Index"],
+        // No g sequence ends with j (spec 01).
+        ["j", "Now"],
+      ]) {
+        armGoSequence();
+        await user.keyboard(key);
+        expectFocusOn(nav, row);
+        // The key was the sequence's second one: a g k or g o after it needs a new g.
+        expect(goSequencePending()).toBe(false);
       }
     } finally {
       clearGoSequence();
