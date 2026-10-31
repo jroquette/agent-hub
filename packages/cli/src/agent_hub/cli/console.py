@@ -1,11 +1,11 @@
 """The entry point of the installed ``hub`` command.
 
 When the arguments are exactly ``workflow list`` and no shell completion is asked, ``main`` lists
-the hub's workflows itself, with the garbage collector off. That path loads neither Typer nor the
-config models. It prints only a listing that has no problem, no escape sequence and no text that
-stdout cannot encode as it is. In every other case nothing is printed yet, and the Typer app of
-``agent_hub.cli.main`` runs instead, so the output stays the Typer command's.
-``python -m agent_hub.cli`` always runs the Typer app.
+the hub's workflows itself, with the garbage collector off. That path loads none of Typer, the
+``HubConfig`` model and the ``hub.json`` reader. It prints only a listing that has no problem, no
+escape sequence and no text that stdout cannot encode as it is. In every other case nothing is
+printed yet, and the Typer app of ``agent_hub.cli.main`` runs instead, so the output stays the
+Typer command's. ``python -m agent_hub.cli`` always runs the Typer app.
 """
 
 import errno
