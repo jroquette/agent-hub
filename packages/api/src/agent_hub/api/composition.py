@@ -650,7 +650,7 @@ def _event_read_models(
         hub_path_of=hub_paths,
         prices=PRICES,
         label_rules_of=label_rules_of,
-        agent_session_link_of=None if sessions is None else sessions.links.link_of,
+        agent_session_links_of=None if sessions is None else sessions.links.links_of,
     )
 
 

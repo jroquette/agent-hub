@@ -24,7 +24,7 @@ issue at read time from the hub's ``LabelRules`` (``label_rules_of``), outside e
 
 import bisect
 import threading
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -372,10 +372,10 @@ class FoldedEventReadModels:
     ``now`` is the clock (folds never read one themselves); ``hub_path_of`` names a project's
     hub path for "How to decide", when the caller knows it; ``label_rules_of`` gives a
     project's ``LabelRules`` (tracker teams, branch prefix), or None when its hub is unknown,
-    and is asked on every read that returns a session or a tile. ``agent_session_link_of``
-    finds the agent session ``hub web`` drives a session from (P13), asked on the same reads:
-    it fills ``Session.agent_session_id``, and a tile whose agent session waits on a
-    permission request shows ``waiting`` (AC-165.25).
+    and is asked on every read that returns a session or a tile. ``agent_session_links_of``
+    finds the agent sessions ``hub web`` drives sessions from (P13), asked once per project on
+    the same reads: it fills ``Session.agent_session_id``, and a tile whose agent session
+    waits on a permission request shows ``waiting`` (AC-165.25).
     """
 
     def __init__(
@@ -386,13 +386,14 @@ class FoldedEventReadModels:
         hub_path_of: Callable[[str], str | None] | None = None,
         prices: Mapping[str, PerMillion] = PRICES,
         label_rules_of: Callable[[str], LabelRules | None] | None = None,
-        agent_session_link_of: Callable[[str, str], AgentSessionLink | None] | None = None,
+        agent_session_links_of: Callable[[str, Collection[str]], Mapping[str, AgentSessionLink]]
+        | None = None,
     ) -> None:
         self._reader = reader
         self._now = now
         self._hub_path_of = hub_path_of
         self._label_rules_of = label_rules_of
-        self._agent_session_link_of = agent_session_link_of
+        self._agent_session_links_of = agent_session_links_of
         self._prices = prices
         # The events read so far, grouped, and the mark they were read up to: the store only
         # grows, so a later read takes only what was appended since.
@@ -500,30 +501,65 @@ class FoldedEventReadModels:
             raise EntityNotFoundError(entity="session", entity_id=session_id)
         return session
 
-    def _decorated(self, sessions: Iterable[Session]) -> list[tuple[Session, bool]]:
+    def _links(self, sessions: Iterable[Session]) -> dict[tuple[str, str], AgentSessionLink]:
+        """The agent-session link of each of ``sessions`` that has one, by ``(project,
+        session_id)``: one lookup per project."""
+        links_of = self._agent_session_links_of
+        if links_of is None:
+            return {}
+        by_project: dict[str, list[str]] = {}
+        for session in sessions:
+            by_project.setdefault(session.project, []).append(session.id)
+        return {
+            (project, session_id): link
+            for project, session_ids in by_project.items()
+            for session_id, link in links_of(project, session_ids).items()
+        }
+
+    def _decorated(
+        self,
+        sessions: Sequence[Session],
+        *,
+        links: Mapping[tuple[str, str], AgentSessionLink] | None = None,
+    ) -> list[tuple[Session, bool]]:
         """Each session with its issue and agent-session link, and whether that agent session
-        waits on a permission request."""
+        waits on a permission request; ``links`` when the caller already read them (``_links``),
+        else they are read here."""
+        if links is None:
+            links = self._links(sessions)
         rules: dict[str, LabelRules | None] = {}
         decorated: list[tuple[Session, bool]] = []
         for session in sessions:
             if session.project not in rules:
                 found = self._label_rules_of
                 rules[session.project] = None if found is None else found(session.project)
-            link_of = self._agent_session_link_of
-            link = None if link_of is None else link_of(session.project, session.id)
+            link = links.get((session.project, session.id))
             labelled = _with_issue(session, rules[session.project], link)
             if link is not None:
                 labelled = labelled.model_copy(update={"agent_session_id": link.agent_session_id})
             decorated.append((labelled, link is not None and link.waiting))
         return decorated
 
-    def _of_issue(self, sessions: Iterable[Session], issue: str) -> list[Session]:
+    def _of_issue(
+        self,
+        sessions: Iterable[Session],
+        issue: str,
+        *,
+        links: Mapping[tuple[str, str], AgentSessionLink],
+    ) -> list[Session]:
         """The sessions about ``issue`` (any case): the issue their first prompt
         (``/feature AGH-305``) names, else their branch or worktree, for the hub's tracker
-        teams, else the one their run names."""
-        return self._of_issues(sessions, frozenset({issue.casefold()}))
+        teams, else the one their run names. ``links`` are their agent-session links
+        (``_links``)."""
+        return self._of_issues(sessions, frozenset({issue.casefold()}), links=links)
 
-    def _of_issues(self, sessions: Iterable[Session], wanted: frozenset[str]) -> list[Session]:
+    def _of_issues(
+        self,
+        sessions: Iterable[Session],
+        wanted: frozenset[str],
+        *,
+        links: Mapping[tuple[str, str], AgentSessionLink],
+    ) -> list[Session]:
         """The sessions about one of the ``wanted`` issues (casefolded), as ``_of_issue``."""
         rules: dict[str, LabelRules | None] = {}
         found: list[Session] = []
@@ -531,8 +567,7 @@ class FoldedEventReadModels:
             if session.project not in rules:
                 rules_of = self._label_rules_of
                 rules[session.project] = None if rules_of is None else rules_of(session.project)
-            link_of = self._agent_session_link_of
-            link = None if link_of is None else link_of(session.project, session.id)
+            link = links.get((session.project, session.id))
             label = _with_issue(session, rules[session.project], link).label
             of = (label.issue if label is not None else None) or session.issue
             if of is not None and of.casefold() in wanted:
@@ -549,8 +584,11 @@ class FoldedEventReadModels:
             for session in snapshot.sessions.values()
             if _session_matches(session, session_filter, snapshot)
         ]
+        links: dict[tuple[str, str], AgentSessionLink] | None = None
         if session_filter.issue is not None:
-            matching = self._of_issue(matching, session_filter.issue)
+            # The page is a subset of these sessions, so the links read here decorate it too.
+            links = self._links(matching)
+            matching = self._of_issue(matching, session_filter.issue, links=links)
         sort = session_filter.sort
         descending = sort.startswith("-")
         page = _paginate(
@@ -561,7 +599,7 @@ class FoldedEventReadModels:
             request=session_filter,
             hwm=snapshot.hwm,
         )
-        items = _with_tile_fields(snapshot, self._decorated(page.items))
+        items = _with_tile_fields(snapshot, self._decorated(page.items, links=links))
         return page.model_copy(update={"items": tuple(items)})
 
     def get_session(self, session_id: str) -> Session:
@@ -647,7 +685,8 @@ class FoldedEventReadModels:
         if issues:
             rest = [session for session in scoped if session.id not in found]
             wanted = frozenset(issue.casefold() for issue in issues)
-            found |= {session.id: session for session in self._of_issues(rest, wanted)}
+            of_issues = self._of_issues(rest, wanted, links=self._links(rest))
+            found |= {session.id: session for session in of_issues}
         priced = [session.cost_usd for session in found.values() if session.cost_usd is not None]
         return FeatureCost(
             total_usd=sum(priced, Decimal(0)) if priced else None,

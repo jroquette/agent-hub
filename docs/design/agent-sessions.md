@@ -131,9 +131,11 @@ session is ended or refused for the limit.
 
 ### Links
 
-`AgentSessionLinks.link_of(project, claude_session_id)` (live sessions first, then the store) gives the folded
-Session its `agent_session_id` and makes its live tile `waiting` while a request is open; the tile carries
-`agent_session_id` too, so the web app links it to the chat (a hook-observed prompt links to Approvals).
+`AgentSessionLinks.links_of(project, claude_session_ids)` (live sessions first, then one store read for the
+others, then one read of the first prompts whose issue is not known yet) gives the folded Sessions their
+`agent_session_id` and makes a live tile `waiting` while a request is open; the read models ask it once per project
+per read, and `link_of` answers one Claude session through it. The tile carries `agent_session_id` too, so the web app
+links it to the chat (a hook-observed prompt links to Approvals).
 
 ### Read-only sessions (AGH-418)
 
