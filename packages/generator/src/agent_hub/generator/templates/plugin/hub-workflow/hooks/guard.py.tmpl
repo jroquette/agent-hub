@@ -78,7 +78,6 @@ and sends the same decision itself; run alone, this file still prints and sends 
 from __future__ import annotations
 
 import bisect
-import io
 import itertools
 import json
 import os
@@ -2021,6 +2020,9 @@ def _input_tool(tool: str) -> bool:
 
 
 EXTENSION_TIMEOUT = 3  # seconds, inside the guard's own 10 s hook timeout (spec Q-5)
+# Seconds the hook waits for a killed runner to end: one in an uninterruptible wait (a read on a
+# hung mount) outlives its SIGKILL, and the hook still answers.
+KILL_WAIT = 1.0
 RUNNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "project_guard_runner.py")
 STRICTNESS = {None: 0, "ask": 1, "deny": 2}
 EXTENSION_REASON = "project guard: {}"
@@ -2127,25 +2129,32 @@ def _tail(fh: IO[bytes]) -> str:
     return fh.read().decode("utf-8", "replace")
 
 
-def _runner_child(fds: tuple[int, int, int], argv: list[str], event: bytes) -> None:
-    """The forked runner; it never returns into the hook. fds: the pipe's read and write ends and
-    the stderr file. It leads a session of its own, reads the event on stdin, writes its stdout
-    to the pipe and its stderr to the file, and calls project_guard_runner's unchanged main with
-    argv as sys.argv. It always ends with os._exit (main's exit code; 1, with one cause line on
-    stderr, when it fails before or after main), so a batch of events run in one process gets
+def _fd_end() -> int:
+    """One past the highest fd this process holds, from its /dev/fd listing (Linux, macOS); the
+    fd limit when there is none."""
+    try:
+        return max(int(name) for name in os.listdir("/dev/fd")) + 1
+    except (OSError, ValueError):
+        return os.sysconf("SC_OPEN_MAX")
+
+
+def _runner_child(fds: tuple[int, int, int], argv: list[str]) -> None:
+    """The forked runner; it never returns into the hook. fds: the event file (at its start), the
+    pipe's write end and the stderr file, which become its fds 0, 1 and 2; every other fd it got
+    from the hook (3 and up) is closed, as close_fds did for a new python3. It leads a session of
+    its own and calls project_guard_runner's unchanged main with argv as sys.argv and the standard
+    streams over fds 0 to 2. It always ends with os._exit (main's exit code; 1, with one cause line
+    on stderr, when it fails before or after main), so a batch of events run in one process gets
     each verdict once."""
-    read_end, write_end, err = fds
+    given, write_end, err = fds
     code = 1
     try:
         os.dup2(err, 2)
         os.setsid()
         os.dup2(write_end, 1)
-        os.close(write_end)
-        os.close(read_end)
-        null = os.open(os.devnull, os.O_RDONLY)
-        os.dup2(null, 0)
-        os.close(null)
-        sys.stdin = io.TextIOWrapper(io.BytesIO(event), encoding="utf-8")
+        os.dup2(given, 0)
+        os.closerange(3, _fd_end())
+        sys.stdin = open(0, encoding="utf-8", closefd=False)
         sys.stdout = stdout = open(1, "w", encoding="utf-8", closefd=False)
         # line-buffered, as a new interpreter's stderr: a line is written before an os._exit
         sys.stderr = stderr = open(
@@ -2169,10 +2178,14 @@ def _runner_child(fds: tuple[int, int, int], argv: list[str], event: bytes) -> N
         os._exit(code)
 
 
-def _fork_runner(argv: list[str], event: bytes, err: int) -> tuple[int, int]:
+def _fork_runner(argv: list[str], given: int, err: int) -> tuple[int, int]:
     """(the forked runner's pid, the read end of its stdout); an OSError when the pipe or the fork
-    fails. The child runs _runner_child and never returns here. The hook starts no thread, so the
-    child, which copies only the calling thread, holds no lock another thread took."""
+    fails. given: the event file; err: the stderr file. The child runs _runner_child and never
+    returns here. The hook starts no thread, so the child, which copies only the calling thread,
+    holds no lock another thread took. An ignored SIGCHLD (it survives exec) would have the kernel
+    reap the child before waitpid reads its status, so the default comes back first."""
+    if signal.getsignal(signal.SIGCHLD) == signal.SIG_IGN:
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
     read_end, write_end = os.pipe()
     try:
         pid = os.fork()
@@ -2181,7 +2194,7 @@ def _fork_runner(argv: list[str], event: bytes, err: int) -> tuple[int, int]:
         os.close(write_end)
         raise
     if pid == 0:
-        _runner_child((read_end, write_end, err), argv, event)
+        _runner_child((given, write_end, err), argv)
     os.close(write_end)
     return pid, read_end
 
@@ -2215,39 +2228,46 @@ def _status_by(pid: int, deadline: float) -> int | None:
 
 
 def _kill_runner(pid: int) -> None:
-    """SIGKILL the runner's whole process group, then reap the runner."""
+    """SIGKILL the runner's whole process group, then reap the runner, waiting at most KILL_WAIT
+    seconds for it to end."""
     try:
         os.killpg(pid, signal.SIGKILL)
     except ProcessLookupError:  # no such group yet: the child has not left the hook's, so it alone
         os.kill(pid, signal.SIGKILL)
-    os.waitpid(pid, 0)
+    _status_by(pid, time.monotonic() + KILL_WAIT)
 
 
 def run_extension(path: str, data: dict, cfg: Config) -> tuple[Verdict, bool]:
     """(the extension's verdict on the event, whether it failed). A failure is an ask naming the
     cause. The runner runs in a forked child of this hook that leads its own session, so a
-    timeout kills every process it started."""
+    timeout, or any exception once it runs, kills every process it started."""
     unusable = _unusable(path, cfg)
     if unusable:
         return _failed(unusable)
     argv = [RUNNER, path, os.path.join(str(cfg.root), "hub.json")]
+    event = json.dumps(data).encode("utf-8")
     import tempfile  # here, not at the top: only a call that runs the extension needs it
 
-    with tempfile.TemporaryFile() as err:
+    with tempfile.TemporaryFile() as err, tempfile.TemporaryFile() as given:
         sys.stdout.flush()  # nothing unwritten is copied into the child
         sys.stderr.flush()
         try:
-            pid, read_end = _fork_runner(argv, json.dumps(data).encode("utf-8"), err.fileno())
+            given.write(event)  # the runner's stdin, read from its start
+            given.seek(0)
+            pid, read_end = _fork_runner(argv, given.fileno(), err.fileno())
         except OSError as error:
             return _failed(f"could not start ({type(error).__name__})")
-        deadline = time.monotonic() + EXTENSION_TIMEOUT
+        stdout = status = None
         try:
+            deadline = time.monotonic() + EXTENSION_TIMEOUT
             stdout = _output_by(read_end, deadline)
+            if stdout is not None:
+                status = _status_by(pid, deadline)
         finally:
             os.close(read_end)
-        status = None if stdout is None else _status_by(pid, deadline)
+            if status is None:  # the deadline came first, or an exception: it may still run
+                _kill_runner(pid)
         if status is None:
-            _kill_runner(pid)
             return _failed(f"timed out after {EXTENSION_TIMEOUT} s")
         cause = _extension_cause(os.waitstatus_to_exitcode(status), stdout, _tail(err))
     if cause:
