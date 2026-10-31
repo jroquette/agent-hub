@@ -1,11 +1,12 @@
-import { fireEvent, screen, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, screen, within } from "@testing-library/react";
+import userEvent, { type UserEvent } from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
   aBrainNote,
   aBrainTree,
+  aBrainTreeOf,
   aKnowledgeResult,
   aKnowledgeSearch,
   aNoteBacklinks,
@@ -763,6 +764,513 @@ describe("BrainScreen search", () => {
     await typeQuery("cleanup");
     await screen.findByRole("alert");
     expect(await seriousViolations(failed.container)).toEqual([]);
+  });
+});
+
+/** A deep link to the middle note of `tree-3/`, one of the 600-note brain's folders of 100. */
+const MIDDLE_NOTE = "/projects/agent-hub/brain/tree-3/note-050.md";
+/** The last row of the 600-note brain once every folder is open. */
+const LAST_NOTE = "/projects/agent-hub/brain/_inbox/proposal-3.md";
+
+/** `note-001.md` to `note-<count>.md`: the notes `aBrainTreeOf` puts in each of its folders. */
+function noteNames(count: number): string[] {
+  return Array.from({ length: count }, (_, note) => `note-${String(note + 1).padStart(3, "0")}.md`);
+}
+
+/** The rows of the 600-note brain with `tree-3/` alone open, by accessible name, in tree order. */
+const WITH_TREE_3_OPEN = [
+  "Index",
+  "Now",
+  "tree-1, 100 notes",
+  "tree-2, 100 notes",
+  "tree-3, 100 notes",
+  ...noteNames(100),
+  "tree-4, 100 notes",
+  "tree-5, 100 notes",
+  "tree-6, 100 notes",
+  "_inbox, 3 notes",
+];
+
+/** The tree box's height in jsdom: the virtualizer's fallback rect (1024 × 640), as DataTable's. */
+const BOX = 640;
+/** The height of what the box holds in jsdom: more than any tree here, so no scroll is capped. */
+const CONTENT = 100_000;
+
+/**
+ * jsdom lays nothing out. Inside the tree's nav every element is BOX high and holds CONTENT, and
+ * scrolling an element (`scrollTop`, `scrollTo`) moves its offset and fires `scroll` on the next
+ * frame, as a browser does. `scrollIntoView` stays a no-op: jsdom has no box to bring into view.
+ */
+function layOutTree() {
+  const offsets = new WeakMap<Element, number>();
+  const inTree = (element: Element) => element.closest("nav[aria-label='Brain notes']") !== null;
+  vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(function (this: Element) {
+    return inTree(this) ? BOX : 0;
+  });
+  vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(function (this: Element) {
+    return inTree(this) ? CONTENT : 0;
+  });
+  vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(function (this: Element) {
+    return offsets.get(this) ?? 0;
+  });
+  vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation(function (
+    this: Element,
+    top: number,
+  ) {
+    offsets.set(this, Math.max(0, top));
+    requestAnimationFrame(() => {
+      this.dispatchEvent(new Event("scroll"));
+    });
+  });
+  Object.defineProperty(Element.prototype, "scrollTo", {
+    configurable: true,
+    writable: true,
+    value(this: Element, options?: ScrollToOptions | number, y?: number) {
+      const top = typeof options === "number" ? y : options?.top;
+      if (top !== undefined) this.scrollTop = top;
+    },
+  });
+}
+
+const brainNotes = () => screen.getByRole("navigation", { name: "Brain notes" });
+
+/** Opens the Brain at `path` on `listing` (the 600-note brain by default), once its tree lists. */
+async function openTree(path: string, listing = aBrainTreeOf(600)) {
+  const shown = open(path, { [TREE]: listing });
+  const nav = brainNotes();
+  await within(nav).findByRole("region", { name: "Folders" }, { timeout: 5_000 });
+  return { ...shown, nav };
+}
+
+/** The selected note's row, once the tree renders it. */
+function selectedRow(nav: HTMLElement): Promise<HTMLElement> {
+  return vi.waitFor(() => {
+    const row = nav.querySelector<HTMLElement>("li a[aria-current='page']");
+    if (row === null) throw new Error("the tree shows no selected note");
+    return row;
+  });
+}
+
+/** A folder row by its accessible name ("tree-3, 100 notes"); it must be rendered. */
+const folderRow = (nav: HTMLElement, name: string) => within(nav).getByRole("button", { name });
+/** A folder row by its accessible name, or null while the tree does not render it. */
+const queryFolderRow = (nav: HTMLElement, name: string) =>
+  within(nav).queryByRole("button", { name });
+/** A note row by the note's name ("note-050.md"), or null while the tree does not render it. */
+const queryNoteRow = (nav: HTMLElement, name: string) => within(nav).queryByRole("link", { name });
+/** A note row by the note's path, or null while the tree does not render it. */
+const noteLink = (nav: HTMLElement, path: string) =>
+  nav.querySelector(`li a[href='/projects/agent-hub/brain/${path}']`);
+const searchbox = (nav: HTMLElement) =>
+  within(nav).getByRole("searchbox", { name: "Search brain notes and repo docs" });
+
+/** Focus is on the tree's row named `name`: never on body, never outside the tree. */
+function expectFocusOn(nav: HTMLElement, name: string) {
+  expect(document.activeElement).toHaveAccessibleName(name);
+  expect(nav.contains(document.activeElement)).toBe(true);
+}
+
+/** Opens the closed folder `name` with a click, which also gives its row focus. */
+async function openByHand(user: UserEvent, nav: HTMLElement, name: string) {
+  expect(folderRow(nav, name)).toHaveAttribute("aria-expanded", "false");
+  await user.click(folderRow(nav, name));
+  expect(folderRow(nav, name)).toHaveAttribute("aria-expanded", "true");
+  expectFocusOn(nav, name);
+}
+
+/**
+ * Scrolls the tree to `top`, as the wheel does. Which element of the nav scrolls is the tree's
+ * own: every element between its groups and the nav moves.
+ */
+function scrollTreeTo(nav: HTMLElement, top: number) {
+  const groups = within(nav).getByRole("region", { name: "Start here" });
+  for (let box = groups.parentElement; box !== null && box !== nav; box = box.parentElement) {
+    box.scrollTop = top;
+    fireEvent.scroll(box);
+  }
+}
+
+/** The rows the tree renders, in order: a note by its link, a folder by its text. */
+function renderedRows(nav: HTMLElement): string[] {
+  return [...nav.querySelectorAll("li")].map(
+    (row) => row.querySelector("a")?.getAttribute("href") ?? row.textContent,
+  );
+}
+
+/** Moves the fake clock by `ms`, then renders what its timers changed. */
+function advance(ms: number) {
+  act(() => {
+    vi.advanceTimersByTime(ms);
+  });
+}
+
+describe("BrainScreen tree", () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = vi.fn();
+    layOutTree();
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(Element.prototype, "scrollTo");
+    vi.useRealTimers();
+  });
+
+  it("renders fewer than 1,000 elements in the tree for a 600-note brain, and every note is reachable by scrolling", async () => {
+    const listing = aBrainTreeOf(600);
+    expect(listing.entries).toHaveLength(605);
+    const user = userEvent.setup();
+    const { nav } = await openTree(MIDDLE_NOTE, listing);
+    expect(await selectedRow(nav)).toHaveAccessibleName("note-050.md");
+
+    expect(nav.querySelectorAll("*").length).toBeLessThan(1000);
+
+    // Every folder open, the lowest first, so the next one to click stays at the top.
+    scrollTreeTo(nav, 0);
+    expect(folderRow(nav, "tree-3, 100 notes")).toHaveAttribute("aria-expanded", "true");
+    await user.click(folderRow(nav, "tree-3, 100 notes"));
+    for (const folder of [
+      "_inbox, 3 notes",
+      "tree-6, 100 notes",
+      "tree-5, 100 notes",
+      "tree-4, 100 notes",
+      "tree-3, 100 notes",
+      "tree-2, 100 notes",
+      "tree-1, 100 notes",
+    ]) {
+      await openByHand(user, nav, folder);
+    }
+    const reached = new Set<string>();
+    let most = 0;
+    for (let top = 0; top <= CONTENT && !reached.has(LAST_NOTE); top += BOX / 2) {
+      scrollTreeTo(nav, top);
+      most = Math.max(most, nav.querySelectorAll("*").length);
+      for (const link of nav.querySelectorAll("li a")) reached.add(link.getAttribute("href") ?? "");
+    }
+
+    expect(most).toBeLessThan(1000);
+    expect([...reached].sort()).toEqual(
+      listing.entries.map((entry) => `/projects/agent-hub/brain/${entry.path}`).sort(),
+    );
+  }, 20_000);
+
+  it("keeps the tree under 1,000 elements at the listing's 2,000-note cap", async () => {
+    const listing = { ...aBrainTreeOf(1995), truncated: true };
+    expect(listing.entries).toHaveLength(2000);
+    expect(listing.entries.filter((entry) => entry.path.startsWith("tree-1/"))).toHaveLength(333);
+    const { nav } = await openTree("/projects/agent-hub/brain/tree-1/note-200.md", listing);
+    expect(await selectedRow(nav)).toHaveAccessibleName("note-200.md");
+
+    expect(nav.querySelectorAll("*").length).toBeLessThan(1000);
+  }, 20_000);
+
+  it.each([
+    { keys: "↓ and ↑", down: "{ArrowDown}", up: "{ArrowUp}" },
+    { keys: "j and k", down: "j", up: "k" },
+  ])(
+    "moves focus row by row with ↓ and ↑, and with j and k, past the rendered rows and back, never to body ($keys)",
+    async ({ down, up }) => {
+      const user = userEvent.setup();
+      const { nav } = await openTree("/projects/agent-hub/brain");
+      await openByHand(user, nav, "tree-3, 100 notes");
+      expect(queryNoteRow(nav, "note-100.md")).toBeNull();
+
+      const from = WITH_TREE_3_OPEN.indexOf("tree-3, 100 notes");
+      for (const name of WITH_TREE_3_OPEN.slice(from + 1)) {
+        await user.keyboard(down);
+        expectFocusOn(nav, name);
+      }
+      // The box followed focus to the last row: the rows before it show, the first ones do not.
+      await vi.waitFor(() => {
+        expect(queryFolderRow(nav, "tree-4, 100 notes")).not.toBeNull();
+      });
+      expect(queryFolderRow(nav, "tree-1, 100 notes")).toBeNull();
+
+      for (const name of WITH_TREE_3_OPEN.slice(0, -1).reverse()) {
+        await user.keyboard(up);
+        expectFocusOn(nav, name);
+      }
+      await vi.waitFor(() => {
+        expect(queryNoteRow(nav, "note-100.md")).toBeNull();
+      });
+      expect(queryFolderRow(nav, "tree-3, 100 notes")).not.toBeNull();
+    },
+    20_000,
+  );
+
+  it("goes to the first and the last row with Home and End", async () => {
+    const user = userEvent.setup();
+    const { nav } = await openTree("/projects/agent-hub/brain");
+    await openByHand(user, nav, "tree-3, 100 notes");
+    expect(queryFolderRow(nav, "_inbox, 3 notes")).toBeNull();
+
+    await user.keyboard("{End}");
+    expectFocusOn(nav, "_inbox, 3 notes");
+    await vi.waitFor(() => {
+      expect(queryFolderRow(nav, "tree-6, 100 notes")).not.toBeNull();
+    });
+    expect(queryFolderRow(nav, "tree-1, 100 notes")).toBeNull();
+
+    await user.keyboard("{Home}");
+    expectFocusOn(nav, "Index");
+    await vi.waitFor(() => {
+      expect(queryFolderRow(nav, "tree-1, 100 notes")).not.toBeNull();
+    });
+    expect(queryNoteRow(nav, "note-100.md")).toBeNull();
+  });
+
+  it.each([
+    { keys: "→ and ←", opens: "{ArrowRight}", closes: "{ArrowLeft}" },
+    { keys: "Enter", opens: "{Enter}", closes: "{Enter}" },
+    { keys: "Space", opens: " ", closes: " " },
+    { keys: "o", opens: "o", closes: "o" },
+  ])(
+    "opens and closes a folder with → and ←, Enter and Space, focus kept on its row ($keys)",
+    async ({ opens, closes }) => {
+      const user = userEvent.setup();
+      const { nav } = await openTree("/projects/agent-hub/brain");
+      await openByHand(user, nav, "tree-2, 100 notes");
+      expect(noteLink(nav, "tree-2/note-001.md")).not.toBeNull();
+
+      await user.keyboard(closes);
+      expect(folderRow(nav, "tree-2, 100 notes")).toHaveAttribute("aria-expanded", "false");
+      expectFocusOn(nav, "tree-2, 100 notes");
+      expect(noteLink(nav, "tree-2/note-001.md")).toBeNull();
+
+      await user.keyboard(opens);
+      expect(folderRow(nav, "tree-2, 100 notes")).toHaveAttribute("aria-expanded", "true");
+      expectFocusOn(nav, "tree-2, 100 notes");
+      expect(noteLink(nav, "tree-2/note-001.md")).not.toBeNull();
+    },
+  );
+
+  it.each([
+    {
+      from: "a note",
+      path: MIDDLE_NOTE,
+      listing: aBrainTreeOf(600),
+      // A click on the open note keeps it open.
+      pick: (nav: HTMLElement) => selectedRow(nav),
+      row: "note-050.md",
+      folder: "tree-3, 100 notes",
+    },
+    {
+      from: "a closed folder",
+      path: "/projects/agent-hub/brain/features/control-plane/plan.md",
+      listing: aBrainTree(),
+      // A click on the open folder closes it.
+      pick: (nav: HTMLElement) => Promise.resolve(folderRow(nav, "control-plane, 1 note")),
+      row: "control-plane, 1 note",
+      folder: "features, 1 note",
+    },
+  ])(
+    "moves from a row to its folder's row with ← ($from)",
+    async ({ path, listing, pick, row, folder }) => {
+      const user = userEvent.setup();
+      const { nav } = await openTree(path, listing);
+      await user.click(await pick(nav));
+      expectFocusOn(nav, row);
+      expect(document.activeElement?.getAttribute("aria-expanded") ?? "false").toBe("false");
+
+      await user.keyboard("{ArrowLeft}");
+
+      expectFocusOn(nav, folder);
+      expect(folderRow(nav, folder)).toHaveAttribute("aria-expanded", "true");
+    },
+  );
+
+  it("keeps a folder opened by hand open after it scrolls away and back", async () => {
+    const user = userEvent.setup();
+    const { nav } = await openTree("/projects/agent-hub/brain");
+    await openByHand(user, nav, "tree-1, 100 notes");
+    // Picking the open note takes focus, and the tree's current row, off the folder.
+    await user.click(within(nav).getByRole("link", { name: "Index" }));
+    expectFocusOn(nav, "Index");
+
+    scrollTreeTo(nav, CONTENT);
+    expect(queryFolderRow(nav, "tree-1, 100 notes")).toBeNull();
+    scrollTreeTo(nav, 0);
+
+    expect(folderRow(nav, "tree-1, 100 notes")).toHaveAttribute("aria-expanded", "true");
+    expect(noteLink(nav, "tree-1/note-001.md")).not.toBeNull();
+  });
+
+  it("keeps a folder opened for an earlier note open when another note is picked", async () => {
+    const user = userEvent.setup();
+    const { nav, router } = await openTree(MIDDLE_NOTE);
+    await selectedRow(nav);
+    scrollTreeTo(nav, 0);
+    expect(folderRow(nav, "tree-3, 100 notes")).toHaveAttribute("aria-expanded", "true");
+
+    await user.click(within(nav).getByRole("link", { name: "Now" }));
+
+    expect(router.state.location.pathname).toBe("/projects/agent-hub/brain/now.md");
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Note now.md" }),
+    ).toBeInTheDocument();
+    expect(folderRow(nav, "tree-3, 100 notes")).toHaveAttribute("aria-expanded", "true");
+    expect(noteLink(nav, "tree-3/note-001.md")).not.toBeNull();
+  });
+
+  it("keeps the tree one Tab stop, entering on the selected note", async () => {
+    const user = userEvent.setup();
+    const { nav } = await openTree(MIDDLE_NOTE);
+    const selected = await selectedRow(nav);
+    const rows = [...nav.querySelectorAll<HTMLElement>("li a, li button")];
+    expect(rows.length).toBeGreaterThan(1);
+    const stops = rows.filter((row) => row.tabIndex >= 0);
+    expect(stops.length).toBe(1);
+    expect(stops[0]).toBe(selected);
+
+    await user.click(searchbox(nav));
+    await user.tab();
+    expect(selected).toHaveFocus();
+    await user.tab();
+    expect(within(nav).getByRole("link", { name: "Triage in Learnings" })).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(selected).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(searchbox(nav)).toHaveFocus();
+  });
+
+  it("moves from an empty search field to the tree's current row with ↓", async () => {
+    const user = userEvent.setup();
+    const { nav } = await openTree(MIDDLE_NOTE);
+    await selectedRow(nav);
+
+    await user.keyboard("/");
+    expect(searchbox(nav)).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    expectFocusOn(nav, "note-050.md");
+
+    // Once the user has used another row, that row is the current one.
+    scrollTreeTo(nav, 0);
+    await user.click(folderRow(nav, "tree-1, 100 notes"));
+    await user.keyboard("/");
+    expect(searchbox(nav)).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    expectFocusOn(nav, "tree-1, 100 notes");
+  });
+
+  it("brings back the same open folders and scroll position when the search is cleared with Escape", async () => {
+    const user = userEvent.setup();
+    const { nav } = await openTree("/projects/agent-hub/brain");
+    await openByHand(user, nav, "tree-2, 100 notes");
+    scrollTreeTo(nav, 1_200);
+    expect(queryFolderRow(nav, "tree-1, 100 notes")).toBeNull();
+    const shown = renderedRows(nav);
+    expect(
+      shown.filter((row) => row.startsWith("/projects/agent-hub/brain/tree-2/")).length,
+    ).toBeGreaterThan(10);
+
+    await user.keyboard("/");
+    await user.keyboard("note-0");
+    expect(within(nav).queryByRole("region", { name: "Folders" })).toBeNull();
+    await user.keyboard("{Escape}");
+
+    expect(searchbox(nav)).toHaveValue("");
+    await vi.waitFor(() => {
+      expect(renderedRows(nav)).toEqual(shown);
+    });
+  });
+
+  it("scrolls the selected row into view on a deep link without moving focus", async () => {
+    const { nav } = await openTree(MIDDLE_NOTE);
+    expect(await selectedRow(nav)).toHaveAccessibleName("note-050.md");
+
+    await vi.waitFor(() => {
+      expect(noteLink(nav, "tree-3/note-045.md")).not.toBeNull();
+      expect(noteLink(nav, "tree-3/note-055.md")).not.toBeNull();
+    });
+    expect(queryNoteRow(nav, "Index")).toBeNull();
+    expect(document.body).toHaveFocus();
+  });
+
+  it.each(["j", "k", "o"])(
+    "leaves j, k and o to the search field while the user types in it (%s)",
+    async (key) => {
+      const user = userEvent.setup();
+      const { nav, router } = await openTree(MIDDLE_NOTE);
+      await user.click(await selectedRow(nav));
+      await user.keyboard("{ArrowDown}");
+      // The tree's current row is now a note other than the open one, which o would open.
+      expectFocusOn(nav, "note-051.md");
+
+      await user.keyboard("/");
+      const field = searchbox(nav);
+      expect(field).toHaveFocus();
+      await user.keyboard(key);
+
+      expect(field).toHaveValue(key);
+      expect(field).toHaveFocus();
+      expect(router.state.location.pathname).toBe("/projects/agent-hub/brain/tree-3/note-050.md");
+    },
+  );
+
+  it("keeps Triage in Learnings at the end of the inbox group in a 600-note tree", async () => {
+    const { nav } = await openTree(MIDDLE_NOTE);
+    await selectedRow(nav);
+    const inbox = within(nav).getByRole("region", { name: "Inbox · unreviewed" });
+
+    scrollTreeTo(nav, 0);
+    expect(queryNoteRow(nav, "Index")).not.toBeNull();
+    expect(within(inbox).queryByText("_inbox/")).toBeNull();
+    expect(within(inbox).getByRole("link", { name: "Triage in Learnings" })).toHaveAttribute(
+      "href",
+      "/knowledge/learnings?scope=agent-hub",
+    );
+
+    scrollTreeTo(nav, CONTENT);
+    const order = [...inbox.querySelectorAll("*")];
+    expect(
+      order.indexOf(within(inbox).getByRole("link", { name: "Triage in Learnings" })),
+    ).toBeGreaterThan(order.indexOf(within(inbox).getByText("_inbox/")));
+  });
+
+  it("shows the panel's skeleton after 300 ms while the listing loads (states)", () => {
+    vi.useFakeTimers();
+    open("/projects/agent-hub/brain", { [TREE]: "pending" });
+    const nav = brainNotes();
+
+    advance(299);
+    expect(nav.querySelectorAll(".ah-skel")).toHaveLength(0);
+    advance(1);
+    // The field, a group heading and 10 rows, in the busy box.
+    expect(nav.querySelectorAll(".ah-skel")).toHaveLength(12);
+    expect(nav.querySelectorAll("[aria-busy='true'] .ah-skel")).toHaveLength(12);
+
+    advance(699);
+    expect(screen.queryByText("Loading brain notes")).toBeNull();
+    advance(1);
+    const said = screen.getByText("Loading brain notes");
+    expect(said.closest(".ah-sr")).not.toBeNull();
+    expect(said.closest("[role='status'], [aria-live='polite']")).not.toBeNull();
+    // A screen reader may hold back what changes inside a busy element until it is no longer busy.
+    expect(said.closest("[aria-busy='true']")).toBeNull();
+  });
+
+  it("has no serious a11y violations on a 600-note tree scrolled to the middle with a folder open (a11y)", async () => {
+    const user = userEvent.setup();
+    const { container, nav } = await openTree("/projects/agent-hub/brain");
+    await openByHand(user, nav, "tree-3, 100 notes");
+    scrollTreeTo(nav, 1_200);
+    expect(queryFolderRow(nav, "tree-1, 100 notes")).toBeNull();
+    expect(queryFolderRow(nav, "tree-6, 100 notes")).toBeNull();
+
+    // The rows in view still say their level and their place among their siblings.
+    const shownNotes = [...nav.querySelectorAll("li a[href^='/projects/agent-hub/brain/tree-3/']")];
+    expect(shownNotes.length).toBeGreaterThan(10);
+    for (const note of shownNotes) {
+      const place = /note-(\d+)\.md$/.exec(note.getAttribute("href") ?? "")?.[1] ?? "";
+      expect(note.closest("li")).toHaveAttribute("aria-level", "2");
+      expect(note.closest("li")).toHaveAttribute("aria-setsize", "100");
+      expect(note.closest("li")).toHaveAttribute("aria-posinset", String(Number(place)));
+    }
+    const folder = folderRow(nav, "tree-3, 100 notes").closest("li");
+    expect(folder).toHaveAttribute("aria-level", "1");
+    expect(folder).toHaveAttribute("aria-setsize", "6");
+    expect(folder).toHaveAttribute("aria-posinset", "3");
+
+    expect(await seriousViolations(container)).toEqual([]);
   });
 });
 

@@ -69,3 +69,15 @@ describe("ShortcutSheet (tickets)", () => {
     ]);
   });
 });
+
+// The Brain tree's own keys: on a row of the tree, and ↓ from its empty search field.
+describe("ShortcutSheet (brain-tree)", () => {
+  it("lists the Brain tree keys", () => {
+    render(<ShortcutSheet onClose={vi.fn()} />);
+
+    const keys = group("Brain tree").flatMap((row) => row.slice(row.indexOf(": ") + 2).split(" "));
+    expect(new Set(keys)).toEqual(
+      new Set(["↓", "↑", "j", "k", "Home", "End", "→", "←", "↵", "o", "Space"]),
+    );
+  });
+});
