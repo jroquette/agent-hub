@@ -43,9 +43,9 @@ outside the uv workspace, with its own `package.json` and `package-lock.json`: `
 (`src/build/bundlePlugins.ts` over `compressAssets.ts`) writes a Brotli variant, `<name>.br`, beside each `.js`, `.css`
 and `.svg` of 1 KB or more under `assets/`. Its settings are fixed (quality 11, text mode, the file's length as the
 size hint), so every build with the same Brotli encoder writes the same bytes. That encoder is the one Node bundles
-(`node -p process.versions.brotli`), and CI checks the variants on two Node builds, its `web` job's and the image's:
-a Node update that changes the encoder moves both in one PR ([TESTING.md](TESTING.md#web-tests) says how). The
-variants are committed and checked with the rest.
+(`node -p process.versions.brotli`), and CI checks the variants on two Node builds, its `web` job's and the image's,
+so a Node update that changes the encoder must reach both in the same PR ([TESTING.md](TESTING.md#web-tests) says
+how). The variants are committed and checked with the rest.
 
 The build is split by route. `src/routes.tsx` loads each routed screen with
 `lazyScreen(() => import("./screens/<name>"), "<Name>Screen")` (`src/shell/routeLoading.tsx`), so each of the 31 screen
