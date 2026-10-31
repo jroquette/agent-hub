@@ -2332,11 +2332,16 @@ def in_auto_mode(verdict: tuple[str, str], data: dict) -> tuple[str, str]:
 
 
 def _print_verdict(data: dict, verdict: tuple[str, str]) -> tuple[dict, dict]:
-    """Print the verdict as the hook's output; return the hook input and the decision to record."""
+    """Print the verdict as the hook's output; return the hook input and the decision to record.
+    The decision is built first, so nothing after the print can fail and print a second value."""
     decision, reason = in_auto_mode(verdict, data)
+    try:
+        rule = rule_of(reason)
+    except Exception:  # the rule id only labels the record: it never changes or follows the verdict
+        rule = None
     emit({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
                                  "permissionDecisionReason": f"[hub guard] {reason}"}})
-    return data, {"by": "guard", "kind": decision, "rule": rule_of(reason)}
+    return data, {"by": "guard", "kind": decision, "rule": rule}
 
 
 def answer(data: dict, unreadable: bool) -> tuple[dict, dict] | None:
