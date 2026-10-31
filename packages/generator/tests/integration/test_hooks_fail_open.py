@@ -1,5 +1,5 @@
-"""The eight rendered hook entry points fail open: whatever the input or the hub, they exit 0,
-print nothing or one JSON object, and never a traceback (AC-4.11, AGH-200 D6).
+"""The nine rendered hook entry points fail open: whatever the input or the hub, they exit 0,
+print nothing or one JSON object, and never a traceback (AC-4.11, AGH-200 D6, AGH-621 AC-38).
 
 Each hook runs as Claude Code runs it: a file on ``hook_python`` with the input on stdin, in an
 environment built from scratch (``HOME`` and ``TMPDIR`` under ``tmp_path``, and the event server's
@@ -31,6 +31,7 @@ ENTRY_POINTS = (
     "pre_compact",
     "event_sensor",
     "readonly_gate",
+    "pre_tool_use",
 )
 # Where Claude Code's plugin cache would hold the hooks: no hub.json three folders up.
 PLUGIN_CACHE = "home/.claude/plugins/cache/agent-hub/hub-workflow/0.1.0/hooks"
@@ -111,6 +112,12 @@ def valid_event(name: str, hub: Path) -> dict[str, Any]:
             "hook_event_name": "SubagentStart",
             "agent_id": "a1",
             "agent_type": "researcher",
+        },
+        "pre_tool_use": {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "git push origin main"},
+            "tool_use_id": "toolu_01",
         },
     }
     return base | extra[name]
@@ -292,6 +299,43 @@ def test_exits_zero_when_git_fails(
     )
 
     assert problems_of(completed, handled=True) == []
+
+
+def remove_file(path: Path) -> None:
+    path.unlink()
+
+
+def break_syntax(path: Path) -> None:
+    path.write_text("def check(:\n", encoding="utf-8")
+
+
+# AGH-621 (AC-20, AC-38): with guard.py gone or broken, the one PreToolUse hook still asks (the
+# guard's crash ask), exits 0 and prints no traceback, where `python3 guard.py` exited 2 or 1.
+GUARD_BREAKS = {"removed": remove_file, "syntax-error": break_syntax}
+
+
+@pytest.mark.parametrize("breaks", GUARD_BREAKS.values(), ids=GUARD_BREAKS.keys())
+def test_asks_without_traceback_when_guard_module_broken(
+    breaks: Callable[[Path], None],
+    hub: Path,
+    *,
+    hook_python: str,
+    run_hook_file: RunHook,
+    tmp_path: Path,
+) -> None:
+    valid_hub_json(hub)
+    breaks(hub / HOOKS / "guard.py")
+
+    completed = run_hook_file(
+        hook_python,
+        hub / HOOKS / "pre_tool_use.py",
+        stdin=json.dumps(valid_event("pre_tool_use", hub)).encode(),
+        cwd=hub,
+        env=scratch_env(tmp_path),
+    )
+
+    assert problems_of(completed) == []
+    assert GUARD_CRASH in completed.stdout
 
 
 def make_read_only(hub: Path) -> None:

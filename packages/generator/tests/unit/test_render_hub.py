@@ -112,6 +112,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/hooks/hubhooks.py",
     "plugin/hub-workflow/hooks/post_edit.py",
     "plugin/hub-workflow/hooks/pre_compact.py",
+    "plugin/hub-workflow/hooks/pre_tool_use.py",
     "plugin/hub-workflow/hooks/project_guard_runner.py",
     "plugin/hub-workflow/hooks/readonly_gate.py",
     "plugin/hub-workflow/hooks/session_end.py",
@@ -4273,21 +4274,14 @@ PROJECT_ONLY_SETTINGS = (
     "skillOverrides",
 )
 # Event → (matcher, hook file, timeout in seconds); `None`: the group has no matcher.
-# Each event's groups: its base hook, then the event sensor (AGH-200 D6, E2: eleven events).
+# Each event's groups: its base hook, then the event sensor (AGH-200 D6, E2), on ten events since
+# AGH-621: on PreToolUse, pre_tool_use.py runs the guard and the sensor in one group.
 SENSOR = "event_sensor.py"
 # AGH-141 (E-4): the read-only gate on the two subagent events, after the sensor's group.
 GATE = "readonly_gate.py"
 SETTINGS_HOOKS = {
     "SessionStart": [("startup|resume|clear|compact", "session_start.py", 20), (None, SENSOR, 5)],
-    "PreToolUse": [
-        (
-            "^(Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch|Task|Agent"
-            "|SendMessage)$|^mcp__",
-            "guard.py",
-            10,
-        ),
-        ("*", SENSOR, 5),
-    ],
+    "PreToolUse": [("*", "pre_tool_use.py", 10)],
     "PostToolUse": [("Edit|Write|MultiEdit", "post_edit.py", 60), ("*", SENSOR, 5)],
     "Stop": [(None, "stop_gate.py", 180), (None, SENSOR, 5)],
     "PreCompact": [(None, "pre_compact.py", 20), (None, SENSOR, 5)],
@@ -4441,6 +4435,38 @@ def test_matches_plugin_hooks_when_settings_compared(demo_render: dict[str, Rend
             assert command == plugin_command.replace(
                 "${CLAUDE_PLUGIN_ROOT}", "$CLAUDE_PROJECT_DIR/plugin/hub-workflow"
             ), event
+
+
+# AGH-621 (AC-26): one PreToolUse group, for every tool, runs the guard and then the sensor in one
+# process; guard.py and event_sensor.py are still rendered (older settings, and the sensor's other
+# events, run them), and PostToolUse keeps its two groups. File → the root its commands name.
+HOOK_ROOTS = {
+    "plugin/hub-workflow/hooks/hooks.json": "${CLAUDE_PLUGIN_ROOT}/hooks",
+    ".claude/settings.json": "$CLAUDE_PROJECT_DIR/plugin/hub-workflow/hooks",
+}
+
+
+def command_group(root: str, *, matcher: str, file: str, timeout: int) -> dict[str, Any]:
+    """A hooks group with a matcher, running one hook file under ``root``."""
+    command = {"type": "command", "command": f'python3 "{root}/{file}"', "timeout": timeout}
+    return {"matcher": matcher, "hooks": [command]}
+
+
+def test_runs_one_pre_tool_use_group_when_hooks_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    for path, root in HOOK_ROOTS.items():
+        hooks = strict_json(demo_render[path].content)["hooks"]
+
+        assert hooks["PreToolUse"] == [
+            command_group(root, matcher="*", file="pre_tool_use.py", timeout=10)
+        ], path
+        assert hooks["PostToolUse"] == [
+            command_group(root, matcher="Edit|Write|MultiEdit", file="post_edit.py", timeout=60),
+            command_group(root, matcher="*", file="event_sensor.py", timeout=5),
+        ], path
+    for name in ("pre_tool_use.py", "guard.py", "event_sensor.py"):
+        assert demo_render[f"plugin/hub-workflow/hooks/{name}"].executable, name
 
 
 # Spec AC-4.8 (Q-9): the files the generator builds from the config.
