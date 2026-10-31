@@ -1,14 +1,19 @@
 import type { Plugin } from "vite";
 import { compressAssets } from "./compressAssets";
 
-// Writes the Brotli variants once the built files are in the real `outDir` (`make web-build`,
-// `make web-dist-check` and the image all pass their own), so `hub web` can serve them (AGH-615, Q8).
+// Writes the Brotli variants once the built files are in the real output folder: `make web-build`,
+// `make web-dist-check` and the image each pass their own, and `hub web` serves the variants.
 export function compressPlugin(): Plugin {
   return {
     name: "ah-compress-assets",
     apply: "build",
-    async writeBundle(options) {
-      if (options.dir) await compressAssets(options.dir);
+    async writeBundle({ dir }) {
+      // Skipping would let the build pass with no variant, and `hub web` would then send every
+      // file uncompressed.
+      if (dir === undefined) {
+        this.error("Vite named no output folder, so no Brotli variant was written.");
+      }
+      await compressAssets(dir);
     },
   };
 }

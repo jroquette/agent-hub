@@ -387,7 +387,7 @@ def test_keeps_csp_when_skills_deep_link_served(wired: Any, path: str) -> None:
     assert response.headers["content-security-policy"] == V0_9_0_CSP
 
 
-# The security headers every answer carries, as served today (local_security.SECURITY_HEADERS).
+# The security headers every answer carries, by value (local_security.SECURITY_HEADERS).
 SECURITY_HEADERS_AS_SERVED = {
     "content-security-policy": V0_9_0_CSP,
     "x-content-type-options": "nosniff",

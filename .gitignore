@@ -11,6 +11,8 @@ __pycache__/
 node_modules/
 dist/
 build/
+# The web app's build plugins: source code, not a build's output.
+!apps/web/src/build/
 *.sqlite
 *.db
 .claude/settings.local.json

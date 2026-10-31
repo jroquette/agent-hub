@@ -11,10 +11,9 @@ as ``immutable`` and carries ``Vary: Accept-Encoding``; ``index.html`` stays ``n
 next load picks up a new release. The build writes a Brotli variant (``<name>.br``) beside each
 script, style and SVG of 1 KB or more. A client whose ``Accept-Encoding`` takes ``br`` gets it,
 typed as the file itself and with its own etag; every other client, and any ``Range`` request,
-gets the file as it is.
+gets the file as it is. A variant asked for by its own name is a 404.
 """
 
-import mimetypes
 import re
 import stat
 from pathlib import Path, PurePosixPath
@@ -32,10 +31,11 @@ INDEX = "index.html"
 READ_METHODS = frozenset({"GET", "HEAD"})
 # The Brain screen's routes end with a note's path, extension included.
 _BRAIN_ROUTE = re.compile(r"^/projects/[^/]+/brain/")
-# The build's hashed files: a name there never changes content (AC-10).
+# The build's hashed files: a name there never changes content.
 _ASSETS = "assets/"
 _IMMUTABLE = "public, max-age=31536000, immutable"
 _BROTLI = "br"
+_VARIANT = f".{_BROTLI}"
 # How much of ``Accept-Encoding`` is read: the rest is ignored, never an error.
 _MAX_ACCEPT_ENCODING_CHARS = 1_024
 _MAX_CODINGS = 32
@@ -67,20 +67,22 @@ class WebApp:
                 return
             response = await self._asset(served, scope)
         elif PurePosixPath(path).suffix and not _BRAIN_ROUTE.match(path):
-            response = problem(
-                404, title="Not Found", detail="No file has this path.", instance=path
-            )
+            response = _no_file(path)
         else:
             response = FileResponse(self._directory / INDEX, headers={"Cache-Control": "no-cache"})
         await response(scope, receive, send)
 
     async def _asset(self, served: str, scope: Scope) -> Response:
         """A file under ``assets/``: its Brotli variant when the client takes one, else the file
-        itself. Each is answered by ``StaticFiles``, so each keeps its own etag and 304 (Q10)."""
+        itself. Each is answered by ``StaticFiles``, so each keeps its own etag and 304, and each
+        is typed as the file: ``mimetypes`` reads the ``.br`` ending as an encoding."""
+        if served.endswith(_VARIANT):
+            # Asked for by its own name, a variant would go out as Brotli bytes typed as its file,
+            # with no Content-Encoding. It is sent only as its file's encoding.
+            return _no_file(str(scope["path"]))
         variant = self._variant(served, Headers(scope=scope))
         response = await self._files.get_response(variant or served, scope)
         if variant is not None and isinstance(response, FileResponse):
-            response.headers["Content-Type"] = _content_type(served)
             response.headers["Content-Encoding"] = _BROTLI
         response.headers["Vary"] = "Accept-Encoding"
         response.headers["Cache-Control"] = _IMMUTABLE
@@ -91,7 +93,7 @@ class WebApp:
         ``Range`` request gets the file itself: a range of encoded bytes confuses clients."""
         if "range" in headers or not _accepts_br(headers.get("accept-encoding", "")):
             return None
-        variant = f"{served}.{_BROTLI}"
+        variant = f"{served}{_VARIANT}"
         return variant if self._is_file(variant) else None
 
     def _names_file(self, path: str) -> bool:
@@ -105,6 +107,10 @@ class WebApp:
 
 def _is_api(path: str) -> bool:
     return path == API_PREFIX or path.startswith(f"{API_PREFIX}/") or path.startswith("/api/")
+
+
+def _no_file(path: str) -> Response:
+    return problem(404, title="Not Found", detail="No file has this path.", instance=path)
 
 
 def _accepts_br(accept_encoding: str) -> bool:
@@ -141,10 +147,3 @@ def _quality(weight: str) -> float | None:
     if key.strip().lower() != "q" or _QVALUE.fullmatch(value) is None:
         return None
     return float(value)
-
-
-def _content_type(served: str) -> str:
-    """The ``Content-Type`` Starlette gives the file ``served`` (its ``mimetypes`` guess, with
-    ``utf-8`` for text), so a variant is typed as its file and never after its ``.br`` name."""
-    media_type = mimetypes.guess_type(served)[0] or "application/octet-stream"
-    return f"{media_type}; charset=utf-8" if media_type.startswith("text/") else media_type

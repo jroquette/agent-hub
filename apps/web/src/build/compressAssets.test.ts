@@ -101,7 +101,7 @@ describe("compressAssets", () => {
   it("writes the same bytes when run twice on the same files", async () => {
     const script = text(6000);
     await build({ "assets/app-AbCd1234.js": script });
-    // The settings the plan fixes (Q9): Brotli quality 11, text mode, the file's length as the size hint.
+    // Other settings write other bytes, and the committed variants would then differ from a build.
     const expected = brotliCompressSync(script, {
       params: {
         [constants.BROTLI_PARAM_QUALITY]: 11,

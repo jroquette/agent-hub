@@ -11,6 +11,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Changed
+
+- `hub web` sends the web app's scripts and styles Brotli-compressed to a browser that accepts `br`, at about a fifth
+  of their size. The browser keeps each content-hashed file under `/assets/` for a year. It still checks `index.html`
+  on every load, so it picks up a new release at once (AGH-615).
+
 ## [0.28.0] - 2026-10-30
 
 ### Added

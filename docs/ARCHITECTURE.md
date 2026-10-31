@@ -42,7 +42,9 @@ outside the uv workspace, with its own `package.json` and `package-lock.json`: `
 `make web-dist-check` fails when it differs from a fresh build. In the same build, a plugin
 (`src/build/bundlePlugins.ts` over `compressAssets.ts`) writes a Brotli variant, `<name>.br`, beside each `.js`, `.css`
 and `.svg` of 1 KB or more under `assets/`. Its settings are fixed (quality 11, text mode, the file's length as the
-size hint), so every build writes the same bytes, and the variants are committed and checked with the rest.
+size hint), so every build with the same Brotli encoder writes the same bytes. That encoder is the one Node bundles
+(`node -p process.versions.brotli`): a Node update that changes it changes the variants, and needs `make web-build`.
+The variants are committed and checked with the rest.
 
 Each package has the same shape:
 

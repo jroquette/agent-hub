@@ -208,6 +208,47 @@ def test_serves_identity_when_accept_encoding_is_malformed(
     assert "accept-encoding" in _varies_on(response)
 
 
+def _field_ending_with(coding: str, *, length: int) -> str:
+    """An ``Accept-Encoding`` field of exactly ``length`` characters: one long unknown coding,
+    then ``coding``."""
+    return "a" * (length - len(coding) - 1) + "," + coding
+
+
+# The server reads Accept-Encoding up to its 1,024th character and its 32nd coding.
+@pytest.mark.usefixtures("compressed_dist")
+@pytest.mark.parametrize(
+    "accept_encoding",
+    [
+        pytest.param(_field_ending_with("br", length=1_024), id="br-ends-on-character-1024"),
+        pytest.param(", ".join(["gzip"] * 31 + ["br"]), id="br-is-coding-32"),
+    ],
+)
+def test_serves_brotli_variant_when_br_sits_within_read_bounds(
+    client: Any, accept_encoding: str
+) -> None:
+    response, body = _fetch(client, SCRIPT, accept_encoding=accept_encoding)
+
+    assert (response.status_code, response.headers.get("content-encoding")) == (200, "br")
+    assert body == SCRIPT_BR_BYTES
+
+
+@pytest.mark.usefixtures("compressed_dist")
+@pytest.mark.parametrize(
+    "accept_encoding",
+    [
+        pytest.param(_field_ending_with("br", length=1_025), id="br-cut-to-b"),
+        # The bound cuts the refusal "br;q=0" to "br": a cut coding is dropped, never read.
+        pytest.param(_field_ending_with("br;q=0", length=1_028), id="refusal-cut-to-br"),
+        pytest.param(", ".join(["gzip"] * 32 + ["br"]), id="br-is-coding-33"),
+    ],
+)
+def test_serves_identity_when_br_sits_past_read_bounds(client: Any, accept_encoding: str) -> None:
+    response, body = _fetch(client, SCRIPT, accept_encoding=accept_encoding)
+
+    assert (response.status_code, response.headers.get("content-encoding")) == (200, None)
+    assert body == SCRIPT_BYTES
+
+
 @pytest.mark.usefixtures("compressed_dist")
 def test_serves_identity_when_asset_has_no_variant(client: Any) -> None:
     response, body = _fetch(client, STYLE, accept_encoding="br, gzip")
@@ -215,6 +256,20 @@ def test_serves_identity_when_asset_has_no_variant(client: Any) -> None:
     assert (response.status_code, response.headers.get("content-encoding")) == (200, None)
     assert body == STYLE_BYTES
     assert "accept-encoding" in _varies_on(response)
+
+
+@pytest.mark.usefixtures("compressed_dist")
+@pytest.mark.parametrize("path", [f"{SCRIPT}.br", f"{SCRIPT}.br/"])
+@pytest.mark.parametrize("accept_encoding", ["br", "identity"])
+def test_answers_not_found_when_variant_requested_by_own_name(
+    client: Any, path: str, accept_encoding: str
+) -> None:
+    response, _ = _fetch(client, path, accept_encoding=accept_encoding)
+
+    assert response.status_code == 404
+    assert response.headers.get("content-type") == "application/problem+json"
+    assert response.headers.get("content-encoding") is None
+    assert "immutable" not in response.headers.get("cache-control", "")
 
 
 @pytest.mark.usefixtures("compressed_dist")
