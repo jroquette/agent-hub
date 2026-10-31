@@ -1,6 +1,6 @@
 import type { components } from "../../api/schema";
 import { useApi } from "../../lib/api";
-import { SESSIONS_READ } from "../tickets";
+import { SESSIONS_READ } from "../tickets/model";
 
 export type ProjectDetail = components["schemas"]["ProjectDetail"];
 export type NowItem = components["schemas"]["NowItem"];

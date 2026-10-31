@@ -7,8 +7,7 @@ import { useScope } from "../../lib/scope";
 import { useApi } from "../../lib/api";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { useDiscuss, useDiscussTarget, type DiscussTarget } from "../../shell/discuss";
-import { SKILLS_PICKER, skillsHome } from "../skills/routes";
-import { workflowHref, workflowsTab } from "./index";
+import { SKILLS_PICKER, skillsHome, workflowHref, workflowsTab } from "../skills/routes";
 import { STEP_KINDS, type StepKind } from "./steps";
 
 /* New workflow: a guided form that writes the request, and Claude (the Discuss panel, in the
