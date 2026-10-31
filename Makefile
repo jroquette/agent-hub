@@ -118,10 +118,8 @@ lane-checks-fast:
 lane-tests-fast:
 	@$(MAKE) $(IN_ORDER) test-fast $(call IF_WEB,web-test)
 
-# PATHS counts only when given on make's command line, and as plain text. make would expand it
-# when it hands it to a recipe, running any $(shell ...) in it, here and again in each make a
-# recipe starts (those get it back through MAKEFLAGS and read this same block); and a PATHS the
-# shell exports would win over the Stop gate's HUB_CHANGED_FILES.
+# Only a command-line PATHS counts, as plain text: make would run any $(shell ...) in it when it
+# hands it to a recipe, and a PATHS the shell exports would beat the Stop gate's HUB_CHANGED_FILES.
 ifeq ($(origin PATHS),command line)
 override PATHS := $(value PATHS)
 export PATHS
@@ -134,6 +132,10 @@ endif
 # it, since make would paste the value into the line the shell runs.
 check-changed: ## the checks and the fast tests of what changed: PATHS="<paths>", else git vs origin/main
 	$(RUN) python -m scripts.check_changed
+
+# check-changed's child processes get no command-line variables in MAKEFLAGS, so a make that
+# reads another Makefile (an npm package's build, say) never sees PATHS.
+check-changed: MAKEOVERRIDES :=
 
 test-integration: ## integration tests (real SQLite files under tmp_path), never live ones; appends coverage
 	$(RUN) pytest -m "integration and not live and not serial" $(XDIST) $(COV) --cov-append
