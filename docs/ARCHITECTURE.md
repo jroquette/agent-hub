@@ -46,6 +46,24 @@ size hint), so every build with the same Brotli encoder writes the same bytes. T
 (`node -p process.versions.brotli`): a Node update that changes it changes the variants, and needs `make web-build`.
 The variants are committed and checked with the rest.
 
+The build is split by route. `src/routes.tsx` loads each routed screen with
+`lazyScreen(() => import("./screens/<name>"), "<Name>Screen")` (`src/shell/routeLoading.tsx`), so each of the 31
+screen modules it names is a chunk of its own, fetched the first time one of its routes opens; the only screen module
+it imports statically is the small helper `screens/sessions-list/liveRedirect.ts`. The entry chunk, the one
+`index.html` loads, and the chunks it imports hold `main.tsx`, the shell and what the shell imports. `react`,
+`react-dom`, `scheduler`, `react-router`, `@tanstack/*` and `openapi-fetch` go into one `vendor` chunk
+(`build.rolldownOptions.output.codeSplitting.groups` in `vite.config.ts`). Each chunk carries the styles its own
+modules import. A second plugin in `bundlePlugins.ts` stops the build when the entry chunk reaches 400,000 B or the
+vendor chunk 350,000 B (`ENTRY_LIMIT_BYTES` and `VENDOR_LIMIT_BYTES` in `src/build/bundleBudget.ts`; budgets only
+tighten). The build also writes Vite's manifest, `web_dist/.vite/manifest.json`, which names the chunk of each module
+loaded on demand: it is committed, shipped in the wheel and served like the other files outside `assets/`, and the web
+smoke reads it. A screen module keeps a chunk of its own only while no other module imports it statically, so code
+that other screens use (a row, a link, a constant) lives in its own module beside the screen, for example
+`screens/skills/routes.ts`, `screens/tickets/TicketItem.tsx` or `screens/workflows/WorkflowList.tsx`. While a
+screen's code loads, `main#main` keeps the previous screen and shows the page skeleton after 300 ms; a chunk that
+fails to load, or a screen that throws while it renders, shows `RouteError` (`src/shell/RouteError.tsx`) inside the
+shell ([spec 22](design/control-plane/specs/22-first-run-and-errors.md)).
+
 Each package has the same shape:
 
 ```

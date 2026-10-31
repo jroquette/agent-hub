@@ -273,13 +273,15 @@ Sample messages (final copy, server-side titles):
 | Nothing shown before | 300 ms: no spinner, no skeleton (avoids flashes on fast loads) |
 | After 300 ms | `Skeleton` shaped like the final layout (same row heights `row-compact` / `row-comfortable`, same column widths, same card sizes) so nothing shifts on arrival |
 | Minimum skeleton time | Once shown, at least 300 ms, to avoid flicker |
-| After 10 s | Inline line under the skeleton: "Still loading… large sessions can take a few seconds." with "Cancel" for user-started queries (filters) |
+| After 10 s | Inline line under the skeleton: "Still loading… large sessions can take a few seconds." with "Cancel" for user-started queries (filters). Under the page skeleton (a screen's code still loading): "Still loading this page. Check that hub web is still running.", with no Cancel: any nav link or shortcut starts another navigation, and the last one wins |
 | Shimmer | `gray-400` on `gray-100`, one sweep per 1.6 s; static (no shimmer) under prefers-reduced-motion |
 | Region independence | Each region loads and fails on its own; the fastest region renders first (e.g. table rows before facet counts) |
-| Navigation | Route change keeps the previous screen visible with a 2 px `accent` progress bar under the top bar until the new primary data arrives or 300 ms passes (then skeleton) |
+| Navigation | Each screen's code loads on demand (AGH-614). A route change keeps the previous screen visible and usable while the new screen's code loads; after 300 ms the page skeleton replaces it in `main#main`, with `aria-busy="true"`, held at least 300 ms. The URL, breadcrumb and selected nav item change when the new screen renders. The 2 px `accent` progress bar is not built (Departures). When the code is already loaded, the new screen renders at once |
+| First load | A deep link or a reload paints the shell (sidebar, top bar, offline banner) first; `main#main` stays empty for 300 ms, then shows the page skeleton until the screen's code runs. Then the screen's own region skeletons take over |
+| Page skeleton | The shape every screen shares, not one screen's body: a breadcrumb bar (120 × 12 px), a title bar (240 × 24 px) and a purpose line (50 % wide, 12 px), then one card (`surface`, `border`, `radius-lg`) of 6 `Skeleton` lines, in the page gutters (`ah-page`) |
 | Buttons | Actions show the verb in progress ("Approving…", "Registering…") and are disabled while pending; no optimistic UI except for reversible local changes (filters, saved views) |
 | Live insertion | New streamed items fade + 4 px slide (`dur-base`, `ease-out`); none under reduced motion |
-| Accessibility | Skeleton regions have `aria-busy="true"` and one polite announcement "Loading sessions" only if loading passes 1 s |
+| Accessibility | Skeleton regions have `aria-busy="true"` and one polite announcement "Loading sessions" only if loading passes 1 s; the page skeleton announces "Loading page" |
 
 Response-time limits drive these values: 0.1 s feels instant (hover, chips: `dur-fast`), 1 s keeps flow (navigation bar), 10 s is the attention limit (explicit "still loading" message and cancel).
 
@@ -294,7 +296,8 @@ Response-time limits drive these values: 0.1 s feels instant (hover, chips: `dur
 | `CollectorPill` | connected / delayed / offline, with per-source popover |
 | `AsOfStamp` | inline (title), cell (per-source) |
 | `ProblemError` | region, full page |
-| `Skeleton` | row, card, chart, text-block |
+| `RouteError` | code (a screen's code failed to load) and render (a screen threw while rendering): the error element of every route under the shell, shown in `main#main` in the 404 page's column, with `role="alert"` on the title and first line. Shell-local (`src/shell/`, not exported from `components/`) and in the entry chunk, so it shows when no chunk can be fetched |
+| `Skeleton` | row, card, chart, text-block; page (`RouteSkeleton`, while a screen's code loads) |
 | `CodeBlock` | copyable command with optional "proposed CLI" chip |
 | `CommandPalette` | Opened from 404 with the query prefilled |
 
@@ -319,7 +322,7 @@ Response-time limits drive these values: 0.1 s feels instant (hover, chips: `dur
 
 | State | What shows | Exact copy |
 |---|---|---|
-| Loading | Skeleton after 300 ms | "Loading sessions" (screen reader only, after 1 s) |
+| Loading | Skeleton after 300 ms; the page skeleton while a screen's code loads | "Loading sessions" (screen reader only, after 1 s); "Loading page" for the page skeleton |
 | Empty | Per-screen copy table above | (see table) |
 | Partial | Inline per-source states + pill popover | "GitHub not reachable, CI unknown." |
 | Error | `ProblemError` | Title + detail + status + Retry |
@@ -327,6 +330,8 @@ Response-time limits drive these values: 0.1 s feels instant (hover, chips: `dur
 | Stale | `AsOfStamp` + frozen live affordances | "As of 14:02" |
 | Offline | Banner + stale | "Collector offline since 14:02. Views show data as of 14:02. Start it with `hub collector start`." |
 | Not found | 404 | "This page does not exist" + entity line |
+| Page did not load | `RouteError`, code variant, inside the shell: overline "Page did not load", then "Reload page" (a full reload, never automatic) and "Go to Portfolio". The nav and every other route keep working; a stale tab after a release lands here on the first navigation that needs a new chunk | "This page could not load" + "The app could not fetch this page from hub web." + "The app may have been updated since this tab opened, or hub web stopped. Reloading gets the current version." + "Requested: <path> · file <assets/…js>" (the file only when the error names it) |
+| Page error | `RouteError`, render variant (a screen threw while rendering): overline "Page error", the same actions | "This page could not be shown" + "It failed while drawing: <first line of the error, at most 200 characters>." + "Other pages still work. Reload the page to try again." |
 
 ## Actions by phase
 

@@ -128,7 +128,11 @@ problems (<T> in total)`, or one line naming an input that could not be read; a 
 
 `hub web` serves the control plane from one local process ([Layer 2](#layer-2-control-plane-and-observability)): the
 `/api/v1` REST and SSE API ([API.md](API.md)) and the committed build of the web app, from the database `hub collect`
-uses. The build's content-hashed files under `/assets/` are cached a year (`Cache-Control: public, max-age=31536000,
+uses. The build is split by route: a first visit loads the shell, the shared libraries and the code of the page it
+opens, and each other page's code loads the first time that page opens. The build fails when the entry chunk, the
+one `index.html` loads, reaches 400,000 B. While a page's code loads, the previous page stays and a page skeleton
+shows after 300 ms; a page whose code cannot load says so inside the app's frame and offers to reload. The build's
+content-hashed files under `/assets/` are cached a year (`Cache-Control: public, max-age=31536000,
 immutable`), and their scripts, styles and SVGs of 1 KB or more are sent Brotli-compressed to a client that accepts
 `br`; `index.html` is `no-cache`, so the next load picks up a new release. It binds `127.0.0.1` (`--host` may name
 another loopback address or `localhost`), prints `agent-hub at

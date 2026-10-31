@@ -121,6 +121,12 @@ changes the owner validated for the whole app:
   prompt reads as shell, and one with no prompt stays plain
   ([ADR 0052](../../adr/0052-syntax-highlighting-across-the-app.md), which widens ADR 0034).
 
+AGH-614 (each screen's code loads on demand, [specs/22-first-run-and-errors.md](specs/22-first-run-and-errors.md))
+changes one rule of spec 22:
+
+- **Route loading.** Route changes keep the previous screen until the new screen's code loads and show the page
+  skeleton after 300 ms; the 2 px progress bar of spec 22 is not built.
+
 ## Design system
 
 The control plane of agent-hub is an observability and governance console for teams of AI coding agents. It answers five questions: how are my projects doing (Portfolio), what are the agents doing right now (Live sessions), why did the agent do that (Session timeline), what does it know and what did it learn (Knowledge), and how should work flow and where does it get stuck (Workflows). A busy engineering lead should understand any screen in five seconds and be able to trust it.
