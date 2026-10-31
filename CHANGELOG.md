@@ -39,6 +39,7 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - `hub doctor` no longer reports `brain.leak` errors for the lines of an ADR draft that reached a repo's `docs/adr/`
   folder, the place a draft is meant to end up. The same lines anywhere else in a repo are still errors, and
   `hub doctor --fix` now judges a draft only by the repo files outside `docs/adr/` (AGH-622).
+- The Stop hook now runs `check_fast` when a new code file has ` -> ` in its name, such as `x -> y.py` (AGH-619).
 
 ## [0.28.0] - 2026-10-30
 
