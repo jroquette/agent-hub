@@ -118,9 +118,20 @@ lane-checks-fast:
 lane-tests-fast:
 	@$(MAKE) $(IN_ORDER) test-fast $(call IF_WEB,web-test)
 
+# PATHS counts only when given on make's command line, and as plain text. make would expand it
+# when it hands it to a recipe, running any $(shell ...) in it, here and again in each make a
+# recipe starts (those get it back through MAKEFLAGS and read this same block); and a PATHS the
+# shell exports would win over the Stop gate's HUB_CHANGED_FILES.
+ifeq ($(origin PATHS),command line)
+override PATHS := $(value PATHS)
+export PATHS
+else
+unexport PATHS
+endif
+
 # The checks, and only the fast tests the change reaches (scripts/check_changed.py; its --plan
-# prints the plan alone). The recipe never names PATHS: make would paste the value into the line
-# the shell runs. Given on make's command line, PATHS reaches the script's environment as data.
+# prints the plan alone). The script reads PATHS from its environment; the recipe never names
+# it, since make would paste the value into the line the shell runs.
 check-changed: ## the checks and the fast tests of what changed: PATHS="<paths>", else git vs origin/main
 	$(RUN) python -m scripts.check_changed
 
