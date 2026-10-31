@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Stop: if this session changed code in a repo checkout/worktree listed in hub.json, run that repo's
-`check_stop` command, else its `check_fast` command, and block completion while it fails (feedback goes
-back to the agent). Releases after
-3 consecutive blocks to avoid loops. When checks pass and files changed, remind about /handoff (never
-blocks). The checkouts checked are the one holding the session's cwd, then each one holding a file that an
+`check_stop` command, else its `check_fast` command, and block completion while it fails
+(feedback goes back to the agent). Releases after 3 consecutive blocks to avoid loops.
+When checks pass and files changed, remind about /handoff (never blocks). The checkouts
+checked are the one holding the session's cwd, then each one holding a file that an
 Edit, Write, MultiEdit or NotebookEdit call touched, read from the main transcript and from the newest
 MAX_SUBAGENT_FILES subagent transcripts beside it; never another checkout or worktree, never the hub. A
 scan cut by the budget or by that cap adds a note. When the main transcript gives no session start and
@@ -18,13 +18,15 @@ counter as it was. Each check runs in its own process group, killed when the run
 a normal exit, and when the hook itself gets SIGTERM or SIGHUP), so no child of a check outlives the gate;
 its output goes to a temp file, so a background child holding it open never holds the gate up.
 A `check_stop` run gets HUB_CHANGED_FILES: the paths the session changed in that checkout, from its top,
-sorted, one a line, with no final newline. A path that exists counts when written since the session
-start; a deleted one, and both sides of a rename, whenever git lists them (a rename keeps the mtime). The
-variable is unset when git quotes any path of the checkout (a quoted name cannot be listed whole), when the
-list is over CHANGED_FILES_MAX_BYTES, and on a second start after the first failed with E2BIG (the list
-and the inherited environment together over the kernel's limit). A value the hook inherits reaches no
-check. The summary lines name what the changed repos were given: check_fast, check_stop, or both as
-check_stop/check_fast.
+sorted, one per line, with no final newline. A path that exists counts when its mtime or its ctime, read
+with lstat so a link counts by its own dates, is at or after the session start (a plain mv keeps the mtime
+and sets the ctime); a deleted one, and both sides of a rename, whenever git lists them. The variable is
+unset when git quotes any path of the checkout (a quoted name cannot be listed whole), when git's status
+holds U+0085, U+2028 or U+2029 (raw in a name under core.quotePath=false, each splits that name's line
+for splitlines()), when the list is over CHANGED_FILES_MAX_BYTES, and on a second start after the first
+failed with E2BIG (the list and the inherited environment together over the kernel's limit). A value the
+hook inherits reaches no check. The summary lines name what the changed repos, and any whose git status
+the budget cut, were given: check_fast, check_stop, or both as check_stop/check_fast.
 After a block is printed, it is sent to the local control plane through the event sensor's
 send_decision (event_sensor.py beside it): the hook input, its content reduced to sizes
 (reduce_hook), with decision {by: stop_gate, kind: block, command, exit_code} of the first failing repo, bounded by the
@@ -72,6 +74,9 @@ OUTPUT_TAIL = 3000
 # The most UTF-8 bytes of changed paths check_stop gets: Linux refuses to start a process with one
 # environment string of about 128 KiB.
 CHANGED_FILES_MAX_BYTES = 65_536
+# The characters str.splitlines() also breaks a line at that git prints raw in a name under
+# core.quotePath=false (it quotes the ASCII ones): a status holding one gives no changed-files list.
+RAW_LINE_BREAKS = "\x85\u2028\u2029"
 START_BYTES = 65_536  # the head of the main transcript read for the session start
 MAX_SUBAGENT_FILES = 1024  # subagent transcripts read for touched files, newest first
 # The file-writing tools and the input key holding the path each one wrote.
@@ -138,19 +143,21 @@ def left() -> float:
     return HOOK_START + BUDGET - time.monotonic()
 
 
-def changed_code(top: Path, since: float) -> tuple[list[str] | None, list[str] | None]:
+def changed_code(top: Path, since: float, all_paths: bool = False) -> tuple[list[str] | None, list[str] | None]:
     """(the code files changed since `since`, every path changed since then), from one git status. Both are
     None when the budget is spent before git answers: git() reads a timeout as "", which is no clean tree. A
-    git error or git's own GIT_TIMEOUT stays "no change". Every path, sorted: one that exists when written
-    since `since`, a deleted one and both sides of a rename always; None when git quotes any path, as a list
-    without that name would come up short."""
+    git error or git's own GIT_TIMEOUT stays "no change". Every path, sorted, only with `all_paths` (for a
+    check_stop run): one that exists when written_since says so, a deleted one and both sides of a rename
+    always; None without `all_paths`, and when git quotes any path or the status holds one of
+    RAW_LINE_BREAKS, as a list without that name, or with pieces of it, would be wrong."""
     cap = min(GIT_TIMEOUT, left())
     if cap <= 0:
         return None, None
     status = git(["status", "--porcelain", "--untracked-files=all"], top, timeout=max(1, math.ceil(cap)))
     if not status and cap < GIT_TIMEOUT and left() <= 0:
         return None, None
-    out, every = [], set()
+    out = []
+    every = set() if all_paths and not any(c in status for c in RAW_LINE_BREAKS) else None
     for line in status.splitlines():
         sides = line[3:].split(" -> ")
         rel = sides[-1].strip('"')
@@ -160,17 +167,19 @@ def changed_code(top: Path, since: float) -> tuple[list[str] | None, list[str] |
         if every is None or any(side.startswith('"') for side in sides):
             every = None
         else:
-            every.update(side for side in sides if len(sides) > 1 or written_since(top / side, since))
+            every.update(side for side in sides if len(sides) > 1 or written_since(os.path.join(top, side), since))
     return out, None if every is None else sorted(every)
 
 
-def written_since(path: Path, since: float) -> bool:
-    """Whether a path git lists counts as changed since `since`: its mtime is at or after it, or it is gone (a
+def written_since(path: str, since: float) -> bool:
+    """Whether a path git lists counts as changed since `since`: its mtime or its ctime is at or after it (by
+    lstat, so a link by its own dates; a plain mv keeps the mtime and sets the ctime), or it is gone (a
     deletion) or cannot be read."""
     try:
-        return path.stat().st_mtime >= since
+        found = os.lstat(path)
     except OSError:
         return True
+    return max(found.st_mtime, found.st_ctime) >= since
 
 
 def touched_paths(tp: str) -> tuple[set[str], str]:
@@ -396,25 +405,31 @@ def main() -> None:
     blocks = saved.get("blocks") if isinstance(saved, dict) else None
     if not isinstance(blocks, int) or isinstance(blocks, bool):
         blocks = 0
-    statuses = [(repo, top, *changed_code(top, since)) for repo, top in candidates(cfg, cwd, touched, tops)]
+    statuses = []
+    for repo, top in candidates(cfg, cwd, touched, tops):
+        entry = cfg.repo(repo)
+        stop = (entry.check_stop if entry else "").strip()
+        statuses.append((repo, top, entry, stop, *changed_code(top, since, all_paths=bool(stop))))
     failures, not_run, passed, cut = [], [], 0, False
     first_failed = None  # (command, exit code) of the first failing check
-    kinds = set()  # what the changed repos with a command were given, run or not: check_stop, check_fast
-    for repo, top, files, every in statuses:
+    # What the repos with a command were given, run or not, among those that changed or whose git status
+    # the budget cut: check_stop, check_fast.
+    kinds = set()
+    for repo, top, entry, stop, files, every in statuses:
         label = label_of(cfg, repo, top)
+        cmd = stop or (entry.check_fast if entry else "").strip()
+        kind = "check_stop" if stop else "check_fast"
         if files is None:
             not_run.append(f"{label}: not run: budget")
             cut = True
+            if cmd:
+                kinds.add(kind)
             continue
         if not files:
             continue
-        entry = cfg.repo(repo)
-        stop = (entry.check_stop if entry else "").strip()
-        cmd = stop or (entry.check_fast if entry else "").strip()
         if not cmd:
             not_run.append(f"{label}: no check_fast configured")
             continue
-        kind = "check_stop" if stop else "check_fast"
         kinds.add(kind)
         own = (entry.check_fast_timeout if entry else None) or TIMEOUT
         budget_left = left()
