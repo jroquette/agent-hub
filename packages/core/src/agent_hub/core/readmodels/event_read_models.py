@@ -221,10 +221,13 @@ class _FoldMemos:
     # Tile fields per (session, waits on a permission request), derived at read time for the
     # rows asked; valid while the group, ``now`` and the folded problems are the same.
     tiles: dict[tuple[str, bool], tuple[_Group, datetime, SessionProblems, TileFields]]
+    # The paths each session touched, folded at read time for the file matches (the feature
+    # cost, the file filter); valid while the group is the same.
+    files: dict[str, tuple[_Group, frozenset[str]]]
 
     @classmethod
     def empty(cls) -> _FoldMemos:
-        return cls(sessions={}, runs={}, approvals={}, learnings=((), {}), tiles={})
+        return cls(sessions={}, runs={}, approvals={}, learnings=((), {}), tiles={}, files={})
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -241,6 +244,7 @@ class _Snapshot:
     approvals: Mapping[str, Approval]
     learnings: Mapping[str, Learning]
     tiles: dict[tuple[str, bool], tuple[_Group, datetime, SessionProblems, TileFields]]
+    files: dict[str, tuple[_Group, frozenset[str]]]
 
 
 def _microseconds(moment: datetime | None) -> int:
@@ -453,6 +457,7 @@ class FoldedEventReadModels:
                 approvals=_fold_approvals(index, hub_paths, memos),
                 learnings=_fold_learnings(index, memos),
                 tiles=memos.tiles,
+                files=memos.files,
             )
 
     def _fold_sessions(
@@ -680,7 +685,7 @@ class FoldedEventReadModels:
         found = {
             session.id: session
             for session in scoped
-            if _file_matches(snapshot.by_session[session.id], folder)
+            if _file_matches(_touched(snapshot, session.id), folder)
         }
         if issues:
             rest = [session for session in scoped if session.id not in found]
@@ -1097,7 +1102,7 @@ def _session_matches(session: Session, wanted: SessionFilter, snapshot: _Snapsho
         all(checks)
         and _cost_in_range(session.cost_usd, wanted)
         and _workflow_matches(snapshot.by_session[session.id], wanted.workflow)
-        and _file_matches(snapshot.by_session[session.id], wanted.file)
+        and (wanted.file is None or _file_matches(_touched(snapshot, session.id), wanted.file))
     )
 
 
@@ -1114,8 +1119,21 @@ def _workflow_matches(events: Sequence[StoredEvent], workflow: str | None) -> bo
     return workflow is None or any(stored.event.workflow == workflow for stored in events)
 
 
-def _file_matches(events: Sequence[StoredEvent], file: str | None) -> bool:
-    return file is None or any(file in change.path for change in fold_session_files(events))
+def _touched(snapshot: _Snapshot, session_id: str) -> frozenset[str]:
+    """The paths the session touched (read or changed), folded again only when its events
+    changed: they are kept while its group is the same object. Written outside the fold lock,
+    as the tile fields are: an equal group gives equal paths."""
+    group = snapshot.by_session[session_id]
+    found = snapshot.files.get(session_id)
+    if found is not None and found[0] is group:
+        return found[1]
+    paths = frozenset(change.path for change in fold_session_files(group))
+    snapshot.files[session_id] = (group, paths)
+    return paths
+
+
+def _file_matches(paths: Iterable[str], file: str) -> bool:
+    return any(file in path for path in paths)
 
 
 def _session_sort_key(field: str, *, descending: bool) -> Callable[[Session], SortKey]:
