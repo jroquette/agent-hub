@@ -61,16 +61,16 @@ export const SHORTCUTS: readonly { title: string; rows: readonly [string, string
     ],
   },
   {
-    // The Brain's note tree (AGH-617, spec 01): on a row of the tree; ↓ also enters it from an
-    // empty search field.
+    // The Brain's note tree (spec 01): on a row of the tree; ↓ also enters it from an empty
+    // search field.
     title: "Brain tree",
     rows: [
       ["Next / previous row", "j k ↓ ↑"],
       ["First / last row", "Home End"],
       ["Into / out of a folder", "→ ←"],
-      ["Open note or folder", "↵ o"],
-      ["Open / close folder", "Space"],
-      ["From the empty search", "↓"],
+      ["Open note", "↵ o"],
+      ["Open / close folder", "↵ o Space"],
+      ["Into the tree (empty search)", "↓"],
     ],
   },
 ];

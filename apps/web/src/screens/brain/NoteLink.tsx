@@ -16,7 +16,7 @@ export interface NoteLinkProps {
   /** The row is one of the search's results, which the arrow and j/k keys move between. */
   searchRow?: boolean | undefined;
   onOpen?: (() => void) | undefined;
-  /** A row of the tree: its path, which the tree's keys find it by (AGH-617). */
+  /** A row of the tree: its path, which the tree's keys find it by. */
   treeRow?: string | undefined;
   /** The tree's roving tab stop: 0 on its current row, -1 on the others. */
   tabIndex?: number | undefined;

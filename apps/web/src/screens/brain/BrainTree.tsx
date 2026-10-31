@@ -1,6 +1,6 @@
 import { defaultRangeExtractor, observeElementRect, useVirtualizer } from "@tanstack/react-virtual";
 import type { Virtualizer } from "@tanstack/react-virtual";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, RefObject } from "react";
 import { flushSync } from "react-dom";
 
@@ -9,8 +9,8 @@ import { goSequencePending, typingIn } from "../../shell/goSequence";
 import { NoteLink } from "./NoteLink";
 import { buildTree, foldersOf, treeRows, type TreeRow } from "./tree";
 
-// The Brain's tree renders only the rows in its box's view (AGH-617): a flat list of rows built
-// from the listing and the open folders, one Tab stop, and keys to move, open and close.
+// The Brain's tree renders only the rows in its box's view: a flat list of rows built from the
+// listing and the open folders, one Tab stop, and keys to move, open and close.
 
 /** Each part's fixed height in px, as Brain.css draws it, so the box never jumps as it scrolls. */
 const SIZE = {
@@ -120,7 +120,11 @@ function keyMove(
   const opened = folder && open.has(row.path);
   const last = layout.rows.length - 1;
   if (key === "ArrowDown" || key === "j") return { to: Math.min(at + 1, last) };
-  if (key === "ArrowUp" || key === "k") return at === 0 ? { field: true } : { to: at - 1 };
+  if (key === "ArrowUp" || key === "k") {
+    if (at > 0) return { to: at - 1 };
+    // Only ↑ leaves the first row for the search field: a held k would type into it.
+    return key === "k" ? { still: true } : { field: true };
+  }
   if (key === "Home") return { to: 0 };
   if (key === "End") return { to: last };
   if (key === "ArrowRight") {
@@ -299,7 +303,10 @@ function TreeItem({
           aria-expanded={opened}
           aria-label={`${row.name}, ${String(row.count)} ${row.count === 1 ? "note" : "notes"}`}
           data-tree-row={row.path}
-          onClick={() => {
+          onClick={(event) => {
+            // Not every browser gives a clicked button focus (Safari does not): the row takes
+            // it, as it does when a key opens or closes the folder.
+            event.currentTarget.focus();
             onUse(row.path);
             onToggle(row.path);
           }}
@@ -338,7 +345,7 @@ export interface BrainTreeProps {
 }
 
 /**
- * The Brain's note tree (spec 19, AGH-617): start notes, folders and the inbox as rows, only the
+ * The Brain's note tree (spec 19): start notes, folders and the inbox as rows, only the
  * ones in view rendered. Folders open and close in place, notes are links, and the tree is one
  * Tab stop whose rows the arrows, `j`/`k`, `Home`/`End`, `Enter`/`o` and `Space` work.
  */
@@ -392,6 +399,47 @@ export function BrainTree({ project, entries, selected, state, field }: BrainTre
     if (selectedPart === undefined) return;
     scrollToPart(boxRef.current, virtualizer, { layout, part: selectedPart, center: true });
   }, [selected, selectedPart, layout, showed, markShown, virtualizer]);
+
+  // The row that has focus. When it leaves the list (a new listing dropped it, or its folder
+  // closed), focus goes to the tree's current row, its folder first, never to the page.
+  const focusedRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const box = boxRef.current;
+    if (box === null) return undefined;
+    const onFocusIn = (event: FocusEvent) => {
+      const row = event.target;
+      if (row instanceof HTMLElement && row.dataset.treeRow !== undefined) {
+        focusedRef.current = row;
+      }
+    };
+    const onFocusOut = (event: FocusEvent) => {
+      const row = event.target;
+      if (!(row instanceof HTMLElement) || focusedRef.current !== row) return;
+      // Some browsers blur a row as it leaves the page: only a row still in the page, which
+      // focus left for something else, lets go of it.
+      queueMicrotask(() => {
+        if (focusedRef.current === row && row.isConnected && document.activeElement !== row) {
+          focusedRef.current = null;
+        }
+      });
+    };
+    box.addEventListener("focusin", onFocusIn);
+    box.addEventListener("focusout", onFocusOut);
+    return () => {
+      box.removeEventListener("focusin", onFocusIn);
+      box.removeEventListener("focusout", onFocusOut);
+    };
+  }, []);
+  useLayoutEffect(() => {
+    const lost = focusedRef.current;
+    if (lost === null || lost.isConnected) return;
+    focusedRef.current = null;
+    const active = document.activeElement;
+    if (active !== null && active !== document.body) return;
+    if (roving === null || rovingPart === undefined) return;
+    scrollToPart(boxRef.current, virtualizer, { layout, part: rovingPart });
+    rowElement(boxRef.current, roving)?.focus({ preventScroll: true });
+  });
 
   /** Goes to the row at `at`: it renders as the current row, the box scrolls, then it takes focus. */
   const goTo = (at: number) => {

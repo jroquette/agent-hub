@@ -79,5 +79,14 @@ describe("ShortcutSheet (brain-tree)", () => {
     expect(new Set(keys)).toEqual(
       new Set(["↓", "↑", "j", "k", "Home", "End", "→", "←", "↵", "o", "Space"]),
     );
+    // Each key under what it does, as the Tickets and Chat groups are pinned.
+    expect(group("Brain tree")).toEqual([
+      "Next / previous row: j k ↓ ↑",
+      "First / last row: Home End",
+      "Into / out of a folder: → ←",
+      "Open note: ↵ o",
+      "Open / close folder: ↵ o Space",
+      "Into the tree (empty search): ↓",
+    ]);
   });
 });

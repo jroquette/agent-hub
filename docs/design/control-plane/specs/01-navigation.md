@@ -519,7 +519,7 @@ The keys are off while focus is in a text field, except `⌘S`. See [23-scenario
 
 | Keys | Action |
 |---|---|
-| `↓` / `j`, `↑` / `k` | On the tree's rows (one tab stop), next / previous row across its groups; `↑` on the first row returns to the search field |
+| `↓` / `j`, `↑` / `k` | On the tree's rows (one tab stop), next / previous row across its groups; `↑` on the first row returns to the search field, `k` stays there |
 | `Home` / `End` | First / last row |
 | `→` | Open a closed folder; on an open folder, go to its first row |
 | `←` | Close an open folder; on a note or a closed folder, go to its folder's row |

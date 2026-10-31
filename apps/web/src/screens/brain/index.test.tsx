@@ -18,6 +18,7 @@ import {
   type ApiRoutes,
 } from "../../testing/builders";
 import { SEARCH_DEBOUNCE_MS } from "../../lib/search";
+import { armGoSequence, clearGoSequence } from "../../shell/goSequence";
 import { BrainPickerScreen, BrainScreen, brainHome } from "./index";
 
 const TREE = "/api/v1/projects/agent-hub/brain";
@@ -1086,6 +1087,66 @@ describe("BrainScreen tree", () => {
     },
   );
 
+  it("goes from an open folder to its first row with →, and opens a note with o, focus kept", async () => {
+    const user = userEvent.setup();
+    const { nav, router } = await openTree("/projects/agent-hub/brain");
+    await openByHand(user, nav, "tree-2, 100 notes");
+
+    await user.keyboard("{ArrowRight}");
+    expectFocusOn(nav, "note-001.md");
+    expect(document.activeElement).toHaveAttribute(
+      "href",
+      "/projects/agent-hub/brain/tree-2/note-001.md",
+    );
+
+    await user.keyboard("o");
+    expect(router.state.location.pathname).toBe("/projects/agent-hub/brain/tree-2/note-001.md");
+    expectFocusOn(nav, "note-001.md");
+    expect(document.activeElement).toHaveAttribute("aria-current", "page");
+  });
+
+  it.each([
+    { keys: "→ on a note", steps: 1, row: "Now", init: { key: "ArrowRight" }, taken: true },
+    { keys: "Space on a note", steps: 1, row: "Now", init: { key: " " }, taken: true },
+    { keys: "← on a top row", steps: 1, row: "Now", init: { key: "ArrowLeft" }, taken: true },
+    {
+      keys: "← on a closed top folder",
+      steps: 2,
+      row: "tree-1, 100 notes",
+      init: { key: "ArrowLeft" },
+      taken: true,
+    },
+    {
+      keys: "Ctrl ↓",
+      steps: 1,
+      row: "Now",
+      init: { key: "ArrowDown", ctrlKey: true },
+      taken: false,
+    },
+    // The browser's Back.
+    { keys: "Alt ←", steps: 1, row: "Now", init: { key: "ArrowLeft", altKey: true }, taken: false },
+    { keys: "⌘ j", steps: 1, row: "Now", init: { key: "j", metaKey: true }, taken: false },
+  ])(
+    "leaves focus, the folders and the note as they are with $keys",
+    async ({ steps, row, init, taken }) => {
+      const user = userEvent.setup();
+      const { nav, router } = await openTree("/projects/agent-hub/brain");
+      await user.keyboard("/{ArrowDown}");
+      for (let step = 0; step < steps; step += 1) await user.keyboard("{ArrowDown}");
+      expectFocusOn(nav, row);
+      const shown = renderedRows(nav);
+      const focused = document.activeElement;
+      if (focused === null) throw new Error("no row has focus");
+
+      // A key the tree takes keeps the browser from acting on it; a modified key is the browser's.
+      expect(fireEvent.keyDown(focused, init)).toBe(!taken);
+
+      expectFocusOn(nav, row);
+      expect(router.state.location.pathname).toBe("/projects/agent-hub/brain");
+      expect(renderedRows(nav)).toEqual(shown);
+    },
+  );
+
   it("keeps a folder opened by hand open after it scrolls away and back", async () => {
     const user = userEvent.setup();
     const { nav } = await openTree("/projects/agent-hub/brain");
@@ -1117,6 +1178,39 @@ describe("BrainScreen tree", () => {
     ).toBeInTheDocument();
     expect(folderRow(nav, "tree-3, 100 notes")).toHaveAttribute("aria-expanded", "true");
     expect(noteLink(nav, "tree-3/note-001.md")).not.toBeNull();
+  });
+
+  it("gives a folder's row focus when a click opens it, though the click itself gives none", async () => {
+    const { nav } = await openTree("/projects/agent-hub/brain");
+    expect(document.body).toHaveFocus();
+
+    // Safari leaves focus where it was when a button is clicked: a click with no focus change.
+    fireEvent.click(folderRow(nav, "tree-2, 100 notes"));
+
+    expect(folderRow(nav, "tree-2, 100 notes")).toHaveAttribute("aria-expanded", "true");
+    expectFocusOn(nav, "tree-2, 100 notes");
+  });
+
+  it("moves focus to the folder's row when a new listing drops the focused note", async () => {
+    const user = userEvent.setup();
+    let listing = aBrainTreeOf(600);
+    const { queryClient } = open("/projects/agent-hub/brain", { [TREE]: () => listing });
+    const nav = brainNotes();
+    await within(nav).findByRole("region", { name: "Folders" }, { timeout: 5_000 });
+    await openByHand(user, nav, "tree-2, 100 notes");
+    await user.keyboard("{ArrowDown}{ArrowDown}");
+    expectFocusOn(nav, "note-002.md");
+
+    listing = {
+      ...listing,
+      entries: listing.entries.filter((entry) => entry.path !== "tree-2/note-002.md"),
+    };
+    await act(() => queryClient.invalidateQueries());
+
+    await vi.waitFor(() => {
+      expect(noteLink(nav, "tree-2/note-002.md")).toBeNull();
+    });
+    expectFocusOn(nav, "tree-2, 99 notes");
   });
 
   it("keeps the tree one Tab stop, entering on the selected note", async () => {
@@ -1157,6 +1251,22 @@ describe("BrainScreen tree", () => {
     expect(searchbox(nav)).toHaveFocus();
     await user.keyboard("{ArrowDown}");
     expectFocusOn(nav, "tree-1, 100 notes");
+  });
+
+  it("goes back to the search field with ↑ on the first row, while k stays there", async () => {
+    const user = userEvent.setup();
+    const { nav } = await openTree("/projects/agent-hub/brain");
+    await user.keyboard("/{ArrowDown}");
+    expectFocusOn(nav, "Index");
+
+    // A held k never types into the field, which would replace the tree with search results.
+    await user.keyboard("kk");
+    expectFocusOn(nav, "Index");
+    expect(searchbox(nav)).toHaveValue("");
+
+    await user.keyboard("{ArrowUp}");
+    expect(searchbox(nav)).toHaveFocus();
+    expect(within(nav).getByRole("region", { name: "Folders" })).toBeInTheDocument();
   });
 
   it("brings back the same open folders and scroll position when the search is cleared with Escape", async () => {
@@ -1213,6 +1323,45 @@ describe("BrainScreen tree", () => {
       expect(router.state.location.pathname).toBe("/projects/agent-hub/brain/tree-3/note-050.md");
     },
   );
+
+  it("leaves the keys another handler already took", async () => {
+    const user = userEvent.setup();
+    const { nav } = await openTree("/projects/agent-hub/brain");
+    await openByHand(user, nav, "tree-2, 100 notes");
+    const take = (event: KeyboardEvent) => {
+      event.preventDefault();
+    };
+
+    document.addEventListener("keydown", take, true);
+    try {
+      await user.keyboard("j{ArrowDown}{ArrowLeft}");
+    } finally {
+      document.removeEventListener("keydown", take, true);
+    }
+
+    expectFocusOn(nav, "tree-2, 100 notes");
+    expect(folderRow(nav, "tree-2, 100 notes")).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("leaves o and k to a g sequence the user started", async () => {
+    const user = userEvent.setup();
+    const { nav, router } = await openTree(MIDDLE_NOTE);
+    await user.click(await selectedRow(nav));
+    await user.keyboard("{ArrowDown}");
+    expectFocusOn(nav, "note-051.md");
+
+    try {
+      for (const key of ["o", "k"]) {
+        // `g o` and `g k` are the shell's (spec 01, Global).
+        armGoSequence();
+        await user.keyboard(key);
+        expectFocusOn(nav, "note-051.md");
+        expect(router.state.location.pathname).toBe("/projects/agent-hub/brain/tree-3/note-050.md");
+      }
+    } finally {
+      clearGoSequence();
+    }
+  });
 
   it("keeps Triage in Learnings at the end of the inbox group in a 600-note tree", async () => {
     const { nav } = await openTree(MIDDLE_NOTE);

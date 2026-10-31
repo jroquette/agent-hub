@@ -314,7 +314,7 @@ row, and the next stop is "Triage in Learnings". On a row:
 
 | Keys | Action |
 |---|---|
-| `↓` / `j`, `↑` / `k` | Next / previous row, across the groups; the box scrolls first, so focus is on the next row in the same keystroke. `↑` on the first row returns to the search field |
+| `↓` / `j`, `↑` / `k` | Next / previous row, across the groups; the box scrolls first, so focus is on the next row in the same keystroke. `↑` on the first row returns to the search field; `k` stays there, so a held `k` never types into the field |
 | `Home` / `End` | First / last row |
 | `→` | Closed folder: open it. Open folder: go to its first row |
 | `←` | Open folder: close it. A note or a closed folder: go to its folder's row |
@@ -323,8 +323,9 @@ row, and the next stop is "Triage in Learnings". On a row:
 
 `↓` in the search field with no query goes to the tree's current row (with a query, to the first result, as before).
 The tree takes these keys only while one of its rows has focus, never with `Ctrl`, `⌘` or `Alt`, never while typing in
-a field and never as the second key of a `g` sequence; opening or closing a folder keeps focus on its row. The
-current row is always rendered, so focus stays on it when the wheel scrolls it out of view.
+a field and never as the second key of a `g` sequence; opening or closing a folder keeps focus on its row, with a
+click too. The current row is always rendered, so focus stays on it when the wheel scrolls it out of view; when the
+focused row leaves the list (a new listing drops it), focus moves to its folder's row, never to the page.
 
 **Loading.** Nothing for 300 ms, then a skeleton of the panel (a field bar, a group heading bar and 10 row bars at row
 height) with `aria-busy="true"`, held at least 300 ms. After 1 s a screen reader hears "Loading brain notes", said
@@ -337,7 +338,9 @@ outside the busy part. Empty, failed and partial listings are as before.
 - **AC-617.2** Given the tree, when the user moves with `↓`/`↑`, `j`/`k`, `Home`/`End`, `→`/`←`, `Enter`, `o` and
   `Space`, then focus moves row by row in tree order past the rendered rows and back, never to the page, folders open
   and close on their row, and the tree is one Tab stop. Tests: `index.test.tsx` "moves focus row by row …", "goes to
-  the first and the last row …", "opens and closes a folder …", "keeps the tree one Tab stop …".
+  the first and the last row …", "opens and closes a folder …", "keeps the tree one Tab stop …", "goes back to the
+  search field with ↑ on the first row …", "moves focus to the folder's row when a new listing drops the focused
+  note".
 - **AC-617.3** Given folders opened by hand or for an earlier note, when the box scrolls them away and back, another
   note is picked or the search is cleared with `Esc`, then they are still open and the box is where it was. Tests:
   `index.test.tsx` "keeps a folder opened by hand open …", "keeps a folder opened for an earlier note open …", "brings
