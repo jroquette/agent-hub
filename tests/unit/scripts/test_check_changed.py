@@ -226,6 +226,31 @@ def test_runs_only_importers_tests_when_cli_or_mcp_server_source_changes_in_repo
     assert (plan.full, plan.openapi, plan.web, plan.ignores) == (False, False, False, ())
 
 
+def test_reads_each_import_form_when_graph_built(tmp_path: Path) -> None:
+    # One package per import form, one of them inside a function; a name in a string is none.
+    sources = {
+        "alpha": "import agent_hub.beta\n",
+        "beta": "from agent_hub import gamma\n",
+        "gamma": "def load() -> None:\n    from agent_hub.delta import run\n",
+        "delta": '"""Starts agent_hub.alpha."""\nCOMMAND = "python -m agent_hub.alpha"\n',
+    }
+    for name, text in sources.items():
+        folder = tmp_path / "packages" / name / "src" / "agent_hub" / name
+        folder.mkdir(parents=True)
+        (folder / "__init__.py").write_text(text, "utf-8")
+    (tmp_path / "scripts").mkdir()
+
+    graph = import_graph(tmp_path)
+
+    assert graph == {
+        "alpha": frozenset({"beta"}),
+        "beta": frozenset({"gamma"}),
+        "gamma": frozenset({"delta"}),
+        "delta": frozenset(),
+        "scripts": frozenset(),
+    }
+
+
 @pytest.mark.parametrize(
     ("path", "missing"),
     [
@@ -722,17 +747,25 @@ def test_prints_plan_and_runs_nothing_when_plan_flag_given(
 REASONS_SHOWN = 20
 
 
+@pytest.mark.parametrize(
+    ("count", "tail"),
+    [
+        pytest.param(REASONS_SHOWN, [], id="at-cap"),
+        pytest.param(REASONS_SHOWN + 1, ["  reason: … and 1 more"], id="over-cap"),
+    ],
+)
 def test_prints_capped_reasons_when_many_paths_unknown(
-    capsys: pytest.CaptureFixture[str],
+    count: int, tail: list[str], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    paths = [f"notes/{index:02}.txt" for index in range(REASONS_SHOWN + 1)]
+    paths = [f"notes/{index:02}.txt" for index in range(count)]
 
     main(["--plan", *paths], environ={}, start=FakeStart(), git=FakeGit({}))
 
     out = capsys.readouterr().out
-    hidden = len(paths) - REASONS_SHOWN
+    reasons = [line for line in out.splitlines() if line.startswith("  reason: ")]
+    shown = [f"  reason: full: unknown path {path}" for path in paths[:REASONS_SHOWN]]
     assert len([path for path in paths if path in out]) == REASONS_SHOWN
-    assert len([line for line in out.splitlines() if f"{hidden} more" in line]) == 1
+    assert reasons == [*shown, *tail]
 
 
 @pytest.mark.parametrize(
