@@ -356,6 +356,72 @@ def test_sends_post_headers_when_server_up(
     assert HookEnvelope.model_validate_json(received.body).hook == reduced("PostToolUse", data)
 
 
+# AGH-621 (AC-25): the Host line of the two forms the case above does not reach, as http.client
+# wrote it: an IPv6 host in brackets, and no port when it is http's 80. argv: the URLs. The child
+# sends one envelope per URL through a socket.create_connection that records the address and the
+# bytes it is given.
+HOST_LINES = r"""
+import json, os, socket
+import event_sensor
+
+addresses, sent = [], []
+
+
+class Recorded:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def settimeout(self, timeout):
+        pass
+
+    def sendall(self, data):
+        sent.append(data)
+
+    def recv(self, size):
+        return b""
+
+
+def create_connection(address, timeout=None):
+    addresses.append(list(address))
+    return Recorded()
+
+
+socket.create_connection = create_connection
+found = {}
+for url in sys.argv[1:]:
+    os.environ["AGENT_HUB_WEB_URL"] = url
+    del addresses[:], sent[:]
+    event_sensor.post_envelope({"v": 1})
+    head = b"".join(sent).split(b"\r\n\r\n")[0].decode("ascii").split("\r\n")
+    found[url] = [list(addresses), [line for line in head if line.startswith("Host: ")]]
+print(json.dumps(found))
+"""
+HOST_CASES = {
+    "http://[::1]:7420": [[["::1", 7420]], ["Host: [::1]:7420"]],
+    "http://[::1]": [[["::1", 80]], ["Host: [::1]"]],
+    "http://127.0.0.1": [[["127.0.0.1", 80]], ["Host: 127.0.0.1"]],
+    "http://LOCALHOST:80/": [[["localhost", 80]], ["Host: localhost"]],
+}
+
+
+def test_writes_host_as_http_client_when_host_is_ipv6_or_port_is_default(
+    hub: Path, *, hook_python: str, run_python: Callable[..., Any], tmp_path: Path
+) -> None:
+    found = run_python(
+        hook_python,
+        HOST_LINES,
+        path=hub / HOOKS,
+        args=list(HOST_CASES),
+        cwd=hub,
+        env={"HOME": str(tmp_path)},
+    )
+
+    assert found == HOST_CASES
+
+
 # AGH-621 (AC-25, Q16): a guard deny records its decision without loading http.client,
 # email.parser or ssl. argv: a hook file and a file holding one event. Runs the hook as __main__
 # in this process with the event on stdin, then lists which of those modules are loaded, before

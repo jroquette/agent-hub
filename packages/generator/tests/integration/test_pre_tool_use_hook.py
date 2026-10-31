@@ -299,12 +299,16 @@ def test_asks_with_crash_cause_when_guard_raises_while_checking(
 
 # What a hook may inherit from the process that starts it. argv: none. Replaces this process with
 # $HOOK_FILE on this interpreter, after one change ($INHERITS) that survives exec: no stdin (fd 0
-# closed), or none.
+# closed), SIGCHLD ignored, one more open fd, or none.
 EXEC_HOOK = """
-import os, sys
+import os, signal, sys
 inherits = os.environ["INHERITS"]
 if inherits == "no-stdin":
     os.close(0)
+elif inherits == "sigchld-ignored":
+    signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+elif inherits == "open-fd":
+    os.set_inheritable(os.open(os.devnull, os.O_RDONLY), True)
 os.execv(sys.executable, [sys.executable, os.environ["HOOK_FILE"]])
 """
 
@@ -334,6 +338,53 @@ def test_prints_one_verdict_when_rule_id_raises(
 
     assert len(calls.read_text(encoding="utf-8").splitlines()) == 1
     assert (completed.returncode, completed.stdout, completed.stderr) == (0, verdict, b"")
+
+
+# AC-23, AC-24: with SIGCHLD ignored, the kernel would reap the forked runner before the hook
+# reads its status; the project guard's verdict still comes through.
+def test_gives_project_guard_verdict_when_sigchld_ignored(hub: Path, run_driver: RunDriver) -> None:
+    source = 'def check(event, cfg):\n    return ("ask", "project says ask")\n'
+    (hub / EXTENSION).write_text(source, encoding="utf-8")
+    stdin = bash("ls")(hub)
+    verdict = run_driver(EXEC_HOOK, GUARD, stdin, INHERITS="nothing").stdout
+    reason = json.loads(verdict)["hookSpecificOutput"]["permissionDecisionReason"]
+    assert reason == "[hub guard] project guard: project says ask"
+
+    completed = run_driver(EXEC_HOOK, HOOK, stdin, INHERITS="sigchld-ignored")
+
+    assert (completed.returncode, completed.stdout, completed.stderr) == (0, verdict, b"")
+
+
+# AC-24 (A6): the forked project guard holds fds 0 to 2 only, as a new python3 did under Popen's
+# close_fds: none of the hook's own files and pipe, nor an fd the hook inherited.
+FD_RECORDER = """\
+import json, os
+
+
+def check(event, cfg):
+    held = []
+    for fd in range(3, 256):
+        try:
+            os.fstat(fd)
+        except OSError:
+            continue
+        held.append(fd)
+    with open({record!r}, "w", encoding="utf-8") as fh:
+        json.dump(held, fh)
+    return None
+"""
+
+
+def test_closes_hook_fds_when_project_guard_forked(
+    hub: Path, run_driver: RunDriver, tmp_path: Path
+) -> None:
+    record = tmp_path / "fds.json"
+    (hub / EXTENSION).write_text(FD_RECORDER.format(record=str(record)), encoding="utf-8")
+
+    completed = run_driver(EXEC_HOOK, HOOK, bash("ls")(hub), INHERITS="open-fd")
+
+    assert (completed.returncode, completed.stdout, completed.stderr) == (0, b"", b"")
+    assert json.loads(record.read_text(encoding="utf-8")) == []
 
 
 # AC-21: (the call, how many POSTs guard.py and event_sensor.py make for it together).

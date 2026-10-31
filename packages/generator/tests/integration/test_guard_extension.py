@@ -687,8 +687,154 @@ def test_asks_with_cause_when_fork_fails(
     assert found["path"] == str(hub / EXTENSION)
     assert found["verdict"] is not None
     assert found["verdict"][0] == "ask"
-    assert found["verdict"][1].startswith("project guard: could not start (")
+    # an OSError with EAGAIN is a BlockingIOError
+    assert found["verdict"][1] == "project guard: could not start (BlockingIOError); confirm"
     assert found["failed"] is True
+    assert seen(marker) == []
+
+
+# AGH-621 (AC-23): an exception raised after the fork (here, while the runner's stdout is read)
+# still kills the runner's group and reaps it before it propagates. argv: the event (JSON).
+READ_FAILS = """
+import json, os
+import guard
+from hubhooks import load_config
+
+
+def failing_read(fd, deadline):
+    raise RuntimeError("read failed")
+
+
+guard._output_by = failing_read
+cfg = load_config(None)
+raised = None
+try:
+    guard.run_extension(guard.extension_file(cfg), json.loads(sys.argv[1]), cfg)
+except RuntimeError as error:
+    raised = str(error)
+try:
+    os.waitpid(-1, os.WNOHANG)
+    reaped = False
+except ChildProcessError:  # no child left: the guard reaped its runner
+    reaped = True
+print(json.dumps({"raised": raised, "reaped": reaped}))
+"""
+# A runner that would outlive a hook that left it running.
+SLEEPS = "import time\ntime.sleep(30)\nreturn None"
+
+
+@pytest.mark.usefixtures("no_process_left")
+def test_kills_and_reaps_runner_when_hook_raises_after_fork(
+    hub: Path, marker: Path, *, hook_python: str, run_python: Callable[..., Any], tmp_path: Path
+) -> None:
+    install(hub, marker=marker, body=SLEEPS)
+    event = read(hub / "README.md") | {"cwd": str(hub)}
+
+    found = run_python(
+        hook_python,
+        READ_FAILS,
+        path=hub / HOOKS,
+        args=[json.dumps(event)],
+        cwd=hub,
+        env={"HOME": str(tmp_path)},
+    )
+
+    assert found == {"raised": "read failed", "reaped": True}
+
+
+# AGH-621 (AC-23): a runner that outlives its SIGKILL (an uninterruptible read on a hung mount)
+# holds the hook about a second at most, then the hook asks with the timeout's cause. Here
+# os.waitpid reports the killed runner as still running. argv: the event (JSON).
+NEVER_ENDS = """
+import json, os, time
+import guard
+from hubhooks import load_config
+
+waitpid = os.waitpid
+
+
+def still_running(pid, options):
+    if options & os.WNOHANG:
+        return 0, 0
+    time.sleep(10)
+    return waitpid(pid, options)
+
+
+os.waitpid = still_running
+guard.EXTENSION_TIMEOUT = 1
+cfg = load_config(None)
+began = time.monotonic()
+verdict = guard.run_extension(guard.extension_file(cfg), json.loads(sys.argv[1]), cfg)
+print(json.dumps({"verdict": verdict, "took": time.monotonic() - began}))
+"""
+# How long the hook waits for a killed runner to end, and the margin a loaded machine adds.
+KILL_WAIT = 1.0
+KILL_MARGIN = 0.5
+
+
+@pytest.mark.serial
+@pytest.mark.usefixtures("no_process_left")
+def test_asks_with_timeout_cause_when_killed_runner_never_ends(
+    hub: Path, marker: Path, *, hook_python: str, run_python: Callable[..., Any], tmp_path: Path
+) -> None:
+    install(hub, marker=marker, body=SLEEPS)
+    event = read(hub / "README.md") | {"cwd": str(hub)}
+
+    found = run_python(
+        hook_python,
+        NEVER_ENDS,
+        path=hub / HOOKS,
+        args=[json.dumps(event)],
+        cwd=hub,
+        env={"HOME": str(tmp_path)},
+    )
+
+    reason = f"project guard: timed out after {TEST_TIMEOUT} s; confirm"
+    assert found["verdict"] == [["ask", reason], True]
+    assert TEST_TIMEOUT <= found["took"] < TEST_TIMEOUT + KILL_WAIT + KILL_MARGIN
+
+
+# AGH-621 (AC-24): the runner's stdin is a real stream over fd 0, a file that holds the event, as
+# the pipe of a new python3 was: fileno() works, and the event can be read through it.
+STDIN_FD = """\
+import os, sys
+fd = sys.stdin.fileno()
+size = os.fstat(fd).st_size
+held = {{"fd": fd, "tty": os.isatty(fd), "event": json.loads(os.pread(fd, size, 0).decode())}}
+with open({record!r}, "w", encoding="utf-8") as fh:
+    json.dump(held, fh)
+return None
+"""
+
+
+def test_reads_event_through_stdin_fd_when_extension_uses_it(
+    hub: Path, guard: Guard, marker: Path, *, tmp_path: Path
+) -> None:
+    record = tmp_path / "record.json"
+    install(hub, marker=marker, body=STDIN_FD.format(record=str(record)))
+    event = read(hub / "README.md") | {"cwd": str(hub)}
+
+    [verdict] = guard(hub / HOOKS, [(event, hub)])
+
+    assert verdict is None
+    assert json.loads(record.read_text(encoding="utf-8")) == {"fd": 0, "tty": False, "event": event}
+
+
+# AGH-621 (AC-20, AC-24): with project_guard_runner.py gone (a partial install), the forked child
+# cannot import it, so it exits 1 with the cause, and the guard asks naming it.
+def test_asks_with_cause_when_runner_missing(hub: Path, guard: Guard, marker: Path) -> None:
+    install(hub, marker=marker, body="return None")
+    (hub / HOOKS / RUNNER).unlink()
+    events = base_events(hub)
+
+    allow, ask, deny = guard(hub / HOOKS, list(events.values()))
+    base = base_verdicts(hub, guard)
+
+    cause = "exit 1 (ModuleNotFoundError: No module named 'project_guard_runner')"
+    assert allow == ("ask", f"{PREFIX}project guard: {cause}; confirm")
+    assert base["ask"] is not None
+    assert ask == ("ask", f"{base['ask'][1]}; project guard: {cause}; confirm")
+    assert deny == base["deny"]
     assert seen(marker) == []
 
 
