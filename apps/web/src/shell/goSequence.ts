@@ -35,8 +35,10 @@ export const GO: Readonly<Record<string, string>> = {
 };
 
 /**
- * The second keys of spec 01's other `g` sequences: `g o` (project switcher), `g u` (up one
- * crumb), Session detail's `g g`, and destinations not built yet.
+ * The second keys of the other `g` sequences in spec 01's keyboard map, kept as the map lists
+ * them: `g w`, `g m`, `g b` and `g t` (destinations not built yet), `g o` (project switcher), `g u`
+ * (up one crumb) and Session detail's `g g`. The shell acts on none of them yet; a screen that
+ * leaves them to a `g` sequence needs no change once it does.
  */
 const OTHER_SEQUENCE_KEYS: ReadonlySet<string> = new Set(["w", "m", "b", "t", "o", "u", "g"]);
 
