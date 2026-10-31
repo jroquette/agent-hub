@@ -1,5 +1,5 @@
 from collections.abc import Callable, Collection, Mapping, Sequence
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -26,6 +26,9 @@ from agent_hub.core.sessions.fold_session import FoldedSession
 from agent_hub.core.sessions.problem import ProblemKind, Resolution
 from agent_hub.core.sessions.session import ProblemCounts, SessionStatus
 from agent_hub.core.sessions.session_label import LabelRules
+from agent_hub.core.skills import skill_usage
+from agent_hub.core.skills.skill_usage import MAX_USAGE_NAMES, fold_skill_usage
+from agent_hub.core.skills.skill_view import Usage, UsageWindows
 from agent_hub.core.testing.builders import an_event
 from agent_hub.core.testing.fakes import InMemoryEventStore
 from agent_hub.core.testing.session_scenarios import (
@@ -34,6 +37,7 @@ from agent_hub.core.testing.session_scenarios import (
     a_run_events,
     a_session_events,
     a_workflow_run_events,
+    as_stored,
     learning_events,
     shuffled,
     usage_events,
@@ -1229,17 +1233,239 @@ def test_counts_skill_usage_windows_when_events_older_than_thirty_days() -> None
     assert usage.by_skill["feature"].count == 3
 
 
-def test_reuses_skill_usage_when_store_and_second_unchanged() -> None:
+def _count_uses_folds(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, datetime]]:
+    """The ``(project, start)`` of each ``fold_skill_uses`` call the read model makes, in order.
+
+    Set with ``raising=False``, so a read model that never looks the name up fails on the
+    fold counts rather than at setup.
+    """
+    folded: list[tuple[str, datetime]] = []
+
+    def counting(sessions: Any, *, project: str, start: datetime) -> Any:
+        folded.append((project, start))
+        return skill_usage.fold_skill_uses(sessions, project=project, start=start)
+
+    monkeypatch.setattr(event_read_models, "fold_skill_uses", counting, raising=False)
+    return folded
+
+
+def _count_index_folds(monkeypatch: pytest.MonkeyPatch) -> list[FoldedEventReadModels]:
+    """The read model of each ``FoldedEventReadModels._fold`` call, in order."""
+    folded: list[FoldedEventReadModels] = []
+    real = FoldedEventReadModels._fold
+
+    def counting(self: FoldedEventReadModels, *args: Any, **kwargs: Any) -> Any:
+        folded.append(self)
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(FoldedEventReadModels, "_fold", counting)
+    return folded
+
+
+def test_reuses_skill_usage_when_store_and_second_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    folded = _count_uses_folds(monkeypatch)
     service, clock = _service(_skill_usage_store(), NOW)
 
     first = service.skill_usage("demo")
     clock.now = NOW + timedelta(milliseconds=200)
     again = service.skill_usage("demo")
+    demo_folds = [project for project, _ in folded]
     other = service.skill_usage("other")
 
-    assert again is first
+    assert demo_folds == ["demo"]
+    assert again.by_skill == first.by_skill
     assert other.by_skill["feature"].count == 1
     assert service.skill_usage("nobody").by_skill == {}
+
+
+def test_runs_no_fold_when_usage_read_again_two_seconds_later(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    uses_folds = _count_uses_folds(monkeypatch)
+    index_folds = _count_index_folds(monkeypatch)
+    service, clock = _service(_skill_usage_store(), NOW)
+    first = service.skill_usage("demo")
+    first_uses = [project for project, _ in uses_folds]
+    uses_folds.clear()
+    index_folds.clear()
+
+    clock.now = NOW + timedelta(seconds=2)
+    again = service.skill_usage("demo")
+    again_uses, again_index = list(uses_folds), list(index_folds)
+    # A fresh read model's session list folds the event index once: the counter sees `_fold`.
+    probe = _service(_skill_usage_store(), clock.now)[0]
+    probe.list_sessions(SessionFilter())
+
+    assert (first_uses, again_uses, again_index) == (["demo"], [], [])
+    assert index_folds == [probe]
+    assert again.by_skill == first.by_skill
+    assert again.by_agent == first.by_agent
+
+
+def test_counts_new_use_when_event_appended_after_cached_usage() -> None:
+    store = _skill_usage_store()
+    service, clock = _service(store, NOW)
+    first = service.skill_usage("demo")
+    clock.now = NOW + timedelta(seconds=2)
+    store.append(
+        [_usage_signal("s-review", 300, {"role": "user", "chars": 7, "slash_command": "/review"})]
+    )
+
+    again = service.skill_usage("demo")
+
+    review_at = SCENARIO_START + timedelta(seconds=300)
+    assert "review" not in first.by_skill
+    assert again.by_skill.get("review") == Usage(
+        count=1, user_count=1, model_count=0, last_used_at=review_at
+    )
+    assert again.windows_by_skill.get("review") == UsageWindows(
+        runs_7d=1, runs_30d=1, runs_90d=1, last_used_at=review_at
+    )
+    assert again.by_skill["feature"] == first.by_skill["feature"]
+
+
+def _typed(command: str) -> dict[str, object]:
+    return {"role": "user", "chars": 8, "slash_command": command}
+
+
+def _signal_at(session: str, at: datetime, payload: dict[str, object]) -> Event:
+    """A usage signal of ``demo`` at ``at``: a typed prompt when ``payload`` has a
+    ``slash_command``, else a tool call."""
+    return an_event(
+        session=session,
+        type="message" if "slash_command" in payload else "tool.call",
+        timestamp=at,
+        source_id=f"{session}:usage:{at.isoformat()}",
+        payload=payload,
+    )
+
+
+def test_folds_once_and_drops_old_use_when_clock_passes_utc_midnight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    folded = _count_uses_folds(monkeypatch)
+    before_midnight = datetime(2026, 10, 13, 23, 59, 58, tzinfo=UTC)
+    old_at = before_midnight - timedelta(days=90)
+    recent_at = before_midnight - timedelta(hours=1)
+    store = InMemoryEventStore()
+    store.append(
+        [
+            _signal_at("s-old", old_at, _typed("/feature")),
+            _signal_at("s-recent", recent_at, _typed("/review")),
+        ]
+    )
+    service, clock = _service(store, before_midnight)
+    then = service.skill_usage("demo")
+
+    clock.now = datetime(2026, 10, 14, 0, 0, 1, tzinfo=UTC)
+    next_day = service.skill_usage("demo")
+
+    review = UsageWindows(runs_7d=1, runs_30d=1, runs_90d=1, last_used_at=recent_at)
+    assert then.windows_by_skill == {
+        "feature": UsageWindows(runs_7d=0, runs_30d=0, runs_90d=1, last_used_at=old_at),
+        "review": review,
+    }
+    assert next_day.windows_by_skill == {"review": review}
+    # One fold per UTC date, each from that date's midnight minus 90 days.
+    assert folded == [
+        ("demo", datetime(2026, 10, 13, tzinfo=UTC) - timedelta(days=90)),
+        ("demo", datetime(2026, 10, 14, tzinfo=UTC) - timedelta(days=90)),
+    ]
+
+
+USAGE_DAY = datetime(2026, 10, 13, tzinfo=UTC)
+
+
+def _day_usage_events() -> list[Event]:
+    """Uses of ``demo`` around ``USAGE_DAY``'s read times: ``review`` at 06:00's 7-day edge,
+    ``plan`` and the ``evaluator`` agent at 12:00's 30-day edge, a ``feature`` use 30 s inside
+    18:00's 90-day edge (30 s outside 18:01's: none within 5 s of a 90-day edge), a typed
+    ``feature`` and its ``Skill`` call yesterday (one use), and ``MAX_USAGE_NAMES - 2`` skills
+    used three days before: 501 skills have a 30-day use up to 12:00:00, 500 after."""
+    agent: dict[str, object] = {
+        "tool": "Agent",
+        "tool_use_id": "toolu_agent",
+        "subagent_type": "evaluator",
+    }
+    skill: dict[str, object] = {
+        "tool": "Skill",
+        "tool_use_id": "toolu_skill",
+        "skill": "hub-workflow:feature",
+    }
+    six, noon, six_pm = (USAGE_DAY + timedelta(hours=hours) for hours in (6, 12, 18))
+    yesterday = USAGE_DAY - timedelta(hours=1)
+    many = USAGE_DAY - timedelta(days=3)
+    return [
+        _signal_at("s-review", six - timedelta(days=7), _typed("/review")),
+        _signal_at("s-plan", noon - timedelta(days=30), _typed("/plan")),
+        _signal_at("s-agent", noon - timedelta(days=30), agent),
+        _signal_at(
+            "s-old", six_pm + timedelta(seconds=30) - timedelta(days=90), _typed("/feature")
+        ),
+        _signal_at("s-feature", yesterday, _typed("/feature")),
+        _signal_at("s-feature", yesterday + timedelta(seconds=2), skill),
+        *(
+            _signal_at("s-many", many + timedelta(seconds=10 * n), _typed(f"/x-{n:04d}"))
+            for n in range(MAX_USAGE_NAMES - 2)
+        ),
+    ]
+
+
+def _sessions_of(events: Sequence[Event]) -> dict[str, list[StoredEvent]]:
+    """``events`` as stored, grouped by session, as ``fold_skill_usage`` takes them."""
+    grouped: dict[str, list[StoredEvent]] = {}
+    for stored in as_stored(events):
+        grouped.setdefault(stored.event.session, []).append(stored)
+    return grouped
+
+
+@pytest.mark.parametrize(
+    ("time_of_day", "expected"),
+    [
+        # Each row: review's 7-day runs, evaluator's 30-day runs, feature's 90-day runs and
+        # whether the 30-day map is truncated.
+        (timedelta(seconds=6), (1, 1, 2, True)),
+        (timedelta(hours=6), (1, 1, 2, True)),
+        (timedelta(hours=6, seconds=1), (0, 1, 2, True)),
+        (timedelta(hours=12), (0, 1, 2, True)),
+        (timedelta(hours=12, seconds=1), (0, 0, 2, False)),
+        (timedelta(hours=18), (0, 0, 2, False)),
+        (timedelta(hours=18, minutes=1), (0, 0, 1, False)),
+        (timedelta(hours=23, minutes=59, seconds=59), (0, 0, 1, False)),
+    ],
+    ids=[
+        "00-00-06",
+        "06-00-00",
+        "06-00-01",
+        "12-00-00",
+        "12-00-01",
+        "18-00-00",
+        "18-01-00",
+        "23-59-59",
+    ],
+)
+def test_counts_like_fresh_fold_when_cached_usage_read_later_in_day(
+    time_of_day: timedelta, expected: tuple[int, int, int, bool]
+) -> None:
+    events = _day_usage_events()
+    store = InMemoryEventStore()
+    store.append(events)
+    service, clock = _service(store, USAGE_DAY + timedelta(seconds=5))
+    service.skill_usage("demo")
+    clock.now = USAGE_DAY + time_of_day
+
+    usage = service.skill_usage("demo")
+
+    assert (
+        usage.windows_by_skill["review"].runs_7d,
+        usage.windows_by_agent["evaluator"].runs_30d,
+        usage.windows_by_skill["feature"].runs_90d,
+        usage.truncated,
+    ) == expected
+    assert usage.since == clock.now - timedelta(days=30)
+    assert usage == fold_skill_usage(_sessions_of(events), project="demo", now=clock.now)
 
 
 def test_links_scenario_run_to_its_page_when_search_finds_it() -> None:

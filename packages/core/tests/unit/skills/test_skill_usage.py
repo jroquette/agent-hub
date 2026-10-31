@@ -1,8 +1,11 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from agent_hub.core.events.event import Event
 from agent_hub.core.events.stored_event import StoredEvent
+from agent_hub.core.skills import skill_usage
 from agent_hub.core.skills.skill_usage import MAX_USAGE_NAMES, fold_skill_usage
 from agent_hub.core.skills.skill_view import USAGE_DAYS, Usage, UsageWindows
 from agent_hub.core.testing.builders import an_event
@@ -321,3 +324,106 @@ def test_keeps_thirty_day_usage_when_ninety_day_names_over_cap() -> None:
         "recent": Usage(count=1, user_count=1, model_count=0, last_used_at=NOW - timedelta(days=1))
     }
     assert not usage.truncated
+
+
+@pytest.mark.parametrize(
+    "events",
+    [
+        pytest.param(
+            [_prompt("/feature", 0), _prompt("/feature", 1.5, source="transcript")],
+            id="hook-and-transcript",
+        ),
+        pytest.param(
+            [
+                _prompt("/feature", 0),
+                _skill_call("hub-workflow:feature", 3, tool_use_id="toolu_skill"),
+            ],
+            id="slash-and-skill-call",
+        ),
+        pytest.param(
+            [
+                _prompt("/feature", 0),
+                _skill_call("hub-workflow:feature", 6, tool_use_id="toolu_skill"),
+                _prompt("/feature", 20),
+                _prompt("/feature", 26, source="transcript"),
+            ],
+            id="signals-six-seconds-apart",
+        ),
+        pytest.param(
+            [_prompt("/feature", 0, session="s-1"), _prompt("/feature", 1, session="s-2")],
+            id="other-sessions",
+        ),
+        pytest.param(
+            [
+                _call("Agent", {"subagent_type": "evaluator"}, 0, tool_use_id="toolu_a"),
+                _call(
+                    "Agent",
+                    {"subagent_type": "evaluator"},
+                    1,
+                    tool_use_id="toolu_a",
+                    source="transcript",
+                ),
+                _call(
+                    "Task", {"subagent_type": "hub-workflow:evaluator"}, 2, tool_use_id="toolu_b"
+                ),
+                _call("Agent", {"subagent_type": "quality-reviewer"}, 60, tool_use_id="toolu_q"),
+            ],
+            id="agents",
+        ),
+        pytest.param(
+            [
+                _prompt("/feature", 0, session="s-other").model_copy(update={"project": "other"}),
+                an_event(
+                    session="s-1",
+                    type="message",
+                    timestamp=_at(0),
+                    payload={"role": "assistant", "chars": 3, "slash_command": "/feature"},
+                ),
+                _call("Bash", {"command": "make check"}, 1, tool_use_id="toolu_bash"),
+                _call("Skill", {}, 2, tool_use_id="toolu_noskill"),
+                _prompt("/", 3),
+            ],
+            id="other-project-and-not-signals",
+        ),
+        pytest.param(
+            [_prompt_days_ago(days, session=f"s-{days}") for days in (1, 10, 30.0001, 40, 100)],
+            id="spread-over-ninety-days",
+        ),
+        pytest.param(
+            [_prompt_days_ago(days, session=f"s-{days}") for days in (7, 30, 90, 90.0001)],
+            id="window-edges",
+        ),
+        pytest.param(
+            [_prompt_days_ago(1, session="s-1"), _prompt_days_ago(90.25, session="s-early")],
+            id="folded-before-ninety-day-edge",
+        ),
+        pytest.param(
+            [
+                *(_prompt(f"/skill-{n:04d}", n * 10) for n in range(MAX_USAGE_NAMES + 1)),
+                _prompt("/skill-0500", 7_000),
+            ],
+            id="names-over-cap",
+        ),
+        pytest.param(
+            [
+                *(
+                    _named_days_ago(f"/old-{index:04d}", 40, session=f"s-{index}-{n}")
+                    for index in range(MAX_USAGE_NAMES)
+                    for n in range(2)
+                ),
+                _named_days_ago("/recent", 1, session="s-recent"),
+            ],
+            id="ninety-day-names-over-cap",
+        ),
+    ],
+)
+def test_counts_as_full_fold_when_uses_folded_from_earlier_start(events: list[Event]) -> None:
+    sessions = _sessions(events)
+    # NOW's UTC midnight minus 90 days: 12 h before NOW's own 90-day edge.
+    start = datetime(2026, 10, 13, tzinfo=UTC) - timedelta(days=90)
+
+    uses = skill_usage.fold_skill_uses(sessions, project="demo", start=start)
+
+    assert skill_usage.usage_at(uses, now=NOW) == fold_skill_usage(
+        sessions, project="demo", now=NOW
+    )
