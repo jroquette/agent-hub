@@ -8,7 +8,8 @@ docs/design/project-config.md § Versioning: a pin other than the running ``hub`
 problem of ``hub.local.json``, its environments, repos and services against a valid ``hub.json``
 included. ``config.identity`` names the branch prefix a developer gets
 when no file sets one (docs/design/developer-identity.md). ``config.stop_gate`` names each repo
-whose ``check_fast`` is absent, empty or blank: the Stop hook has no fast gate to run for it.
+with no ``check_stop`` whose ``check_fast`` is absent, empty or blank: the Stop hook has no
+command to run for it.
 """
 
 from collections.abc import Iterable
@@ -110,7 +111,7 @@ def _config_stop_gate(snapshot: DoctorSnapshot) -> Iterable[Finding]:
             fix=STOP_GATE_FIX,
         )
         for index, repo in enumerate(config.repos)
-        if not (repo.check_fast or "").strip()
+        if repo.check_stop is None and not (repo.check_fast or "").strip()
     )
 
 
@@ -154,7 +155,7 @@ CONFIG_IDENTITY: Final = Rule(
 CONFIG_STOP_GATE: Final = Rule(
     id=CONFIG_STOP_GATE_RULE,
     severity=Severity.WARNING,
-    summary="a Stop gate for each repo: its check_fast is set and not blank",
+    summary="a Stop gate for each repo: a check_stop, or a check_fast that is set and not blank",
     module=RULE_MODULES.get(CONFIG_STOP_GATE_RULE),
     reads=frozenset(),
     check=_config_stop_gate,
