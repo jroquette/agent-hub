@@ -6,7 +6,9 @@ the file on an interpreter, the event on stdin), on this interpreter and on a re
 test process keeps a way out of its own (``host_network``): proxy variables at a loopback port,
 a ``NO_PROXY`` that exempts every host, a git URL rewrite, GitHub tokens and git limited to
 ``file`` remotes. A probe that let any of them reach the child would lose the record a case
-expects, or hand the child a credential; one case pins the variables the child gets.
+expects, or hand the child a credential; one case pins the variables the child gets. Two more pin
+``processes_left``: it waits for a detached grandchild the hook leaves running, and names one
+that outlives its timeout.
 """
 
 import contextlib
@@ -25,6 +27,7 @@ from agent_hub.core.testing.loopback import closed_url
 from agent_hub.core.testing.outbound_probe import (
     outbound_calls,
     outbound_env,
+    processes_left,
     recording_proxy,
     write_stubs,
 )
@@ -205,6 +208,41 @@ CAUGHT_CALLS = [
     ),
 ]
 
+# Starts a detached grandchild as SessionStart starts its refresh (its own session, none of the
+# hook's stdio) and prints its pid: this file again, with ``--linger <seconds>`` from the event,
+# so its command line names the case's folder. The grandchild sleeps that long, then looks up a
+# host, which the probe records.
+LINGERING_HOOK = """\
+import json
+import socket
+import subprocess
+import sys
+import time
+
+if sys.argv[1:2] == ["--linger"]:
+    time.sleep(float(sys.argv[2]))
+    try:
+        socket.getaddrinfo("example.invalid", 443)
+    except OSError:
+        pass
+    sys.exit(0)
+seconds = json.load(sys.stdin)["seconds"]
+grandchild = subprocess.Popen(
+    [sys.executable, __file__, "--linger", str(seconds)],
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+    start_new_session=True,
+)
+print(grandchild.pid)
+"""
+# The grandchild's sleep, in seconds: SHORT_LINGER ends well within LINGER_WAIT, LONG_LINGER
+# well past SHORT_WAIT (the case's cleanup kills it).
+SHORT_LINGER = 1
+LONG_LINGER = 60
+LINGER_WAIT = 10.0
+SHORT_WAIT = 0.2
+
 
 @pytest.fixture(autouse=True)
 def host_network(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -342,3 +380,42 @@ def test_records_nothing_when_connect_is_loopback(
     # Only the control: the loopback connect and both lookups left no record.
     assert len(calls) == 1, calls
     assert "192.0.2.1" in calls[0]
+
+
+@pytest.mark.usefixtures("no_process_left")
+def test_waits_for_detached_grandchild_when_it_ends_within_timeout(
+    *, each_python: str, run_hook_file: RunHook, tmp_path: Path
+) -> None:
+    hook = write_hook(tmp_path, "lingering_hook.py", LINGERING_HOOK)
+    folder = tmp_path / "probe"
+
+    with probed(folder) as env:
+        stdin = json.dumps({"seconds": SHORT_LINGER}).encode()
+        completed = run_hook_file(each_python, hook, stdin=stdin, cwd=tmp_path, env=env)
+        left = processes_left(folder, tmp_path, timeout=LINGER_WAIT)
+    calls = outbound_calls(folder)
+
+    assert completed.returncode == 0, completed.stderr
+    assert left == []
+    # The grandchild had ended: its lookup, made a second after the hook exited, is logged.
+    assert calls == [f"getaddrinfo example.invalid:443 by {hook} --linger {SHORT_LINGER}"]
+
+
+@pytest.mark.usefixtures("no_process_left")
+def test_names_detached_grandchild_when_it_outlives_timeout(
+    *, each_python: str, run_hook_file: RunHook, tmp_path: Path
+) -> None:
+    hook = write_hook(tmp_path, "lingering_hook.py", LINGERING_HOOK)
+    folder = tmp_path / "probe"
+
+    with probed(folder) as env:
+        stdin = json.dumps({"seconds": LONG_LINGER}).encode()
+        completed = run_hook_file(each_python, hook, stdin=stdin, cwd=tmp_path, env=env)
+        left = processes_left(folder, tmp_path, timeout=SHORT_WAIT)
+
+    assert completed.returncode == 0, completed.stderr
+    assert len(left) == 1, left
+    # Its pid, then its command line: the interpreter, then this file with its arguments.
+    pid, command = left[0].split(" ", 1)
+    assert pid == completed.stdout.decode().strip()
+    assert command.endswith(f" {hook} --linger {LONG_LINGER}"), command
