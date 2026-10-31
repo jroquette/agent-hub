@@ -1342,3 +1342,94 @@ def test_leaves_feature_cost_empty_when_no_session_worked_on_it() -> None:
     cost = service.feature_cost("demo", "nothing", ())
 
     assert (cost.total_usd, cost.sessions, cost.unpriced) == (None, 0, 0)
+
+
+def _count_file_folds(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The sessions ``fold_session_files`` folds the touched paths of, in call order."""
+    folded: list[str] = []
+    real = event_read_models.fold_session_files
+
+    def counting(events: Any, *args: Any, **kwargs: Any) -> Any:
+        group = tuple(events)
+        folded.append(group[0].event.session)
+        return real(group, *args, **kwargs)
+
+    monkeypatch.setattr(event_read_models, "fold_session_files", counting)
+    return folded
+
+
+def test_folds_session_files_once_when_feature_cost_is_read_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    folded = _count_file_folds(monkeypatch)
+    rules = {"demo": LabelRules(teams=("DEM",), branch_prefix="jdoe/")}
+    store = _feature_store()
+    clock = Clock(NOW)
+    service = FoldedEventReadModels(store, now=clock, label_rules_of=rules.get)
+    issues = ("dem-7", "DEM-8")
+    first = service.feature_cost("demo", "login", issues)
+    first_folds = list(folded)
+    folded.clear()
+
+    clock.now = NOW + timedelta(seconds=2)
+    again = service.feature_cost("demo", "login", issues)
+    again_folds = list(folded)
+    folded.clear()
+    store.append(
+        [
+            an_event(
+                session="s-elsewhere",
+                type="tool.call",
+                timestamp=SCENARIO_START + timedelta(minutes=30),
+                repo="demo-api",
+                payload={
+                    "tool": "Write",
+                    "tool_use_id": "toolu_s-elsewhere_late",
+                    "path": "/work/hub/brain/features/login/plan.md",
+                },
+            )
+        ]
+    )
+    changed = service.feature_cost("demo", "login", issues)
+    changed_folds = list(folded)
+    fresh = FoldedEventReadModels(store, now=Clock(clock.now), label_rules_of=rules.get)
+
+    assert {"s-spec", "s-elsewhere"} <= set(first_folds)
+    assert len(first_folds) == len(set(first_folds))
+    assert (first.sessions, first.unpriced) == (3, 1)
+    assert again_folds == []
+    assert again == first
+    assert changed_folds == ["s-elsewhere"]
+    assert (changed.sessions, changed.unpriced) == (4, 1)
+    assert changed == fresh.feature_cost("demo", "login", issues)
+
+
+def test_filters_by_file_from_kept_paths_when_session_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    folded = _count_file_folds(monkeypatch)
+    store = InMemoryEventStore()
+    store.append(
+        [
+            *a_session_events(
+                "s-spec", tools=(("Write", {"path": "/work/hub/brain/features/login/spec.md"}),)
+            ),
+            *a_session_events(
+                "s-elsewhere",
+                tools=(("Write", {"path": "/work/hub/brain/features/other/spec.md"}),),
+            ),
+        ]
+    )
+    service = _service(store, NOW)[0]
+    service.feature_cost("demo", "login", ())
+    kept = sorted(folded)
+    folded.clear()
+
+    listed = service.list_sessions(SessionFilter(file="features/login/"))
+    from_list = list(folded)
+    fresh = _service(store, NOW)[0].list_sessions(SessionFilter(file="features/login/"))
+
+    assert kept == ["s-elsewhere", "s-spec"]
+    assert from_list == []
+    assert [session.id for session in listed.items] == ["s-spec"]
+    assert listed == fresh
