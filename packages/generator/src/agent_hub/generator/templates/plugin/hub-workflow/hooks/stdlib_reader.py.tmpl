@@ -114,7 +114,10 @@ class LazyPattern:
 
     Reading any attribute (``search``, ``finditer``, ``pattern``) compiles the pattern once, so
     loading a hook compiles none of its patterns, only the ones a call uses. It is not a
-    ``re.Pattern``: call its methods, never pass it to ``re.search`` and the like.
+    ``re.Pattern``: call its methods, never pass it to ``re.search`` and the like. Each such read
+    costs a method call: a loop that runs one per word binds the method once, before it. Like a
+    ``re.Pattern`` it never changes, so a copy or a deep copy is the pattern itself, and a pickle
+    loads back as a pattern of the same arguments.
     """
 
     __slots__ = ("_args", "_compiled")
@@ -124,9 +127,20 @@ class LazyPattern:
         self._compiled: re.Pattern[str] | None = None
 
     def __getattr__(self, name: str) -> object:
+        # Only a name the instance lacks gets here. A name with a leading underscore is never the
+        # pattern's: copy and pickle look up dunders on an instance whose slots are not set yet,
+        # and reading the unset _compiled for them would call this method without end.
+        if name.startswith("_"):
+            raise AttributeError(name)
         if self._compiled is None:
             self._compiled = _compile(*self._args)
         return getattr(self._compiled, name)
+
+    def __copy__(self) -> LazyPattern:
+        return self
+
+    def __deepcopy__(self, memo: dict) -> LazyPattern:
+        return self
 
 
 COMMENT_KEY_PREFIX = "_"
