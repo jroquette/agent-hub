@@ -70,12 +70,9 @@ from typer._click.exceptions import ClickException
 
 from agent_hub.cli.command_exits import FAILURE, fail
 from agent_hub.cli.errors import RunLogError
-from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit, local_lines
-from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit, local_home
+from agent_hub.cli.hub_root import FILE_LABEL, hub_checkout, hub_root_or_exit, local_home
 from agent_hub.cli.init_report import shown_path, shown_text
 from agent_hub.cli.workflow_schedule_command import schedule_app
-from agent_hub.core.hub_config.effective_environments import effective_environments
-from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.catalog import (
     LoadProblem,
@@ -83,13 +80,9 @@ from agent_hub.core.workflows.catalog import (
     check_workflows,
 )
 from agent_hub.core.workflows.document import WorkflowDocument, WorkflowLoadError, parse_workflow
-from agent_hub.core.workflows.events import WorkflowEvents, issue_key
-from agent_hub.core.workflows.gates import GateAnswer, GateAnswers
 from agent_hub.core.workflows.includes import IncludeResolver
 from agent_hub.core.workflows.nodes import ActionNode, ExpectNode, Node, ScriptNode, ShellNode
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
-from agent_hub.core.workflows.ports import RunEnd, RunRecorder, RunTrace
-from agent_hub.core.workflows.run_state import RunState
 from agent_hub.generator.workflow_discovery import (
     BUILTIN_WORKFLOWS,
     HUB_WORKFLOWS,
@@ -111,10 +104,15 @@ if TYPE_CHECKING:
     from agent_hub.cli.workflow_policy import NodePolicyRunner, StartPolicy
     from agent_hub.cli.workflow_runs import RecordedAnswers, RecordedGates
     from agent_hub.core.approvals.decide_gate import RequestedGate
+    from agent_hub.core.hub_config.model import HubConfig
     from agent_hub.core.ingestion.ingest_events import IngestEvents
     from agent_hub.core.scenarios.credentials import CredentialNames
     from agent_hub.core.scenarios.policy_gates import PolicyAsk
     from agent_hub.core.workflows.engine import EnginePorts
+    from agent_hub.core.workflows.events import WorkflowEvents
+    from agent_hub.core.workflows.gates import GateAnswer, GateAnswers
+    from agent_hub.core.workflows.ports import RunRecorder, RunTrace
+    from agent_hub.core.workflows.run_state import RunState
     from agent_hub.generator.action_discovery import ActionDiscovery
     from agent_hub.generator.workflow_fixtures import FixtureRun
 
@@ -318,6 +316,9 @@ def _decide(
     from agent_hub.core.workflows.engine import (  # noqa: PLC0415 - only a decision resumes the engine
         WorkflowEngineError,
     )
+    from agent_hub.core.workflows.gates import (  # noqa: PLC0415 - only a decision answers a gate
+        GateAnswer,
+    )
 
     hub = _decision_hub(run_id)
     try:
@@ -364,6 +365,9 @@ def decide(
     )
     from agent_hub.core.workflows.engine import (  # noqa: PLC0415 - only a decision reads the engine's errors
         WorkflowEngineError,
+    )
+    from agent_hub.core.workflows.gates import (  # noqa: PLC0415 - only a decision answers a gate
+        GateAnswer,
     )
 
     if gate_id.split(":", 1)[0] != run_id:
@@ -652,6 +656,9 @@ def _start_policy(
     from agent_hub.cli.workflow_runs import (  # noqa: PLC0415 - only a run reads the run store's errors
         WorkflowRunError,
     )
+    from agent_hub.core.hub_config.effective_environments import (  # noqa: PLC0415 - only a run in an environment reads it
+        effective_environments,
+    )
     from agent_hub.core.scenarios.policy_gates import (  # noqa: PLC0415 - only a run has an environment
         workflow_environment,
     )
@@ -744,6 +751,9 @@ def run_delivery(
 ) -> int:
     """``hub run``'s run of issue-to-pr: the engine around ``parent``, no workflow folder (no
     resume); ``hub run``'s exit."""
+    from agent_hub.cli.hub_config_reader import (  # noqa: PLC0415 - only a run reads hub.json
+        load_hub_config_or_exit,
+    )
     from agent_hub.core.workflows.engine import (  # noqa: PLC0415 - only a run starts the engine
         run_workflow,
     )
@@ -848,9 +858,15 @@ def credential_names(hub: Path, config: HubConfig) -> CredentialNames:
         EffectiveConfig,
         effective_or_problems,
     )
+    from agent_hub.cli.hub_config_reader import (  # noqa: PLC0415 - only a live run reads it
+        local_lines,
+    )
     from agent_hub.cli.run_children import (  # noqa: PLC0415 - only a live run starts children
         SESSION_HIDDEN,
         without,
+    )
+    from agent_hub.core.hub_config.effective_environments import (  # noqa: PLC0415 - only a live run reads it
+        effective_environments,
     )
     from agent_hub.core.scenarios.credentials import (  # noqa: PLC0415 - only a live run hides credentials
         CredentialNames,
@@ -876,6 +892,9 @@ def _begin(
     policy: _StartPolicy | None = None,
     trigger: str | None = None,
 ) -> int:
+    from agent_hub.cli.hub_config_reader import (  # noqa: PLC0415 - only a run reads hub.json
+        load_hub_config_or_exit,
+    )
     from agent_hub.cli.workflow_runs import (  # noqa: PLC0415 - only a run writes the run store
         append_record,
     )
@@ -1029,6 +1048,9 @@ def _continue_in_environment(
         ends_of,
         snapshot_includes,
     )
+    from agent_hub.core.workflows.ports import (  # noqa: PLC0415 - only a resume may end a run
+        RunEnd,
+    )
 
     header, snapshot = records[0], folder / SNAPSHOT
     includes = snapshot_includes(snapshot)
@@ -1084,6 +1106,7 @@ def _abandon(hub: Path, run_id: str) -> None:
         ends_of,
         run_lock,
     )
+    from agent_hub.core.workflows.ports import RunEnd  # noqa: PLC0415 - only an abandon ends a run
 
     folder = existing_run(hub, run_id)
     with run_lock(folder):
@@ -1148,6 +1171,9 @@ def _execute(
     answers: RecordedAnswers | None = None,
     policy: _RunPolicy | None = None,
 ) -> int:
+    from agent_hub.cli.hub_config_reader import (  # noqa: PLC0415 - only a run reads hub.json
+        load_hub_config_or_exit,
+    )
     from agent_hub.cli.workflow_checkout import (  # noqa: PLC0415 - only a live run probes checkouts
         GitCheckoutProbe,
     )
@@ -1240,6 +1266,9 @@ def _policy_runner(
         SNAPSHOT,
         EventSink,
     )
+    from agent_hub.core.hub_config.effective_environments import (  # noqa: PLC0415 - only a run in an environment reads it
+        effective_environments,
+    )
     from agent_hub.core.scenarios.scenario_events import (  # noqa: PLC0415 - only a run in an environment logs actions
         ScenarioEvents,
     )
@@ -1282,6 +1311,10 @@ def _policy_runner(
 def _issue(inputs: dict[str, JsonValue]) -> str | None:
     """The run's ``issue`` input when it is a tracker key: its events carry it, so hub web
     finds an issue's live run."""
+    from agent_hub.core.workflows.events import (  # noqa: PLC0415 - only a run's events name an issue
+        issue_key,
+    )
+
     return issue_key(inputs.get("issue"))
 
 
@@ -1302,6 +1335,9 @@ def _events(
 ) -> WorkflowEvents:
     from agent_hub.cli.collect import (  # noqa: PLC0415 - only a run's events name the project
         hub_project_name,
+    )
+    from agent_hub.core.workflows.events import (  # noqa: PLC0415 - only a run sends events
+        WorkflowEvents,
     )
 
     revision = header.get("revision")
