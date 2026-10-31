@@ -253,6 +253,10 @@ dev dependency of the workspace.
   `src/testing/axe.ts`). Fixtures come only from `src/testing/builders.ts`; ESLint refuses a `*.json` import in a test.
 - Coverage: Vitest with V8, 80% of lines and of branches over `src/` (the generated `schema.d.ts`, `main.tsx` and
   `src/testing/` excluded), in `web-fast`.
+- The build plugins' tests (`src/build/*.test.ts`) run in Vitest's node environment (`// @vitest-environment node`),
+  not jsdom, on a temp folder from `mkdtemp`: `compressAssets.test.ts` checks which files get a Brotli variant
+  (`<name>.br`), that each variant decodes to its file's exact bytes, that two runs write the same bytes, and that no
+  variant outlives its file.
 - The smoke: `tests/e2e/test_web_smoke.py` installs `hub`, starts `hub web` on a temp database and registry, registers
   two synthetic hubs (`hub init`), ingests a synthetic scenario (two projects, one live session with a guard denial,
   one session waiting on a guard ask, one failed run, one 5,000-event session) through `POST /events/hooks` and
