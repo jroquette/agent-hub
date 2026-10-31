@@ -6,9 +6,13 @@ the file on an interpreter, the event on stdin), on this interpreter and on a re
 test process keeps a way out of its own (``host_network``): proxy variables at a loopback port,
 a ``NO_PROXY`` that exempts every host, a git URL rewrite, GitHub tokens and git limited to
 ``file`` remotes. A probe that let any of them reach the child would lose the record a case
-expects, or hand the child a credential; one case pins the variables the child gets. Two more pin
-``processes_left``: it waits for a detached grandchild the hook leaves running, and names one
-that outlives its timeout.
+expects, or hand the child a credential; one case pins the variables the child gets.
+
+The last five pin ``processes_left``. It waits for a detached grandchild the hook leaves running,
+and names one that outlives its timeout, through the probe's marker when the grandchild's command
+line does not name the case's folder. Run from this process instead of through a hook, a child
+is named by its whole command line however narrow ``COLUMNS`` is, and a child that has exited
+counts as ended before it is reaped.
 """
 
 import contextlib
@@ -16,8 +20,10 @@ import errno
 import json
 import os
 import re
+import signal
 import socket
 import subprocess
+import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -25,6 +31,7 @@ import pytest
 
 from agent_hub.core.testing.loopback import closed_url
 from agent_hub.core.testing.outbound_probe import (
+    LOADED_LOG,
     outbound_calls,
     outbound_env,
     processes_left,
@@ -236,12 +243,38 @@ grandchild = subprocess.Popen(
 )
 print(grandchild.pid)
 """
+# Starts a detached grandchild whose command line does not name the case's folder (``python -c``,
+# its code, then the seconds from the event) and prints its pid once the grandchild has said it
+# runs: its sitecustomize logged the probe's marker before its code started. It sleeps that long.
+MARKED_HOOK = """\
+import json
+import subprocess
+import sys
+
+seconds = json.load(sys.stdin)["seconds"]
+grandchild = subprocess.Popen(
+    [
+        sys.executable,
+        "-c",
+        "import sys, time; print('runs', flush=True); time.sleep(float(sys.argv[1]))",
+        str(seconds),
+    ],
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL,
+    start_new_session=True,
+)
+grandchild.stdout.readline()
+print(grandchild.pid)
+"""
 # The grandchild's sleep, in seconds: SHORT_LINGER ends well within LINGER_WAIT, LONG_LINGER
 # well past SHORT_WAIT (the case's cleanup kills it).
 SHORT_LINGER = 1
 LONG_LINGER = 60
 LINGER_WAIT = 10.0
 SHORT_WAIT = 0.2
+# A terminal width that cuts the line ps prints for any child here, unless ps is told to ignore it.
+NARROW_COLUMNS = "40"
 
 
 @pytest.fixture(autouse=True)
@@ -265,6 +298,20 @@ def host_network(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GIT_ALLOW_PROTOCOL", "file")
     for name in ("GH_TOKEN", "GITHUB_TOKEN"):
         monkeypatch.setenv(name, HOST_TOKEN)
+
+
+@pytest.fixture
+def no_process_left(tmp_path: Path) -> Iterator[None]:
+    """After the case, kill what it left running, as ``processes_left`` finds it, then wait until
+    all of it has gone. It replaces conftest's ``pkill -f`` of the case's folder here, which
+    misses a grandchild found only by its marker."""
+    yield
+    folder = tmp_path / "probe"
+    for left in processes_left(folder, tmp_path, timeout=0):
+        with contextlib.suppress(ProcessLookupError):  # it ended on its own meanwhile
+            os.kill(int(left.split(" ", 1)[0]), signal.SIGKILL)
+    still = processes_left(folder, tmp_path, timeout=LINGER_WAIT)
+    assert still == [], "still running after the kill:\n" + "\n".join(still)
 
 
 @contextlib.contextmanager
@@ -419,3 +466,60 @@ def test_names_detached_grandchild_when_it_outlives_timeout(
     pid, command = left[0].split(" ", 1)
     assert pid == completed.stdout.decode().strip()
     assert command.endswith(f" {hook} --linger {LONG_LINGER}"), command
+
+
+@pytest.mark.usefixtures("no_process_left")
+def test_names_grandchild_by_its_marker_when_command_line_omits_case_folder(
+    *, each_python: str, run_hook_file: RunHook, tmp_path: Path
+) -> None:
+    hook = write_hook(tmp_path, "marked_hook.py", MARKED_HOOK)
+    folder = tmp_path / "probe"
+
+    with probed(folder) as env:
+        stdin = json.dumps({"seconds": LONG_LINGER}).encode()
+        completed = run_hook_file(each_python, hook, stdin=stdin, cwd=tmp_path, env=env)
+        left = processes_left(folder, tmp_path, timeout=SHORT_WAIT)
+
+    assert completed.returncode == 0, completed.stderr
+    assert len(left) == 1, left
+    pid, command = left[0].split(" ", 1)
+    assert pid == completed.stdout.decode().strip()
+    # The interpreter, -c and its code: only the marker can name this process.
+    assert " -c " in command, command
+    assert str(tmp_path) not in command, command
+
+
+def test_names_whole_command_line_when_columns_is_narrow(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    script = write_hook(tmp_path, "sleeping.py", f"import time\ntime.sleep({LONG_LINGER})\n")
+    argv = [sys.executable, str(script)]
+    # Exported, as a developer's shell or a CI runner may: ps reads it even into a pipe.
+    monkeypatch.setenv("COLUMNS", NARROW_COLUMNS)
+
+    with subprocess.Popen(argv, stdin=subprocess.DEVNULL) as child:  # noqa: S603 - this interpreter, a script in tmp_path
+        try:
+            left = processes_left(tmp_path / "probe", tmp_path, timeout=0)
+        finally:
+            child.kill()
+
+    assert left == [f"{child.pid} {' '.join(argv)}"]
+
+
+def test_counts_child_as_ended_when_it_has_exited_unreaped(tmp_path: Path) -> None:
+    script = write_hook(tmp_path, "quick.py", "")
+    argv = [sys.executable, str(script)]
+    folder = tmp_path / "probe"
+
+    with (
+        probed(folder) as env,
+        subprocess.Popen(argv, env=env, stdin=subprocess.DEVNULL) as child,  # noqa: S603 - this interpreter, a script in tmp_path
+    ):
+        # Its exit, without reaping it: a zombie that ps still lists until the block reaps it.
+        # A zombie's command line is empty, so pgrep -f misses it and only its marker names it.
+        os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT)
+        left = processes_left(folder, tmp_path, timeout=0)
+    markers = (folder / LOADED_LOG).read_text(encoding="utf-8").splitlines()
+
+    assert [json.loads(marker)["pid"] for marker in markers] == [child.pid]
+    assert left == []
