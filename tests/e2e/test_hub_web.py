@@ -7,12 +7,14 @@ ended by the server (AC-165.23), and it never upgrades a connection to a WebSock
 
 import contextlib
 import json
+import os
 import queue
 import re
 import signal
 import socket
 import sqlite3
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
@@ -27,6 +29,7 @@ import pytest
 from agent_hub.claude_sessions.process_tree import alive
 from agent_hub.claude_sessions.testing.scenarios import Scenario, held_turn
 from agent_hub.core.testing.builders import an_event, events_to_jsonl
+from agent_hub.core.testing.hook_inputs import a_hook_input
 from tests.e2e.conftest import InstalledHub, RunningWeb, StubClaude
 
 REQUEST_SECONDS = 10
@@ -303,3 +306,59 @@ def test_refuses_websocket_upgrade_when_any_path_requested(hub_web: RunningWeb, 
     status = _upgrade_status(hub_web, path)
 
     assert not status.startswith("HTTP/1.1 101"), status
+
+
+# AGH-621 (AC-21): the rendered sensor writes its own HTTP request. The installed hub web takes it
+# (uvicorn's parser, then hub web's Host check) and the event shows in the sessions list.
+SENSOR = "plugin/hub-workflow/hooks/event_sensor.py"
+SENSOR_SESSION = "sensor-e2e"
+
+
+def _session_ids(web: RunningWeb, *, wait: float) -> list[str]:
+    """The ids of the sessions ``web`` lists, as soon as there is one or after ``wait`` seconds."""
+    deadline = time.monotonic() + wait
+    with httpx.Client(base_url=web.url, timeout=REQUEST_SECONDS) as client:
+        while True:
+            listed = client.get("/api/v1/sessions")
+            assert listed.status_code == 200, listed.text
+            ids = [item["id"] for item in listed.json()["items"]]
+            if ids or time.monotonic() >= deadline:
+                return ids
+            time.sleep(0.05)
+
+
+def test_ingests_hook_event_when_rendered_sensor_posts(
+    hub_web: RunningWeb, *, installed_hub: InstalledHub, tmp_path: Path
+) -> None:
+    hub = tmp_path / "demo-hub"
+    command = [str(installed_hub.executable), "init", "demo", *HUB_FLAGS, "--dir", str(hub)]
+    made = subprocess.run(
+        command, cwd=tmp_path, env=installed_hub.env, capture_output=True, text=True, check=False
+    )
+    assert made.returncode == 0, made.stderr
+    with httpx.Client(base_url=hub_web.url, timeout=REQUEST_SECONDS) as client:
+        registered = client.post(
+            "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": hub_web.url}
+        )
+    assert registered.status_code == 201, registered.text
+    assert _session_ids(hub_web, wait=0) == []
+    event = a_hook_input("PostToolUse", session_id=SENSOR_SESSION, cwd=str(hub))
+    env = {
+        "PATH": os.environ.get("PATH", os.defpath),
+        "HOME": str(tmp_path / "sensor-home"),
+        "AGENT_HUB_WEB_URL": hub_web.url,
+    }
+
+    sent = subprocess.run(
+        [sys.executable, str(hub / SENSOR)],
+        input=json.dumps(event),
+        cwd=hub,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=REQUEST_SECONDS,
+        check=False,
+    )
+
+    assert (sent.returncode, sent.stdout, sent.stderr) == (0, "", "")
+    assert _session_ids(hub_web, wait=REQUEST_SECONDS) == [SENSOR_SESSION]

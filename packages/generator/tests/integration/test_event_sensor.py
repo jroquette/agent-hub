@@ -319,6 +319,88 @@ def test_connects_to_loopback_when_url_is_loopback(
     assert len(event_server.bodies()) == 1
 
 
+# AGH-621 (AC-25, Q16): the sensor writes its POST itself, on a plain socket. The request keeps
+# what http.client sent (the Host hub web checks, the body's type and length) and asks the server
+# to close the connection once it has answered.
+REQUEST_HEADERS = ("host", "content-type", "content-length", "connection")
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost"])
+def test_sends_post_headers_when_server_up(
+    host: str,
+    *,
+    hub: Path,
+    hook_python: str,
+    run_hook_file: RunHook,
+    event_server: Any,
+) -> None:
+    port = urlsplit(event_server.url).port
+    data = hook_input("PostToolUse", hub)
+    env = {URL_VARIABLE: f"http://{host}:{port}"}
+
+    completed, _ = run_sensor(
+        run_hook_file, hook_python, hub, stdin=json.dumps(data).encode(), env=env
+    )
+
+    assert_silent(completed)
+    assert len(event_server.received) == 1
+    [received] = event_server.received
+    headers = {name.lower(): value for name, value in received.headers.items()}
+    assert (received.method, received.path) == ("POST", HOOKS_PATH)
+    assert {name: headers.get(name) for name in REQUEST_HEADERS} == {
+        "host": f"{host}:{port}",
+        "content-type": "application/json",
+        "content-length": str(len(received.body)),
+        "connection": "close",
+    }
+    assert HookEnvelope.model_validate_json(received.body).hook == reduced("PostToolUse", data)
+
+
+# AGH-621 (AC-25, Q16): a guard deny records its decision without loading http.client,
+# email.parser or ssl. argv: a hook file and a file holding one event. Runs the hook as __main__
+# in this process with the event on stdin, then lists which of those modules are loaded, before
+# the run and after it.
+RUN_AND_LIST_MODULES = """
+import contextlib, io, json, runpy
+WATCHED = ("http.client", "email.parser", "ssl")
+hook, event = sys.argv[1], sys.argv[2]
+before = [name for name in WATCHED if name in sys.modules]
+with open(event, "rb") as fh:
+    sys.stdin = io.TextIOWrapper(io.BytesIO(fh.read()), encoding="utf-8")
+out, code = io.StringIO(), None
+with contextlib.redirect_stdout(out):
+    try:
+        runpy.run_path(hook, run_name="__main__")
+    except SystemExit as stop:
+        code = stop.code
+after = [name for name in WATCHED if name in sys.modules]
+print(json.dumps({"before": before, "code": code, "stdout": out.getvalue(), "after": after}))
+"""
+
+
+def test_loads_no_http_client_when_guard_denies(
+    hub: Path, *, hook_python: str, run_python: Callable[..., Any], tmp_path: Path
+) -> None:
+    event = tmp_path / "event.json"
+    push = hook_input("PreToolUse", hub) | {"tool_input": {"command": "git push origin main"}}
+    event.write_text(json.dumps(push), encoding="utf-8")
+
+    # the child's environment points the sensor at a loopback port nothing listens on
+    found = run_python(
+        hook_python,
+        RUN_AND_LIST_MODULES,
+        path=hub / HOOKS,
+        args=[str(hub / HOOKS / "guard.py"), str(event)],
+        cwd=hub,
+        env={"HOME": str(tmp_path)},
+    )
+
+    assert found["before"] == []
+    verdict = json.loads(found["stdout"])["hookSpecificOutput"]
+    assert (found["code"], verdict["permissionDecision"]) == (0, "deny")
+    assert found["after"] == []
+
+
 def test_omits_strings_when_oversize(
     *,
     hub: Path,
