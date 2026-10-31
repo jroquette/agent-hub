@@ -4,18 +4,22 @@ database it writes, read back with stdlib ``sqlite3``; and the whole suite
 
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import closing
 from pathlib import Path
 from typing import Any
 
 from alembic.script import ScriptDirectory
 
+from agent_hub.core.testing.loopback import closed_url
 from agent_hub.storage.migration import alembic_config
+from scripts.perf.environment import child_env, create_hub, make_tool_bin, transcript_path
 from scripts.perf.fixture import PAGE_SESSION
+from scripts.perf.process_probes import hook_probes
 
 type Run = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -216,3 +220,67 @@ def test_writes_one_row_per_table_line_when_run_on_a_small_fixture(
     assert len(over) == 1
     assert over[0]["status"] == "over"
     assert over[0]["budget"]["p95_ms"] == 0
+
+
+# The pre_tool_use rows time calls the guard lets through: an ask or a deny would time the
+# decision's send too, with no sign in the table.
+PRE_TOOL_USE_ROWS = (
+    "pre_tool_use (PreToolUse Bash)",
+    "pre_tool_use (PreToolUse Read)",
+    "pre_tool_use (PreToolUse Edit)",
+)
+
+
+def _tool(name: str) -> Path:
+    found = shutil.which(name)
+    assert found is not None, f"{name} is not on PATH"
+    return Path(found)
+
+
+def _setup(
+    argv: Sequence[str], cwd: Path | str | None = None, env: Mapping[str, str] | None = None
+) -> object:
+    """``create_hub``'s runner: one setup command, which must exit 0."""
+    result = subprocess.run(
+        list(argv),
+        cwd=cwd,
+        env=None if env is None else dict(env),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=BUILD_SECONDS,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return result
+
+
+def test_prints_no_verdict_when_pre_tool_use_probes_run(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    tool_bin = make_tool_bin(
+        root,
+        hub_bin=Path(sys.executable).parent / "hub",
+        git=_tool("git"),
+        python3=_tool("python3"),
+        sh=_tool("sh"),
+    )
+    env = child_env(root, db=root / "perf.db", tool_bin=tool_bin, sensor_url=closed_url())
+    hub = create_hub(root, runner=_setup, env=env)
+    probes = [p for p in hook_probes(hub, transcript_path(env)) if p.path in PRE_TOOL_USE_ROWS]
+
+    results = [
+        subprocess.run(
+            list(probe.argv),
+            input=probe.stdin,
+            capture_output=True,
+            text=True,
+            cwd=hub,
+            env=env,
+            check=False,
+            timeout=BUILD_SECONDS,
+        )
+        for probe in probes
+    ]
+
+    assert [probe.path for probe in probes] == list(PRE_TOOL_USE_ROWS)
+    assert [(result.returncode, result.stdout) for result in results] == [(0, "")] * len(probes)
