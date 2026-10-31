@@ -473,6 +473,33 @@ export function aBrainTree(overrides: Partial<BrainTree> = {}): BrainTree {
   };
 }
 
+/**
+ * A large brain tree of project `agent-hub` (AGH-617): `index.md`, `now.md`, `notes` notes spread
+ * over the folders `tree-1/` to `tree-<folders>/` (`note-001.md` on; the first folders take one
+ * more when `notes` does not split evenly) and 3 notes under `_inbox/`, sorted by path as the API
+ * lists them.
+ */
+export function aBrainTreeOf(notes: number, { folders = 6 }: { folders?: number } = {}): BrainTree {
+  const entries = [
+    { path: "_inbox/proposal-1.md", size: 84 },
+    { path: "_inbox/proposal-2.md", size: 84 },
+    { path: "_inbox/proposal-3.md", size: 84 },
+    { path: "index.md", size: 180 },
+    { path: "now.md", size: 140 },
+  ];
+  for (let folder = 1; folder <= folders; folder += 1) {
+    const inFolder = Math.floor(notes / folders) + (folder <= notes % folders ? 1 : 0);
+    for (let note = 1; note <= inFolder; note += 1) {
+      entries.push({
+        path: `tree-${String(folder)}/note-${String(note).padStart(3, "0")}.md`,
+        size: 120,
+      });
+    }
+  }
+  entries.sort((a, b) => (a.path === b.path ? 0 : a.path < b.path ? -1 : 1));
+  return aBrainTree({ entries });
+}
+
 /** A brain note of project `agent-hub` (index.md by default). */
 export function aBrainNote(overrides: Partial<BrainNote> = {}): BrainNote {
   return {

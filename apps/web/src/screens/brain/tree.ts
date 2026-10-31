@@ -57,3 +57,38 @@ export function matchNotes<T extends { path: string }>(entries: readonly T[], qu
     ? [...entries]
     : entries.filter((entry) => entry.path.toLowerCase().includes(needle));
 }
+
+/** One row of the Brain tree, in the flat list the virtual tree renders (AGH-617). */
+export interface TreeRow {
+  kind: "note" | "folder";
+  /** A note's path, or a folder's path with its trailing `/`. */
+  path: string;
+  /** The name the row shows: a start note's ("Index"), a note's file name or a folder's name. */
+  name: string;
+  /** 0 for the top rows of a section, one more per folder level. */
+  depth: number;
+  /** The section that lists the row: "Start here", "Folders" or "Inbox · unreviewed". */
+  group: "start" | "folders" | "inbox";
+  /** How many rows share the row's folder (at depth 0, its section). */
+  setSize: number;
+  /** The row's place among them, from 1. */
+  posInSet: number;
+  /** A folder's notes, its subfolders' included. */
+  count: number;
+}
+
+/**
+ * The rows of the tree's three sections, in order: each folder in `open` lists its notes, then its
+ * subfolders.
+ */
+export function treeRows(root: BrainFolder, open: ReadonlySet<string>): TreeRow[] {
+  throw new Error(`treeRows is not implemented yet (${root.path}, ${String(open.size)} open)`);
+}
+
+/**
+ * The folders a note sits in, as folder paths with their trailing `/`: the tree opens them for the
+ * selected note.
+ */
+export function foldersOf(path: string): string[] {
+  throw new Error(`foldersOf is not implemented yet (${path})`);
+}
