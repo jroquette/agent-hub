@@ -527,7 +527,8 @@ The keys are off while focus is in a text field, except `⌘S`. See [23-scenario
 | `Space` | Open or close the focused folder |
 | `↓` in the empty search field | Go to the tree's current row (with a query, to the first result) |
 
-The keys work only while a row of the tree has focus, and not while typing in a field. See
+The keys work only while a row of the tree has focus, and not while typing in a field. While a `g` sequence waits, `k`
+and `o` are its second key (`g k`, `g o`); the other keys still act on the tree. See
 [19-brain-and-skills.md](19-brain-and-skills.md).
 
 ### Learnings triage (P3)

@@ -21,6 +21,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   fails while drawing, now shows "This page could not load" or "This page could not be shown" inside the app, with
   "Reload page", instead of a blank window. Answers from `hub web` also no longer wait about 40 ms on a kept-alive
   connection (AGH-614).
+- The Brain's note tree in `hub web` draws only the rows in view, so a brain of hundreds of notes stays fast. The tree
+  is one Tab stop: the arrow keys, `j`/`k` and `Home`/`End` move between rows, `→`, `←`, `Enter`, `o` and `Space` open
+  and close folders, and `↓` in the empty search field goes into the tree. Folders stay open until you close them,
+  and the tree stays beside a long note as it scrolls. To find a note anywhere in the brain, search with `/`
+  (AGH-617).
 
 ## [0.28.0] - 2026-10-30
 

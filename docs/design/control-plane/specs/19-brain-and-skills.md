@@ -284,7 +284,8 @@ stays fast; what it shows, its groups, names and counts are AC-270.9's, unchange
 banner), so all of it shows at first paint; a small brain makes a short card. It stays `space-4` under the top bar
 while a long note scrolls. Inside it the search field and the listing banner stay put, and the rows scroll in a box of
 their own (the search's results scroll in the same place when they replace the tree). Below 900 px the card stacks
-above the note and scrolls with the page; its box is at most half the screen high and at least 240 px (10 rows).
+above the note and scrolls with the page; its box is at most half the screen high and at least 240 px (a group heading
+and about 8 rows).
 
 **Rows.** Each group ("Start here", "Folders", "Inbox · unreviewed") is a `section` labelled by its `h2`, which stays
 at the top of the box while the group's rows pass under it. Its rows are one `ul` of `li`, indented `space-3` per
@@ -322,10 +323,12 @@ row, and the next stop is "Triage in Learnings". On a row:
 | `Space` | Folder: open or close it. Note: nothing |
 
 `↓` in the search field with no query goes to the tree's current row (with a query, to the first result, as before).
-The tree takes these keys only while one of its rows has focus, never with `Ctrl`, `⌘` or `Alt`, never while typing in
-a field and never as the second key of a `g` sequence; opening or closing a folder keeps focus on its row, with a
-click too. The current row is always rendered, so focus stays on it when the wheel scrolls it out of view; when the
-focused row leaves the list (a new listing drops it), focus moves to its folder's row, never to the page.
+The tree takes these keys only while one of its rows has focus, never with `Ctrl`, `⌘` or `Alt`, and never while typing
+in a field. While a `g` sequence waits for its second key, `k` and `o` are the sequence's (`g k`, `g o`); the arrows,
+`Home`, `End`, `j` and `Space` still act on the tree, and end the sequence. Opening or closing a folder keeps focus on
+its row, with a click too. The current row is always rendered, so focus stays on it when the wheel scrolls it out of
+view; when the focused row leaves the list (a new listing drops it), focus moves to its folder's row, else to the row
+before it, never to the page.
 
 **Loading.** Nothing for 300 ms, then a skeleton of the panel (a field bar, a group heading bar and 10 row bars at row
 height) with `aria-busy="true"`, held at least 300 ms. After 1 s a screen reader hears "Loading brain notes", said
@@ -340,11 +343,13 @@ outside the busy part. Empty, failed and partial listings are as before.
   and close on their row, and the tree is one Tab stop. Tests: `index.test.tsx` "moves focus row by row …", "goes to
   the first and the last row …", "opens and closes a folder …", "keeps the tree one Tab stop …", "goes back to the
   search field with ↑ on the first row …", "moves focus to the folder's row when a new listing drops the focused
-  note".
+  note", "moves focus to the row before it when a new listing drops a focused row with no folder listed …", "moves
+  with the arrows, Home, End and j while a g sequence waits …".
 - **AC-617.3** Given folders opened by hand or for an earlier note, when the box scrolls them away and back, another
   note is picked or the search is cleared with `Esc`, then they are still open and the box is where it was. Tests:
   `index.test.tsx` "keeps a folder opened by hand open …", "keeps a folder opened for an earlier note open …", "brings
-  back the same open folders and scroll position …".
+  back the same open folders and scroll position …", "leaves the box where it is when a note is opened from the tree
+  …".
 - **AC-617.4** Given a 600-note tree scrolled to the middle with a folder open, when axe runs, then it finds no serious
   or critical violation, and the rows in view carry their level, set size and position. Test: `index.test.tsx` "has
   no serious a11y violations on a 600-note tree … (a11y)".
