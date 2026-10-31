@@ -39,7 +39,8 @@ Set up once per clone or worktree with `uv sync --all-packages` (the `make` targ
 - `make check-fast`: while working (format, lint, mypy --strict, test layout, version lockstep, unit and contract tests).
 - `make check-changed`: while working, on a change to part of the tree: the same checks on the whole tree, but only the
   unit and contract tests the change can reach (each changed package and every package that imports it), without
-  coverage. The paths come from `PATHS="<paths>"`, else `HUB_CHANGED_FILES`, else git against `origin/main`;
+  coverage. The paths come from `PATHS="<paths>"` on make's command line (taken as plain text, never expanded; a
+  `PATHS` the shell exports does not count), else `HUB_CHANGED_FILES`, else git against `origin/main`;
   `uv run --locked --all-packages python -m scripts.check_changed --plan <paths>` prints its plan and runs nothing.
 - `make check`: before a PR, and what CI runs (`check-fast` + integration, e2e, import contracts, migrations, coverage floors).
   `check-changed` never replaces it.
