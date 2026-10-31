@@ -105,6 +105,30 @@ import stat
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+# ``re.compile`` as it was when this module loaded: what ``LazyPattern`` compiles with.
+_compile = re.compile
+
+
+class LazyPattern:
+    """``re.compile(*args)``, compiled when first used and then kept.
+
+    Reading any attribute (``search``, ``finditer``, ``pattern``) compiles the pattern once, so
+    loading a hook compiles none of its patterns, only the ones a call uses. It is not a
+    ``re.Pattern``: call its methods, never pass it to ``re.search`` and the like.
+    """
+
+    __slots__ = ("_args", "_compiled")
+
+    def __init__(self, *args: object) -> None:
+        self._args = args
+        self._compiled: re.Pattern[str] | None = None
+
+    def __getattr__(self, name: str) -> object:
+        if self._compiled is None:
+            self._compiled = _compile(*self._args)
+        return getattr(self._compiled, name)
+
+
 COMMENT_KEY_PREFIX = "_"
 FALLBACK_PROJECT_NAME = "hub"
 LOCAL_FILE = "hub.local.json"
@@ -114,13 +138,13 @@ PREFIX_FROM_LOCAL = LOCAL_FILE
 PREFIX_FROM_HUB = "hub.json"
 PREFIX_DERIVED = "derived"
 # ``[0-9]`` and ``fullmatch``: ``\d`` takes any Unicode digit and ``$`` a final newline.
-RELEASE_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+RELEASE_VERSION = LazyPattern(r"[0-9]+\.[0-9]+\.[0-9]+")
 # The model's ``PlatformRepository`` pattern, for ``fullmatch``, rendered from agent-hub's core.
-PLATFORM_REPOSITORY = re.compile(r"@@{platform_repository_pattern}")
+PLATFORM_REPOSITORY = LazyPattern(r"@@{platform_repository_pattern}")
 PLATFORM_REPOSITORY_MAX_CHARS = 200
 LOCK_FILE = "hub.lock"
 LOCK_FILE_MAX_BYTES = 1_048_576
-RELEASE_COMMIT = re.compile(r"[0-9a-f]{40}")
+RELEASE_COMMIT = LazyPattern(r"[0-9a-f]{40}")
 RELEASE_SUBDIRECTORY = "#subdirectory=packages/agent-hub"
 # The brief cache (ADR 0055): core's ``agent_hub.core.workspace.brief_cache`` writes the same names.
 CACHE_FOLDER = ".hub-cache"
@@ -136,19 +160,19 @@ CHECK_FAST_TIMEOUT_MIN = 1
 CHECK_FAST_TIMEOUT_MAX = 160
 # The model's ``BranchName`` pattern without ``^`` and ``$``, for ``fullmatch``. No separator
 # character is also a segment character, so ``re`` matches in linear time.
-BRANCH_NAME = re.compile(
+BRANCH_NAME = LazyPattern(
     r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*(?:/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*)*"
 )
 # The model's ``BranchPrefix``, ``EmailAddress`` and ``FreeString`` patterns, likewise.
-BRANCH_PREFIX = re.compile(r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*/")
-EMAIL_ADDRESS = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+")
-FREE_STRING = re.compile(r"[^\x00-\x1f\x7f]+")
+BRANCH_PREFIX = LazyPattern(r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*/")
+EMAIL_ADDRESS = LazyPattern(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+")
+FREE_STRING = LazyPattern(r"[^\x00-\x1f\x7f]+")
 # The model's ``EnvFileName`` pattern without ``^`` and ``$``: an env file name with a suffix.
-ENV_FILE_NAME = re.compile(r"\.env\.[A-Za-z0-9_.-]+")
+ENV_FILE_NAME = LazyPattern(r"\.env\.[A-Za-z0-9_.-]+")
 # The model's ``KEY_FILE_SUFFIXES``: a readable env file name never ends in one.
 KEY_FILE_SUFFIXES = (".pem", ".key", ".p12", ".pfx")
 # A character ``FREE_STRING`` refuses: an infra pattern holding one is unusable.
-CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
+CONTROL_CHARACTER = LazyPattern(r"[\x00-\x1f\x7f]")
 # The keys ``guard.infra`` may hold besides comment keys; any other key is unusable.
 INFRA_LISTS = ("allow", "prod_markers")
 # The git config key each git-read identity key comes from.
@@ -169,32 +193,32 @@ GUARD_KEYS = (
 BLOCKED_LISTS = ("blocked_words", "blocked_words_files", "blocked_words_env")
 # An unknown ``guard`` key is named in a problem only with this shape; any other is ``<key>``, so
 # a secret pasted as a key never reaches a reason.
-PLAIN_GUARD_KEY = re.compile(r"[a-z][a-z0-9_]{0,40}")
+PLAIN_GUARD_KEY = LazyPattern(r"[a-z][a-z0-9_]{0,40}")
 # The model's ``BlockedWord``, ``WordFileGlob`` and ``EnvVarPattern`` shapes and bounds
 # (core/hub_config/environments.py), for ``fullmatch``. No separator character is also a segment
 # character, so ``re`` matches in linear time.
-BLOCKED_WORD = re.compile(r"[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*")
+BLOCKED_WORD = LazyPattern(r"[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*")
 BLOCKED_WORD_MIN_CHARS = 2
 BLOCKED_WORD_MAX_CHARS = 64
 MAX_BLOCKED_WORDS = 200
-BLOCKED_GLOB = re.compile(r"[!-.0-~][!-~]*")
+BLOCKED_GLOB = LazyPattern(r"[!-.0-~][!-~]*")
 BLOCKED_GLOB_MAX_CHARS = 200
 MAX_BLOCKED_GLOBS = 100
-BLOCKED_ENV = re.compile(r"[A-Z_][A-Z0-9_]{0,63}\*?")
+BLOCKED_ENV = LazyPattern(r"[A-Z_][A-Z0-9_]{0,63}\*?")
 MAX_BLOCKED_ENV = 50
 # The model's ``EnvironmentName`` (a safe segment of at most 40 characters), ``Access`` and
 # ``EnvVarName`` (core/hub_config/environments.py), for ``fullmatch``.
-ENVIRONMENT_NAME = re.compile(r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*")
+ENVIRONMENT_NAME = LazyPattern(r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*")
 ENVIRONMENT_NAME_MAX_CHARS = 40
 ACCESS_LEVELS = ("read", "write", "ask")
-ENV_VAR_NAME = re.compile(r"[A-Z_][A-Z0-9_]{0,63}")
+ENV_VAR_NAME = LazyPattern(r"[A-Z_][A-Z0-9_]{0,63}")
 # The model's ``EnvFilePath`` (printable ASCII without space, not starting with ``/`` or ``~``, at
 # most 200 characters, no ``..`` segment) and ``Url`` (``scheme://host[:port][/path]``, no user
 # info, query or fragment, at most 200 characters) shapes, for ``fullmatch``; the url's host is
 # group 1.
-ENV_FILE_PATH = re.compile(r"[!-.0-}][!-~]*")
+ENV_FILE_PATH = LazyPattern(r"[!-.0-}][!-~]*")
 ENV_FILE_PATH_MAX_CHARS = 200
-ENDPOINT_URL = re.compile(
+ENDPOINT_URL = LazyPattern(
     r"[A-Za-z][A-Za-z0-9+.-]*://([A-Za-z0-9.-]+)(?::[0-9]{1,5})?(?:/[!\"$->A-~]*)?"
 )
 ENDPOINT_URL_MAX_CHARS = 200
@@ -203,7 +227,7 @@ ENDPOINT_URL_MAX_CHARS = 200
 # The JWT shape is the old lint's, which matches what core's linear rewrite matches; the texts
 # it runs on are at most 64 characters.
 SECRET_SHAPES = tuple(
-    re.compile(pattern)
+    LazyPattern(pattern)
     for pattern in (
         r"eyJ[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{15}",
         r"AKIA[0-9A-Z]{16}",
@@ -519,7 +543,7 @@ class EffectiveValues:
             return PREFIX_FROM_HUB
         return PREFIX_DERIVED if self.branch_prefix() else ""
 
-    def _value(self, key: str, pattern: re.Pattern[str]) -> str:
+    def _value(self, key: str, pattern: LazyPattern) -> str:
         from_file = getattr(self.local_file, key) or getattr(self.hub_file.project, key)
         if from_file:
             return from_file
@@ -599,13 +623,13 @@ def _text(section: dict[str, object], key: str, default: str) -> str:
     return value if isinstance(value, str) and value else default
 
 
-def _matching(section: dict[str, object], key: str, pattern: re.Pattern[str]) -> str:
+def _matching(section: dict[str, object], key: str, pattern: LazyPattern) -> str:
     """The value at ``key`` when it is a string with ``pattern``'s shape, else ``""``."""
     value = _text(section, key, "")
     return value if _is_shaped(value, pattern) else ""
 
 
-def _is_shaped(value: str, pattern: re.Pattern[str]) -> bool:
+def _is_shaped(value: str, pattern: LazyPattern) -> bool:
     """Whether ``pattern`` matches all of ``value`` and ``value`` is UTF-8 text, as the model asks.
 
     A lone surrogate (JSON ``"\\ud800"``) passes a negated character class but not the model.
