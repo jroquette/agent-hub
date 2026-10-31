@@ -119,8 +119,15 @@ def _nodes_alive() -> int:
     return sum(isinstance(item, Node) for item in gc.get_objects())
 
 
-def test_leaves_no_parse_tree_alive_when_loader_refuses_file(hub: Path, builtin: Path) -> None:
-    _write(hub / "workflows/p/bad.yaml", b"name: bad\nname: again\n")
+@pytest.mark.parametrize(
+    "content",
+    [b"name: bad\nname: again\n", b"name: bad\nnodes:\n  - id: a\nextra:\n  k: 1\n  k: 2\n"],
+    ids=["top-level-duplicate", "nested-duplicate-after-list"],
+)
+def test_leaves_no_parse_tree_alive_when_loader_refuses_file(
+    hub: Path, builtin: Path, content: bytes
+) -> None:
+    _write(hub / "workflows/p/bad.yaml", content)
 
     # With the collector off, as `hub workflow list` runs, a cycle through the refused file's error
     # would keep its YAML nodes alive until the process ends.
