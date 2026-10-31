@@ -18,9 +18,9 @@ from agent_hub.core.hub_config.config_object import (
 )
 from agent_hub.core.hub_config.doctor_rules import drop_map_comment_keys
 from agent_hub.core.hub_config.text_shapes import ENVIRONMENT_TEXT_PATTERN, SAFE_SEGMENT
+from agent_hub.core.hub_config.text_shapes import MAX_NAME_CHARS as MAX_NAME_CHARS
 from agent_hub.core.secret_shapes import secret_kind
 
-MAX_NAME_CHARS: Final = 40
 MAX_CREDENTIAL_ENV: Final = 10
 MAX_URL_CHARS: Final = 200
 MAX_KIND_CHARS: Final = 32
