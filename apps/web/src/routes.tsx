@@ -29,7 +29,7 @@ function LiveRedirect() {
  * A project's Brain is `projects/:project/brain/<note path>` (AGH-201 D3); its Skills are
  * `projects/:project/skills[/<kind>/<source>/<name>]` (AGH-164).
  *
- * Each screen's module loads on demand, in its own chunk (AGH-614); only the shell and the
+ * Each screen's module loads on demand, in its own chunk; only the shell and the
  * redirects defined here are in the entry, and each redirect waits for its target screen's code.
  * Under the shell, a route whose code does not load, or whose screen throws, shows `RouteError`,
  * and a first load shows the page skeleton until its screen's code arrives.

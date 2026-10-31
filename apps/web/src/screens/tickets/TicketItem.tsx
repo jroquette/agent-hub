@@ -1,5 +1,5 @@
 /* One ticket's row: the Tickets list shows it, and so does the Project overview, which must not
- * load the Tickets screen with it (each screen's code loads on demand, AGH-614). */
+ * load the Tickets screen with it (each screen's code loads on demand). */
 import "../features/features.css";
 
 import { useId, useState } from "react";

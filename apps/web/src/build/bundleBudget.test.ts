@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import { checkBundle } from "./bundleBudget";
 import { budgetPlugin } from "./bundlePlugins";
 
-// The owner's limits in bytes (spec.md, Owner answers): 400,000 B for the entry chunk alone (O1) and
-// 350,000 B for the vendor chunk (O2).
+// The limits the owner set, in bytes: 400,000 B for the entry chunk alone and 350,000 B for the
+// vendor chunk.
 const LIMITS = { entry: 400_000, vendor: 350_000 };
 
 const ENTRY = "assets/index-AbCd1234.js";

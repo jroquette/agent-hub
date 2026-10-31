@@ -49,6 +49,10 @@ export default defineConfig(({ command, mode }) => ({
               name: VENDOR_CHUNK_NAME,
               test: /node_modules[\\/](react|react-dom|scheduler|react-router|@tanstack|openapi-fetch)[\\/]/,
             },
+            // Every stylesheet in one group, so the one sheet keeps src/styles/cascade.ts's order:
+            // spread over the chunks that import them, the stylesheets of a chunk the entry
+            // imports would come first. A group of stylesheets only writes no script.
+            { name: "styles", test: /\.css$/ },
           ],
         },
       },

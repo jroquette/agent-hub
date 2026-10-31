@@ -374,6 +374,33 @@ def test_links_every_stylesheet_from_index_when_web_app_built() -> None:
     assert sorted(linked) == built
 
 
+# A screen rule and a base rule of the same specificity that style one element (the Sessions
+# grid's group heading, the session header's meta row). The one-bundle build put the base styles
+# after every screen's, so the base rule won.
+SCREEN_THEN_BASE_RULES = ((".sl-group-head", ".ah-caption"), (".sd-meta", ".ah-row"))
+
+
+def _rule_starts(sheet: str, selector: str) -> list[int]:
+    """Where each rule whose whole selector is ``selector`` starts in the minified sheet."""
+    starts = [match.end() for match in re.finditer(rf"(?:^|}}){re.escape(selector)}\{{", sheet)]
+    assert starts != [], f"no {selector} rule in the built stylesheet"
+    return starts
+
+
+def test_orders_base_styles_after_screen_styles_when_web_app_built() -> None:
+    """AC-5: the one stylesheet keeps the one-bundle build's order (``src/styles/cascade.ts``),
+    whichever chunk a screen's code comes in. In a chunk's order, rules of the same specificity
+    would swap winners on one element, as these pairs did."""
+    linked = _STYLESHEET.findall((WEB_DIST / "index.html").read_text(encoding="utf-8"))
+    assert len(linked) == 1, linked
+    sheet = (WEB_DIST / linked[0]).read_text(encoding="utf-8")
+
+    for screen, base in SCREEN_THEN_BASE_RULES:
+        last_screen = max(_rule_starts(sheet, screen))
+        first_base = min(_rule_starts(sheet, base))
+        assert last_screen < first_base, f"{base} comes before {screen} in {linked[0]}"
+
+
 @dataclass(frozen=True)
 class Scenario:
     """What the smoke pages open: ids the synthetic scenario stored."""

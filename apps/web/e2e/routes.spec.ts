@@ -6,12 +6,12 @@ import type { Manifest } from "vite";
 
 import { env, expectAccessible, watch } from "./pageChecks";
 
-// AGH-614: each routed screen loads on demand, from its own chunk of the committed build that
-// hub web serves (perf-smooth-web AC-2, AC-5, AC-7). Run alone by
-// test_loads_route_chunks_on_demand_when_built_app_served: every title starts with "Route chunks".
+// Each routed screen loads on demand, from its own chunk of the committed build that hub web
+// serves. Run alone by test_loads_route_chunks_on_demand_when_built_app_served: every title starts
+// with "Route chunks".
 
-// The committed build hub web serves, and its Vite manifest (Q-N3): the chunk of each module,
-// and the chunks each one imports.
+// The committed build hub web serves, and its Vite manifest: the chunk of each module, and the
+// chunks each one imports.
 const WEB_DIST = join(import.meta.dirname, "../../../packages/api/src/agent_hub/api/web_dist");
 const MANIFEST = join(WEB_DIST, ".vite", "manifest.json");
 // The screen module the /sessions route loads (routes.tsx).
@@ -38,7 +38,7 @@ const NAV_DESTINATIONS: { link: RegExp; heading: string }[] = [
   { link: /^Settings/, heading: "Settings" },
 ];
 
-// AC-5's deep links: a Brain note, a session and a settings section of the smoke's scenario.
+// Deep links: a Brain note, a session and a settings section of the smoke's scenario.
 const DEEP_LINKS: { path: string; heading: string | RegExp; shows: string }[] = [
   {
     path: "/projects/demo/brain/now.md",
@@ -55,7 +55,7 @@ function readManifest(): Manifest {
   return JSON.parse(readFileSync(MANIFEST, "utf-8")) as Manifest;
 }
 
-/** The file of `key`'s own route chunk: the chunk the manifest marks as its dynamic entry (O3). */
+/** The file of `key`'s own route chunk: the chunk the manifest marks as its dynamic entry. */
 function routeFile(manifest: Manifest, key: string): string {
   const chunk = manifest[key];
   expect(chunk?.isDynamicEntry, `${key} has no route chunk of its own`).toBe(true);
@@ -111,7 +111,7 @@ test("Route chunks: a first visit to /sessions requests only the entry, vendor, 
   const entries = Object.keys(manifest).filter((key) => manifest[key]?.isEntry === true);
   expect(entries).toHaveLength(1);
   const sessionsFile = routeFile(manifest, SESSIONS_SCREEN);
-  // AC-2: the entry with the vendor and shared chunks it imports, and the same for /sessions.
+  // The entry with the vendor and shared chunks it imports, and the same for /sessions.
   const allowed = new Set([
     ...staticFiles(manifest, entries[0] ?? ""),
     ...staticFiles(manifest, SESSIONS_SCREEN),

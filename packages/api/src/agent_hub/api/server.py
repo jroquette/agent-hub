@@ -43,7 +43,10 @@ def bind_address(host: str, port: int) -> socket.socket:
     ``PortInUseError`` when the port is taken; any other ``OSError`` propagates.
     """
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
-    sock = socket.socket(family, socket.SOCK_STREAM)
+    # Made for TCP by name, as asyncio turns Nagle off only on such a socket's connections. With
+    # Nagle on, a body sent after its headers on a kept-alive connection waits for the client's
+    # delayed ACK, about 40 ms.
+    sock = socket.socket(family, socket.SOCK_STREAM, socket.IPPROTO_TCP)
     # Lets a restart reuse the port while old connections sit in TIME_WAIT; a live listener
     # still makes bind fail.
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

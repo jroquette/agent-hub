@@ -1,3 +1,7 @@
+// First of all imports: the order of the stylesheets in the built sheet is the order they are
+// first imported in.
+import "./styles/cascade";
+
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 

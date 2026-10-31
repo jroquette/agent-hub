@@ -1,5 +1,5 @@
 /* A project's workflows as catalog cards: the Toolkit's Workflows tab shows them without loading
- * the Workflows screen, whose code loads on demand (AGH-614). */
+ * the Workflows screen, whose code loads on demand. */
 import "../skills/Skills.css";
 
 import type { components } from "../../api/schema";

@@ -6,7 +6,7 @@ import type { RouteObject } from "react-router";
 import { SKELETON_DELAY_MS, Skeleton, useDelayed, useSkeleton } from "../components/feedback";
 
 // Each routed screen loads on demand, in its own chunk; while its code loads, `main#main` shows the
-// page skeleton after 300 ms, and once shown, for at least 300 ms (AGH-614, AC-1, AC-6).
+// page skeleton after 300 ms, and once shown, for at least 300 ms.
 
 /** "Loading page" is said only once a route's code has been loading this long (spec 22). */
 const ANNOUNCE_AFTER_MS = 1_000;
@@ -113,18 +113,16 @@ export function RouteSkeleton({ waited = 0 }: RouteSkeletonProps): ReactElement 
 }
 
 /**
- * A routed screen. When it mounts while a page skeleton shows, it keeps the skeleton until that has
- * shown for the skeleton delay: on a first load the router drops its fallback as soon as the
- * screen's code arrives, however briefly the fallback's bars have shown. After a navigation
- * `RouteOutlet` has already waited, so the screen draws at once.
+ * A routed page: a screen, or a redirect to one. When it mounts while a page skeleton shows, it
+ * keeps the skeleton until that has shown for the skeleton delay: on a first load the router
+ * drops its fallback as soon as the page's code arrives, however briefly the fallback's bars have
+ * shown. After a navigation `RouteOutlet` has already waited, so the page draws at once.
  */
-function RoutedScreen({ screen: Screen }: { screen: ComponentType }): ReactElement {
+function RoutedScreen({ page }: { page: ReactElement }): ReactElement {
   const { shownAt } = useContext(PageSkeletonContext);
-  // How long the skeleton has shown when the screen mounts, or null when none shows.
+  // How long the skeleton has shown when the page mounts, or null when none shows.
   const [shownFor] = useState(() => (shownAt === null ? null : Date.now() - shownAt));
   const done = useDelayed(shownFor === null ? 0 : SKELETON_DELAY_MS - shownFor);
-  // The same element each time, so a new skeleton state never draws the screen again.
-  const page = useMemo(() => <Screen />, [Screen]);
   return done ? page : <RouteSkeleton waited={SKELETON_DELAY_MS + (shownFor ?? 0)} />;
 }
 
@@ -135,16 +133,18 @@ export function lazyScreen<Name extends string>(
 ): Pick<RouteObject, "lazy"> {
   return {
     lazy: async () => {
-      const screens = await loadCode(load);
-      return { element: <RoutedScreen screen={screens[name]} /> };
+      const Screen: ComponentType = (await loadCode(load))[name];
+      // One element for the route, so a new skeleton state never draws the screen again.
+      return { element: <RoutedScreen page={<Screen />} /> };
     },
   };
 }
 
 /**
  * The route fields of a redirect to a screen that loads on demand: `redirect` draws only once the
- * module `load` imports, the target screen's, has arrived. Drawn at once, it would empty
- * `main#main`, and move the address and the nav, while the target's code still loads.
+ * module `load` imports, the target screen's, has arrived, and on a first load once a page
+ * skeleton shown meanwhile has had its time. Drawn at once, it would empty `main#main`, and move
+ * the address and the nav, while the target's code still loads.
  */
 export function lazyRedirect(
   load: () => Promise<unknown>,
@@ -153,7 +153,7 @@ export function lazyRedirect(
   return {
     lazy: async () => {
       await loadCode(load);
-      return { element: redirect };
+      return { element: <RoutedScreen page={redirect} /> };
     },
   };
 }

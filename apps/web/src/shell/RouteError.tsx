@@ -7,7 +7,7 @@ import { Button } from "../components/core";
 import { RouteCodeError } from "./routeLoading";
 
 // The page the shell shows in `main#main` when a route's code fails to load, or when its screen
-// throws while rendering (AGH-614, AC-7).
+// throws while rendering.
 
 /** At most this much of an error's first line is shown. */
 const MESSAGE_LIMIT = 200;

@@ -1,0 +1,1 @@
+import{j as e}from"./vendor-ePNXhF7P.js";import{Bn as t,En as n,dt as r}from"./components-mRLyh6R7.js";import{n as i}from"./index-CaBbC1XN.js";var a=e();function o(){let{state:e,asOf:o}=i(),{tz:s}=t();return e===`offline`?(0,a.jsx)(r,{stale:!0,time:n(o,s)}):null}export{o as t};

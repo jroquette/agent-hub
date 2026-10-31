@@ -29,6 +29,7 @@ function PortfolioStandIn() {
     <>
       <h1>Portfolio stand-in</h1>
       <Link to="/sessions">Open sessions</Link>
+      <Link to="/live">Open live sessions</Link>
     </>
   );
 }
@@ -84,6 +85,8 @@ function sessionsRoutes(sessions: DeferredSessions): RouteObject[] {
         "PortfolioScreen",
       ),
     },
+    // As routes.tsx's /live: a bookmark that opens the Sessions screen, by a replace.
+    { path: "live", ...lazyRedirect(sessions.load, <Navigate to="/sessions" replace />) },
     { path: "sessions", ...lazyScreen(sessions.load, "SessionsListScreen") },
   ]);
 }
@@ -113,31 +116,48 @@ function wait(ms: number) {
 type Entry = "an in-app navigation" | "a deep link";
 const ENTRIES: Entry[] = ["an in-app navigation", "a deep link"];
 
+/** Where a load goes, and the Portfolio stand-in's link to it. */
+const TARGETS = {
+  "/sessions": "Open sessions",
+  "/live": "Open live sessions",
+} as const;
+
 /**
- * Starts loading /sessions on the fake clock, from the Portfolio stand-in's link or as the first
- * page, and returns the text `main` held just before the load began.
+ * Starts loading `target` (/sessions, or the /live redirect to it) on the fake clock, from the
+ * Portfolio stand-in's link or as the first page. Returns the router, and the text `main` held
+ * just before the load began.
  */
-async function startLoading(entry: Entry, sessions: DeferredSessions): Promise<string> {
+async function startLoading(
+  entry: Entry,
+  sessions: DeferredSessions,
+  target: keyof typeof TARGETS = "/sessions",
+) {
   vi.useFakeTimers();
   if (entry === "a deep link") {
-    renderAt("/sessions", sessionsRoutes(sessions));
-    return "";
+    return { router: renderAt(target, sessionsRoutes(sessions)), before: "" };
   }
-  renderAt("/", sessionsRoutes(sessions));
+  const router = renderAt("/", sessionsRoutes(sessions));
   await act(async () => {
     await Promise.resolve();
   });
   expect(screen.getByRole("heading", { level: 1, name: "Portfolio stand-in" })).toBeInTheDocument();
   const before = main().textContent;
-  fireEvent.click(screen.getByRole("link", { name: "Open sessions" }));
-  return before;
+  fireEvent.click(screen.getByRole("link", { name: TARGETS[target] }));
+  return { router, before };
+}
+
+/** Lets the router finish a navigation its own code started, as a redirect's. */
+async function settle() {
+  await act(async () => {
+    await Promise.resolve();
+  });
 }
 
 describe("route loading", () => {
   it.each(ENTRIES)(
     "shows nothing new for 300 ms, then the page skeleton in main with aria-busy while a route's code loads (%s)",
     async (entry) => {
-      const before = await startLoading(entry, deferredSessions());
+      const { before } = await startLoading(entry, deferredSessions());
 
       wait(299);
       expect(main().textContent).toBe(before);
@@ -235,6 +255,32 @@ describe("route loading", () => {
     ).toBeInTheDocument();
   });
 
+  it.each(ENTRIES)(
+    "keeps the page skeleton at least 300 ms once shown, through a redirect (%s)",
+    async (entry) => {
+      const sessions = deferredSessions();
+      const { router } = await startLoading(entry, sessions, "/live");
+      wait(300);
+      expect(skeleton()).not.toBeNull();
+
+      await sessions.arrive();
+      wait(299);
+      expect(skeleton()).not.toBeNull();
+      expect(main()).toHaveAttribute("aria-busy", "true");
+      expect(screen.queryByRole("heading", { name: "Sessions stand-in" })).toBeNull();
+
+      wait(1);
+      await settle();
+      expect(skeleton()).toBeNull();
+      expect(
+        screen.getByRole("heading", { level: 1, name: "Sessions stand-in" }),
+      ).toBeInTheDocument();
+      // A replace, so Back skips /live.
+      expect(router.state.location.pathname).toBe("/sessions");
+      expect(router.state.historyAction).toBe("REPLACE");
+    },
+  );
+
   it.each(ENTRIES)("announces Loading page only after 1 s (%s)", async (entry) => {
     await startLoading(entry, deferredSessions());
 
@@ -281,21 +327,24 @@ describe("route loading", () => {
     expect(screen.getByRole("banner")).toBe(topBar);
   });
 
-  it("renders the screen and drops the skeleton once its code arrives", async () => {
-    const sessions = deferredSessions();
-    await startLoading("an in-app navigation", sessions);
-    wait(300);
-    wait(400);
-    expect(skeleton()).not.toBeNull();
+  it.each(ENTRIES)(
+    "renders the screen and drops the skeleton once its code arrives (%s)",
+    async (entry) => {
+      const sessions = deferredSessions();
+      await startLoading(entry, sessions);
+      wait(300);
+      wait(400);
+      expect(skeleton()).not.toBeNull();
 
-    await sessions.arrive();
-    wait(0);
-    expect(
-      screen.getByRole("heading", { level: 1, name: "Sessions stand-in" }),
-    ).toBeInTheDocument();
-    expect(skeleton()).toBeNull();
-    expect(main()).not.toHaveAttribute("aria-busy", "true");
-  });
+      await sessions.arrive();
+      wait(0);
+      expect(
+        screen.getByRole("heading", { level: 1, name: "Sessions stand-in" }),
+      ).toBeInTheDocument();
+      expect(skeleton()).toBeNull();
+      expect(main()).not.toHaveAttribute("aria-busy", "true");
+    },
+  );
 
   it("loads the export the route names", async () => {
     // The picker comes first, as in screens/brain, so taking the first export would show it.

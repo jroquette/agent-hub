@@ -20,7 +20,7 @@ export function compressPlugin(): Plugin {
   };
 }
 
-// Stops the build when the entry chunk or the vendor chunk is over its size limit (AGH-614, AC-1, AC-3).
+// Stops the build when the entry chunk or the vendor chunk is over its size limit.
 export function budgetPlugin(): Plugin {
   return {
     name: "ah-bundle-budget",

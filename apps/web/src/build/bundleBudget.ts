@@ -1,7 +1,7 @@
-// The size budget of the built app (AGH-614, AC-1, AC-3): the entry chunk, the one index.html loads,
-// and the vendor chunk each have a limit in bytes.
+// The size budget of the built app: the entry chunk, the one index.html loads, and the vendor
+// chunk each have a limit in bytes.
 
-// The owner's limits (O1, O2). Budgets only tighten: lower a limit, never raise it.
+// The limits the owner set. Budgets only tighten: lower a limit, never raise it.
 export const ENTRY_LIMIT_BYTES = 400_000;
 export const VENDOR_LIMIT_BYTES = 350_000;
 
