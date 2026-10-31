@@ -18,18 +18,78 @@
 .ah-brain-tree[data-root] {
   padding-left: 0;
 }
-.ah-brain-tree summary {
-  cursor: pointer;
-  padding: 4px 6px;
-  min-height: 24px;
-  font-size: 12px;
-  color: var(--text-muted);
+/* The tree's own scroll box (AGH-617): only the rows in its view are in the page. Its inline
+   padding keeps a row's focus ring inside it, and the negative margin keeps the rows where the
+   card puts them; a row it scrolls to stays below its group's sticky heading. */
+.ah-brain-scroll {
+  max-height: calc(100dvh - var(--topbar) - 240px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  margin: 0 calc(-1 * var(--space-1));
+  padding: 0 var(--space-1) var(--space-1);
+  scroll-padding: 24px 0 var(--space-1);
+}
+.ah-brain-scroll .ah-brain-group {
+  display: block;
+}
+.ah-brain-scroll .ah-brain-group + .ah-brain-group {
+  margin-top: var(--space-6);
+}
+/* The heading stays at the top of the box while its group's rows pass under it. The 4 px below
+   it are left clear, so the focus ring of the row under it shows whole. */
+.ah-brain-scroll .ah-brain-group-label {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 20px;
+  margin: 0 0 4px;
+  background: var(--surface);
+}
+/* The rows' heights are fixed per kind (BrainTree's SIZE): padding stands in for the rows out of
+   view, so the scrollbar never jumps. */
+.ah-brain-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ah-brain-rows > li[data-kind="note"] {
+  height: 26px;
+}
+.ah-brain-rows > li[data-kind="folder"] {
+  height: 28px;
 }
 .ah-brain-folder {
-  display: list-item;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
 }
-.ah-brain-folder .ah-count {
-  float: right;
+.ah-brain-folder:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.ah-brain-folder > .ah-mono {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ah-brain-folder > .ah-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.ah-brain-scroll .ah-brain-group > .ah-brain-link {
+  margin-top: 2px;
 }
 .ah-brain-group {
   display: flex;

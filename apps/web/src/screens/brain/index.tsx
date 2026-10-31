@@ -1,18 +1,9 @@
 import "./Brain.css";
 
 import { useEffect, useRef } from "react";
-import type { ReactNode } from "react";
 import { Navigate, useParams, useSearchParams } from "react-router";
 
-import {
-  AppLink,
-  Banner,
-  Button,
-  EmptyState,
-  Icon,
-  ProblemError,
-  Skeleton,
-} from "../../components";
+import { Banner, Button, EmptyState, Icon, ProblemError, Skeleton } from "../../components";
 import { useScope } from "../../lib/scope";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
@@ -20,12 +11,11 @@ import { CountCell, KnowledgeProjectIndex, PickFoot } from "../knowledge-index";
 import { useProjectNow } from "../project-overview/queries";
 import { BRAIN_NOTE_STARTERS } from "../learnings/discussLearning";
 import { BrainSearch, NOTE_PATH_ID, focusFirstResult, useSearchTerm } from "./BrainSearch";
+import { BrainTree } from "./BrainTree";
 import { LINKED_FROM_ID, LinkedFrom, linkedFromLabel } from "./LinkedFrom";
 import { NOTE_ORIGIN_ID, NoteOrigin, originFields } from "./NoteOrigin";
-import { NoteLink } from "./NoteLink";
 import { NoteView } from "./NoteView";
 import { useBacklinks, useBrainNote, useBrainTree, useNoteLearnings } from "./queries";
-import { INBOX_FOLDER, START_NOTES, buildTree, countNotes, type BrainFolder } from "./tree";
 
 /** The note a project's Brain opens when the URL names none (AC-201.38). */
 export const DEFAULT_NOTE = "index.md";
@@ -33,125 +23,6 @@ export const DEFAULT_NOTE = "index.md";
 /** The in-app route of a project's Brain, on its default note. */
 export function brainHome(project: string): string {
   return `/projects/${encodeURIComponent(project)}/brain`;
-}
-
-function Folder({
-  folder,
-  project,
-  selected,
-}: {
-  folder: BrainFolder;
-  project: string;
-  selected: string;
-}) {
-  return (
-    <ul className="ah-brain-tree" data-root={folder.path === "" || undefined}>
-      {folder.notes.map((entry) => (
-        <li key={entry.path}>
-          <NoteLink project={project} path={entry.path} selected={selected} />
-        </li>
-      ))}
-      {folder.folders.map((child) => (
-        <FolderItem key={child.path} folder={child} project={project} selected={selected} />
-      ))}
-    </ul>
-  );
-}
-
-function FolderItem({
-  folder,
-  project,
-  selected,
-}: {
-  folder: BrainFolder;
-  project: string;
-  selected: string;
-}) {
-  const count = countNotes(folder);
-  return (
-    <li>
-      <details open={selected.startsWith(folder.path)}>
-        <summary
-          className="ah-brain-folder"
-          aria-label={`${folder.name}, ${String(count)} ${count === 1 ? "note" : "notes"}`}
-        >
-          <span className="ah-mono">{folder.name}/</span>
-          <span className="ah-count">{count}</span>
-        </summary>
-        <Folder folder={folder} project={project} selected={selected} />
-      </details>
-    </li>
-  );
-}
-
-function TreeGroup({ id, label, children }: { id: string; label: string; children: ReactNode }) {
-  return (
-    <section className="ah-brain-group" aria-labelledby={id}>
-      <h2 id={id} className="ah-brain-group-label">
-        {label}
-      </h2>
-      {children}
-    </section>
-  );
-}
-
-function GroupedTree({
-  root,
-  project,
-  selected,
-}: {
-  root: BrainFolder;
-  project: string;
-  selected: string;
-}) {
-  const start = root.notes;
-  const folders = root.folders.filter((folder) => folder.name !== INBOX_FOLDER);
-  const inbox = root.folders.find((folder) => folder.name === INBOX_FOLDER);
-  return (
-    <>
-      {start.length > 0 && (
-        <TreeGroup id="brain-start" label="Start here">
-          <ul className="ah-brain-tree" data-root>
-            {[...start]
-              .sort((a, b) => Number(b.path in START_NOTES) - Number(a.path in START_NOTES))
-              .map((entry) => (
-                <li key={entry.path}>
-                  <NoteLink
-                    project={project}
-                    path={entry.path}
-                    selected={selected}
-                    label={START_NOTES[entry.path]}
-                  />
-                </li>
-              ))}
-          </ul>
-        </TreeGroup>
-      )}
-      {folders.length > 0 && (
-        <TreeGroup id="brain-folders" label="Folders">
-          <ul className="ah-brain-tree" data-root>
-            {folders.map((folder) => (
-              <FolderItem key={folder.path} folder={folder} project={project} selected={selected} />
-            ))}
-          </ul>
-        </TreeGroup>
-      )}
-      {inbox && (
-        <TreeGroup id="brain-inbox" label="Inbox · unreviewed">
-          <ul className="ah-brain-tree" data-root>
-            <FolderItem folder={inbox} project={project} selected={selected} />
-          </ul>
-          <AppLink
-            href={`/knowledge/learnings?scope=${encodeURIComponent(project)}`}
-            className="ah-brain-link"
-          >
-            <Icon name="lightbulb" size="sm" />
-            <span>Triage in Learnings</span>
-          </AppLink>
-        </TreeGroup>
-      )}
-    </>
-  );
 }
 
 function typingIn(target: EventTarget | null): boolean {
@@ -261,7 +132,7 @@ function BrainTreePanel({ project, selected }: { project: string; selected: stri
         </Banner>
       )}
       {query.trim() === "" ? (
-        <GroupedTree root={buildTree(entries)} project={project} selected={selected} />
+        <BrainTree project={project} entries={entries} selected={selected} field={fieldRef} />
       ) : (
         <BrainSearch
           project={project}
