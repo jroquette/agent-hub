@@ -22,7 +22,6 @@ The guard and the Stop gate send their decisions through send_decision (fail ope
 
 from __future__ import annotations
 
-import http.client
 import json
 import os
 import re
@@ -220,31 +219,42 @@ def build_envelope(hook: dict, decision: dict | None = None) -> dict | None:
 
 
 def post_envelope(envelope: dict, timeout: float = TIMEOUT) -> None:
-    """POST envelope to the event server within timeout seconds; any failure is silent."""
+    """POST envelope to the event server within timeout seconds; any failure is silent.
+
+    The request is written on a plain socket as http.client wrote it (the same Host, the body's
+    type and length), with Connection: close, and one read of at most 4 KiB takes the answer.
+    With no time left (timeout 0 or less) nothing is sent."""
     try:
+        if timeout <= 0:
+            return
+        deadline = time.monotonic() + timeout
         target = endpoint()
         if target is None:
             return
         body = json.dumps(envelope, allow_nan=False).encode("ascii")
         if len(body) > MAX_BODY_BYTES:
             return
-        deadline = time.monotonic() + timeout
         host, port = target
-        connection = http.client.HTTPConnection(host, port, timeout=timeout)
-        try:
-            connection.connect()
+        # http.client's Host: an IPv6 address in brackets, and the port unless it is http's 80.
+        name = f"[{host}]" if ":" in host else host
+        authority = name if port == 80 else f"{name}:{port}"
+        head = (
+            f"POST {HOOKS_PATH} HTTP/1.1\r\nHost: {authority}\r\nContent-Type: application/json\r\n"
+            f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
+        )
+        import socket  # here, not at the top: a hook that loads the sensor and sends nothing skips it
+
+        with socket.create_connection(target, timeout=deadline - time.monotonic()) as connection:
             left = deadline - time.monotonic()
             if left <= 0:
                 return
-            connection.sock.settimeout(left)
-            connection.request("POST", HOOKS_PATH, body=body, headers={"Content-Type": "application/json"})
+            connection.settimeout(left)
+            connection.sendall(head.encode("ascii") + body)
             left = deadline - time.monotonic()
             if left <= 0:
                 return
-            connection.sock.settimeout(left)
-            connection.getresponse().read(4096)
-        finally:
-            connection.close()
+            connection.settimeout(left)
+            connection.recv(4096)
     except Exception:  # down, slow, refused, unencodable: the sensor fails open
         return
 
@@ -259,9 +269,8 @@ def send_decision(hook: dict, decision: dict) -> None:
         return
 
 
-def read_hook() -> dict | None:
-    """The hook input on stdin, or None: over MAX_STDIN bytes, not UTF-8, not a JSON object."""
-    raw = sys.stdin.buffer.read(MAX_STDIN + 1)
+def parse_hook(raw: bytes) -> dict | None:
+    """The hook input in raw, or None: over MAX_STDIN bytes, not UTF-8, not a JSON object."""
     if len(raw) > MAX_STDIN:
         return None
     try:
@@ -269,6 +278,11 @@ def read_hook() -> dict | None:
     except (ValueError, RecursionError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def read_hook() -> dict | None:
+    """The hook input on stdin, read up to one byte past MAX_STDIN (see parse_hook)."""
+    return parse_hook(sys.stdin.buffer.read(MAX_STDIN + 1))
 
 
 def main() -> None:

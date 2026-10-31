@@ -341,12 +341,12 @@
     "plugin/hub-workflow/hooks/event_sensor.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "46ba13d517e3a9974c75b5c1ad46c29337eab3235077dabd8d00b374a5ad118a"
+      "sha256": "1927880ec63c5abfc9c92666d7b29317971cf8ca30d5dbdc7f1c2fc5bed87c79"
     },
     "plugin/hub-workflow/hooks/guard.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "fcdc052caf53e1842e91df79227275fb58302edbdd663e14a80becc9957447b3"
+      "sha256": "bc3c25dacae16a9194f006e43add41e417a6a0da4f6ecea45c8a3df0836ada1a"
     },
     "plugin/hub-workflow/hooks/hooks.json": {
       "executable": false,

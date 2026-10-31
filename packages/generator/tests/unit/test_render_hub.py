@@ -1087,10 +1087,16 @@ def function_imports(module: ast.Module) -> Iterator[tuple[str, int]]:
 
 
 # The real-3.9 import test executes module-level imports only (class bodies included); an import
-# inside a function would reach 3.9 untested. One exception, closed: the extension runner imports
-# its sibling reader inside `answer`, so a missing or broken reader ends the run with exit 3 and a
-# one-line cause (its docstring's protocol), and the guard extension tests run that path on 3.9.
-FUNCTION_IMPORTS = {EXTENSION_RUNNER: ["from stdlib_reader import load_hub_file"]}
+# inside a function would reach 3.9 untested. The exceptions, closed, each run on 3.9 by the hook
+# tests: the extension runner imports its sibling reader inside `answer`, so a missing or broken
+# reader ends the run with exit 3 and a one-line cause (its docstring's protocol), and the guard
+# extension tests run that path; the guard loads the sensor only in `record`, on a deny or an ask,
+# and the sensor imports `socket` only when it sends (AGH-621), which the sensor tests run.
+FUNCTION_IMPORTS = {
+    EXTENSION_RUNNER: ["from stdlib_reader import load_hub_file"],
+    GUARD_HOOK: ["from event_sensor import send_decision"],
+    "plugin/hub-workflow/hooks/event_sensor.py": ["import socket"],
+}
 
 
 def test_imports_at_module_level_when_rendered(demo_render: dict[str, RenderedFile]) -> None:

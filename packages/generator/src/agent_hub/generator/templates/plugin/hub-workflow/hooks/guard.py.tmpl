@@ -101,11 +101,6 @@ except Exception as error:  # a partial install: ask, never let the call through
                                              "permissionDecisionReason": f"[hub guard] could not check this call ({type(error).__name__}); confirm"}}))
     sys.exit(0)
 
-try:  # the control plane's sender: without it, decisions are simply not recorded
-    from event_sensor import send_decision
-except Exception:
-    send_decision = None
-
 Verdict = Optional[tuple[str, str]]
 
 NON_SECRET_ENV = {".env.example", ".env.development", ".env.staging", ".env.test", ".env.sample", ".env.template"}
@@ -2210,11 +2205,13 @@ def rule_of(reason: str) -> str | None:
 
 
 def record(data: dict, decision: str, reason: str) -> None:
-    """Send the printed verdict to the control plane; never raises, never prints."""
-    if send_decision is None:
-        return
+    """Send the printed verdict to the control plane; never raises, never prints. The sensor is
+    loaded here, so a call the guard lets through never loads it; without it (a partial install),
+    decisions are simply not recorded."""
     try:
         sys.stdout.flush()
+        from event_sensor import send_decision
+
         send_decision(data, {"by": "guard", "kind": decision, "rule": rule_of(reason)})
     except Exception:
         pass
