@@ -5,10 +5,12 @@ import { createMemoryRouter, RouterProvider } from "react-router";
 import type { RouteObject } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { apiKey } from "./lib/api";
 import { AppShell } from "./shell/AppShell";
 import { lazyRedirect, lazyScreen, Redirect, RouteSkeleton } from "./shell/routeLoading";
 import {
   aPage,
+  aProblem,
   aProjectSummary,
   stubApi,
   stubEventSource,
@@ -246,12 +248,12 @@ function standInRoute(path: string, heading: string): RouteObject {
   return { path, lazy: () => Promise.resolve({ element: createElement(standIn(heading)) }) };
 }
 
-/** Opens `path` on `routes`; returns the router. */
-function openAt(routes: RouteObject[], path: string) {
+/** Opens `path` on `routes`, with the queries in `client`; returns the router. */
+function openAt(routes: RouteObject[], path: string, client = testQueryClient()) {
   const router = createMemoryRouter(routes, { initialEntries: [path] });
   render(
     createElement(TestProviders, {
-      client: testQueryClient(),
+      client,
       children: createElement(RouterProvider, { router }),
     }),
   );
@@ -298,6 +300,31 @@ describe("HubGate", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Welcome stand-in" })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/welcome");
     expect(router.state.historyAction).toBe("REPLACE");
+  });
+
+  it("keeps the page drawn once the hub list cannot be read", async () => {
+    vi.useFakeTimers();
+    stubNoHub({ "/api/v1/hubs": aProblem() });
+    const client = testQueryClient();
+    const welcome = heldModule({ WelcomeScreen: standIn("Welcome stand-in") });
+    const portfolio = { PortfolioScreen: standIn("Portfolio stand-in") };
+    const router = openAt(
+      gatedRoutes(
+        [{ index: true, ...lazyScreen(() => Promise.resolve(portfolio), "PortfolioScreen") }],
+        welcome.load,
+      ),
+      "/",
+      client,
+    );
+    await settle();
+
+    // The failed answer is in, and the gate does not take it for an empty list.
+    expect(client.getQueryState(apiKey("/api/v1/hubs"))?.status).toBe("error");
+    expect(router.state.navigation.state).toBe("idle");
+    expect(router.state.location.pathname).toBe("/");
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Portfolio stand-in" }),
+    ).toBeInTheDocument();
   });
 
   it("never shows the Portfolio's empty state once the hub list comes back empty", async () => {
