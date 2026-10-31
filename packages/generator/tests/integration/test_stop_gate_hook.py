@@ -1517,6 +1517,15 @@ def git_in(top: Path, tmp_path: Path, *args: str) -> str:
     return completed.stdout
 
 
+def bash_in(top: Path, tmp_path: Path, command: str) -> None:
+    """Run ``command`` with bash in ``top``, in the scratch environment."""
+    bash = shutil.which("bash")
+    assert bash is not None
+    subprocess.run(  # noqa: S603 - bash found on PATH, a command of this test
+        [bash, "-c", command], cwd=top, check=True, capture_output=True, env=scratch_env(tmp_path)
+    )
+
+
 def write_new_files(top: Path, size: int) -> bytes:
     """New code files in ``top`` whose sorted names, joined by newlines, take ``size`` bytes.
 
@@ -1584,22 +1593,42 @@ def test_lists_changed_paths_when_check_stop_runs(
 
 
 @pytest.mark.parametrize(
-    ("command", "status", "listed"),
+    ("before", "command", "status", "listed"),
     [
         pytest.param(
+            "",
             "mkdir pkg2 && mv pkg1/b.py pkg2/b.py",
             [" M a.py", " D pkg1/b.py", "?? pkg2/b.py"],
             b"a.py\npkg1/b.py\npkg2/b.py",
             id="mv_across_folders",
         ),
         pytest.param(
-            "ln -s b.py link.py", [" M a.py", "?? link.py"], b"a.py\nlink.py", id="link_to_old_file"
+            "",
+            "mv pkg1 pkg2",
+            [" M a.py", " D pkg1/b.py", " D pkg1/sub/c.py", "?? pkg2/b.py", "?? pkg2/sub/c.py"],
+            b"a.py\npkg1/b.py\npkg1/sub/c.py\npkg2/b.py\npkg2/sub/c.py",
+            id="mv_folder",
         ),
         pytest.param(
+            "",
+            "ln -s b.py link.py",
+            [" M a.py", "?? link.py"],
+            b"a.py\nlink.py",
+            id="link_to_old_file",
+        ),
+        pytest.param(
+            "",
             "git mv b.py c.py && echo 'x = 2' > b.py",
             [" M a.py", "R  b.py -> c.py", "?? b.py"],
             b"a.py\nb.py\nc.py",
             id="git_mv_then_same_name",
+        ),
+        pytest.param(
+            "git mv b.py c.py",
+            "",
+            [" M a.py", "R  b.py -> c.py"],
+            b"a.py\nb.py\nc.py",
+            id="git_mv_before_session",
         ),
     ],
 )
@@ -1608,29 +1637,31 @@ def test_lists_moved_and_linked_paths_when_check_stop_runs(
     workspace: Path,
     tmp_path: Path,
     *,
+    before: str,
     command: str,
     status: list[str],
     listed: bytes,
 ) -> None:
-    # b.py and pkg1/b.py were committed before the session, older than it by both dates. The
-    # session edits a.py, so the gate runs, and runs one shell command. A plain mv, not staged,
-    # is a deletion and an untracked file to git, and keeps the file's mtime: the new name counts
-    # by the ctime the move set. A new link counts by its own dates, not its older target's. A
-    # name git lists twice, a staged rename's old name and a file made again under it, is listed
+    # b.py, pkg1/b.py and pkg1/sub/c.py were committed before the session, older than it by both
+    # dates. Each row runs one shell command before the session starts, and one after the session
+    # edits a.py, so the gate runs. A plain mv, not staged, is a deletion and an untracked file to
+    # git, and keeps the file's mtime: the new name counts by the ctime the move set. A folder
+    # moved with mv keeps both dates of the files in it: they count by the ctime of a folder
+    # between the checkout's top and them, here pkg2 above the older pkg2/sub. A new link counts by
+    # its own dates, not its older target's. Both names of a rename count whenever git lists them,
+    # even when the rename was staged before the session and c.py is older than it by both dates.
+    # A name git lists twice, a staged rename's old name and a file made again under it, is listed
     # once.
     app = workspace / "app"
-    (app / "pkg1").mkdir()
-    for name in ("a.py", "b.py", "pkg1/b.py"):
+    (app / "pkg1" / "sub").mkdir(parents=True)
+    for name in ("a.py", "b.py", "pkg1/b.py", "pkg1/sub/c.py"):
         (app / name).write_text("x = 1\n", encoding="utf-8")
     git_in(app, tmp_path, "add", "-A")
     git_in(app, tmp_path, "commit", "-qm", "before the session")
+    bash_in(app, tmp_path, before)
     start = start_between_writes()
     (app / "a.py").write_text("x = 2\n", encoding="utf-8")
-    bash = shutil.which("bash")
-    assert bash is not None
-    subprocess.run(  # noqa: S603 - bash found on PATH, a command of this test
-        [bash, "-c", command], cwd=app, check=True, capture_output=True, env=scratch_env(tmp_path)
-    )
+    bash_in(app, tmp_path, command)
     found = git_in(app, tmp_path, "status", "--porcelain", "--untracked-files=all")
     assert sorted(found.splitlines()) == sorted(status)
     saved = tmp_path / "changed-files"
@@ -1641,12 +1672,46 @@ def test_lists_moved_and_linked_paths_when_check_stop_runs(
     assert saved_bytes(saved) == listed
 
 
+def test_lists_whole_name_when_old_git_prints_arrow_unquoted(
+    run_hook: RunHook, workspace: Path, *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # git before 2.29 printed a space in an untracked name unquoted, so a new name holding " -> "
+    # reads like a rename record. A git first on the gate's PATH prints this tree's status as
+    # such a git did, and hands any other call to git. Each name is listed whole: no piece of it,
+    # absolute or holding "..", reaches check_stop.
+    app = workspace / "app"
+    names = ["a.py", "x -> /etc/passwd", "y -> ../z.py"]
+    for name in names:
+        (app / name).parent.mkdir(parents=True, exist_ok=True)
+        (app / name).write_text("x = 1\n", encoding="utf-8")
+    old_status = tmp_path / "old-status"
+    old_status.write_text("".join(f"?? {name}\n" for name in names), encoding="utf-8")
+    git = shutil.which("git")
+    assert git is not None
+    old_git = tmp_path / "old-git"
+    old_git.mkdir()
+    (old_git / "git").write_text(
+        f'#!/bin/sh\ncase "$1" in status) exec cat {shlex.quote(str(old_status))};; esac\n'
+        f'exec {shlex.quote(git)} "$@"\n',
+        encoding="utf-8",
+    )
+    (old_git / "git").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{old_git}{os.pathsep}{os.environ.get('PATH', os.defpath)}")
+    saved = tmp_path / "changed-files"
+
+    run_hook([{"dir": "app", "check_stop": saving(saved)}], app)
+
+    assert saved_bytes(saved) == b"a.py\nx -> /etc/passwd\ny -> ../z.py"
+
+
 @pytest.mark.parametrize(
     ("quote_path", "name", "shown", "exit_code", "decision"),
     [
         pytest.param("true", "café.py", '"caf\\303\\251.py"', 0, None, id="non_ascii"),
         pytest.param("true", "my notes.md", '"my notes.md"', 3, "block", id="space"),
+        pytest.param("false", "x\u0085y.py", "x\u0085y.py", 0, None, id="raw_next_line"),
         pytest.param("false", "x\u2028y.py", "x\u2028y.py", 0, None, id="raw_line_separator"),
+        pytest.param("false", "x\u2029y.py", "x\u2029y.py", 0, None, id="raw_paragraph_separator"),
     ],
 )
 def test_leaves_changed_files_unset_when_git_quotes_a_path(
@@ -1663,8 +1728,8 @@ def test_leaves_changed_files_unset_when_git_quotes_a_path(
     # git prints this new name quoted, so a list could only leave it out and come up one path
     # short: check_stop gets no list and finds the changes itself. It still runs, and its exit
     # code decides as usual (a pass or a failure, by row). Under core.quotePath=false git prints
-    # a non-ASCII name raw, and Python's splitlines() breaks a line at U+2028: the record would
-    # come apart into pieces of names, so no list either.
+    # a non-ASCII name raw, and Python's splitlines() breaks a line at U+0085, U+2028 and U+2029:
+    # the record would come apart into pieces of names, so no list either.
     app = workspace / "app"
     git_in(app, tmp_path, "config", "core.quotePath", quote_path)
     (app / "a.py").write_text("x = 1\n", encoding="utf-8")
