@@ -302,5 +302,28 @@ export function ConfirmDialog({
  * at least that long, so a fast answer never flashes it and a slow one never blinks it away.
  */
 export function useSkeleton(pending: boolean): boolean {
-  throw new Error(`useSkeleton is not implemented yet (${String(pending)})`);
+  const [shownAt, setShownAt] = useState<number | null>(null);
+  useEffect(() => {
+    if (pending && shownAt === null) {
+      const timer = setTimeout(() => {
+        setShownAt(Date.now());
+      }, SKELETON_DELAY_MS);
+      return () => {
+        clearTimeout(timer);
+      };
+    }
+    if (!pending && shownAt !== null) {
+      const timer = setTimeout(
+        () => {
+          setShownAt(null);
+        },
+        Math.max(0, shownAt + SKELETON_DELAY_MS - Date.now()),
+      );
+      return () => {
+        clearTimeout(timer);
+      };
+    }
+    return undefined;
+  }, [pending, shownAt]);
+  return shownAt !== null;
 }

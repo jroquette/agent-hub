@@ -1,14 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 
-import {
-  Banner,
-  Button,
-  ProblemError,
-  SKELETON_DELAY_MS,
-  Skeleton,
-  useDelayed,
-} from "../../components";
+import { Banner, Button, ProblemError, Skeleton, useDelayed, useSkeleton } from "../../components";
 import type { ApiData, ApiProblem } from "../../lib/api";
 import { SEARCH_DEBOUNCE_MS } from "../../lib/search";
 import { KnowledgeRow } from "./KnowledgeRow";
@@ -47,37 +40,6 @@ export function useSearchTerm(text: string): [string, () => void] {
       setTerm(text);
     },
   ];
-}
-
-/**
- * Whether the loading skeleton shows: only once `pending` has lasted the skeleton delay, then for
- * at least that long, so a fast answer never flashes it and a slow one never blinks it away.
- */
-function useSkeleton(pending: boolean): boolean {
-  const [shownAt, setShownAt] = useState<number | null>(null);
-  useEffect(() => {
-    if (pending && shownAt === null) {
-      const timer = setTimeout(() => {
-        setShownAt(Date.now());
-      }, SKELETON_DELAY_MS);
-      return () => {
-        clearTimeout(timer);
-      };
-    }
-    if (!pending && shownAt !== null) {
-      const timer = setTimeout(
-        () => {
-          setShownAt(null);
-        },
-        Math.max(0, shownAt + SKELETON_DELAY_MS - Date.now()),
-      );
-      return () => {
-        clearTimeout(timer);
-      };
-    }
-    return undefined;
-  }, [pending, shownAt]);
-  return shownAt !== null;
 }
 
 function plural(count: number, one: string, many: string): string {
