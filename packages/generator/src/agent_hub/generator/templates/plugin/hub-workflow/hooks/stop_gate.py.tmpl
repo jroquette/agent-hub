@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Stop: if this session changed code in a repo checkout/worktree listed in hub.json, run that repo's
-`check_fast` command and block completion while it fails (feedback goes back to the agent). Releases after
+`check_stop` command, else its `check_fast` command, and block completion while it fails (feedback goes
+back to the agent). Releases after
 3 consecutive blocks to avoid loops. When checks pass and files changed, remind about /handoff (never
 blocks). The checkouts checked are the one holding the session's cwd, then each one holding a file that an
 Edit, Write, MultiEdit or NotebookEdit call touched, read from the main transcript and from the newest
@@ -11,11 +12,19 @@ starts at the first timestamp in the first START_BYTES of the main transcript; w
 none can be read there, or it is in the future, at the transcript's birth time where the platform keeps
 one, else 12 h ago. Every git status and check fits in one BUDGET of seconds from the hook's start; each
 run gets the repo's `check_fast_timeout` (else TIMEOUT), capped by the budget left. A repo whose run was
-cut, never started for lack of budget, or that has no `check_fast` gets a "not run" line: it never blocks,
+cut, never started for lack of budget, or that has neither command gets a "not run" line: it never blocks,
 and it is always named. A run with no failure and at least one budget or timeout line leaves the block
 counter as it was. Each check runs in its own process group, killed when the run ends (on a timeout, after
 a normal exit, and when the hook itself gets SIGTERM or SIGHUP), so no child of a check outlives the gate;
 its output goes to a temp file, so a background child holding it open never holds the gate up.
+A `check_stop` run gets HUB_CHANGED_FILES: the paths the session changed in that checkout, from its top,
+sorted, one a line, with no final newline. A path that exists counts when written since the session
+start; a deleted one, and both sides of a rename, whenever git lists them (a rename keeps the mtime). The
+variable is unset when git quotes any path of the checkout (a quoted name cannot be listed whole), when the
+list is over CHANGED_FILES_MAX_BYTES, and on a second start after the first failed with E2BIG (the list
+and the inherited environment together over the kernel's limit). A value the hook inherits reaches no
+check. The summary lines name what the changed repos were given: check_fast, check_stop, or both as
+check_stop/check_fast.
 After a block is printed, it is sent to the local control plane through the event sensor's
 send_decision (event_sensor.py beside it): the hook input, its content reduced to sizes
 (reduce_hook), with decision {by: stop_gate, kind: block, command, exit_code} of the first failing repo, bounded by the
@@ -23,6 +32,7 @@ sensor's 0.5 s; it prints nothing and never changes the output or the exit code.
 
 from __future__ import annotations
 
+import errno
 import json
 import math
 import os
@@ -59,6 +69,9 @@ MIN_RUN = 1  # a check starts only with this many seconds of budget left
 KILL_WAIT = 1
 GIT_TIMEOUT = 10
 OUTPUT_TAIL = 3000
+# The most UTF-8 bytes of changed paths check_stop gets: Linux refuses to start a process with one
+# environment string of about 128 KiB.
+CHANGED_FILES_MAX_BYTES = 65_536
 START_BYTES = 65_536  # the head of the main transcript read for the session start
 MAX_SUBAGENT_FILES = 1024  # subagent transcripts read for touched files, newest first
 # The file-writing tools and the input key holding the path each one wrote.
@@ -125,22 +138,39 @@ def left() -> float:
     return HOOK_START + BUDGET - time.monotonic()
 
 
-def changed_code(top: Path, since: float) -> list[str] | None:
-    """The code files changed since `since`, or None when the budget is spent before git answers: git()
-    reads a timeout as "", which is no clean tree. A git error or git's own GIT_TIMEOUT stays "no change"."""
+def changed_code(top: Path, since: float) -> tuple[list[str] | None, list[str] | None]:
+    """(the code files changed since `since`, every path changed since then), from one git status. Both are
+    None when the budget is spent before git answers: git() reads a timeout as "", which is no clean tree. A
+    git error or git's own GIT_TIMEOUT stays "no change". Every path, sorted: one that exists when written
+    since `since`, a deleted one and both sides of a rename always; None when git quotes any path, as a list
+    without that name would come up short."""
     cap = min(GIT_TIMEOUT, left())
     if cap <= 0:
-        return None
+        return None, None
     status = git(["status", "--porcelain", "--untracked-files=all"], top, timeout=max(1, math.ceil(cap)))
     if not status and cap < GIT_TIMEOUT and left() <= 0:
-        return None
-    out = []
+        return None, None
+    out, every = [], set()
     for line in status.splitlines():
-        rel = line[3:].split(" -> ")[-1].strip('"')
+        sides = line[3:].split(" -> ")
+        rel = sides[-1].strip('"')
         p = top / rel
         if (p.suffix in CODE_EXT or p.name in CODE_NAMES) and p.exists() and p.stat().st_mtime >= since:
             out.append(rel)
-    return out
+        if every is None or any(side.startswith('"') for side in sides):
+            every = None
+        else:
+            every.update(side for side in sides if len(sides) > 1 or written_since(top / side, since))
+    return out, None if every is None else sorted(every)
+
+
+def written_since(path: Path, since: float) -> bool:
+    """Whether a path git lists counts as changed since `since`: its mtime is at or after it, or it is gone (a
+    deletion) or cannot be read."""
+    try:
+        return path.stat().st_mtime >= since
+    except OSError:
+        return True
 
 
 def touched_paths(tp: str) -> tuple[set[str], str]:
@@ -240,22 +270,31 @@ def label_of(cfg: Config, repo: str, top: Path) -> str:
         return f"{repo} ({top})"
 
 
-def run_check(cmd: str, top: Path, limit: float) -> tuple[str, str, int | None]:
-    """(status, output tail, exit code) of one check: "passed", "failed" (non-zero exit, could not start:
-    no exit code) or "killed" (still running after `limit` s). The output goes to an unnamed temp file and
-    the gate waits for bash alone; then it kills the check's process group, whichever way the run ended."""
+def run_check(cmd: str, top: Path, limit: float, *, kind: str, changed: str | None) -> tuple[str, str, int | None]:
+    """(status, output tail, exit code) of one check of `kind` (check_stop or check_fast): "passed", "failed"
+    (non-zero exit, could not start: no exit code) or "killed" (still running after `limit` s). The output
+    goes to an unnamed temp file and the gate waits for bash alone; then it kills the check's process group,
+    whichever way the run ended. `changed`, the joined paths a check_stop gets, becomes HUB_CHANGED_FILES
+    when it fits CHANGED_FILES_MAX_BYTES; the variable from the gate's own environment never passes on."""
     env = dict(os.environ, NO_COLOR="1", FORCE_COLOR="0", CLICOLOR="0")
+    env.pop("HUB_CHANGED_FILES", None)
+    if changed is not None and len(changed.encode("utf-8", "surrogateescape")) <= CHANGED_FILES_MAX_BYTES:
+        env["HUB_CHANGED_FILES"] = changed
     try:
         out = tempfile.TemporaryFile()
     except OSError as e:
-        return "failed", f"check_fast could not start: {e}", None
+        return "failed", f"{kind} could not start: {e}", None
     with out:
         exit_on_cancel()
-        try:
-            proc = subprocess.Popen(["bash", "-c", cmd], cwd=top, stdin=subprocess.DEVNULL, stdout=out,
-                                    stderr=subprocess.STDOUT, env=env, start_new_session=True)
-        except OSError as e:
-            return "failed", f"check_fast could not start: {e}", None
+        while True:  # at most twice: once more without the list after E2BIG
+            try:
+                proc = subprocess.Popen(["bash", "-c", cmd], cwd=top, stdin=subprocess.DEVNULL, stdout=out,
+                                        stderr=subprocess.STDOUT, env=env, start_new_session=True)
+                break
+            except OSError as e:
+                # E2BIG: the list and the inherited environment together pass the kernel's limit.
+                if e.errno != errno.E2BIG or env.pop("HUB_CHANGED_FILES", None) is None:
+                    return "failed", f"{kind} could not start: {e}", None
         code = None
         try:
             code = proc.wait(timeout=limit)
@@ -344,7 +383,7 @@ def main() -> None:
     touched, partial = touched_paths(tp) if readable and isinstance(tp, str) else (set(), "")
     if not readable and checkout_of(str(cwd), tops) is None:
         # D10: no file the session touched can be known, and cwd names no checkout: check none.
-        if any(changed_code(top, since) != [] for _, top, _ in tops):
+        if any(changed_code(top, since)[0] != [] for _, top, _ in tops):
             emit({"systemMessage": "[hub stop-gate] the session transcript could not be read and the session's cwd "
                                    "is in no repo checkout, so no repo was checked."})
         return
@@ -357,10 +396,11 @@ def main() -> None:
     blocks = saved.get("blocks") if isinstance(saved, dict) else None
     if not isinstance(blocks, int) or isinstance(blocks, bool):
         blocks = 0
-    statuses = [(repo, top, changed_code(top, since)) for repo, top in candidates(cfg, cwd, touched, tops)]
+    statuses = [(repo, top, *changed_code(top, since)) for repo, top in candidates(cfg, cwd, touched, tops)]
     failures, not_run, passed, cut = [], [], 0, False
     first_failed = None  # (command, exit code) of the first failing check
-    for repo, top, files in statuses:
+    kinds = set()  # what the changed repos with a command were given, run or not: check_stop, check_fast
+    for repo, top, files, every in statuses:
         label = label_of(cfg, repo, top)
         if files is None:
             not_run.append(f"{label}: not run: budget")
@@ -369,17 +409,21 @@ def main() -> None:
         if not files:
             continue
         entry = cfg.repo(repo)
-        cmd = (entry.check_fast if entry else "").strip()
+        stop = (entry.check_stop if entry else "").strip()
+        cmd = stop or (entry.check_fast if entry else "").strip()
         if not cmd:
             not_run.append(f"{label}: no check_fast configured")
             continue
+        kind = "check_stop" if stop else "check_fast"
+        kinds.add(kind)
         own = (entry.check_fast_timeout if entry else None) or TIMEOUT
         budget_left = left()
         if budget_left < MIN_RUN:
             not_run.append(f"{label}: not run: budget")
             cut = True
             continue
-        status, out, code = run_check(cmd, top, min(own, budget_left))
+        changed = "\n".join(every) if stop and every is not None else None
+        status, out, code = run_check(cmd, top, min(own, budget_left), kind=kind, changed=changed)
         if status == "killed":
             not_run.append(f"{label}: not run: budget" if budget_left < own else f"{label}: not run: timeout ({own} s)")
             cut = True
@@ -388,20 +432,22 @@ def main() -> None:
             failures.append(f"## {label}: `{cmd}` FAILED\nchanged: {', '.join(files[:8])}\n{out}")
         else:
             passed += 1
+    # One name for the summary lines, in one order whichever repo ran first; check_fast when none was given.
+    checks = "/".join(name for name in ("check_stop", "check_fast") if name in kinds) or "check_fast"
     notes = "\n".join(not_run)
     if failures and blocks < MAX_BLOCKS:
         found = "\n\n".join(failures) + (f"\n\n{notes}" if notes else "")
         try:
             state.write_text(json.dumps({"blocks": blocks + 1}))
         except OSError:  # without its counter the gate could never release: fail open, warn
-            emit_noted(note, {"systemMessage": "[hub stop-gate] check_fast still failing and the block counter could not be saved; "
+            emit_noted(note, {"systemMessage": f"[hub stop-gate] {checks} still failing and the block counter could not be saved; "
                                                "finishing anyway. Do not claim the work is done.\n\n" + found})
             return
-        emit_noted(note, {"decision": "block", "reason": "[hub stop-gate] Fix these before finishing (check_fast must pass):\n\n" + found})
+        emit_noted(note, {"decision": "block", "reason": f"[hub stop-gate] Fix these before finishing ({checks} must pass):\n\n" + found})
         record(data, first_failed)
         return
     if cut and not failures:  # only not-run outcomes: the block counter stays as it was
-        emit_noted(note, {"systemMessage": "[hub stop-gate] check_fast did not finish in every changed repo; finishing anyway. "
+        emit_noted(note, {"systemMessage": f"[hub stop-gate] {checks} did not finish in every changed repo; finishing anyway. "
                                            "Do not claim those repos pass.\n" + notes})
         return
     try:
@@ -410,9 +456,9 @@ def main() -> None:
         pass
     lines = f"\n{notes}" if notes else ""
     if failures:
-        emit_noted(note, {"systemMessage": f"[hub stop-gate] check_fast still failing after {MAX_BLOCKS} attempts; finishing anyway. Do not claim the work is done.{lines}"})
+        emit_noted(note, {"systemMessage": f"[hub stop-gate] {checks} still failing after {MAX_BLOCKS} attempts; finishing anyway. Do not claim the work is done.{lines}"})
     elif passed:
-        emit_noted(note, {"systemMessage": f"[hub] code changed and check_fast is green. If the work spans sessions, run /handoff.{lines}"})
+        emit_noted(note, {"systemMessage": f"[hub] code changed and {checks} is green. If the work spans sessions, run /handoff.{lines}"})
     elif not_run:
         emit_noted(note, {"systemMessage": f"[hub] code changed; no changed repo has a check_fast to run. If the work spans sessions, run /handoff.{lines}"})
     elif note:

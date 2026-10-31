@@ -396,7 +396,7 @@
     "plugin/hub-workflow/hooks/stop_gate.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "fda989c56a96c0b52c630a60efa31fb0858322292df04031c3bc99165a025066"
+      "sha256": "75d668c59f0a925ee7e06fb214f969946645fcd3296f659990c14cceb462f9bc"
     },
     "plugin/hub-workflow/schemas/eval.v1.json": {
       "executable": false,
