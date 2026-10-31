@@ -1,5 +1,9 @@
 // @vitest-environment node
-import { describe, expect, it, vi } from "vitest";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { build } from "vite";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { checkBundle } from "./bundleBudget";
 import { budgetPlugin } from "./bundlePlugins";
 
@@ -169,4 +173,33 @@ describe("budgetPlugin", () => {
       await expect(stopped).rejects.toThrow(lineNaming(file, size, limit));
     },
   );
+
+  it("leaves the new build in the output folder when the check stops a real build", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ah-budget-"));
+    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    await writeFile(join(root, "index.html"), '<script type="module" src="/main.js"></script>\n');
+    await writeFile(join(root, "main.js"), 'document.title = "A small app";\n');
+    // The output folder holds an earlier build, as the committed web_dist does.
+    const outDir = join(root, "web_dist");
+    await mkdir(join(outDir, "assets"), { recursive: true });
+    await writeFile(join(outDir, "assets", "index-Earlier1.js"), "export {};\n");
+
+    // The app has no vendor chunk, so the check fails, as over a limit.
+    const built = build({
+      root,
+      configFile: false,
+      logLevel: "silent",
+      plugins: [budgetPlugin()],
+      build: { outDir, emptyOutDir: true },
+    });
+
+    await expect(built).rejects.toThrow(/no vendor chunk/);
+    // Vite empties the folder before the build renders, so a check that stopped it before the
+    // files were written would leave the folder empty, and hub web from the checkout with no app.
+    const files = (await readdir(outDir, { recursive: true })).map((file) =>
+      file.replace(/\\/g, "/"),
+    );
+    expect(files).toContain("index.html");
+    expect(files.filter((file) => /^assets\/index-.+\.js$/.test(file))).toHaveLength(1);
+  });
 });
