@@ -14,7 +14,7 @@ import { lazyRedirect, lazyScreen, Redirect, RouteSkeleton } from "./shell/route
  * draws only its redirect to Welcome, never the page under it.
  */
 export function askForHubList(client: QueryClient): void {
-  // The gate reads a failure as it reads the query: the page shows.
+  // Nothing to do on a failure: the gate reads it from the query, and its page shows.
   client.query(apiQuery("/api/v1/hubs")).catch(() => undefined);
 }
 
