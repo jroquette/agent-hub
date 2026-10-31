@@ -14,8 +14,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 ### Fixed
 
 - `hub doctor` no longer reports `brain.leak` errors for the lines of an ADR draft that reached a repo's `docs/adr/`
-  folder, the place a draft is meant to end up. The same lines anywhere else in a repo are still errors, and
-  `hub doctor --fix` leaves such a draft unchanged (AGH-622).
+  folder, the place a draft is meant to end up. The same lines anywhere else in a repo are still errors.
+  `hub doctor --fix` keeps the draft lines that only `docs/adr/` holds, and still rewrites those copied into other
+  repo files (AGH-622).
 
 ## [0.28.0] - 2026-10-30
 
