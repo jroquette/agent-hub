@@ -78,7 +78,6 @@ and sends the same decision itself; run alone, this file still prints and sends 
 from __future__ import annotations
 
 import bisect
-import glob
 import io
 import itertools
 import json
@@ -88,11 +87,8 @@ import select
 import signal
 import stat
 import sys
-import tempfile
 import time
 from fnmatch import fnmatch, fnmatchcase
-from typing import IO, Callable, Optional
-from urllib.parse import unquote, urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
@@ -105,7 +101,13 @@ except Exception as error:  # a partial install: ask, never let the call through
                                              "permissionDecisionReason": f"[hub guard] could not check this call ({type(error).__name__}); confirm"}}))
     sys.exit(0)
 
-Verdict = Optional[tuple[str, str]]
+# For a type checker only: annotations are never evaluated here, so the hook does not load typing,
+# which would add to its start-up on every call.
+TYPE_CHECKING = False
+if TYPE_CHECKING:
+    from typing import IO, Callable, Optional
+
+    Verdict = Optional[tuple[str, str]]
 
 NON_SECRET_ENV = {".env.example", ".env.development", ".env.staging", ".env.test", ".env.sample", ".env.template"}
 KEY_FILE = LazyPattern(r"\.(pem|key|p12|pfx)$")  # never released, whatever a list says
@@ -1925,6 +1927,8 @@ def _env_file_bash(env_files: _EnvFiles, cmd: str, scan: _BlockedScan) -> str | 
 
 def _env_file_webfetch(env_files: _EnvFiles, url: str) -> str | None:
     """A WebFetch URL naming an env file (raw or percent-decoded), or a file:// URL to one."""
+    from urllib.parse import unquote, urlsplit  # here, not at the top: only a WebFetch needs them
+
     decoded = unquote(url)
     environment = env_files.named(url) or env_files.named(decoded)
     if environment or not url.lower().startswith("file:"):
@@ -1989,6 +1993,8 @@ def check_environment_endpoint(tool: str, ti: dict, cfg: Config, environ: dict |
     shown = environment.access + (", production" if environment.production else "")
     reached = ("ask", ENDPOINT_REASON.format(tool, environment.name, shown))
     if tool == "WebFetch":
+        from urllib.parse import urlsplit  # here, not at the top: only a WebFetch needs it
+
         try:
             host = (urlsplit(_str(ti.get("url"))).hostname or "").lower()
         except ValueError:  # a malformed URL (a bad port, an unclosed bracket)
@@ -2072,6 +2078,8 @@ def extension_file(cfg: Config) -> str | None:
             return path
     if _named(cfg):
         return None
+    import glob  # here, not at the top: only a hub.json that names no project needs it
+
     pattern = os.path.join(glob.escape(str(cfg.root)), "plugin", "*", "hooks", EXTENSION_NAME)
     found = [p for p in sorted(glob.glob(pattern)) if p.split(os.sep)[-3] != "hub-workflow"]
     return found[0] if len(found) == 1 else None
@@ -2223,6 +2231,8 @@ def run_extension(path: str, data: dict, cfg: Config) -> tuple[Verdict, bool]:
     if unusable:
         return _failed(unusable)
     argv = [RUNNER, path, os.path.join(str(cfg.root), "hub.json")]
+    import tempfile  # here, not at the top: only a call that runs the extension needs it
+
     with tempfile.TemporaryFile() as err:
         sys.stdout.flush()  # nothing unwritten is copied into the child
         sys.stderr.flush()
