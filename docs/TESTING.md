@@ -20,9 +20,10 @@ Makefile uses.
   passes them to `CliRunner.invoke(env=...)`. JSON Lines inputs are written to `tmp_path` at test time from the
   builders (`an_event`, `events_to_jsonl`); no `*.jsonl` file is committed. A test that runs a child process and
   must show it stays off the network uses the outbound probe, `agent_hub.core.testing.outbound_probe`: the child gets
-  an environment built from scratch, a `sitecustomize` that records and refuses every connection or name lookup that
-  is not loopback, stand-ins for `gh`, `uv`, `uvx`, `claude`, `curl`, `wget` and `ssh`, and proxy variables that point
-  at a local recorder. A Python child started with `-I`, `-E` or `-S` skips the `sitecustomize` and goes unseen.
+  an environment built from scratch, a `sitecustomize` that records and refuses each Python socket connect, `sendto`
+  and name lookup that is not loopback, stand-ins for `gh`, `uv`, `uvx`, `claude`, `curl`, `wget` and `ssh`, and proxy
+  variables that point at a local recorder. The module's docstring lists what the probe cannot see, such as a Python
+  child started with `-I`, `-E` or `-S`.
 
 ## Levels
 
@@ -117,7 +118,8 @@ runs once (`test_imports_every_rendered_module_when_run_on_each_python`, `test_e
 `test_hooks_make_no_network_call.py` runs every rendered hook under the outbound probe and expects no call; the only
 call allowed is SessionStart's detached refresh running `uvx … hub brief --write-cache` (ADR 0055).
 `packages/cli/tests/integration/test_simple_commands_make_no_network_call.py` does the same for the simple `hub`
-commands. Each case gets its own `TMPDIR`, since some hooks keep state there. A characterization case compares a hook's or script's exit code, stdout, stderr, files and calls to fake tools with
+commands. The hooks file gives each case its own `TMPDIR`, since some hooks keep state there. A characterization
+case compares a hook's or script's exit code, stdout, stderr, files and calls to fake tools with
 `packages/generator/tests/integration/golden/<file>/<case>.golden`, stored byte-exact (`-text` in `.gitattributes`).
 `GOLDEN_UPDATE=1` rewrites the goldens (refused under `CI`; review and commit the diff) and `GOLDEN_KEEP=1` keeps each
 case's temporary root and prints its path. The `hub init` golden,
