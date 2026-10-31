@@ -1423,6 +1423,12 @@ def test_kills_check_stop_at_check_fast_timeout_when_it_sleeps(
             id="budget_cut",
         ),
         pytest.param(
+            [{"dir": "app", "check_stop": "true"}],
+            ("GIT_TIMEOUT", 0),
+            "[hub stop-gate] check_stop did not finish in every changed repo; finishing anyway.",
+            id="status_cut",
+        ),
+        pytest.param(
             [{"dir": "app", "check_fast": "true"}, {"dir": "web", "check_stop": "true"}],
             None,
             "[hub] code changed and check_stop/check_fast is green.",
@@ -1440,9 +1446,10 @@ def test_names_check_stop_in_summary_when_repo_selects_it(
     summary: str,
 ) -> None:
     # The summary names the kind of command each changed repo was given, even one the budget
-    # never let start (MIN_RUN above the budget). With both kinds, app's check_fast runs first
-    # from the hub, yet the name keeps its one order. A repo with a check_stop never reads as
-    # having no command.
+    # never let start (MIN_RUN above the budget), or whose git status it left no time for
+    # (GIT_TIMEOUT 0 caps that status as a spent budget does). With both kinds, app's check_fast
+    # runs first from the hub, yet the name keeps its one order. A repo with a check_stop never
+    # reads as having no command.
     touches = [
         ("Edit", "file_path", changed(workspace / str(repo["dir"]) / "x.py")) for repo in repos
     ]
@@ -1476,8 +1483,12 @@ def test_blocks_naming_check_stop_when_it_cannot_start(
 
 
 # HUB_CHANGED_FILES: the paths the session changed in the checkout, given to check_stop alone; left
-# unset when git prints one of them quoted or when the list passes CHANGED_FILES_CAP bytes.
+# unset when git prints one of them quoted, or raw with a character Python's splitlines() breaks a
+# line at, or when the list passes CHANGED_FILES_CAP bytes.
 CHANGED_FILES_CAP = 65_536
+# The pause on each side of a session start taken between writes: well over the tick of the clock
+# the kernel dates files by (at most 10 ms), which can trail the time Python reads.
+DATE_PAUSE = 0.05
 
 
 def saving(saved: Path) -> str:
@@ -1523,6 +1534,18 @@ def write_new_files(top: Path, size: int) -> bytes:
     return listed
 
 
+def start_between_writes() -> datetime:
+    """A session start after the dates of the files written so far, before those written next.
+
+    The gate counts a file by its ctime too, and os.utime moves the ctime to now: a file older than
+    the session by both dates is one written before this start.
+    """
+    time.sleep(DATE_PAUSE)
+    start = datetime.now(UTC)
+    time.sleep(DATE_PAUSE)
+    return start
+
+
 def test_lists_changed_paths_when_check_stop_runs(
     run_hook: RunHook, workspace: Path, tmp_path: Path
 ) -> None:
@@ -1531,18 +1554,18 @@ def test_lists_changed_paths_when_check_stop_runs(
     # the session. Both sides of the move and the deletion count; stale.md is no change of this
     # session. The changed line of the block keeps to code files changed in the session.
     app = workspace / "app"
-    start = datetime.now(UTC) - timedelta(hours=1)
     for name in ("a.py", "old.py"):
         (app / name).write_text("x = 1\n", encoding="utf-8")
-    set_mtime(app / "b.py", start - timedelta(hours=1))
+    set_mtime(app / "b.py", datetime.now(UTC) - timedelta(hours=2))
     git_in(app, tmp_path, "add", "-A")
     git_in(app, tmp_path, "commit", "-qm", "before the session")
+    (app / "stale.md").write_text("x = 1\n", encoding="utf-8")
+    start = start_between_writes()
     (app / "a.py").write_text("x = 2\n", encoding="utf-8")
     git_in(app, tmp_path, "mv", "b.py", "c.py")
     (app / "old.py").unlink()
     (app / "docs").mkdir()
     (app / "docs" / "x.md").write_text("# x\n", encoding="utf-8")
-    set_mtime(app / "stale.md", start - timedelta(hours=1))
     status = git_in(app, tmp_path, "status", "--porcelain", "--untracked-files=all")
     assert sorted(status.splitlines()) == sorted(
         [" M a.py", "R  b.py -> c.py", " D old.py", "?? docs/x.md", "?? stale.md"]
@@ -1561,10 +1584,69 @@ def test_lists_changed_paths_when_check_stop_runs(
 
 
 @pytest.mark.parametrize(
-    ("name", "shown", "exit_code", "decision"),
+    ("command", "status", "listed"),
     [
-        pytest.param("café.py", '"caf\\303\\251.py"', 0, None, id="non_ascii"),
-        pytest.param("my notes.md", '"my notes.md"', 3, "block", id="space"),
+        pytest.param(
+            "mkdir pkg2 && mv pkg1/b.py pkg2/b.py",
+            [" M a.py", " D pkg1/b.py", "?? pkg2/b.py"],
+            b"a.py\npkg1/b.py\npkg2/b.py",
+            id="mv_across_folders",
+        ),
+        pytest.param(
+            "ln -s b.py link.py", [" M a.py", "?? link.py"], b"a.py\nlink.py", id="link_to_old_file"
+        ),
+        pytest.param(
+            "git mv b.py c.py && echo 'x = 2' > b.py",
+            [" M a.py", "R  b.py -> c.py", "?? b.py"],
+            b"a.py\nb.py\nc.py",
+            id="git_mv_then_same_name",
+        ),
+    ],
+)
+def test_lists_moved_and_linked_paths_when_check_stop_runs(
+    run_hook: RunHook,
+    workspace: Path,
+    tmp_path: Path,
+    *,
+    command: str,
+    status: list[str],
+    listed: bytes,
+) -> None:
+    # b.py and pkg1/b.py were committed before the session, older than it by both dates. The
+    # session edits a.py, so the gate runs, and runs one shell command. A plain mv, not staged,
+    # is a deletion and an untracked file to git, and keeps the file's mtime: the new name counts
+    # by the ctime the move set. A new link counts by its own dates, not its older target's. A
+    # name git lists twice, a staged rename's old name and a file made again under it, is listed
+    # once.
+    app = workspace / "app"
+    (app / "pkg1").mkdir()
+    for name in ("a.py", "b.py", "pkg1/b.py"):
+        (app / name).write_text("x = 1\n", encoding="utf-8")
+    git_in(app, tmp_path, "add", "-A")
+    git_in(app, tmp_path, "commit", "-qm", "before the session")
+    start = start_between_writes()
+    (app / "a.py").write_text("x = 2\n", encoding="utf-8")
+    bash = shutil.which("bash")
+    assert bash is not None
+    subprocess.run(  # noqa: S603 - bash found on PATH, a command of this test
+        [bash, "-c", command], cwd=app, check=True, capture_output=True, env=scratch_env(tmp_path)
+    )
+    found = git_in(app, tmp_path, "status", "--porcelain", "--untracked-files=all")
+    assert sorted(found.splitlines()) == sorted(status)
+    saved = tmp_path / "changed-files"
+    transcript = write_transcript(tmp_path / "session.jsonl", start=start)
+
+    run_hook([{"dir": "app", "check_stop": saving(saved)}], app, transcript=transcript)
+
+    assert saved_bytes(saved) == listed
+
+
+@pytest.mark.parametrize(
+    ("quote_path", "name", "shown", "exit_code", "decision"),
+    [
+        pytest.param("true", "café.py", '"caf\\303\\251.py"', 0, None, id="non_ascii"),
+        pytest.param("true", "my notes.md", '"my notes.md"', 3, "block", id="space"),
+        pytest.param("false", "x\u2028y.py", "x\u2028y.py", 0, None, id="raw_line_separator"),
     ],
 )
 def test_leaves_changed_files_unset_when_git_quotes_a_path(
@@ -1572,6 +1654,7 @@ def test_leaves_changed_files_unset_when_git_quotes_a_path(
     workspace: Path,
     tmp_path: Path,
     *,
+    quote_path: str,
     name: str,
     shown: str,
     exit_code: int,
@@ -1579,13 +1662,15 @@ def test_leaves_changed_files_unset_when_git_quotes_a_path(
 ) -> None:
     # git prints this new name quoted, so a list could only leave it out and come up one path
     # short: check_stop gets no list and finds the changes itself. It still runs, and its exit
-    # code decides as usual (a pass in one row, a failure in the other).
+    # code decides as usual (a pass or a failure, by row). Under core.quotePath=false git prints
+    # a non-ASCII name raw, and Python's splitlines() breaks a line at U+2028: the record would
+    # come apart into pieces of names, so no list either.
     app = workspace / "app"
-    git_in(app, tmp_path, "config", "core.quotePath", "true")
+    git_in(app, tmp_path, "config", "core.quotePath", quote_path)
     (app / "a.py").write_text("x = 1\n", encoding="utf-8")
     (app / name).write_text("x = 1\n", encoding="utf-8")
     status = git_in(app, tmp_path, "status", "--porcelain", "--untracked-files=all")
-    assert sorted(status.splitlines()) == ["?? " + shown, "?? a.py"]
+    assert sorted(status.rstrip("\n").split("\n")) == sorted(["?? " + shown, "?? a.py"])
     saved = tmp_path / "changed-files"
 
     output = run_hook([{"dir": "app", "check_stop": f"{saving(saved)}; exit {exit_code}"}], app)
