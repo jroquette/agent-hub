@@ -18,7 +18,11 @@ Makefile uses.
   home from the password database. `packages/cli/tests/conftest.py` has an autouse fixture that points `HOME`
   and `XDG_DATA_HOME` under `tmp_path` and unsets `AGENT_HUB_DB` for every cli test; a test that needs other values
   passes them to `CliRunner.invoke(env=...)`. JSON Lines inputs are written to `tmp_path` at test time from the
-  builders (`an_event`, `events_to_jsonl`); no `*.jsonl` file is committed.
+  builders (`an_event`, `events_to_jsonl`); no `*.jsonl` file is committed. A test that runs a child process and
+  must show it stays off the network uses the outbound probe, `agent_hub.core.testing.outbound_probe`: the child gets
+  an environment built from scratch, a `sitecustomize` that records and refuses every connection or name lookup that
+  is not loopback, stand-ins for `gh`, `uv`, `uvx`, `claude`, `curl`, `wget` and `ssh`, and proxy variables that point
+  at a local recorder. A Python child started with `-I`, `-E` or `-S` skips the `sitecustomize` and goes unseen.
 
 ## Levels
 
@@ -109,8 +113,11 @@ The API's integration tests for the learning decisions and the web smoke drive t
 A test that runs a rendered hook or script takes the `hook_python` fixture, a real Python 3.9 (the system `python3` on
 macOS, the hooks' floor); without a 3.9 on `PATH` it runs on the current Python, and under `CI` it fails. The
 `each_python` fixture runs a smoke on both interpreters: every rendered module imports, and every hook entry point
-runs once (`test_imports_every_rendered_module_when_run_on_each_python`, `test_exits_zero_when_git_fails`). A
-characterization case compares a hook's or script's exit code, stdout, stderr, files and calls to fake tools with
+runs once (`test_imports_every_rendered_module_when_run_on_each_python`, `test_exits_zero_when_git_fails`).
+`test_hooks_make_no_network_call.py` runs every rendered hook under the outbound probe and expects no call; the only
+call allowed is SessionStart's detached refresh running `uvx … hub brief --write-cache` (ADR 0055).
+`packages/cli/tests/integration/test_simple_commands_make_no_network_call.py` does the same for the simple `hub`
+commands. Each case gets its own `TMPDIR`, since some hooks keep state there. A characterization case compares a hook's or script's exit code, stdout, stderr, files and calls to fake tools with
 `packages/generator/tests/integration/golden/<file>/<case>.golden`, stored byte-exact (`-text` in `.gitattributes`).
 `GOLDEN_UPDATE=1` rewrites the goldens (refused under `CI`; review and commit the diff) and `GOLDEN_KEEP=1` keeps each
 case's temporary root and prints its path. The `hub init` golden,
