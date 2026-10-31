@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 import type { ReactNode } from "react";
-import { Outlet, useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 
 import { usePreferences } from "../lib/preferences";
 import { useScope } from "../lib/scope";
@@ -23,6 +23,7 @@ import { ScreenDiscussFallback } from "./screenContext";
 import { GlobalStreamProvider, useGlobalStream } from "./GlobalStream";
 import { armGoSequence, clearGoSequence, goSequencePending, typingIn } from "./goSequence";
 import { OfflineBanner } from "./OfflineBanner";
+import { PageBusyContext, RouteOutlet } from "./routeLoading";
 import { ShakeToSession } from "./ShakeToSession";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { Sidebar } from "./Sidebar";
@@ -121,6 +122,21 @@ function useGlobalKeys(actions: {
   }, [navigate]);
 }
 
+/**
+ * `main#main`: the page passed in, else the routed screen. Busy while the page skeleton shows, a
+ * state of its own so the loading states re-render only the page, never the sidebar or top bar.
+ */
+function ShellMain({ children }: { children?: ReactNode }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <main className="ah-shell-main" id="main" aria-busy={busy || undefined}>
+      <PageBusyContext.Provider value={setBusy}>
+        {children ?? <RouteOutlet />}
+      </PageBusyContext.Provider>
+    </main>
+  );
+}
+
 function ShellLayout({ children }: { children?: ReactNode }) {
   const preferences = usePreferences();
   const [scope, setScope] = usePageScope();
@@ -195,9 +211,7 @@ function ShellLayout({ children }: { children?: ReactNode }) {
         <div className="ah-shell-banner">
           <OfflineBanner health={health} />
         </div>
-        <main className="ah-shell-main" id="main">
-          {children ?? <Outlet />}
-        </main>
+        <ShellMain>{children}</ShellMain>
         <DiscussPanel resize={discussWidth} />
         <DiscussSelection />
         {discuss.open && <ScreenDiscussFallback />}
