@@ -304,8 +304,9 @@ def _running(pids: Collection[int]) -> list[str]:
     if not pids:
         return []
     ids = ",".join(str(pid) for pid in sorted(pids))
+    # -ww: whole lines. Without it, ps cuts each one at an exported COLUMNS, even into a pipe.
     listed = subprocess.run(  # noqa: S603 - ps with fixed options and process ids
-        ["ps", "-o", "pid=,stat=,args=", "-p", ids],  # noqa: S607 - ps from PATH
+        ["ps", "-ww", "-o", "pid=,stat=,args=", "-p", ids],  # noqa: S607 - ps from PATH
         capture_output=True,
         text=True,
         errors="replace",
