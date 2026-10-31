@@ -7,14 +7,16 @@ the event loop. ``AgentSessionStoreContract`` checks every implementation:
   next one adds 1, else ``StoreSequenceError`` and nothing is written. It moves ``last_seq``.
 - ``records`` and ``list`` keep order (``seq``; newest ``created_at`` first); ``records`` may
   keep only some kinds (the page then holds at most ``limit`` records of those kinds).
+- ``links_of`` answers each asked id as ``link_of`` does; ``first_records`` answers each asked
+  session's first record of some kinds. Both read many sessions at once, for the session lists.
 - ``open_permission`` is never stored: ``get`` and ``list`` answer it as None.
 - ``end_unfinished`` ends every non-terminal session (a crash left it so); ``purge_ended_before``
   removes terminal sessions that ended before the cutoff, with their records, and never a live
   one; ``delete`` removes one session and its records.
-- An unknown id raises ``AgentSessionNotFoundError``.
+- An unknown id raises ``AgentSessionNotFoundError`` (``first_records`` leaves it out instead).
 """
 
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import datetime
 from typing import Protocol, TypedDict, Unpack
 
@@ -99,6 +101,18 @@ class AgentSessionStore(Protocol):
 
     def link_of(self, project: str, claude_session_id: str) -> str | None:
         """The id of the newest agent session of ``project`` driving that Claude session."""
+        ...
+
+    def links_of(self, project: str, claude_session_ids: Collection[str]) -> Mapping[str, str]:
+        """``link_of``'s answer for each of ``claude_session_ids`` that has one; the others are
+        absent."""
+        ...
+
+    def first_records(
+        self, agent_session_ids: Collection[str], *, kinds: Collection[RecordKind]
+    ) -> Mapping[str, LogRecord]:
+        """Each asked session's lowest-``seq`` record of ``kinds``; a session with none, or an
+        unknown id, is absent."""
         ...
 
     def end_unfinished(self, at: datetime, reason: EndReason) -> int:

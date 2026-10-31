@@ -1,6 +1,6 @@
 """``InMemoryAgentSessionStore``: the ``AgentSessionStore`` port over dictionaries."""
 
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import datetime
 from typing import Unpack
 
@@ -109,6 +109,23 @@ class InMemoryAgentSessionStore:
             if session.claude_session_id == claude_session_id:
                 return session.id
         return None
+
+    def links_of(self, project: str, claude_session_ids: Collection[str]) -> Mapping[str, str]:
+        """``link_of`` for each id (so within the same newest sessions), the unlinked left out."""
+        found = {claude_id: self.link_of(project, claude_id) for claude_id in claude_session_ids}
+        return {claude_id: link for claude_id, link in found.items() if link is not None}
+
+    def first_records(
+        self, agent_session_ids: Collection[str], *, kinds: Collection[RecordKind]
+    ) -> Mapping[str, LogRecord]:
+        """Each known session's first record of ``kinds``."""
+        first: dict[str, LogRecord] = {}
+        for agent_session_id in agent_session_ids:
+            records = self._records.get(agent_session_id, [])
+            found = next((record for record in records if record.kind in kinds), None)
+            if found is not None:
+                first[agent_session_id] = found
+        return first
 
     def end_unfinished(self, at: datetime, reason: EndReason) -> int:
         """End every non-terminal session."""
