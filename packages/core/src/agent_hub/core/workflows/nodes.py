@@ -31,7 +31,7 @@ from pydantic import (
 )
 
 from agent_hub.core.hub_config.model_tiers import Tier
-from agent_hub.core.scenarios.access_policy import Effect
+from agent_hub.core.scenarios.effect import Effect
 from agent_hub.core.workflows.substitution import NodeRef, SubstitutionError, parse_ref
 
 TriggerRule = Literal["all_success", "one_success", "none_failed_min_one_success", "all_done"]
