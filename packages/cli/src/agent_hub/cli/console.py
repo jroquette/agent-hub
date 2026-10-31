@@ -96,6 +96,7 @@ def _print_at_once(text: str) -> None:
         # Stdout now goes nowhere, so the interpreter's last flush cannot fail at exit.
         devnull = os.open(os.devnull, os.O_WRONLY)
         os.dup2(devnull, sys.stdout.fileno())
+        os.close(devnull)
         raise SystemExit(_CLOSED_PIPE_EXIT) from None
 
 
