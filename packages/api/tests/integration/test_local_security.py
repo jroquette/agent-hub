@@ -387,6 +387,42 @@ def test_keeps_csp_when_skills_deep_link_served(wired: Any, path: str) -> None:
     assert response.headers["content-security-policy"] == V0_9_0_CSP
 
 
+# The security headers every answer carries, as served today (local_security.SECURITY_HEADERS).
+SECURITY_HEADERS_AS_SERVED = {
+    "content-security-policy": V0_9_0_CSP,
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer",
+}
+
+
+def _answer_accepting_br(client: TestClient, path: str) -> Any:
+    """GETs ``path`` accepting Brotli and gzip without reading the body: the test client would
+    decode the codings it knows, and the stand-in variant is no real Brotli."""
+    with client.stream("GET", path, headers={"Accept-Encoding": "br, gzip"}) as response:
+        return response
+
+
+def test_keeps_security_headers_when_compressed_asset_served(wired: Any, web_dist: Path) -> None:
+    (web_dist / "assets" / "app.js.br").write_bytes(b"\x1b\x00stand-in for the Brotli variant")
+
+    answers = {
+        "asset": _answer_accepting_br(wired.client, "/assets/app.js"),
+        "index.html": _answer_accepting_br(wired.client, "/sessions"),
+        "api": _answer_accepting_br(wired.client, "/api/v1/hubs"),
+    }
+
+    assert {kind: answer.status_code for kind, answer in answers.items()} == dict.fromkeys(
+        answers, 200
+    )
+    assert answers["asset"].headers.get("content-encoding") == "br"
+    assert {
+        kind: {name: answer.headers.get(name) for name in SECURITY_HEADERS_AS_SERVED}
+        for kind, answer in answers.items()
+    } == dict.fromkeys(answers, SECURITY_HEADERS_AS_SERVED)
+    api = answers["api"].headers
+    assert (api.get("cache-control"), api.get("content-encoding")) == ("no-store", None)
+
+
 # A workflow gate's decision (AC-213.18) runs the CLI and resumes a run: the same strict checks.
 GATE_DECISION = "/api/v1/approvals/run-9:ok:1/decision"
 
