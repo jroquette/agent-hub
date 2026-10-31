@@ -2684,9 +2684,10 @@ def test_names_rendered_script_when_hooks_json_command_read(
         hook["command"] for groups in hooks.values() for group in groups for hook in group["hooks"]
     ]
 
-    # The six base hooks, then the event sensor on eleven events (AGH-200 E2).
+    # The six base hooks, then the event sensor on ten events (AGH-200 E2): on PreToolUse the
+    # base hook, pre_tool_use.py, sends the sensor's envelope itself (AGH-621).
     # AGH-141: the read-only gate on SubagentStart and SubagentStop, after the sensor.
-    assert (len(commands), len(hooks)) == (19, 11)
+    assert (len(commands), len(hooks)) == (18, 11)
     for command in commands:
         match = HOOK_COMMAND.fullmatch(command)
         assert match, command
