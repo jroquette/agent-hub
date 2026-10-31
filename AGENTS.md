@@ -37,12 +37,18 @@ The spec is in `docs/SPEC.md`: read it before any task. The directions already s
 Set up once per clone or worktree with `uv sync --all-packages` (the `make` targets also sync on their own).
 
 - `make check-fast`: while working (format, lint, mypy --strict, test layout, version lockstep, unit and contract tests).
+- `make check-changed`: while working, on a change to part of the tree: the same checks on the whole tree, but only the
+  unit and contract tests the change can reach (each changed package and every package that imports it), without
+  coverage. The paths come from `PATHS="<paths>"`, else `HUB_CHANGED_FILES`, else git against `origin/main`;
+  `uv run --locked --all-packages python -m scripts.check_changed --plan <paths>` prints its plan and runs nothing.
 - `make check`: before a PR, and what CI runs (`check-fast` + integration, e2e, import contracts, migrations, coverage floors).
+  `check-changed` never replaces it.
 - `make pr-title TITLE="<title>"`: before opening a PR (CI does not check titles).
 
-Both gates run two lanes at once (the checks, and the test runners in turn) and print each lane when it ends;
-`check-fast` skips the web app's steps unless something under `apps/web/` differs from `origin/main`
-(`WEB_FAST=1` forces them).
+`check-fast`, `check-changed` and `check` run two lanes at once (the checks, and the test runners in turn) and print
+each lane when it ends; `check-fast` skips the web app's steps unless something under `apps/web/` differs from
+`origin/main` (`WEB_FAST=1` forces them), and `check-changed` runs them only for a changed path under `apps/web/` or
+when it cannot tell what changed.
 
 Redirect the output to a file and check the exit code: `make check > check.log 2>&1; echo $?`. Never run them with `-j`.
 

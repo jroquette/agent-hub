@@ -375,6 +375,34 @@ Inside a lane the steps run in order and stop at the first failure; each lane's 
   from `origin/main` (committed, staged, unstaged or new), or with `WEB_FAST=1`; `WEB_FAST=0` skips them.
   `openapi-check` always runs.
 
+`make check-changed` (while working, for one change; `scripts/check_changed.py`):
+
+- Paths: the script's arguments, else `PATHS` (`make check-changed PATHS="a.py docs/x.md"`, split on whitespace),
+  else `HUB_CHANGED_FILES` (one path a line, as the Stop gate sets it), else what `git diff --name-only` lists against
+  the merge base with `origin/main`, plus untracked files. It never fetches. A path stays data: the recipe never
+  names `PATHS` (make would paste it into the line the shell runs), and no path becomes a command argument.
+  `$R python -m scripts.check_changed --plan <paths>` prints the plan and runs nothing.
+- Checks, always on the whole tree: `format`, `lint`, `typecheck` (pack loop included), `layout`, `lockstep`; then
+  `export_openapi --check` when the plan reaches `api` or `packages/api/openapi.json` changed.
+- Tests: `pytest -m "unit or contract"` on the planned folders and files alone, without coverage, so the data that
+  `make coverage` reads stays the gates'. The web steps (`web-install` first, then `web-static` and `web-test` in
+  their lanes) run only for a path under `apps/web/`, or when the changed paths are unknown.
+- What a path runs: a package's `src/` or `tests/data/`, the fast tests of that package and of every package that
+  imports it, directly or not (read from the import statements of each `src/` and of `scripts/`, which root
+  `tests/unit` tests), plus core's `hub_config/test_model.py` and `test_conventions.py`, which scan every package's
+  source. A core change leaves out the pack-script tests under `packages/core/tests/unit/workflows/builtin/`; a pack's
+  `scripts/` runs that pack's tests, the generator's and those two files; another pack file is a core change plus that
+  pack's tests. A changed unit or contract test runs its package's fast tests; `scripts/` and root `tests/unit/` run
+  `tests/unit`; the docs, root Markdown and the llms files run the root tests that read them; `apps/web/src/routes.tsx`
+  and `screens/` add `test_playground_export.py`. Integration and e2e tests, `.github/`, the Docker files,
+  `.gitattributes`, `.gitignore`, `.importlinter` and a `*.log` at the top run the checks alone, with a reason line.
+- Full plan, every unit and contract test: a build file (`pyproject.toml`, `uv.lock`, `conftest.py`, `pytest.ini`,
+  `mypy.ini`, `Makefile` or `.python-version` in any folder, and `scripts/pytest_levels.py`), a path it cannot place
+  (absolute, with a `..` part, in a pack that does not exist, or matching no rule), or no merge base with
+  `origin/main`.
+- Output: the plan, then each lane when it ends, a failed lane last, and a final line naming the failed step; exit 0,
+  or 1 when a step failed. CI and the PR gate keep `make check`.
+
 `make check` (before a PR; CI runs the same steps as parallel jobs):
 
 - Checks: the ones above (web included), `imports` (`lint-imports`), `migrations` (upgrade a scratch SQLite database

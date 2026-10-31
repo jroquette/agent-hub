@@ -18,7 +18,8 @@ in [TESTING.md](TESTING.md).
    Playwright Chromium (`npm --prefix apps/web exec playwright install chromium` once on a new machine); without one it
    skips locally and fails under `CI`. A change under `apps/web/src` ends with `make web-build`, and the rebuilt
    `packages/api/src/agent_hub/api/web_dist/` is committed with it (`make web-dist-check` fails otherwise).
-5. **Test first** ([TESTING.md](TESTING.md)), then implement. Run `make check-fast` while working.
+5. **Test first** ([TESTING.md](TESTING.md)), then implement. Run `make check-fast` while working, or
+   `make check-changed` to run only the tests your change can reach.
 6. **Before the PR**, run `make check`. Redirect the output and check the exit code:
    `make check > check.log 2>&1; echo $?`.
 7. **PR** against `main`, with a Conventional Commit title (check it first with `make pr-title TITLE="<title>"`) and the body from `.github/pull_request_template.md` (tracker

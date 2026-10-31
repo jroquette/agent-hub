@@ -11,6 +11,14 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- `make check-changed` runs the checks (format, lint, mypy, test layout, version lockstep) on the whole tree, and only
+  the unit and contract tests a change can break: those of each changed package and of the packages that import it.
+  It takes the paths from `PATHS="<paths>"`, `HUB_CHANGED_FILES` or git against `origin/main`, and
+  `python -m scripts.check_changed --plan <paths>` prints the plan without running it. A build file, or a path it
+  cannot place, runs every fast test. `make check` stays the gate before a PR and in CI (AGH-620).
+
 ### Fixed
 
 - `hub doctor` no longer reports `brain.leak` errors for the lines of an ADR draft that reached a repo's `docs/adr/`
