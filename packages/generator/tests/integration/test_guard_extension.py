@@ -442,6 +442,40 @@ def test_kills_extension_process_group_when_timed_out(
     assert not late.exists()
 
 
+# AGH-621 (AC-23): an extension that holds its interpreter (a regex that backtracks for ever, a
+# busy loop that swallows every exception) is still stopped at the timeout, with the same ask.
+HOLDS_INTERPRETER = {
+    "backtracking": 'import re\nre.match(r"(a+)+$", "a" * 64 + "b")\nreturn None',
+    "busy_loop": (
+        "while True:\n    try:\n        while True:\n            pass\n"
+        "    except BaseException:\n        pass"
+    ),
+}
+
+
+@pytest.mark.serial
+@pytest.mark.usefixtures("no_process_left")
+@pytest.mark.parametrize("body", HOLDS_INTERPRETER.values(), ids=HOLDS_INTERPRETER.keys())
+def test_asks_when_extension_holds_interpreter_past_timeout(
+    body: str,
+    hub: Path,
+    marker: Path,
+    *,
+    hook_python: str,
+    run_hook_with_constant: Callable[..., Any],
+    tmp_path: Path,
+) -> None:
+    install(hub, marker=marker, body=body)
+
+    allow, took = guard_with_timeout(
+        hub, run_hook_with_constant, python=hook_python, tmp_path=tmp_path
+    )
+
+    assert allow == ("ask", f"{PREFIX}project guard: timed out after {TEST_TIMEOUT} s; confirm")
+    assert TEST_TIMEOUT <= took < 2
+    assert seen(marker) == ["Read"]
+
+
 @pytest.mark.parametrize("linked", ["project_folder", "extension_file"])
 def test_asks_when_extension_resolves_outside_hub(
     hub: Path, guard: Guard, marker: Path, *, tmp_path: Path, linked: str
@@ -557,6 +591,105 @@ def test_passes_event_and_config_when_runner_called(
         "deny_paths": DENY_PATHS,
         "repos": ["demo-api"],
     }
+
+
+# AGH-621 (AC-24, A6): the extension runs in a fork of the hook, not in a new interpreter, so the
+# hook's own modules are already loaded there; the fork leads a session of its own and calls the
+# runner as before.
+FORKED = """\
+import os, sys
+with open({record!r}, "w", encoding="utf-8") as fh:
+    json.dump(
+        {{
+            "hubhooks_loaded": "hubhooks" in sys.modules,
+            "own_session": os.getsid(0) == os.getpid(),
+            "argv0": os.path.basename(sys.argv[0]),
+        }},
+        fh,
+    )
+return None
+"""
+
+
+def test_runs_extension_in_forked_child_when_guard_runs(
+    hub: Path, guard: Guard, marker: Path, *, tmp_path: Path
+) -> None:
+    record = tmp_path / "record.json"
+    install(hub, marker=marker, body=FORKED.format(record=str(record)))
+
+    [verdict] = guard(hub / HOOKS, [base_events(hub)["allow"]])
+
+    assert verdict is None
+    assert seen(marker) == ["Read"]
+    assert json.loads(record.read_text(encoding="utf-8")) == {
+        "hubhooks_loaded": True,
+        "own_session": True,
+        "argv0": RUNNER,
+    }
+
+
+# AGH-621 (AC-24): the child never returns into the hook, so a batch of events run in one process
+# gets one verdict per event, each from one run of the extension.
+def test_answers_each_event_once_when_batch_runs_many_events(
+    hub: Path, guard: Guard, marker: Path
+) -> None:
+    install(hub, marker=marker, body='return ("ask", "seen " + event["tool_name"])')
+    runs = [
+        (read(hub / "README.md"), hub),
+        (bash("git status"), hub),
+        (edit(hub / "README.md"), hub),
+    ]
+
+    verdicts = guard(hub / HOOKS, runs)
+
+    assert verdicts == [
+        ("ask", f"{PREFIX}project guard: seen {tool}") for tool in ("Read", "Bash", "Edit")
+    ]
+    assert seen(marker) == ["Read", "Bash", "Edit"]
+
+
+# AGH-621 (AC-24, A6): a fork that fails asks with its cause, as a runner that could not start
+# does, and the extension never runs. argv: the event (JSON). ``os.fork`` raises EAGAIN from
+# before the guard is imported; the guard finds its own extension file.
+FORK_FAILS = """
+import errno, json, os
+
+
+def no_fork():
+    raise OSError(errno.EAGAIN, "no process left")
+
+
+os.fork = no_fork
+import guard
+from hubhooks import load_config
+cfg = load_config(None)
+path = guard.extension_file(cfg)
+verdict, failed = guard.run_extension(path, json.loads(sys.argv[1]), cfg)
+print(json.dumps({"path": path, "verdict": verdict, "failed": failed}))
+"""
+
+
+def test_asks_with_cause_when_fork_fails(
+    hub: Path, marker: Path, *, hook_python: str, run_python: Callable[..., Any], tmp_path: Path
+) -> None:
+    install(hub, marker=marker, body='return ("deny", "project says deny")')
+    event = read(hub / "README.md") | {"cwd": str(hub)}
+
+    found = run_python(
+        hook_python,
+        FORK_FAILS,
+        path=hub / HOOKS,
+        args=[json.dumps(event)],
+        cwd=hub,
+        env={"HOME": str(tmp_path)},
+    )
+
+    assert found["path"] == str(hub / EXTENSION)
+    assert found["verdict"] is not None
+    assert found["verdict"][0] == "ask"
+    assert found["verdict"][1].startswith("project guard: could not start (")
+    assert found["failed"] is True
+    assert seen(marker) == []
 
 
 # AC-4.15
