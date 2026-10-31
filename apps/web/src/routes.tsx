@@ -116,7 +116,12 @@ export const appRoutes: RouteObject[] = [
               },
               {
                 path: "projects/:project/skills/new/:kind",
-                ...lazyScreen(() => import("./screens/skills/Studio"), "NewDraftScreen"),
+                // An invalid kind redirects to the Toolkit, whose code loads with it.
+                ...lazyScreen(
+                  () => import("./screens/skills/Studio"),
+                  "NewDraftScreen",
+                  () => import("./screens/skills"),
+                ),
               },
               {
                 path: "projects/:project/skills/drafts/:draftId",
@@ -137,7 +142,12 @@ export const appRoutes: RouteObject[] = [
               },
               {
                 path: "projects/:project/skills/:kind/:source/:name/edit",
-                ...lazyScreen(() => import("./screens/skills/Studio"), "EditDraftScreen"),
+                // As a new draft's: an invalid kind redirects to the Toolkit.
+                ...lazyScreen(
+                  () => import("./screens/skills/Studio"),
+                  "EditDraftScreen",
+                  () => import("./screens/skills"),
+                ),
               },
               {
                 path: "live",
