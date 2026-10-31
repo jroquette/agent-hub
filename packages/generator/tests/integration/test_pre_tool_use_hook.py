@@ -299,12 +299,14 @@ def test_asks_with_crash_cause_when_guard_raises_while_checking(
 
 # What a hook may inherit from the process that starts it. argv: none. Replaces this process with
 # $HOOK_FILE on this interpreter, after one change ($INHERITS) that survives exec: no stdin (fd 0
-# closed), SIGCHLD ignored, one more open fd, or none.
+# closed), no stderr (fd 2 closed), SIGCHLD ignored, one more open fd, or none.
 EXEC_HOOK = """
 import os, signal, sys
 inherits = os.environ["INHERITS"]
 if inherits == "no-stdin":
     os.close(0)
+elif inherits == "no-stderr":
+    os.close(2)
 elif inherits == "sigchld-ignored":
     signal.signal(signal.SIGCHLD, signal.SIG_IGN)
 elif inherits == "open-fd":
@@ -322,6 +324,18 @@ def test_asks_with_crash_cause_when_stdin_closed(run_driver: RunDriver) -> None:
     completed = run_driver(EXEC_HOOK, HOOK, b"", INHERITS="no-stdin")
 
     assert (completed.returncode, completed.stdout, completed.stderr) == (0, reference.stdout, b"")
+
+
+# AC-23, AC-24: with no stderr at all (sys.stderr is None), the hook still forks the project
+# guard: the seeded stub keeps the base verdict, so a call no rule stops goes through with no
+# output, as it did when the guard started a new python3 for it.
+@pytest.mark.parametrize("script", [GUARD, HOOK], ids=["guard", "pre_tool_use"])
+def test_passes_call_when_stderr_closed(script: str, hub: Path, run_driver: RunDriver) -> None:
+    assert (hub / EXTENSION).is_file()
+
+    completed = run_driver(EXEC_HOOK, script, bash("ls")(hub), INHERITS="no-stderr")
+
+    assert (completed.returncode, completed.stdout, completed.stderr) == (0, b"", b"")
 
 
 # AC-20, AC-21: the rule id only labels the decision sent after the verdict; when finding it
