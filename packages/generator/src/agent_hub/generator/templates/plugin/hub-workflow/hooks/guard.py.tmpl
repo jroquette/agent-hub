@@ -2249,8 +2249,9 @@ def run_extension(path: str, data: dict, cfg: Config) -> tuple[Verdict, bool]:
     import tempfile  # here, not at the top: only a call that runs the extension needs it
 
     with tempfile.TemporaryFile() as err, tempfile.TemporaryFile() as given:
-        sys.stdout.flush()  # nothing unwritten is copied into the child
-        sys.stderr.flush()
+        for stream in (sys.stdout, sys.stderr):  # nothing unwritten is copied into the child
+            if stream is not None:  # None: the hook started with that fd closed
+                stream.flush()
         try:
             given.write(event)  # the runner's stdin, read from its start
             given.seek(0)
