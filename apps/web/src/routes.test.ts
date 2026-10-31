@@ -48,7 +48,7 @@ function routeName(route: RouteObject): string {
 }
 
 // The redirects routes.tsx defines itself, in table order: `live` (LiveRedirect), `knowledge` and
-// `settings` (Navigate). LegacyWorkflowRedirect is not one of them: it lives in screens/workflows.
+// `settings` (Redirect). LegacyWorkflowRedirect is not one of them: it lives in screens/workflows.
 const OWN_REDIRECTS = ["live", "knowledge", "settings"];
 
 // The screen module of the page each redirect opens: /sessions, /knowledge/learnings and
@@ -183,25 +183,67 @@ function stubNoHub(api: ApiRoutes = {}) {
   stubEventSource();
 }
 
+/** The app's route shape: the shell, then a pathless route whose fallback covers a first load. */
+function shellRoutes(children: RouteObject[]): RouteObject[] {
+  return [
+    {
+      element: createElement(AppShell),
+      children: [{ hydrateFallbackElement: createElement(RouteSkeleton), children }],
+    },
+  ];
+}
+
 /** The app's shape around the gate: the shell, the first-load fallback, the gated pages, Welcome. */
 function gatedRoutes(
   pages: RouteObject[],
   welcome: () => Promise<{ WelcomeScreen: ComponentType }>,
 ): RouteObject[] {
-  return [
-    {
-      element: createElement(AppShell),
-      children: [
-        {
-          hydrateFallbackElement: createElement(RouteSkeleton),
-          children: [
-            { element: createElement(HubGate), children: pages },
-            { path: "welcome", ...lazyScreen(welcome, "WelcomeScreen") },
-          ],
-        },
-      ],
+  return shellRoutes([
+    { element: createElement(HubGate), children: pages },
+    { path: "welcome", ...lazyScreen(welcome, "WelcomeScreen") },
+  ]);
+}
+
+interface HeldRoute {
+  route: RouteObject;
+  /** The route's code arrives, and the router takes it. */
+  arrive: () => Promise<void>;
+}
+
+/**
+ * The route `path` of the real table, whose code arrives only when the test calls `arrive`: a
+ * first load of it is slow. Its own code is loaded once first, so it is quick on the fake clock.
+ */
+async function heldRealRoute(path: string): Promise<HeldRoute> {
+  const [route] = allRoutes(appRoutes).filter((each) => each.path === path);
+  const lazy = route?.lazy;
+  if (typeof lazy !== "function") throw new Error(`no lazy on ${path}`);
+  await lazy();
+  let open: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return {
+    route: {
+      path,
+      lazy: async () => {
+        await gate;
+        return lazy();
+      },
     },
-  ];
+    arrive: async () => {
+      await act(async () => {
+        open();
+        await gate;
+      });
+      await settle();
+    },
+  };
+}
+
+/** A route that lands after the router's next turn, on a stand-in with the heading `heading`. */
+function standInRoute(path: string, heading: string): RouteObject {
+  return { path, lazy: () => Promise.resolve({ element: createElement(standIn(heading)) }) };
 }
 
 /** Opens `path` on `routes`; returns the router. */
@@ -416,5 +458,80 @@ describe("HubGate", () => {
 
     expect(router.state.location.pathname).toBe("/welcome");
     expect(screen.getByRole("heading", { level: 1, name: "Welcome stand-in" })).toBeInTheDocument();
+  });
+});
+
+// Where each of routes.tsx's own redirects lands, with its target's route.
+const LANDINGS: Record<string, { target: string; lands: string }> = {
+  live: { target: "sessions", lands: "/sessions" },
+  knowledge: { target: "knowledge/learnings", lands: "/knowledge/learnings" },
+  settings: { target: "settings/:section", lands: "/settings/hubs" },
+};
+
+describe("the route table's redirects", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /**
+   * Opens `path` on `routes` on the fake clock, with the held route's code arriving once the
+   * skeleton shows; returns the router. 300 ms later the skeleton has had its time, and the page,
+   * a redirect here, is drawn.
+   */
+  async function openSlowly(held: HeldRoute, routes: RouteObject[], path: string) {
+    vi.useFakeTimers();
+    stubApi({ "/api/v1/projects": aPage([aProjectSummary()]) });
+    stubEventSource();
+    const router = openAt(routes, path);
+    wait(300);
+    expect(skeleton()).not.toBeNull();
+    await held.arrive();
+    return router;
+  }
+
+  it.each(OWN_REDIRECTS)(
+    "keeps the page skeleton until /%s's target renders, on a slow first load",
+    async (path) => {
+      const landing = LANDINGS[path];
+      if (landing === undefined) throw new Error(`no landing for /${path}`);
+      const held = await heldRealRoute(path);
+      const router = await openSlowly(
+        held,
+        shellRoutes([held.route, standInRoute(landing.target, "Target stand-in")]),
+        `/${path}`,
+      );
+
+      // The redirect is drawn, and the router has yet to land.
+      wait(300);
+      expect(router.state.location.pathname).toBe(`/${path}`);
+      expect(skeleton()).not.toBeNull();
+      expect(main()).toHaveAttribute("aria-busy", "true");
+
+      await settle();
+      expect(router.state.location.pathname).toBe(landing.lands);
+      expect(router.state.historyAction).toBe("REPLACE");
+      expect(
+        screen.getByRole("heading", { level: 1, name: "Target stand-in" }),
+      ).toBeInTheDocument();
+      expect(skeleton()).toBeNull();
+    },
+  );
+
+  it("keeps the page skeleton until a Settings alias's section renders, on a slow first load", async () => {
+    const held = await heldRealRoute("settings/:section");
+    const router = await openSlowly(held, shellRoutes([held.route]), "/settings/retention");
+    // The alias's section is on the same route, so the router lands at once: what main shows is
+    // read as the router moves, before the section renders.
+    const frames: string[] = [];
+    const unsubscribe = router.subscribe((state) => {
+      frames.push(`${state.location.pathname} ${skeleton() === null ? "empty" : "skeleton"}`);
+    });
+
+    wait(300);
+    unsubscribe();
+    expect(frames).toEqual(["/settings/privacy skeleton"]);
+    expect(router.state.historyAction).toBe("REPLACE");
+    await settle();
+    expect(screen.getByRole("heading", { level: 1, name: "Settings" })).toBeInTheDocument();
   });
 });
