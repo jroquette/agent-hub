@@ -45,7 +45,7 @@ URL := http://127.0.0.1:$(AGENT_HUB_PORT)
 # drives the Claude sessions stays on AGENT_HUB_PORT, started apart).
 LIVE_API_PORT ?= 7421
 
-.PHONY: help format lint typecheck layout lockstep test-fast check-fast test-integration test-e2e \
+.PHONY: help format lint typecheck layout lockstep test-fast check-fast check-changed test-integration test-e2e \
         test-e2e-parallel test-e2e-serial test-suite test-suite-serial pr-title \
         lane-checks-fast lane-checks lane-tests-fast lane-tests web-static web-test \
         imports migrations coverage check llms-txt hub-schema parsed-builtins output-schemas web-install web-fast web-build web-dist-check \
@@ -117,6 +117,12 @@ lane-checks-fast:
 
 lane-tests-fast:
 	@$(MAKE) $(IN_ORDER) test-fast $(call IF_WEB,web-test)
+
+# The checks, and only the fast tests the change reaches (scripts/check_changed.py; its --plan
+# prints the plan alone). The recipe never names PATHS: make would paste the value into the line
+# the shell runs. Given on make's command line, PATHS reaches the script's environment as data.
+check-changed: ## the checks and the fast tests of what changed: PATHS="<paths>", else git vs origin/main
+	$(RUN) python -m scripts.check_changed
 
 test-integration: ## integration tests (real SQLite files under tmp_path), never live ones; appends coverage
 	$(RUN) pytest -m "integration and not live and not serial" $(XDIST) $(COV) --cov-append

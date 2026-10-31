@@ -5,7 +5,16 @@ A package's code reaches the fast tests of every package that imports it, direct
 others, in the ``agent_hub`` import graph; the repo's ``scripts`` are one more node there, tested
 by the root ``tests/unit``. Other paths go through a table of rows (``_row``). A build file, an
 absolute path, a path with a ``..`` part, a pack that does not exist or a path no row names makes
-the plan full: every unit and contract test. The runner lands in a later commit.
+the plan full: every unit and contract test.
+
+The runner (``main``) prints the plan, and with ``--plan`` stops there. Otherwise it runs
+``make web-install`` first when the plan has the web steps, then two lanes at once, each stopping
+at its first failed step: the checks (``format``, ``lint``, ``typecheck``, ``layout`` and
+``lockstep`` on the whole tree, then ``web-static`` with the web steps and the OpenAPI check when
+``api`` is reached) and the tests (pytest on the planned targets with ``-m "unit or contract"``
+and no coverage, then ``web-test`` with the web steps). Each lane's output is printed when the
+lane ends, a failed lane's only once the other lane is done, and the last line names the failed
+step: the Stop gate keeps only the end of the output. The exit code is 0, or 1 when a step failed.
 
 Choices behind the plan:
 
@@ -23,8 +32,14 @@ Choices behind the plan:
   printable and at most SHOWN_LIMIT characters long, else cut.
 """
 
+import argparse
+import os
 import re
+import shlex
+import subprocess
+import sys
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,6 +51,11 @@ type Git = Callable[[Sequence[str]], str | None]
 # One step's argv, mapped to its exit code and its output.
 type Start = Callable[[Sequence[str]], tuple[int, str]]
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+# make runs the targets that follow one after the other (LANE=1) and stops at the first failure.
+IN_ORDER = ("make", "--no-print-directory", "LANE=1")
+CHECKS = ("format", "lint", "typecheck", "layout", "lockstep")
+WEB_INSTALL = (*IN_ORDER, "web-install")
 SCRIPTS = "scripts"
 ROOT_UNIT = "tests/unit"
 CORE_UNIT = "packages/core/tests/unit"
@@ -201,7 +221,19 @@ def change_set(
 
 def lanes(plan: Plan) -> tuple[tuple[tuple[str, ...], ...], tuple[tuple[str, ...], ...]]:
     """The checks lane's steps and the tests lane's steps, each step an argv."""
-    raise NotImplementedError
+    checks: list[tuple[str, ...]] = [(*IN_ORDER, *CHECKS, *(("web-static",) if plan.web else ()))]
+    if plan.openapi:
+        checks.append((sys.executable, "-m", "scripts.export_openapi", "--check"))
+    tests: list[tuple[str, ...]] = []
+    # With no target, pytest would collect every test folder: no pytest step at all then. No
+    # coverage either, so the data make coverage reads stays the gates'.
+    if plan.tests:
+        ignores = (f"--ignore={path}" for path in plan.ignores)
+        marker = ("-m", "unit or contract")
+        tests.append((sys.executable, "-m", "pytest", *marker, "-n", "auto", *plan.tests, *ignores))
+    if plan.web:
+        tests.append((*IN_ORDER, "web-test"))
+    return tuple(checks), tuple(tests)
 
 
 def main(
@@ -212,7 +244,14 @@ def main(
     git: Git,
 ) -> int:
     """Print the plan, then run it unless ``--plan`` is given; returns the exit code."""
-    raise NotImplementedError
+    arguments = _parser().parse_args(argv)
+    paths: list[str] = arguments.paths
+    source, changed = change_set(paths, environ, git)
+    plan = plan_change(changed, import_graph(REPO_ROOT), read_tree(REPO_ROOT))
+    print(_described(source, changed, plan), flush=True)
+    if arguments.plan:
+        return 0
+    return _run(plan, start)
 
 
 # The planner's rows.
@@ -336,6 +375,80 @@ def _shown(path: str) -> str:
     return path if end == len(path) else f"{path[:end]}…"
 
 
+# The runner.
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Run the checks, and the fast tests of what the changed paths reach."
+    )
+    parser.add_argument("--plan", action="store_true", help="print the plan and run nothing")
+    parser.add_argument(
+        "paths", nargs="*", help="the changed paths (default: PATHS, HUB_CHANGED_FILES, git)"
+    )
+    return parser
+
+
+def _described(source: str, paths: Sequence[str] | None, plan: Plan) -> str:
+    """The plan as lines: how many paths and from where, why, the pytest targets, the steps."""
+    count = "unknown" if paths is None else str(len(set(paths)))
+    lines = [
+        f"check-changed: changed paths from {source}: {count}",
+        f"  plan: {'full' if plan.full else 'narrowed'}",
+        *(f"  reason: {reason}" for reason in plan.reasons),
+        *(f"  test: {target}" for target in plan.tests or ("none",)),
+        *(f"  ignore: {path}" for path in plan.ignores),
+        f"  openapi check: {'yes' if plan.openapi else 'no'}",
+        f"  web steps: {'yes' if plan.web else 'no'}",
+    ]
+    return "\n".join(lines)
+
+
+def _run(plan: Plan, start: Start) -> int:
+    """Run the plan's steps; 1 when one fails."""
+    if plan.web:
+        # Before the lanes, which would otherwise both install at once.
+        code, output = start(WEB_INSTALL)
+        _show(output)
+        if code != 0:
+            print(_failure(WEB_INSTALL))
+            return 1
+    failures: list[tuple[str, tuple[str, ...]]] = []
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        running = [pool.submit(_run_lane, lane, start) for lane in lanes(plan)]
+        for done in as_completed(running):
+            output, failed = done.result()
+            if failed is None:
+                _show(output)
+            else:
+                failures.append((output, failed))
+    for output, _ in failures:
+        _show(output)
+    for _, failed in failures:
+        print(_failure(failed))
+    return 1 if failures else 0
+
+
+def _run_lane(steps: Sequence[tuple[str, ...]], start: Start) -> tuple[str, tuple[str, ...] | None]:
+    """Run ``steps`` in order up to the first that fails: the output, and the failed step."""
+    outputs: list[str] = []
+    for step in steps:
+        code, output = start(step)
+        outputs.append(output)
+        if code != 0:
+            return "".join(outputs), step
+    return "".join(outputs), None
+
+
+def _show(output: str) -> None:
+    if output:
+        print(output, end="" if output.endswith("\n") else "\n", flush=True)
+
+
+def _failure(step: Sequence[str]) -> str:
+    return f"check-changed: failed: {shlex.join(step)}"
+
+
 # Reading the change set and the checkout.
 
 
@@ -361,3 +474,40 @@ def _imports(folder: Path) -> frozenset[str]:
         for name in match.groups()
         if name is not None
     )
+
+
+# The real steps and git, for a run from make or by hand.
+
+
+def _start_step(argv: Sequence[str]) -> tuple[int, str]:
+    """Run one step from the checkout top, its stdout and stderr together, with no shell."""
+    done = subprocess.run(
+        list(argv),
+        cwd=REPO_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    return done.returncode, done.stdout
+
+
+def _run_git(args: Sequence[str]) -> str | None:
+    """git's stdout for ``args`` in the checkout; None when git exits non-zero or cannot start."""
+    try:
+        done = subprocess.run(
+            ["git", *args],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except OSError:
+        return None
+    return done.stdout if done.returncode == 0 else None
+
+
+if __name__ == "__main__":
+    sys.exit(main(environ=os.environ, start=_start_step, git=_run_git))
