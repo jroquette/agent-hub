@@ -135,7 +135,7 @@ def run_hub(
 ) -> tuple[int, subprocess.CompletedProcess[str]]:
     """``python -m agent_hub.cli``, or this interpreter on ``entry``, with ``args`` in ``hub``, no
     stdin: its process id, and what it gave. A command still running at ``COMMAND_TIMEOUT`` is
-    killed and reaped, then the timeout raised."""
+    killed and reaped, then the timeout raised, as ``subprocess.run`` does on POSIX."""
     argv = [sys.executable, *entry, *args]
     with subprocess.Popen(  # noqa: S603 - this interpreter, fixed arguments
         argv,
@@ -151,7 +151,9 @@ def run_hub(
             stdout, stderr = process.communicate(timeout=COMMAND_TIMEOUT)
         except subprocess.TimeoutExpired:
             process.kill()
-            process.communicate()
+            # Not communicate(): it waits for the end of the output, which a child of the command
+            # can hold open as long as it lives. The output so far is on the exception.
+            process.wait()
             raise
     return process.pid, subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
 
