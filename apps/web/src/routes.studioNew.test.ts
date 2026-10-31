@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 import { appRoutes } from "./routes";
 
 // The Toolkit's module arrives only when the test lets it. This file has a module registry of its
-// own, so no other test has loaded the Toolkit's code first.
+// own, so no other test has loaded the Toolkit's code first. It opens one route only: while the
+// mock holds a module, Vitest's mocker gives a second import of it the real module at once, so
+// the edit route has a file of its own (routes.studioEdit.test.ts).
 const toolkit = vi.hoisted(() => {
   let open: () => void = () => undefined;
   const arrived = new Promise<void>((resolve) => {
@@ -22,11 +24,7 @@ vi.mock("./screens/skills", async (importOriginal) => {
   return importOriginal();
 });
 
-// The Studio's routes that send an invalid kind to the Toolkit, in table order.
-const TOOLKIT_FALLBACKS = [
-  "projects/:project/skills/new/:kind",
-  "projects/:project/skills/:kind/:source/:name/edit",
-];
+const NEW_DRAFT = "projects/:project/skills/new/:kind";
 
 /** Every route of the table, nested children included, in order. */
 function allRoutes(routes: readonly RouteObject[]): RouteObject[] {
@@ -34,17 +32,15 @@ function allRoutes(routes: readonly RouteObject[]): RouteObject[] {
 }
 
 describe("appRoutes", () => {
-  it("draws a new draft or a draft's edit only once the Toolkit's code is in", async () => {
+  it("draws a new draft only once the Toolkit's code is in", async () => {
     // An invalid kind redirects to the Toolkit: drawn before its code, the page would be empty.
-    const routes = allRoutes(appRoutes).filter((route) =>
-      TOOLKIT_FALLBACKS.includes(route.path ?? ""),
-    );
-    expect(routes.map((route) => route.path)).toEqual(TOOLKIT_FALLBACKS);
+    const routes = allRoutes(appRoutes).filter((route) => route.path === NEW_DRAFT);
+    expect(routes.map((route) => route.path)).toEqual([NEW_DRAFT]);
+    const [route] = routes;
+    if (typeof route?.lazy !== "function") throw new Error(`no lazy on ${NEW_DRAFT}`);
     const drawn: string[] = [];
-    const loads = routes.map(async (route) => {
-      if (typeof route.lazy !== "function") throw new Error(`no lazy on ${route.path ?? ""}`);
-      await route.lazy();
-      drawn.push(route.path ?? "");
+    const load = route.lazy().then(() => {
+      drawn.push(NEW_DRAFT);
     });
 
     // The Studio's own code arrives, and the Toolkit's is still on its way.
@@ -53,7 +49,7 @@ describe("appRoutes", () => {
     expect(drawn).toEqual([]);
 
     toolkit.arrive();
-    await Promise.all(loads);
-    expect(drawn.toSorted()).toEqual(TOOLKIT_FALLBACKS.toSorted());
+    await load;
+    expect(drawn).toEqual([NEW_DRAFT]);
   });
 });
