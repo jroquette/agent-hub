@@ -325,7 +325,7 @@ row, and the next stop is "Triage in Learnings". On a row:
 `↓` in the search field with no query goes to the tree's current row (with a query, to the first result, as before).
 The tree takes these keys only while one of its rows has focus, never with `Ctrl`, `⌘` or `Alt`, and never while typing
 in a field. While a `g` sequence waits for its second key, `k` and `o` are the sequence's (`g k`, `g o`); the arrows,
-`Home`, `End`, `j` and `Space` still act on the tree, and end the sequence. Opening or closing a folder keeps focus on
+`Home`, `End`, `j`, `Space` and `Enter` still act on the tree, and end the sequence. Opening or closing a folder keeps focus on
 its row, with a click too. The current row is always rendered, so focus stays on it when the wheel scrolls it out of
 view; when the focused row leaves the list (a new listing drops it), focus moves to its folder's row, else to the row
 before it, never to the page.
