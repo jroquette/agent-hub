@@ -2,19 +2,19 @@
 SQLite file and a registered synthetic hub.
 
 Each route is read once to warm it, then measured with ``count_sql`` at 20 and again at 200
-sessions (the 180 more appended in between, the route warmed again). The counts must be the
-same at both sizes, so an N+1 fails here (AC-2), and equal the pinned literal, so one extra
-query fails too. The routes that still ask one query per session are strict xfails until their
-fix. Each read also checks one value of the response at each size, so a route that stops seeing
-the sessions fails rather than passing with fewer queries. A bad status or value fails through
-``pytest.fail``, outside the xfails' ``raises=AssertionError``: only the count check can be the
-expected failure.
+sessions (the 180 more appended in between, the route warmed again); ``?issue=``, which looks at
+every session in scope, at 2,000. Every fifth session is driven by an ended agent session of
+``hub web``, half of those with a stored first prompt, so each route shows links with and
+without one at both sizes. The counts must be the same at both sizes, so an N+1 fails here
+(AC-2), and equal the pinned literal, so one extra query fails too. Each read also checks one
+value of the response at each size, so a route that stops seeing the sessions fails rather than
+passing with fewer queries. A bad status or value fails through ``pytest.fail``.
 A statement is anything sent through a cursor, ``BEGIN`` included; a connection is a new DB-API
 connection a pool opens, so a warm route, served by its engines' idle connections, opens none.
 """
 
 from collections.abc import Callable
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, closing
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -23,10 +23,14 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
 
+from agent_hub.core.agent_sessions.agent_session import AgentSessionStatus, EndReason
+from agent_hub.core.testing.read_model_builders import a_log_record, an_agent_session
 from agent_hub.core.testing.session_scenarios import a_session_events
+from agent_hub.storage.agent_session_store import open_agent_session_store
 
 FEW = 20
 MANY = 200
+ISSUE_MANY = 2_000
 ORIGIN = {"Origin": "http://127.0.0.1:7420"}
 FEATURE = "export"
 FEATURE_ISSUE = "DEM-7"
@@ -42,6 +46,8 @@ RECORD = (
     '{"feature": "export", "linear": ["DEM-7"], "acs": [{"id": "AC-7.1", "description": "One",'
     ' "repo": "demo-api", "verification": "make check", "passes": true, "evidence": "run"}]}'
 )
+# A first prompt with no slash command names no issue, so a link changes no session's label.
+LINKED_PROMPT = "Look at the export."
 
 
 class Counts(NamedTuple):
@@ -50,7 +56,7 @@ class Counts(NamedTuple):
 
 
 class Seen(NamedTuple):
-    """The value a route's response shows at ``FEW`` and at ``MANY`` sessions."""
+    """The value a route's response shows at ``FEW`` sessions and at its larger size."""
 
     few: int
     many: int
@@ -63,10 +69,18 @@ def _skill_uses(body: Any) -> int:
     return next(item["usage"]["count"] for item in body["items"] if item["name"] == "create-plan")
 
 
-def _sessions(composed: Any, numbers: range) -> None:
+def _linked(body: Any) -> int:
+    return len([item for item in body["items"] if item["agent_session_id"] is not None])
+
+
+def _sessions(composed: Any, numbers: range, *, size: int) -> None:
     """Sessions on the hub's branch prefix and team: the even ones about ``FEATURE_ISSUE``, the
-    odd ones about an issue of their own; every third one still live; each uses a skill."""
-    start = composed.settings.clock() - timedelta(minutes=12)
+    odd ones about an issue of their own; every third one still live; each uses a skill.
+
+    Session ``n`` starts ``n`` seconds after the first; in a world of ``size`` sessions the
+    first starts early enough that the last starts 8 min 41 s before the frozen clock, as at
+    200, so none starts after it."""
+    start = composed.settings.clock() - timedelta(minutes=12, seconds=size - MANY)
     events = []
     for number in numbers:
         issue = "dem-7" if number % 2 == 0 else f"dem-{100 + number}"
@@ -78,6 +92,30 @@ def _sessions(composed: Any, numbers: range) -> None:
             git_branch=f"jdoe/{issue}-work",
         )
     composed.store.append(events)
+
+
+def _links(composed: Any, numbers: range) -> None:
+    """Every fifth session driven by an ended agent session of ``hub web``; those with
+    ``number % 20 < 10`` have a stored first prompt, the others none."""
+    ended_at = composed.settings.clock() - timedelta(minutes=1)
+    with closing(open_agent_session_store(composed.settings.db_path)) as agent_sessions:
+        for number in numbers:
+            if number % 5 != 0:
+                continue
+            agent_session_id = f"01929a4e-7a11-7c00-8a00-{number:012d}"
+            agent_sessions.create(
+                an_agent_session(
+                    id=agent_session_id,
+                    claude_session_id=f"session-{number:03d}",
+                    status=AgentSessionStatus.ENDED,
+                    end_reason=EndReason.CLOSED,
+                    ended_at=ended_at,
+                    last_seq=0,
+                )
+            )
+            if number % 20 < 10:
+                prompt = a_log_record("user.message", 1, body={"text": LINKED_PROMPT})
+                agent_sessions.append(agent_session_id, [prompt])
 
 
 @pytest.fixture
@@ -105,6 +143,22 @@ def _ok(response: Any) -> Any:
     return response.json()
 
 
+def _counted(
+    composed: Any,
+    path: str,
+    count_sql: Callable[[], AbstractContextManager[Any]],
+    *,
+    reading: Reading,
+    expected: int,
+) -> Counts:
+    with count_sql() as counts:
+        response = composed.client.get(path)
+    seen = reading(_ok(response))
+    if seen != expected:
+        pytest.fail(f"{path} shows {seen}, expected {expected}")
+    return Counts(counts.statements, counts.connections)
+
+
 def _measured(
     composed: Any,
     path: str,
@@ -114,12 +168,7 @@ def _measured(
     expected: int,
 ) -> Counts:
     _ok(composed.client.get(path))
-    with count_sql() as counts:
-        response = composed.client.get(path)
-    seen = reading(_ok(response))
-    if seen != expected:
-        pytest.fail(f"{path} shows {seen}, expected {expected}")
-    return Counts(counts.statements, counts.connections)
+    return _counted(composed, path, count_sql, reading=reading, expected=expected)
 
 
 def _at_both_sizes(
@@ -129,27 +178,22 @@ def _at_both_sizes(
     *,
     reading: Reading,
     seen: Seen,
+    size: int,
 ) -> tuple[Counts, Counts]:
-    _sessions(world, range(FEW))
+    _sessions(world, range(FEW), size=size)
+    _links(world, range(FEW))
     few = _measured(world, path, count_sql, reading=reading, expected=seen.few)
-    _sessions(world, range(FEW, MANY))
+    _sessions(world, range(FEW, size), size=size)
+    _links(world, range(FEW, size))
     many = _measured(world, path, count_sql, reading=reading, expected=seen.many)
     return few, many
 
 
-# The lookup of each session's agent-session link (``link_of``) costs one connection and two
-# statements (``BEGIN``, ``SELECT``) per session it is asked for.
-ISSUE_N_PLUS_ONE = pytest.mark.xfail(
-    strict=True, raises=AssertionError, reason="N+1: link_of per session, fixed by AGH-610"
-)
-LISTED_N_PLUS_ONE = pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="N+1: link_of per listed session (_decorated), fixed by AGH-610",
-)
-
-# A pinned route asserts its literal counts; an N+1 route (pinned None) asserts only that they
-# stay the same, so its strict xfail passes, and fails CI, once the fix lands: then pin it.
+# A warm read costs the store's mark (``BEGIN``, ``SELECT``); a route that shows links adds one
+# ``links_of`` and one ``first_records`` (the linked sessions with no stored prompt are asked
+# again on every read), two statements each. The ``first_records`` pins hold while a lookup asks
+# at most 500 links (one chunk): ``?issue=`` at 2,000 sessions finds 400 and asks them all on
+# first sight.
 # Every third session is live; half are about ``FEATURE_ISSUE``; the sessions page holds 50.
 ROUTES = [
     pytest.param(
@@ -157,6 +201,7 @@ ROUTES = [
         Counts(2, 0),
         lambda body: body["items"][0]["live_sessions"],
         Seen(7, 67),
+        MANY,
         id="projects",
     ),
     pytest.param(
@@ -164,69 +209,107 @@ ROUTES = [
         Counts(0, 0),
         lambda body: len(body["items"]),
         Seen(1, 1),
+        MANY,
         id="features",
     ),
     pytest.param(
         f"/api/v1/features/demo/{FEATURE}",
-        None,
+        Counts(6, 0),
         lambda body: body["cost"]["sessions"],
         Seen(10, 100),
+        MANY,
         id="feature-detail",
-        marks=ISSUE_N_PLUS_ONE,
     ),
     pytest.param(
         "/api/v1/sessions",
-        None,
+        Counts(6, 0),
         lambda body: len(body["items"]),
         Seen(20, 50),
+        MANY,
         id="sessions",
-        marks=LISTED_N_PLUS_ONE,
     ),
     pytest.param(
         f"/api/v1/sessions?issue={FEATURE_ISSUE}",
-        None,
+        Counts(6, 0),
         lambda body: len(body["items"]),
         Seen(10, 50),
+        ISSUE_MANY,
         id="sessions-of-issue",
-        marks=ISSUE_N_PLUS_ONE,
     ),
     pytest.param(
         "/api/v1/live-sessions",
-        None,
+        Counts(6, 0),
         lambda body: len(body["items"]),
         Seen(7, 67),
+        MANY,
         id="live-sessions",
-        marks=LISTED_N_PLUS_ONE,
     ),
     pytest.param(
-        "/api/v1/projects/demo/skills", Counts(2, 0), _skill_uses, Seen(20, 200), id="skills"
+        "/api/v1/projects/demo/skills",
+        Counts(2, 0),
+        _skill_uses,
+        Seen(20, 200),
+        MANY,
+        id="skills",
     ),
     pytest.param(
         "/api/v1/doctor/findings?project=demo",
         Counts(0, 0),
         lambda body: len(body["items"]),
         Seen(2, 2),
+        MANY,
         id="doctor-findings",
     ),
 ]
 
 
-@pytest.mark.parametrize(("path", "pinned", "reading", "seen"), ROUTES)
+@pytest.mark.parametrize(("path", "pinned", "reading", "seen", "size"), ROUTES)
 def test_keeps_sql_counts_when_sessions_grow_tenfold(  # noqa: PLR0913 -- one per param
     world: Any,
     count_sql: Callable[[], AbstractContextManager[Any]],
     *,
     path: str,
-    pinned: Counts | None,
+    pinned: Counts,
     reading: Reading,
     seen: Seen,
+    size: int,
 ) -> None:
-    """AC-2: a route's statements and connections do not grow with the sessions."""
-    few, many = _at_both_sizes(world, path, count_sql, reading=reading, seen=seen)
+    """AC-2: a route's statements and connections do not grow with the sessions, linked ones
+    included (AC-9, AC-10)."""
+    few, many = _at_both_sizes(world, path, count_sql, reading=reading, seen=seen, size=size)
 
     assert few == many, (few, many)
-    if pinned is not None:
-        assert few == pinned, few
+    assert few == pinned, few
+
+
+# The sessions page shows the 50 newest (150 to 199 at 200), ``?issue=`` the 50 newest even
+# ones (100 to 198); every fifth session is linked.
+@pytest.mark.parametrize(
+    ("path", "linked"),
+    [
+        pytest.param("/api/v1/sessions", Seen(4, 10), id="sessions"),
+        pytest.param(
+            f"/api/v1/sessions?issue={FEATURE_ISSUE}", Seen(2, 10), id="sessions-of-issue"
+        ),
+    ],
+)
+def test_reads_new_link_prompts_in_one_batch_when_links_first_seen(
+    world: Any,
+    count_sql: Callable[[], AbstractContextManager[Any]],
+    *,
+    path: str,
+    linked: Seen,
+) -> None:
+    """AC-11: links stored after the route is warm are read on first sight, their prompts in
+    one batch, in the same statements at 20 and at 200 sessions."""
+    cold = []
+    for numbers, shown in ((range(FEW), linked.few), (range(FEW, MANY), linked.many)):
+        _sessions(world, numbers, size=MANY)
+        _ok(world.client.get(path))
+        _links(world, numbers)
+        cold.append(_counted(world, path, count_sql, reading=_linked, expected=shown))
+
+    assert cold == [Counts(6, 0), Counts(6, 0)], cold
 
 
 def test_counts_statements_and_connection_when_block_runs_two_statements(

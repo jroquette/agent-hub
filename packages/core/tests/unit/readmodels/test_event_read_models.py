@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -944,6 +944,21 @@ def test_leaves_issue_empty_when_no_hub_rules() -> None:
     assert label.issue is None
 
 
+def _links_of(
+    links: dict[tuple[str, str], AgentSessionLink],
+) -> Callable[[str, Collection[str]], Mapping[str, AgentSessionLink]]:
+    """The batch link lookup over ``links``, read at each call, so a test can change a link."""
+
+    def links_of(project: str, session_ids: Collection[str]) -> Mapping[str, AgentSessionLink]:
+        return {
+            session_id: links[(project, session_id)]
+            for session_id in session_ids
+            if (project, session_id) in links
+        }
+
+    return links_of
+
+
 def _linked_service(links: dict[tuple[str, str], AgentSessionLink]) -> FoldedEventReadModels:
     store = InMemoryEventStore()
     store.append(
@@ -955,7 +970,7 @@ def _linked_service(links: dict[tuple[str, str], AgentSessionLink]) -> FoldedEve
     return FoldedEventReadModels(
         store,
         now=Clock(SCENARIO_START + timedelta(minutes=8)),
-        agent_session_link_of=lambda project, session_id: links.get((project, session_id)),
+        agent_session_links_of=_links_of(links),
     )
 
 
@@ -966,7 +981,7 @@ def test_takes_issue_from_first_prompt_when_branch_and_worktree_name_none() -> N
     service = FoldedEventReadModels(
         store,
         now=Clock(SCENARIO_START + timedelta(minutes=8)),
-        agent_session_link_of=lambda project, session_id: links.get((project, session_id)),
+        agent_session_links_of=_links_of(links),
         label_rules_of={"demo": LabelRules(teams=("DEM",))}.get,
     )
 
@@ -991,7 +1006,7 @@ def test_lists_session_under_prompt_issue_when_branch_names_another_ticket() -> 
     service = FoldedEventReadModels(
         store,
         now=Clock(SCENARIO_START + timedelta(minutes=8)),
-        agent_session_link_of=lambda project, session_id: links.get((project, session_id)),
+        agent_session_links_of=_links_of(links),
         label_rules_of={"demo": LabelRules(teams=("DEM",))}.get,
     )
 
@@ -1060,6 +1075,53 @@ def test_carries_agent_session_id_on_tile_when_link_known_agent_session_link() -
 
     assert tiles["s-web"].agent_session_id == "a-1"
     assert tiles["s-cli"].agent_session_id is None
+
+
+def test_asks_links_once_per_project_when_sessions_listed() -> None:
+    store = InMemoryEventStore()
+    store.append(
+        [
+            *a_session_events("s-dem-1", ended=False, git_branch="jdoe/dem-7-login"),
+            *a_session_events("s-dem-2", ended=False),
+            *a_session_events("s-oth-1", project="other", ended=False),
+            *a_session_events("s-oth-2", project="other", ended=False),
+        ]
+    )
+    asked: list[tuple[str, frozenset[str]]] = []
+    lookup = _links_of({("demo", "s-dem-2"): AgentSessionLink(agent_session_id="a-1")})
+
+    def recording(project: str, session_ids: Collection[str]) -> Mapping[str, AgentSessionLink]:
+        asked.append((project, frozenset(session_ids)))
+        return lookup(project, session_ids)
+
+    service = FoldedEventReadModels(
+        store,
+        now=Clock(SCENARIO_START + timedelta(minutes=8)),
+        agent_session_links_of=recording,
+        label_rules_of={"demo": LabelRules(teams=("DEM",), branch_prefix="jdoe/")}.get,
+    )
+    each_project = [
+        ("demo", frozenset({"s-dem-1", "s-dem-2"})),
+        ("other", frozenset({"s-oth-1", "s-oth-2"})),
+    ]
+
+    listed = service.list_sessions(SessionFilter())
+    from_list = sorted(asked)
+    asked.clear()
+    tiles = service.list_live_sessions(Scope())
+    from_tiles = sorted(asked)
+    asked.clear()
+    cost = service.feature_cost("demo", "login", ("DEM-7",))
+    from_cost = [project for project, _ in asked]
+    asked.clear()
+    one = service.get_session("s-dem-2")
+
+    assert len(listed.items) == len(tiles.items) == 4
+    assert from_list == from_tiles == each_project
+    assert cost.sessions == 1
+    assert from_cost == ["demo"]
+    assert asked == [("demo", frozenset({"s-dem-2"}))]
+    assert one.agent_session_id == "a-1"
 
 
 def _usage_signal(
