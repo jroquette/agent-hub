@@ -9,14 +9,15 @@ starts them; this command only reads ``hub.json`` (a folder that is not a hub ex
 
 import os
 from datetime import UTC, datetime
-from typing import Annotated, Final
+from typing import TYPE_CHECKING, Annotated, Final
 
 import typer
 
-from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
-from agent_hub.cli.hub_root import hub_root_or_exit
-from agent_hub.core.hub_config.schedules import Schedule
-from agent_hub.core.schedules.cron import parse_cron
+from agent_hub.cli.hub_root import FILE_LABEL, hub_root_or_exit
+
+if TYPE_CHECKING:
+    # Only an annotation here: the workflow group loads this module for every workflow command.
+    from agent_hub.core.hub_config.schedules import Schedule
 
 COMMAND: Final = "workflow schedule"
 _TIME_HINT: Final = "give an ISO 8601 time with its offset, such as 2026-10-26T09:00:00+00:00"
@@ -44,6 +45,10 @@ def list_schedules(
     ] = None,
 ) -> None:
     """List each schedule of hub.json with its next start (UTC)."""
+    from agent_hub.cli.hub_config_reader import (  # noqa: PLC0415 - only this command reads hub.json
+        load_hub_config_or_exit,
+    )
+
     moment = datetime.now(UTC) if after is None else _time(after)
     root = hub_root_or_exit(os.environ, command=COMMAND)
     config = load_hub_config_or_exit(root / FILE_LABEL)
@@ -55,6 +60,10 @@ def list_schedules(
 
 
 def _line(schedule: Schedule, after: datetime) -> str:
+    from agent_hub.core.schedules.cron import (  # noqa: PLC0415 - only this command reads a cron
+        parse_cron,
+    )
+
     following = parse_cron(schedule.cron).next_after(after)
     shown = "never" if following is None else following.strftime("%Y-%m-%dT%H:%MZ")
     line = f"{schedule.workflow}  {schedule.cron}  next {shown}"
