@@ -4,14 +4,16 @@ Each ``HOOK_EVENTS`` row runs as Claude Code runs it: the hook file on ``hook_py
 valid input of its event on stdin (``a_hook_input``), in the probe's environment
 (``agent_hub.core.testing.outbound_probe``): stand-ins for gh, uv, uvx, claude, curl, wget and
 ssh first on ``PATH``, every proxy variable at a recording proxy, and a sitecustomize that records
-and refuses each socket call that would leave the machine. Two more cases take the paths that
-reach for a server: the guard denying a push to main (it then sends its decision), and the sensor
-given a control plane on another host. The workspace is synthetic: the rendered demo hub at
-``ws/demo-hub`` and its repo ``ws/demo-api``, both committed git checkouts, a synthetic
-transcript, and the hooks' ``TMPDIR`` under the test's folder.
+and refuses each socket call that would leave the machine. Three more cases take the paths that
+reach for a server: the guard denying a push to main, alone and through ``pre_tool_use.py`` as
+Claude Code runs it (each then sends its decision), and the sensor given a control plane on
+another host. The workspace is synthetic: the rendered demo hub at ``ws/demo-hub`` and its repo
+``ws/demo-api``, both committed git checkouts, a synthetic transcript, and the hooks' ``TMPDIR``
+under the test's folder.
 
 A case passes when the hook gives its normal exit code and output, the probe's marker shows it
-loaded in the process the test started, and nothing was recorded. A case listed in
+loaded in the process the test started, nothing the case started still runs within
+``REFRESH_WAIT`` (the logs are read only then), and nothing was recorded. A case listed in
 ``KNOWN_CALLS`` is a strict xfail naming the ticket that removes its call; none is listed. The one
 call allowed by design is SessionStart's detached refresh (ADR 0055): with no brief cache, its
 ``uvx … hub brief --write-cache``, for the ``session_start.py --refresh`` process only.
@@ -42,6 +44,7 @@ from agent_hub.core.testing.outbound_probe import (
     LOADED_LOG,
     outbound_calls,
     outbound_env,
+    processes_left,
     recording_proxy,
     write_stubs,
 )
@@ -50,16 +53,19 @@ from agent_hub.generator.render_hub import render_hub
 
 HOOKS = "plugin/hub-workflow/hooks"
 RESEARCHER = "plugin/hub-workflow/agents/researcher.md"
-# The two cases beside the rows: the guard denying a push to main, after which it sends its
-# decision, and the sensor given a control plane on a TEST-NET-1 host (RFC 5737), which it must
-# not try.
+# The three cases beside the rows: the guard denying a push to main, after which it sends its
+# decision, run alone and through pre_tool_use.py (the hook Claude Code runs on PreToolUse), and
+# the sensor given a control plane on a TEST-NET-1 host (RFC 5737), which it must not try.
 GUARD_DENY = "guard-PreToolUse-deny"
+PRE_TOOL_USE_DENY = "pre_tool_use-PreToolUse-deny"
+DENIES = (GUARD_DENY, PRE_TOOL_USE_DENY)
 REMOTE_URL = "event_sensor-remote-url"
 REMOTE_CONTROL_PLANE = "http://192.0.2.1:7420"
 # Each case: the hook file it runs and the event of its input.
 CASES: dict[str, tuple[str, str]] = {
     **{f"{hook.file[:-3]}-{hook.event}": (hook.file, hook.event) for hook in HOOK_EVENTS},
     GUARD_DENY: ("guard.py", "PreToolUse"),
+    PRE_TOOL_USE_DENY: ("pre_tool_use.py", "PreToolUse"),
     REMOTE_URL: ("event_sensor.py", "PostToolUse"),
 }
 # A case that still calls out, mapped to the ticket that removes the call: the case becomes a
@@ -73,13 +79,14 @@ REFRESH_LOCK = f"{CACHE_DIR}/refresh.lock"
 CACHED_BRIEF = "# Brief\n\n## Now\nShip the cache.\n"
 # Under the 5 min refresh floor, so no refresh starts; shown as "3 min", rounded or cut.
 FRESH_AGE = 200
-# How long the cold case waits for its refresh to end.
+# How long a case waits for what it started to end, the cold case's refresh included.
 REFRESH_WAIT = 10.0
 
 # What a case prints on a normal run, the guard's reason left out (test_guard_hook.py owns its
-# words): SessionStart's context from a warm cache, headed with its age, and the guard's deny.
-# Every other case prints nothing: the sensor never prints, the guard prints nothing for a call it
-# lets through, and the other hooks' normal runs are silent (their goldens).
+# words): SessionStart's context from a warm cache, headed with its age, and the guard's deny,
+# which pre_tool_use.py prints as the guard does. Every other case prints nothing: the sensor
+# never prints, the guard prints nothing for a call it lets through, and the other hooks' normal
+# runs are silent (their goldens).
 PRINTS: dict[str, dict[str, Any]] = {
     "session_start-SessionStart": {
         "hookSpecificOutput": {
@@ -87,9 +94,10 @@ PRINTS: dict[str, dict[str, Any]] = {
             "additionalContext": f"(brief from 3 min ago)\n\n{CACHED_BRIEF.strip()}",
         }
     },
-    GUARD_DENY: {
-        "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny"}
-    },
+    **dict.fromkeys(
+        DENIES,
+        {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny"}},
+    ),
 }
 
 # ADR 0054: with the release commit in hub.lock, the refresh's brief is one uvx call from the
@@ -208,7 +216,7 @@ def case_fields(case: str, workspace: Workspace) -> dict[str, Any]:
         return {"tool_name": "Edit", "tool_input": edit, "tool_response": {"filePath": edited}}
     if file == "readonly_gate.py":
         return {"agent_type": "researcher"}
-    if case == GUARD_DENY:
+    if case in DENIES:
         return {"tool_input": {"command": "git push origin main", "description": "Push"}}
     return {}
 
@@ -304,6 +312,9 @@ def test_makes_no_network_call_when_hook_runs(
         completed = run(
             hook, stdin=hook_input(event, workspace, **case_fields(case, workspace)), env=env
         )
+        # A call is logged when it is made: a detached child's, after the hook has exited.
+        left = processes_left(folder, tmp_path, timeout=REFRESH_WAIT)
+        assert left == [], f"{case} left running:\n" + "\n".join(left)
     calls = outbound_calls(folder)
 
     assert (completed.returncode, completed.stderr) == (0, b""), case
@@ -325,8 +336,11 @@ def test_allows_only_refresh_uvx_when_session_starts_cold(
         completed = run_hook_file(
             hook_python, hook, stdin=hook_input("SessionStart", workspace), cwd=hub, env=env
         )
-        # The recorder logs only what it accepted before the block ends: the refresh ends here.
+        # The recorder logs only what it accepted before the block ends: the refresh ends here,
+        # and so does anything else the case started.
         ended = refresh_ended(hub)
+        left = processes_left(folder, tmp_path, timeout=REFRESH_WAIT)
+        assert left == [], "session_start cold start left running:\n" + "\n".join(left)
     calls = outbound_calls(folder)
 
     assert (completed.returncode, completed.stderr) == (0, b"")
@@ -355,15 +369,16 @@ def write_lock(hub: Path, *, commit: str) -> None:
     assert (lock["platform_version"], lock.get("platform_commit")) == (version, commit)
 
 
-# The session-start helpers below are copies of test_session_start_hook.py's, which keeps its own.
+# The session-start helpers below are copies of test_session_start_hook.py's, which keeps its own,
+# without the options this file never sets.
 
 
-def write_cache(hub: Path, *, age: float, brief: str = CACHED_BRIEF) -> None:
-    """The cache ``hub brief --write-cache`` leaves, made ``age`` seconds ago."""
+def write_cache(hub: Path, *, age: float) -> None:
+    """The cache ``hub brief --write-cache`` leaves, ``CACHED_BRIEF`` made ``age`` seconds ago."""
     folder = hub / CACHE_DIR
     folder.mkdir(exist_ok=True)
     (folder / ".gitignore").write_text("*\n", encoding="utf-8")
-    document = {"made_at": time.time() - age, "brief": brief}
+    document = {"made_at": time.time() - age, "brief": CACHED_BRIEF}
     (hub / CACHE).write_text(json.dumps(document), encoding="utf-8")
 
 
@@ -377,11 +392,11 @@ def wait_until(condition: Callable[[], object], deadline: float = REFRESH_WAIT) 
     return True
 
 
-def refresh_ended(hub: Path, deadline: float = REFRESH_WAIT) -> bool:
+def refresh_ended(hub: Path) -> bool:
     """True once the refresh lock exists and is free: the refresh that held it has ended."""
-    end = time.monotonic() + deadline
+    end = time.monotonic() + REFRESH_WAIT
     lock = hub / REFRESH_LOCK
-    if not wait_until(lock.exists, deadline):
+    if not wait_until(lock.exists, REFRESH_WAIT):
         return False
     return is_lock_free_within(lock, max(end - time.monotonic(), 0.0))
 
