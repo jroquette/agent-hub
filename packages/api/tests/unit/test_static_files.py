@@ -1,3 +1,4 @@
+import mimetypes
 from pathlib import Path
 from typing import Any
 
@@ -145,13 +146,18 @@ def test_serves_brotli_variant_when_client_accepts_br(client: Any, accept_encodi
 def test_keeps_asset_content_type_when_variant_served(client: Any) -> None:
     variant, _ = _fetch(client, SCRIPT, accept_encoding="br")
     identity, _ = _fetch(client, SCRIPT, accept_encoding="identity")
+    # Starlette types a file with Python's mimetypes, which reads the host's mime database
+    # (Apache's mime.types, which macOS ships, has named a script application/javascript), so the
+    # type expected is mimetypes' own for the file's name.
+    file_type, _ = mimetypes.guess_type(SCRIPT)
 
     answers = [variant, identity]
     assert [answer.headers.get("content-encoding") for answer in answers] == ["br", None]
-    assert [answer.headers.get("content-type") for answer in answers] == [
-        "text/javascript; charset=utf-8",
-        "text/javascript; charset=utf-8",
+    assert [answer.headers.get("content-type", "").partition(";")[0] for answer in answers] == [
+        file_type,
+        file_type,
     ]
+    assert variant.headers.get("content-type") == identity.headers.get("content-type")
 
 
 @pytest.mark.usefixtures("compressed_dist")

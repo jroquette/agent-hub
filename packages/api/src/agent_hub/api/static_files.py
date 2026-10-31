@@ -11,7 +11,7 @@ as ``immutable`` and carries ``Vary: Accept-Encoding``; ``index.html`` stays ``n
 next load picks up a new release. The build writes a Brotli variant (``<name>.br``) beside each
 script, style and SVG of 1 KB or more. A client whose ``Accept-Encoding`` takes ``br`` gets it,
 typed as the file itself and with its own etag; every other client, and any ``Range`` request,
-gets the file as it is. A variant asked for by its own name is a 404.
+gets the file as it is. A variant asked for by its own name, in any case, is a 404.
 """
 
 import re
@@ -62,7 +62,9 @@ class WebApp:
             response.headers["Allow"] = "GET, HEAD"
         elif self._names_file(path):
             served = self._files.get_path(scope)
-            if not served.startswith(_ASSETS):
+            # A case-insensitive disk (macOS's default) finds a file under any case of its name,
+            # so ``served`` is tested caseless here and in ``_asset``.
+            if not served.casefold().startswith(_ASSETS):
                 await self._files(scope, receive, send)
                 return
             response = await self._asset(served, scope)
@@ -76,7 +78,7 @@ class WebApp:
         """A file under ``assets/``: its Brotli variant when the client takes one, else the file
         itself. Each is answered by ``StaticFiles``, so each keeps its own etag and 304, and each
         is typed as the file: ``mimetypes`` reads the ``.br`` ending as an encoding."""
-        if served.endswith(_VARIANT):
+        if served.casefold().endswith(_VARIANT):
             # Asked for by its own name, a variant would go out as Brotli bytes typed as its file,
             # with no Content-Encoding. It is sent only as its file's encoding.
             return _no_file(str(scope["path"]))
