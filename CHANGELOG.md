@@ -24,6 +24,16 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   changes itself. `check_fast_timeout` limits whichever command runs, and no check gets a `HUB_CHANGED_FILES` the hook
   inherited. Set the key only after bumping `platform.version` to a release that has it (AGH-619).
 
+### Changed
+
+- A tool call now starts one hook process instead of two: `pre_tool_use.py` runs the guard, then the event sensor. The
+  guard answers each call as before, and its decision and the event still reach `hub web`, sent after the answer is
+  printed and within one 0.5 s limit for both. The guard also loads less: its patterns are compiled when first used,
+  and the sensor writes its request to a plain socket. The project guard (`plugin/<project>/hooks/project_guard.py`)
+  runs in a fork of the hook instead of a new `python3`, with the same 3 s limit and the same asks when it fails. A
+  missing or broken `guard.py` now gets the guard's ask, where it used to block the call or let it through. Run
+  `hub sync` after bumping `platform.version` to get the new hook (AGH-621).
+
 ### Fixed
 
 - `hub doctor` no longer reports `brain.leak` errors for the lines of an ADR draft that reached a repo's `docs/adr/`
