@@ -103,8 +103,14 @@ describe("BrainScreen", () => {
     const tree = screen.getByRole("navigation", { name: "Brain notes" });
     const plan = await within(tree).findByRole("link", { name: "plan.md" });
     expect(plan).toHaveAttribute("aria-current", "page");
-    expect(plan.closest("details")).toHaveAttribute("open");
-    expect(within(tree).getByText("decisions/").closest("details")).not.toHaveAttribute("open");
+    expect(within(tree).getByText("control-plane/").closest("button")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(within(tree).getByText("decisions/").closest("button")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
     expect(within(tree).getByRole("link", { name: "Now" })).toHaveAttribute(
       "href",
       "/projects/agent-hub/brain/now.md",
@@ -172,7 +178,7 @@ describe("BrainScreen", () => {
         .map((link) => link.textContent),
     ).toEqual(["Index", "Now"]);
     const folders = within(tree).getByRole("region", { name: "Folders" });
-    expect(within(folders).getByText("features/").closest("summary")).toHaveAccessibleName(
+    expect(within(folders).getByText("features/").closest("button")).toHaveAccessibleName(
       "features, 1 note",
     );
     expect(within(folders).queryByText("_inbox/")).not.toBeInTheDocument();
