@@ -1610,6 +1610,21 @@ def test_lists_changed_paths_when_check_stop_runs(
             id="mv_folder",
         ),
         pytest.param(
+            "mkdir -p pkg1/sub/deep/inner && echo 'x = 3' > pkg1/sub/deep/inner/d.py"
+            " && git add -A && git -c user.name=t -c user.email=t@example.com commit -qm deep",
+            "mv pkg1/sub/deep pkg1/sub/moved",
+            [" M a.py", " D pkg1/sub/deep/inner/d.py", "?? pkg1/sub/moved/inner/d.py"],
+            b"a.py\npkg1/sub/deep/inner/d.py\npkg1/sub/moved/inner/d.py",
+            id="mv_folder_below_older_folder",
+        ),
+        pytest.param(
+            "echo 'x = 3' > pkg1/b.py",
+            "echo 'x = 1' > pkg1/new.py",
+            [" M a.py", " M pkg1/b.py", "?? pkg1/new.py"],
+            b"a.py\npkg1/new.py",
+            id="tracked_edit_before_session_in_changed_folder",
+        ),
+        pytest.param(
             "",
             "ln -s b.py link.py",
             [" M a.py", "?? link.py"],
@@ -1630,6 +1645,13 @@ def test_lists_changed_paths_when_check_stop_runs(
             b"a.py\nb.py\nc.py",
             id="git_mv_before_session",
         ),
+        pytest.param(
+            "git config diff.renames copies",
+            "cp pkg1/b.py c.py && echo 'x = 3' >> pkg1/b.py && git add pkg1/b.py c.py",
+            [" M a.py", "M  pkg1/b.py", "C  pkg1/b.py -> c.py"],
+            b"a.py\nc.py\npkg1/b.py",
+            id="copy_record",
+        ),
     ],
 )
 def test_lists_moved_and_linked_paths_when_check_stop_runs(
@@ -1647,11 +1669,15 @@ def test_lists_moved_and_linked_paths_when_check_stop_runs(
     # edits a.py, so the gate runs. A plain mv, not staged, is a deletion and an untracked file to
     # git, and keeps the file's mtime: the new name counts by the ctime the move set. A folder
     # moved with mv keeps both dates of the files in it: they count by the ctime of a folder
-    # between the checkout's top and them, here pkg2 above the older pkg2/sub. A new link counts by
-    # its own dates, not its older target's. Both names of a rename count whenever git lists them,
-    # even when the rename was staged before the session and c.py is older than it by both dates.
-    # A name git lists twice, a staged rename's old name and a file made again under it, is listed
-    # once.
+    # between the checkout's top and them, here pkg2 above the older pkg2/sub. The gate reads
+    # every such folder: pkg1/sub/moved/inner/d.py counts though its first folder, pkg1, and its
+    # nearest, pkg1/sub/moved/inner, are both older than the session. Only an untracked path
+    # counts by its folder: pkg1/b.py, edited before the session, stays out though pkg1 gains a
+    # file. A new link counts by its own dates, not its older target's. Both names of a rename
+    # count whenever git lists them, even when the rename was staged before the session and c.py
+    # is older than it by both dates. A copy record, which git prints under diff.renames=copies,
+    # is split the same way. A name git lists twice, a staged rename's old name and a file made
+    # again under it, is listed once.
     app = workspace / "app"
     (app / "pkg1" / "sub").mkdir(parents=True)
     for name in ("a.py", "b.py", "pkg1/b.py", "pkg1/sub/c.py"):
@@ -1670,6 +1696,43 @@ def test_lists_moved_and_linked_paths_when_check_stop_runs(
     run_hook([{"dir": "app", "check_stop": saving(saved)}], app, transcript=transcript)
 
     assert saved_bytes(saved) == listed
+
+
+# argv: a checkout's top. Builds its check_stop list for a session that starts in a minute, so
+# that no file or folder counts, then prints the list and each path os.lstat read, sorted.
+FOLDER_READS = """\
+import json, os, time, stop_gate
+from pathlib import Path
+top, reads, lstat = sys.argv[1], [], os.lstat
+def reading(path, *args, **kwargs):
+    reads.append(path)
+    return lstat(path, *args, **kwargs)
+os.lstat = reading
+every = stop_gate.changed_code(Path(top), time.time() + 60, all_paths=True)[1]
+os.lstat = lstat
+print(json.dumps([every, sorted(os.path.relpath(path, top) for path in reads)]))
+"""
+
+
+def test_reads_each_folder_once_when_untracked_files_share_it(
+    workspace: Path, *, hook_python: str, tmp_path: Path, run_python: Callable[..., Any]
+) -> None:
+    # The gate keeps each folder's answer. Without it, each untracked file reads every folder
+    # above it again, and a deep tree with many files can pass the hook's timeout.
+    app = workspace / "app"
+    (app / "d1" / "d2").mkdir(parents=True)
+    for name in ("x.md", "y.md", "z.md"):
+        (app / "d1" / "d2" / name).write_text("x\n", encoding="utf-8")
+
+    result = run_python(
+        hook_python,
+        FOLDER_READS,
+        path=workspace / "demo-hub" / HOOK.rsplit("/", 1)[0],
+        args=[str(app)],
+        cwd=tmp_path,
+    )
+
+    assert result == [[], ["d1", "d1/d2", "d1/d2/x.md", "d1/d2/y.md", "d1/d2/z.md"]]
 
 
 def test_lists_whole_name_when_old_git_prints_arrow_unquoted(
@@ -1702,6 +1765,24 @@ def test_lists_whole_name_when_old_git_prints_arrow_unquoted(
     run_hook([{"dir": "app", "check_stop": saving(saved)}], app)
 
     assert saved_bytes(saved) == b"a.py\nx -> /etc/passwd\ny -> ../z.py"
+
+
+def test_blocks_when_only_change_is_new_file_named_with_arrow(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # Only a rename or copy record is split at " -> ", so in a hub without check_stop this new
+    # code file starts check_fast under its whole name. The part after the arrow, y.py, names no
+    # file, so a gate that reads only that part runs nothing.
+    app = workspace / "app"
+    name = "x -> y.py"
+    (app / name).write_text("x = 1\n", encoding="utf-8")
+    status = git_in(app, tmp_path, "status", "--porcelain", "--untracked-files=all")
+    assert status == f'?? "{name}"\n'
+
+    output = run_hook([{"dir": "app", "check_fast": "echo boom; exit 3"}], app)
+
+    assert output.get("decision") == "block"
+    assert f"\nchanged: {name}\n" in output["reason"]
 
 
 @pytest.mark.parametrize(
