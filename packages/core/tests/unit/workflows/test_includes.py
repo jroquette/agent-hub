@@ -1,11 +1,13 @@
 """``include``: expansion at load, namespacing, ``with`` and ``inputs``, the primary sink, the
 include's graph keys on the block's roots, depth 3 and cycles (AC-213.17)."""
 
+import gc
 from collections.abc import Mapping
 from typing import Any
 
 import pytest
 
+import agent_hub.core.workflows.includes as includes_module
 import agent_hub.core.workflows.nodes as workflow_nodes
 import agent_hub.core.workflows.plan as planning
 from agent_hub.core.testing.workflow_fakes import (
@@ -306,6 +308,29 @@ def test_refuses_the_include_when_no_workflow_has_its_name() -> None:
     assert problems_of(include("x", "nowhere")) == [
         ("nodes[0].include", 'no workflow is named "nowhere"')
     ]
+
+
+def resolvers_alive() -> int:
+    return sum(isinstance(item, includes_module._Resolver) for item in gc.get_objects())
+
+
+def test_leaves_no_resolver_alive_when_the_include_names_no_workflow() -> None:
+    # With the collector off, as `hub workflow list` runs, a cycle through a failed include's
+    # error keeps its resolver and documents alive, which piles up workflow after workflow.
+    gc.disable()
+    try:
+        before = resolvers_alive()
+        problems: list[tuple[str, str]] = []
+        try:
+            plan_of(include("x", "nowhere"))
+        except WorkflowLoadError as error:
+            problems = [(problem.key, problem.message) for problem in error.problems]
+        left = resolvers_alive() - before
+    finally:
+        gc.enable()
+
+    assert problems == [("nodes[0].include", 'no workflow is named "nowhere"')]
+    assert left == 0
 
 
 def test_refuses_the_include_when_no_resolver_is_given() -> None:
