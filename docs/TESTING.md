@@ -260,8 +260,11 @@ dev dependency of the workspace.
   Vite names, and stops the build when Vite names none. `bundleBudget.test.ts` checks the size budget: it passes and
   prints the entry chunk's and the vendor chunk's sizes in bytes when both are under their limits, fails naming the
   file, its size and the limit when one is 1 B over, fails when the bundle has no entry chunk, and its plugin stops
-  the build with `this.error` when the check fails. `vite build` runs that plugin on every build, so `make web-build`,
-  `make web-dist-check` (in `make check`), CI's `web` job and the image all fail over the budget.
+  the build with `this.error` when the check fails. The plugin checks once the build is written, because Vite empties
+  the output folder before it renders: a real Vite build over the budget fails and leaves its new files in the folder,
+  so a failed `make web-build` leaves `web_dist/` with that build, never empty. `vite build` runs that plugin on every
+  build (`bundlePlugins.test.ts` checks that `vite.config.ts` lists it, before the Brotli plugin), so
+  `make web-build`, `make web-dist-check` (in `make check`), CI's `web` job and the image all fail over the budget.
 - The variants' bytes also depend on the Brotli encoder that Node bundles (`node -p process.versions.brotli`), and two
   Node builds check them against the committed `web_dist/`: CI's `web` job runs `make web-dist-check` on the 22.x that
   `actions/setup-node` picks for `apps/web/.node-version` (`22`), and the `docker` job's
@@ -282,17 +285,20 @@ dev dependency of the workspace.
 - The route chunks (AGH-614) have a run of their own on the same server (`-k route_chunks`): it plays
   `apps/web/e2e/routes.spec.ts`, whose test titles all start with `Route chunks:` (the page run leaves them out). A
   first `/sessions` visit fetches only the entry, vendor, shared and Sessions chunks, and prints its request log (each
-  script and style with its bytes on the wire); every nav destination opens by in-app navigation with its heading;
+  script and style with its bytes on the wire), which the pytest test prints again, so
+  `pytest -rP -k route_chunks` shows it on a pass; every nav destination opens by in-app navigation with its heading;
   a Brain note, a session and a settings section open from a full page load; and with the Sessions chunk's request
   aborted, "This page could not load" shows inside the shell while the other routes still open. The in-app and
   full-load pages pass the page run's checks (`watch` and `expectAccessible`, shared through
   `apps/web/e2e/pageChecks.ts`), and the failed-chunk page the axe one. The test reads
   the committed Vite manifest (`web_dist/.vite/manifest.json`) for the chunk files, as do two tests that need no
   browser: each screen module `routes.tsx` loads with `import()` has a chunk of its own that a first load does not
-  fetch (`-k own_chunk`), and the entry chunk `index.html` loads is under 400,000 B (`-k entry_chunk`). A third one
-  checks that `index.html` links every stylesheet of the build (`-k every_stylesheet`), so a deep-linked screen
-  has the classes it borrows from another screen's styles, and a fourth that the one sheet keeps the base styles
-  after the screens' (`-k orders_base_styles`), as the one-bundle build did. In Vitest,
+  fetch (`-k own_chunk`), and the manifest's vendor chunk is under 350,000 B (`-k vendor_chunk`). Three more need no
+  browser: the entry chunk `index.html` loads is under 400,000 B (`-k entry_chunk`), which with the vendor limit
+  repeats the build check's limits, so they hold even if that check stops running; `index.html` links every
+  stylesheet of the build (`-k every_stylesheet`), so a deep-linked screen has the classes it borrows from another
+  screen's styles; and the one sheet keeps the base styles after the screens' (`-k orders_base_styles`), as the
+  one-bundle build did. In Vitest,
   `src/styles/cascade.test.ts` checks the list that sets that order: every stylesheet once, the base styles last,
   and imported first by `main.tsx`.
   `tests/e2e/test_package_data.py -k web_dist` builds the api wheel and checks that it ships every `web_dist` file,

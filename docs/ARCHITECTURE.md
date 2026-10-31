@@ -62,7 +62,9 @@ the order the one-bundle build had (the design tokens, the fonts and `bundle.css
 first. A `styles` group (`codeSplitting.groups`) keeps every stylesheet in one chunk, which writes no script, so the
 order of the chunks the entry imports cannot reorder them. A second plugin in `bundlePlugins.ts`
 stops the build when the entry chunk reaches 400,000 B or the vendor chunk 350,000 B (`ENTRY_LIMIT_BYTES` and
-`VENDOR_LIMIT_BYTES` in `src/build/bundleBudget.ts`; budgets only tighten). The build also writes Vite's manifest,
+`VENDOR_LIMIT_BYTES` in `src/build/bundleBudget.ts`; budgets only tighten). It checks once the build is written,
+because Vite empties the output folder before it renders: a failed check leaves the new files in `web_dist/`, not an
+empty folder. The build also writes Vite's manifest,
 `web_dist/.vite/manifest.json`, which names the chunk of each module loaded on demand: it is committed, shipped in the
 wheel and served like the other files outside `assets/`, and the web smoke reads it. A screen module that another screen
 imports statically costs that screen a chunk: Rolldown either folds it into the importer's chunk, so it has no chunk of
@@ -73,8 +75,13 @@ fetches the Studio's). So code that other screens use (a row, a link, a constant
 screen, for example `screens/skills/routes.ts`, `screens/tickets/TicketItem.tsx` or
 `screens/workflows/WorkflowList.tsx`. While a screen's code loads, `main#main` keeps the previous screen and shows the
 page skeleton after 300 ms, then for at least 300 ms, on a first load too; the redirects `routes.tsx` defines
-(`lazyRedirect`) wait for their target screen's code the same way. A chunk that fails to load, or a screen that throws
-while it renders, shows `RouteError` (`src/shell/RouteError.tsx`) inside the shell
+(`lazyRedirect`) wait for their target screen's code the same way, and so does `/workflows`, a screen that only
+redirects to the Toolkit (`lazyScreen`'s third argument loads the Toolkit's code with it). A page that only redirects
+draws `Redirect` (`src/shell/routeLoading.tsx`), which keeps a page skeleton shown at that moment until the router
+lands on the target; a page that shows something before it redirects (the first-run gate, Run detail for a scenario
+run) keeps that drawn next to its `<Navigate>` until then, since the target's code may still be loading. A chunk that
+fails to load, or a screen that throws while it renders, shows `RouteError` (`src/shell/RouteError.tsx`) inside the
+shell, after a page skeleton shown on a first load has had its 300 ms
 ([spec 22](design/control-plane/specs/22-first-run-and-errors.md)).
 
 Each package has the same shape:
