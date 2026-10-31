@@ -204,6 +204,16 @@ LIST_CASES = [
         ),
         id="ascii-stdout-accented-description",
     ),
+    # The same with an error handler set: Click still writes UTF-8, so a check that used the
+    # handler would print "Caf? au lait" where the Typer app prints the accented line.
+    pytest.param(
+        ListCase(
+            files=(("workflows/demo/zz-cafe.json", workflow_json("zz-cafe", "Café au lait")),),
+            env=(("PYTHONIOENCODING", "ascii:replace"),),
+            sign=(0, "stdout", "zz-cafe  1 nodes  Café au lait\n".encode()),
+        ),
+        id="ascii-replace-stdout-accented-description",
+    ),
 ]
 
 
