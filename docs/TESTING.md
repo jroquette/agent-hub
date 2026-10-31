@@ -22,8 +22,9 @@ Makefile uses.
   must show it stays off the network uses the outbound probe, `agent_hub.core.testing.outbound_probe`: the child gets
   an environment built from scratch, a `sitecustomize` that records and refuses each Python socket connect, `sendto`
   and name lookup that is not loopback, stand-ins for `gh`, `uv`, `uvx`, `claude`, `curl`, `wget` and `ssh`, and proxy
-  variables that point at a local recorder. The module's docstring lists what the probe cannot see, such as a Python
-  child started with `-I`, `-E` or `-S`.
+  variables that point at a local recorder. The test reads the probe's logs only once `processes_left` finds nothing
+  the child started still running, since a detached child can call out after its parent has exited. The module's
+  docstring lists what the probe cannot see, such as a Python child started with `-I`, `-E` or `-S`.
 
 ## Levels
 
