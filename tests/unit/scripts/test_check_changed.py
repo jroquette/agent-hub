@@ -1,9 +1,15 @@
-"""``make check-changed`` (``scripts/check_changed.py``): the plan a change set gets.
+"""``make check-changed`` (``scripts/check_changed.py``): the plan a change set gets, and the
+steps a run starts.
 
 Planner tests use the small graph and tree below, except those whose name ends in ``in_repo``:
-they read this checkout's own packages and test folders. git is a fake: no process starts.
+they read this checkout's own packages and test folders. Runner tests plan from this checkout
+too. git and every step are fakes: no process starts.
 """
 
+import itertools
+import re
+import threading
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,6 +22,7 @@ from scripts.check_changed import (
     Tree,
     change_set,
     import_graph,
+    main,
     plan_change,
     read_tree,
 )
@@ -479,3 +486,207 @@ def test_never_fetches_when_paths_come_from_git(
 
     assert MERGE_BASE in git.calls
     assert [call for call in git.calls if NETWORK_GIT.intersection(call)] == []
+
+
+MAKEFILE = REPO_ROOT / "Makefile"
+CHECKS = frozenset({"format", "lint", "typecheck", "layout", "lockstep"})
+WEB_STEPS = frozenset({"web-install", "web-static", "web-test"})
+HOSTILE = "$(touch x).py;rm -rf y"
+NO_STEP = "no-such-step"
+FAILED_OUTPUT = "output of the step that failed"
+PASSED_OUTPUT = "output of the step that passed"
+LANE_WAIT_S = 2.0
+
+
+@dataclass
+class FakeStart:
+    """Starts no process: records each step's argv and fails the steps that name ``failing``."""
+
+    failing: str = NO_STEP
+    calls: list[tuple[str, ...]] = field(default_factory=list)
+
+    def __call__(self, argv: Sequence[str]) -> tuple[int, str]:
+        call = tuple(argv)
+        self.calls.append(call)
+        return (1, f"{self.failing} failed\n") if _names(call, self.failing) else (0, "")
+
+
+@dataclass
+class LaneStart:
+    """Fails the step naming ``failing`` at once; the step naming ``waiter`` passes after it."""
+
+    failing: str
+    waiter: str
+    failed: threading.Event = field(default_factory=threading.Event)
+
+    def __call__(self, argv: Sequence[str]) -> tuple[int, str]:
+        if _names(argv, self.failing):
+            self.failed.set()
+            return 1, f"{FAILED_OUTPUT}\n"
+        if _names(argv, self.waiter):
+            self.failed.wait(LANE_WAIT_S)
+            # Lets the failed lane end first, so printing lanes as they end shows up.
+            time.sleep(0.1)
+            return 0, f"{PASSED_OUTPUT}\n"
+        return 0, ""
+
+
+def _names(call: Sequence[str], word: str) -> bool:
+    """Whether a step's argv holds ``word``, alone or as the file name of a program."""
+    return any(arg == word or Path(arg).name == word for arg in call)
+
+
+def _make_words(calls: Sequence[Sequence[str]]) -> set[str]:
+    """Every argument the steps give to make."""
+    return {arg for call in calls if Path(call[0]).name == "make" for arg in call[1:]}
+
+
+def _is_pytest(call: Sequence[str]) -> bool:
+    return _names(call, "pytest")
+
+
+def _pytest_view(call: Sequence[str]) -> tuple[list[str], list[str], frozenset[str]]:
+    """A pytest step's marker expressions, coverage options and test paths."""
+    markers = [value for option, value in itertools.pairwise(call) if option == "-m"]
+    return (
+        [marker for marker in markers if marker != "pytest"],
+        [arg for arg in call if arg.startswith("--cov")],
+        frozenset(arg for arg in call if arg.startswith(("packages/", "tests/"))),
+    )
+
+
+def _recipe(makefile: str, target: str) -> str:
+    """The recipe of ``target``'s rule, continuations joined; empty when no rule names it."""
+    lines = makefile.replace("\\\n", " ").splitlines()
+    rule = re.compile(rf"{re.escape(target)}[ \t]*:(?![=:])")
+    starts = [index for index, line in enumerate(lines) if rule.match(line)]
+    if not starts:
+        return ""
+    body = lines[starts[0] + 1 :]
+    return "\n".join(itertools.takewhile(lambda line: line.startswith("\t"), body))
+
+
+@dataclass(frozen=True)
+class RunCase:
+    path: str
+    tests: tuple[str, ...]
+    openapi: bool
+    web: bool
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(RunCase(STORAGE_DB, STORAGE_PLAN, openapi=True, web=False), id="storage"),
+        pytest.param(RunCase(FLAKY_SCRIPT, FLAKY_PLAN, openapi=False, web=False), id="pack"),
+        pytest.param(RunCase(WEB_COMPONENT, (), openapi=False, web=True), id="web"),
+    ],
+)
+def test_runs_checks_on_whole_tree_when_plan_runs(case: RunCase) -> None:
+    start = FakeStart()
+
+    code = main([case.path], environ={}, start=start, git=FakeGit({}))
+
+    openapi = [call for call in start.calls if _names(call, "scripts.export_openapi")]
+    tests = [_pytest_view(call) for call in start.calls if _is_pytest(call)]
+    assert code == 0
+    assert _make_words(start.calls) >= CHECKS
+    assert [call for call in start.calls if any(case.path in arg for arg in call)] == []
+    assert [call for call in openapi if "--check" in call] == openapi
+    assert bool(openapi) is case.openapi
+    assert tests == ([(["unit or contract"], [], frozenset(case.tests))] if case.tests else [])
+    assert _make_words(start.calls) & WEB_STEPS == (WEB_STEPS if case.web else set())
+    assert _names(start.calls[0], "web-install") is case.web
+
+
+@pytest.mark.parametrize(
+    ("path", "failing"),
+    [
+        pytest.param(STORAGE_DB, NO_STEP, id="none"),
+        pytest.param(STORAGE_DB, "lint", id="checks"),
+        pytest.param(STORAGE_DB, "scripts.export_openapi", id="openapi"),
+        pytest.param(STORAGE_DB, "pytest", id="tests"),
+        pytest.param(WEB_COMPONENT, "web-install", id="web-install"),
+        pytest.param(WEB_COMPONENT, "web-test", id="web-test"),
+    ],
+)
+def test_exits_non_zero_when_a_step_fails(path: str, failing: str) -> None:
+    start = FakeStart(failing=failing)
+
+    code = main([path], environ={}, start=start, git=FakeGit({}))
+
+    fails = failing != NO_STEP
+    assert any(_names(call, failing) for call in start.calls) is fails
+    assert (code != 0) is fails
+
+
+@pytest.mark.parametrize(
+    ("failing", "waiter"),
+    [
+        pytest.param("lint", "pytest", id="checks-lane"),
+        pytest.param("pytest", "lint", id="tests-lane"),
+    ],
+)
+def test_prints_failed_lane_last_when_lanes_end(
+    failing: str, waiter: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = main([FLAKY_SCRIPT], environ={}, start=LaneStart(failing, waiter), git=FakeGit({}))
+
+    out = capsys.readouterr().out
+    assert (code != 0, PASSED_OUTPUT in out, FAILED_OUTPUT in out) == (True, True, True)
+    assert out.rindex(PASSED_OUTPUT) < out.index(FAILED_OUTPUT)
+
+
+def test_prints_plan_and_runs_nothing_when_plan_flag_given(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    start = FakeStart()
+
+    code = main(["--plan", STORAGE_DB], environ={}, start=start, git=FakeGit({}))
+
+    out = capsys.readouterr().out
+    assert (code, start.calls) == (0, [])
+    assert [target for target in STORAGE_PLAN if target not in out] == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param(".github/workflows/ci.yml", id="workflow"),
+        pytest.param("check.log", id="scratch-log"),
+    ],
+)
+def test_starts_no_pytest_when_plan_has_no_tests(path: str) -> None:
+    start = FakeStart()
+
+    code = main([path], environ={}, start=start, git=FakeGit({}))
+
+    assert code == 0
+    assert _make_words(start.calls) >= CHECKS
+    assert [call for call in start.calls if _is_pytest(call)] == []
+
+
+@pytest.mark.parametrize(
+    ("argv", "environ"),
+    [
+        pytest.param([HOSTILE], {}, id="argument"),
+        pytest.param([], {"HUB_CHANGED_FILES": HOSTILE}, id="changed-files"),
+    ],
+)
+def test_passes_paths_as_data_when_runner_starts_steps(
+    argv: list[str], environ: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    start = FakeStart()
+
+    main(argv, environ=environ, start=start, git=FakeGit({}))
+
+    assert _make_words(start.calls) >= CHECKS
+    assert [arg for call in start.calls for arg in call if "touch" in arg] == []
+    assert HOSTILE in capsys.readouterr().out
+
+
+def test_keeps_paths_out_of_recipe_when_makefile_read() -> None:
+    recipe = _recipe(MAKEFILE.read_text("utf-8"), "check-changed")
+
+    assert "scripts.check_changed" in recipe
+    assert "PATHS" not in recipe

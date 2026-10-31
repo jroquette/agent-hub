@@ -248,6 +248,7 @@ def _reached(rules: Mapping[str, tuple[list[str], list[str], list[str]]], start:
             "check-fast", {"lane-checks-fast", "lane-tests-fast", "test-fast"}, id="check-fast"
         ),
         pytest.param("check", {"lane-checks", "lane-tests", "test-suite", "coverage"}, id="check"),
+        pytest.param("check-changed", {"check-changed"}, id="check-changed"),
     ],
 )
 def test_keeps_perf_out_of_the_gates_when_the_makefile_is_read(gate: str, steps: set[str]) -> None:
