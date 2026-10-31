@@ -4,10 +4,12 @@ each file loaded by the strict loader (AC-213.2); pack paths kept inside the pac
 TESTING.md: synthetic trees only, written under ``tmp_path``.
 """
 
+import gc
 import os
 from pathlib import Path
 
 import pytest
+from yaml.nodes import Node
 
 from agent_hub.generator.workflow_discovery import (
     BUILTIN_WORKFLOWS,
@@ -111,6 +113,27 @@ def test_keeps_other_workflows_when_one_file_is_broken(hub: Path, builtin: Path)
     assert problem.line == 2
     assert "more than once" in problem.reason
     assert problem.message.startswith(f"{problem.path}:2: ")
+
+
+def _nodes_alive() -> int:
+    return sum(isinstance(item, Node) for item in gc.get_objects())
+
+
+def test_leaves_no_parse_tree_alive_when_loader_refuses_file(hub: Path, builtin: Path) -> None:
+    _write(hub / "workflows/p/bad.yaml", b"name: bad\nname: again\n")
+
+    # With the collector off, as `hub workflow list` runs, a cycle through the refused file's error
+    # would keep its YAML nodes alive until the process ends.
+    gc.disable()
+    try:
+        before = _nodes_alive()
+        found = _discover(hub, builtin)
+        left = _nodes_alive() - before
+    finally:
+        gc.enable()
+
+    assert [problem.path.name for problem in found.problems] == ["bad.yaml"]
+    assert left == 0
 
 
 def test_keeps_first_pack_when_hub_packs_share_name(hub: Path, builtin: Path) -> None:
