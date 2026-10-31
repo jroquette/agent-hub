@@ -153,6 +153,79 @@ async function settle() {
   });
 }
 
+/** Lets the router land a module that arrived, and start a redirect's navigation, at this time. */
+async function settleNow() {
+  for (let turn = 0; turn < 10; turn += 1) {
+    await settle();
+    wait(0);
+  }
+}
+
+/** A screen that only redirects to /sessions, whose code is in another module, as the hub gate's. */
+function RedirectingStandIn() {
+  return <Redirect to="/sessions" />;
+}
+
+/** A module the test delivers itself: `load` stands for its `import()`. */
+function deferredModule<Module>(module: Module) {
+  let resolve: (value: Module) => void = () => undefined;
+  const loaded = new Promise<Module>((done) => {
+    resolve = done;
+  });
+  return {
+    load: () => loaded,
+    /** The module arrives, and the router takes it. */
+    arrive: async () => {
+      await act(async () => {
+        resolve(module);
+        await loaded;
+      });
+    },
+  };
+}
+
+/**
+ * Opens /old on the fake clock, from the Portfolio stand-in or as the first page. Its screen only
+ * redirects to /sessions, and its code arrives 350 ms in: the page skeleton shows from 300 ms and
+ * keeps its 300 ms, so the redirect is drawn, with the skeleton, 600 ms in, while /sessions' code
+ * still loads. The navigation's own skeleton is due 300 ms later. Returns the router.
+ */
+async function startRedirecting(entry: Entry, sessions: DeferredSessions) {
+  vi.useFakeTimers();
+  const old = deferredModule({ OldScreen: RedirectingStandIn });
+  const routes = shellRoutes([
+    {
+      index: true,
+      ...lazyScreen(
+        () => Promise.resolve({ PortfolioScreen: PortfolioStandIn }),
+        "PortfolioScreen",
+      ),
+    },
+    { path: "old", ...lazyScreen(old.load, "OldScreen") },
+    { path: "sessions", ...lazyScreen(sessions.load, "SessionsListScreen") },
+  ]);
+  const router = renderAt(entry === "a deep link" ? "/old" : "/", routes);
+  if (entry === "an in-app navigation") {
+    await settle();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Portfolio stand-in" }),
+    ).toBeInTheDocument();
+    act(() => {
+      void router.navigate("/old");
+    });
+  }
+  // A step renders what its timers changed only at its end: stop at 300 ms, when the bars appear.
+  wait(300);
+  wait(50);
+  await old.arrive();
+  await settleNow();
+  wait(250);
+  await settleNow();
+  expect(router.state.navigation.location?.pathname).toBe("/sessions");
+  expect(skeleton()).not.toBeNull();
+  return router;
+}
+
 describe("route loading", () => {
   it.each(ENTRIES)(
     "shows nothing new for 300 ms, then the page skeleton in main with aria-busy while a route's code loads (%s)",
@@ -286,6 +359,56 @@ describe("route loading", () => {
       expect(
         screen.getByRole("heading", { level: 1, name: "Sessions stand-in" }),
       ).toBeInTheDocument();
+    },
+  );
+
+  it.each(ENTRIES)(
+    "renders the page once its code is in, when its skeleton goes on from a redirect's that has had its 300 ms (%s)",
+    async (entry) => {
+      const sessions = deferredSessions();
+      await startRedirecting(entry, sessions);
+
+      // The navigation's skeleton takes over the redirect's at 900 ms; the bars have shown 700 ms.
+      wait(300);
+      wait(100);
+      expect(skeleton()).not.toBeNull();
+      await sessions.arrive();
+      wait(0);
+
+      expect(
+        screen.getByRole("heading", { level: 1, name: "Sessions stand-in" }),
+      ).toBeInTheDocument();
+      expect(skeleton()).toBeNull();
+    },
+  );
+
+  it.each(ENTRIES)(
+    "announces Loading page 1 s into the load, when its skeleton goes on from a redirect's (%s)",
+    async (entry) => {
+      await startRedirecting(entry, deferredSessions());
+
+      // The navigation's skeleton takes over the redirect's at 900 ms.
+      wait(300);
+      wait(99);
+      expect(screen.queryByText(wholeText("Loading page"))).toBeNull();
+
+      wait(1);
+      expect(screen.getByText(wholeText("Loading page"))).toBeInTheDocument();
+    },
+  );
+
+  it.each(ENTRIES)(
+    "says the page is still loading 10 s into the load, when its skeleton goes on from a redirect's (%s)",
+    async (entry) => {
+      await startRedirecting(entry, deferredSessions());
+
+      // The navigation's skeleton takes over the redirect's at 900 ms.
+      wait(300);
+      wait(9099);
+      expect(screen.queryByText(wholeText(STILL_LOADING))).toBeNull();
+
+      wait(1);
+      expect(within(main()).getByText(wholeText(STILL_LOADING))).toBeInTheDocument();
     },
   );
 

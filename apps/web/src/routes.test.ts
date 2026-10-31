@@ -327,6 +327,37 @@ describe("HubGate", () => {
     ).toBeInTheDocument();
   });
 
+  it("never draws the page on a first load whose hub list is in before the page's code", async () => {
+    vi.useFakeTimers();
+    stubNoHub();
+    const drawn = vi.fn();
+    const portfolio = heldModule({
+      PortfolioScreen: () => {
+        drawn();
+        return createElement("h1", null, "Portfolio stand-in");
+      },
+    });
+    const welcome = heldModule({ WelcomeScreen: standIn("Welcome stand-in") });
+    const router = openAt(
+      gatedRoutes(
+        [{ index: true, ...lazyScreen(portfolio.load, "PortfolioScreen") }],
+        welcome.load,
+      ),
+      "/",
+    );
+    // The shell is drawn, and the empty list is in, while the Portfolio's code loads.
+    await settle();
+
+    await portfolio.arrive();
+    await settle();
+    expect(router.state.navigation.location?.pathname).toBe("/welcome");
+    await welcome.arrive();
+    await settle();
+
+    expect(screen.getByRole("heading", { level: 1, name: "Welcome stand-in" })).toBeInTheDocument();
+    expect(drawn).not.toHaveBeenCalled();
+  });
+
   it("never shows the Portfolio's empty state once the hub list comes back empty", async () => {
     const portfolio = await import("./screens/portfolio");
     vi.useFakeTimers();
