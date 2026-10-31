@@ -9,6 +9,9 @@ stands behind every proxy variable, and recording stand-ins for gh, uv, uvx, cla
 and ssh come first on ``PATH``, in an environment built from scratch. A simple command passes
 when it exits 0 with its usual output, the marker names its process, nothing it started still
 runs within ``EXIT_WAIT`` (the logs are read only then) and nothing was recorded.
+
+The installed ``hub`` runs ``agent_hub.cli.console.main``, which lists workflows on a path of its
+own (AGH-638), so ``workflow list`` also runs through a launcher that calls it.
 """
 
 import contextlib
@@ -62,6 +65,21 @@ SIMPLE_COMMANDS = [
     pytest.param(("scenario", "list"), None, "demo-service-up", id="scenario-list"),
     pytest.param(("workflow", "list"), None, "issue-to-pr", id="workflow-list"),
 ]
+# A file named ``hub`` that calls the console entry as the installed script does. At exit it
+# notes, beside itself, whether the run loaded Typer: it does not when the console listed the
+# workflows on its own path.
+CONSOLE_LAUNCHER = """\
+import atexit
+import sys
+from pathlib import Path
+
+atexit.register(
+    lambda: Path(sys.argv[0]).with_name("typer-loaded").write_text(str("typer" in sys.modules))
+)
+from agent_hub.cli.console import main
+
+sys.exit(main())
+"""
 
 pytestmark = pytest.mark.usefixtures("no_process_left")
 
@@ -113,12 +131,16 @@ def probed(folder: Path) -> Iterator[dict[str, str]]:
 
 
 def run_hub(
-    args: Sequence[str], *, hub: Path, env: Mapping[str, str]
+    args: Sequence[str],
+    *,
+    hub: Path,
+    env: Mapping[str, str],
+    entry: Sequence[str] = ("-m", "agent_hub.cli"),
 ) -> tuple[int, subprocess.CompletedProcess[str]]:
-    """``python -m agent_hub.cli`` with ``args`` in ``hub``, no stdin: its process id, and what it
-    gave. A command still running at ``COMMAND_TIMEOUT`` is killed and reaped, then the timeout
-    raised."""
-    argv = [sys.executable, "-m", "agent_hub.cli", *args]
+    """``python -m agent_hub.cli``, or this interpreter on ``entry``, with ``args`` in ``hub``, no
+    stdin: its process id, and what it gave. A command still running at ``COMMAND_TIMEOUT`` is
+    killed and reaped, then the timeout raised."""
+    argv = [sys.executable, *entry, *args]
     with subprocess.Popen(  # noqa: S603 - this interpreter, fixed arguments
         argv,
         cwd=hub,
@@ -167,6 +189,30 @@ def test_makes_no_network_call_when_simple_command_runs(
     assert shown is None or shown in completed.stdout, completed.stdout
     assert pid in loaded_pids(folder), "the probe did not load in the command's process"
     assert calls == [], f"hub {' '.join(args)} called out"
+
+
+def test_makes_no_network_call_when_console_lists_workflows(
+    *, committed_hub: Path, tmp_path: Path
+) -> None:
+    folder = tmp_path / "probe"
+    launcher = tmp_path / "console" / "hub"
+    launcher.parent.mkdir()
+    launcher.write_text(CONSOLE_LAUNCHER, encoding="utf-8")
+
+    with probed(folder) as env:
+        pid, completed = run_hub(
+            ("workflow", "list"), hub=committed_hub, env=env, entry=(str(launcher),)
+        )
+        left = processes_left(folder, tmp_path, timeout=EXIT_WAIT)
+        assert left == [], "the console's workflow list left running:\n" + "\n".join(left)
+    calls = outbound_calls(folder)
+
+    assert completed.returncode == 0, completed.stderr
+    assert "issue-to-pr" in completed.stdout, completed.stdout
+    typer_loaded = (launcher.parent / "typer-loaded").read_text(encoding="utf-8")
+    assert typer_loaded == "False", "the console handed the listing over to the Typer app"
+    assert pid in loaded_pids(folder), "the probe did not load in the console's process"
+    assert calls == [], "the console's workflow list called out"
 
 
 def test_records_gh_calls_when_brief_uses_network(*, committed_hub: Path, tmp_path: Path) -> None:
