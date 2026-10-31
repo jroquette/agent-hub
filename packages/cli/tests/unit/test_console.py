@@ -357,6 +357,11 @@ def test_exits_like_typer_when_listing_interrupted(
     assert (stop.value.code, typer_app_runs, capsys.readouterr().out) == (130, [], "")
 
 
+def open_descriptors() -> int:
+    """How many descriptors the process holds (``/dev/fd`` lists them on Linux and macOS)."""
+    return len(os.listdir("/dev/fd"))
+
+
 @pytest.mark.parametrize(
     ("failure", "code"),
     [
@@ -380,8 +385,10 @@ def test_exits_like_typer_when_print_interrupted_or_pipe_closed(
     monkeypatch.setattr(sys, "argv", ["hub", "workflow", "list"])
 
     try:
+        before = open_descriptors()
         with pytest.raises(SystemExit) as stop:
             console.main()
+        opened = open_descriptors() - before
         to_null = os.path.samestat(os.fstat(descriptor), os.stat(os.devnull))
     finally:
         os.close(descriptor)
@@ -390,6 +397,8 @@ def test_exits_like_typer_when_print_interrupted_or_pipe_closed(
     assert (stop.value.code, len(stdout.written), typer_app_runs) == (code, 1, [])
     assert CHECK_LINE.decode() in stdout.written[0].splitlines(keepends=True)
     assert to_null == (code == 1)
+    # Sending fd 1 to /dev/null leaves no other descriptor open.
+    assert opened == 0
 
 
 def test_raises_when_print_fails_without_closed_pipe(
