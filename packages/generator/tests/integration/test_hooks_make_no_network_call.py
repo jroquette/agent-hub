@@ -42,6 +42,7 @@ from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.core.testing.hook_inputs import a_hook_input
 from agent_hub.core.testing.outbound_probe import (
     LOADED_LOG,
+    kill_processes_left,
     outbound_calls,
     outbound_env,
     processes_left,
@@ -125,6 +126,16 @@ GIT_SETTINGS = (
 type RunHook = Callable[..., subprocess.CompletedProcess[bytes]]
 
 pytestmark = pytest.mark.usefixtures("no_process_left")
+
+
+@pytest.fixture
+def no_process_left(tmp_path: Path) -> Iterator[None]:
+    """After the case, kill what it left running, as ``processes_left`` finds it, until nothing is
+    left: a failing case leaves nothing behind. It replaces conftest's ``pkill -f`` of the case's
+    folder here, which misses a Python child found only by the probe's marker."""
+    yield
+    still = kill_processes_left(tmp_path / "probe", tmp_path, timeout=REFRESH_WAIT)
+    assert still == [], "still running after the kill:\n" + "\n".join(still)
 
 
 @dataclass(frozen=True)

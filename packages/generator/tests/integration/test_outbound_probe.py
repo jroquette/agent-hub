@@ -20,7 +20,6 @@ import errno
 import json
 import os
 import re
-import signal
 import socket
 import subprocess
 import sys
@@ -32,6 +31,7 @@ import pytest
 from agent_hub.core.testing.loopback import closed_url
 from agent_hub.core.testing.outbound_probe import (
     LOADED_LOG,
+    kill_processes_left,
     outbound_calls,
     outbound_env,
     processes_left,
@@ -302,15 +302,11 @@ def host_network(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def no_process_left(tmp_path: Path) -> Iterator[None]:
-    """After the case, kill what it left running, as ``processes_left`` finds it, then wait until
-    all of it has gone. It replaces conftest's ``pkill -f`` of the case's folder here, which
-    misses a grandchild found only by its marker."""
+    """After the case, kill what it left running, as ``processes_left`` finds it, until nothing is
+    left. It replaces conftest's ``pkill -f`` of the case's folder here, which misses a
+    grandchild found only by its marker."""
     yield
-    folder = tmp_path / "probe"
-    for left in processes_left(folder, tmp_path, timeout=0):
-        with contextlib.suppress(ProcessLookupError):  # it ended on its own meanwhile
-            os.kill(int(left.split(" ", 1)[0]), signal.SIGKILL)
-    still = processes_left(folder, tmp_path, timeout=LINGER_WAIT)
+    still = kill_processes_left(tmp_path / "probe", tmp_path, timeout=LINGER_WAIT)
     assert still == [], "still running after the kill:\n" + "\n".join(still)
 
 

@@ -7,7 +7,8 @@ child, points every proxy variable at the recorder and puts stand-ins for gh, uv
 curl, wget, ssh and git's proxy command first on ``PATH``. Apart from the ``PATH`` the test
 passes, nothing of its own environment reaches the child: no proxy setting, ``NO_PROXY``, git
 config or token. A call is logged when it is made, so before the recorder closes the test waits
-until nothing the child started still runs, detached processes included (``processes_left``).
+until nothing the child started still runs, detached processes included (``processes_left``);
+its teardown kills what is left (``kill_processes_left``).
 
 Once the recorder has closed, ``outbound_calls`` lists what the child tried, one line each:
 
@@ -42,6 +43,7 @@ import contextlib
 import json
 import os
 import shlex
+import signal
 import socket
 import socketserver
 import subprocess
@@ -283,6 +285,25 @@ def processes_left(folder: Path, case: Path, *, timeout: float) -> list[str]:
         left = _running({*_named(case), *loaded})
         if not left or time.monotonic() > end:
             return left
+        time.sleep(POLL_INTERVAL)
+
+
+def kill_processes_left(folder: Path, case: Path, *, timeout: float) -> list[str]:
+    """Kill what a case left running, as ``processes_left`` finds it, until it finds nothing or
+    ``timeout`` seconds have passed; return what still runs then (empty once all have ended).
+
+    A case's teardown: unlike ``pkill -f`` of the case's folder, it also ends a Python child
+    found only by its marker. Each pass kills what it finds, so a process that shows up meanwhile
+    is ended too.
+    """
+    end = time.monotonic() + timeout
+    while True:
+        left = processes_left(folder, case, timeout=0)
+        if not left or time.monotonic() > end:
+            return left
+        for line in left:
+            with contextlib.suppress(ProcessLookupError):  # it ended on its own meanwhile
+                os.kill(int(line.split(" ", 1)[0]), signal.SIGKILL)
         time.sleep(POLL_INTERVAL)
 
 
