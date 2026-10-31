@@ -89,8 +89,8 @@ class HookEvent(NamedTuple):
 
 
 # AGH-200 D6 and E2: the events the hook sensor has a group of its own on. It sends each input to
-# the local control plane within 0.5 s and always exits 0; the tool events match every tool. Ten
-# since AGH-621: on PreToolUse, `pre_tool_use.py` sends the input itself, after the guard.
+# the local control plane within 0.5 s and always exits 0; the tool events match every tool. On
+# PreToolUse, `pre_tool_use.py` sends the input itself, after the guard.
 _SENSOR_FILE: Final = "event_sensor.py"
 _SENSOR_TIMEOUT: Final = 5
 _SENSOR_EVENTS: Final = (
@@ -115,8 +115,8 @@ _GATE_EVENTS: Final = (("SubagentStart", 10), ("SubagentStop", 30))
 # for a plugin install.
 HOOK_EVENTS: Final = (
     HookEvent("SessionStart", "startup|resume|clear|compact", "session_start.py", 20),
-    # AGH-621: every tool call; the hook hands the calls of the guard's old anchored matcher
-    # (AGH-293), now its `GUARDED_TOOLS`, to the guard, then runs the sensor.
+    # Every tool call: the hook hands the calls its `GUARDED_TOOLS` matches to the guard, then runs
+    # the sensor.
     HookEvent("PreToolUse", "*", "pre_tool_use.py", 10),
     HookEvent("PostToolUse", "Edit|Write|MultiEdit", "post_edit.py", 60),
     HookEvent("Stop", None, "stop_gate.py", 180),

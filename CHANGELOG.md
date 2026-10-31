@@ -30,9 +30,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   guard answers each call as before, and its decision and the event still reach `hub web`, sent after the answer is
   printed and within one 0.5 s limit for both. The guard also loads less: its patterns are compiled when first used,
   and the sensor writes its request to a plain socket. The project guard (`plugin/<project>/hooks/project_guard.py`)
-  runs in a fork of the hook instead of a new `python3`, with the same 3 s limit and the same asks when it fails. A
-  missing or broken `guard.py` now gets the guard's ask, where it used to block the call or let it through. Run
-  `hub sync` after bumping `platform.version` to get the new hook (AGH-621).
+  runs in a fork of the hook instead of a new `python3`, with the same 3 s limit and the same asks when it fails,
+  except that a missing `project_guard_runner.py` now gives `exit 1 (ModuleNotFoundError: …)` as the cause, where it
+  gave `exit 2`. A missing or broken `guard.py` now gets the guard's ask, where it used to block the call or let it
+  through. Run `hub sync` after bumping `platform.version` to get the new hook (AGH-621).
 
 ### Fixed
 

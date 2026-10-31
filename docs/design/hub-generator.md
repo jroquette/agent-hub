@@ -155,8 +155,11 @@ guard sends a deny or an ask (`decision: {by: guard, kind, rule}`, `rule` a stab
 `push_protected_branch`, `ask_before_edit`) and the Stop gate a block (`{by: stop_gate, kind: block, command,
 exit_code}`) through the sensor's `send_decision`, bounded the same way; their output and exit codes do not change
 (characterization goldens `golden/guard`, `golden/stop_gate`). In `pre_tool_use.py` the guard's decision goes first and
-the event's own envelope second, within one 0.5 s deadline for both that starts once the verdict is flushed; nothing
-that fails there touches the verdict or the exit code. Proof: integration tests.
+the event's own envelope second, within one 0.5 s deadline for both that starts once the verdict is flushed; fd 1 then
+points at `/dev/null`, so nothing written after the verdict can follow it, and nothing that fails there touches the
+verdict or the exit code. The deadline leaves out name resolution: for a `localhost` URL the lookup runs before any limit
+applies, and each address it returns gets the time still left, so a slow resolver or two addresses that never answer
+can take longer (the hook's own 10 s limit still holds). Proof: integration tests.
 The read-only gate `readonly_gate.py` (AGH-141) is a second group on SubagentStart (timeout 10 s) and SubagentStop
 (30 s), after the sensor's. It acts only for a declared agent: the first definition whose frontmatter `name` is the bare
 `agent_type` (split at its last `:`), looked up in the hook root's `.claude/agents/`, then `plugin/<project>/agents/`,
