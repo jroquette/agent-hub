@@ -1261,3 +1261,214 @@ def test_keeps_block_when_event_server_slow(
     assert (completed.returncode, completed.stderr) == (0, b"")
     assert json.loads(completed.stdout)["decision"] == "block"
     assert time.monotonic() - started < 2.5
+
+
+# repos[].check_stop: a repo's narrower command, which the gate runs in place of its check_fast.
+# The fake checks append the name they are given, one line each, to a run log under tmp_path.
+CHECK_FAST_GREEN = (
+    "[hub] code changed and check_fast is green. If the work spans sessions, run /handoff."
+)
+# Added to a fake check's name: "=<value>" when HUB_CHANGED_FILES is set, even to "".
+WITH_CHANGED_FILES = "${HUB_CHANGED_FILES+=$HUB_CHANGED_FILES}"
+# The hook's MAX_BLOCKS (test_keeps_budget_inside_hook_timeout_when_constants_rendered).
+MAX_BLOCKS = 3
+
+
+def appending(log: Path, name: str) -> str:
+    """A check that appends ``name`` to ``log`` as one line; bash expands it (double quotes)."""
+    return f'echo "{name}" >> {shlex.quote(str(log))}'
+
+
+def recorded(log: Path) -> list[str]:
+    """The lines the fake checks appended to ``log``, in run order; none when no check ran."""
+    return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+
+
+def test_runs_check_stop_instead_of_check_fast_when_repo_sets_it(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    log = tmp_path / "runs.log"
+    repo = {
+        "dir": "app",
+        "check_fast": appending(log, "check_fast"),
+        "check_stop": appending(log, "check_stop"),
+    }
+
+    run_hook([repo], workspace / "app")
+
+    assert recorded(log) == ["check_stop"]
+
+
+def test_blocks_with_check_stop_command_when_it_fails(
+    workspace: Path, hook_python: str, *, tmp_path: Path, event_server: Any
+) -> None:
+    # As a failing check_fast does: one block per stop, each sent with the command that ran,
+    # until MAX_BLOCKS; the next stop lets the session finish and names the command kind.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    command = "echo boom; exit 3"
+    repos = [{"dir": "app", "check_fast": "true", "check_stop": command}]
+    env = scratch_env(tmp_path) | {"AGENT_HUB_WEB_URL": event_server.url}
+
+    runs = [
+        run_gate(workspace, hook_python, repos=repos, env=env)[0] for _ in range(MAX_BLOCKS + 1)
+    ]
+
+    assert [(run.returncode, run.stderr) for run in runs] == [(0, b"")] * (MAX_BLOCKS + 1)
+    *blocks, release = [json.loads(run.stdout) for run in runs]
+    assert [output.get("decision") for output in blocks] == ["block"] * MAX_BLOCKS
+    for output in blocks:
+        assert output["reason"].startswith("[hub stop-gate] ")
+        assert f"## app (app): `{command}` FAILED\n" in output["reason"]
+    assert "decision" not in release
+    assert release.get("systemMessage", "").startswith(
+        "[hub stop-gate] check_stop still failing after 3 attempts"
+    )
+    decisions = [HookEnvelope.model_validate(body).decision for body in event_server.bodies()]
+    sent = {"by": "stop_gate", "kind": "block", "rule": None, "command": command, "exit_code": 3}
+    assert [None if decision is None else decision.model_dump() for decision in decisions] == [
+        sent
+    ] * MAX_BLOCKS
+
+
+def test_runs_each_repo_choice_when_two_repos_changed(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # The session's cwd is in web, so web runs first; then app, which an edit touched. Each
+    # repo runs the command it chose, one after the other in the one gate run.
+    transcript = touch_both(workspace, tmp_path)
+    log = tmp_path / "runs.log"
+    repos = [
+        {
+            "dir": "app",
+            "check_fast": appending(log, "app check_fast"),
+            "check_stop": appending(log, "app check_stop"),
+        },
+        {"dir": "web", "check_fast": appending(log, "web check_fast")},
+    ]
+
+    run_hook(repos, workspace / "web", transcript=transcript)
+
+    assert recorded(log) == ["web check_fast", "app check_stop"]
+
+
+@pytest.mark.parametrize(
+    "check_stop",
+    [
+        pytest.param(None, id="absent"),
+        pytest.param("  ", id="blank"),
+        pytest.param(5, id="number"),
+        pytest.param([], id="list"),
+    ],
+)
+def test_runs_check_fast_without_changed_files_when_check_stop_unusable(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, check_stop: object
+) -> None:
+    # A check_stop the hooks read as none leaves the gate as it is without one: check_fast runs,
+    # with no HUB_CHANGED_FILES, and the reminder is the same bytes.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    log = tmp_path / "runs.log"
+    repo: dict[str, object] = {
+        "dir": "app",
+        "check_fast": appending(log, "check_fast" + WITH_CHANGED_FILES),
+    }
+    if check_stop is not None:
+        repo["check_stop"] = check_stop
+    transcript = write_transcript(tmp_path / "session.jsonl")
+
+    output = run_hook([repo], workspace / "app", transcript=transcript)
+
+    assert recorded(log) == ["check_fast"]
+    assert output == {"systemMessage": CHECK_FAST_GREEN}
+
+
+@pytest.mark.serial
+def test_kills_check_stop_at_check_fast_timeout_when_it_sleeps(
+    run_hook: RunHook, workspace: Path
+) -> None:
+    # check_fast_timeout limits whichever command the gate runs: cut at 2 s, well before its
+    # 10 s sleep would end, and named as not run, which never blocks.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    repo = {"dir": "app", "check_stop": "sleep 10", "check_fast_timeout": 2}
+
+    start = time.monotonic()
+    output = run_hook([repo], workspace / "app")
+    took = time.monotonic() - start
+
+    assert "decision" not in output
+    assert "app (app): not run: timeout (2 s)" in output.get("systemMessage", "")
+    assert took < 8
+
+
+@pytest.mark.parametrize(
+    ("repos", "constant", "summary"),
+    [
+        pytest.param(
+            [{"dir": "app", "check_stop": "true"}],
+            None,
+            "[hub] code changed and check_stop is green.",
+            id="green",
+        ),
+        pytest.param(
+            [{"dir": "app", "check_stop": "echo boom; exit 3"}],
+            None,
+            "[hub stop-gate] Fix these before finishing (check_stop must pass):\n",
+            id="failed",
+        ),
+        pytest.param(
+            [{"dir": "app", "check_stop": "true"}],
+            ("MIN_RUN", 200),
+            "[hub stop-gate] check_stop did not finish in every changed repo; finishing anyway.",
+            id="budget_cut",
+        ),
+        pytest.param(
+            [{"dir": "app", "check_fast": "true"}, {"dir": "web", "check_stop": "true"}],
+            None,
+            "[hub] code changed and check_stop/check_fast is green.",
+            id="both_kinds",
+        ),
+    ],
+)
+def test_names_check_stop_in_summary_when_repo_selects_it(
+    run_hook: RunHook,
+    workspace: Path,
+    tmp_path: Path,
+    *,
+    repos: list[dict[str, object]],
+    constant: tuple[str, object] | None,
+    summary: str,
+) -> None:
+    # The summary names the kind of command each changed repo was given, even one the budget
+    # never let start (MIN_RUN above the budget). With both kinds, app's check_fast runs first
+    # from the hub, yet the name keeps its one order. A repo with a check_stop never reads as
+    # having no command.
+    touches = [
+        ("Edit", "file_path", changed(workspace / str(repo["dir"]) / "x.py")) for repo in repos
+    ]
+    transcript = write_transcript(tmp_path / "session.jsonl", touches=touches)
+
+    output = run_hook(repos, workspace / "demo-hub", transcript=transcript, constant=constant)
+
+    text = output.get("reason") or output.get("systemMessage", "")
+    assert text.startswith(summary)
+    assert "no check_fast configured" not in text
+
+
+def test_blocks_naming_check_stop_when_it_cannot_start(
+    run_hook: RunHook, workspace: Path, *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The gate's PATH holds git alone, so bash, which runs every check, cannot start: a failure,
+    # so a block, named after the kind of command the gate chose.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    git = shutil.which("git")
+    assert git is not None
+    only_git = tmp_path / "only-git"
+    only_git.mkdir()
+    (only_git / "git").symlink_to(git)
+    assert shutil.which("bash", path=str(only_git)) is None
+    monkeypatch.setenv("PATH", str(only_git))
+
+    output = run_hook([{"dir": "app", "check_stop": "true"}], workspace / "app")
+
+    assert output.get("decision") == "block"
+    assert "\ncheck_stop could not start: " in output["reason"]
