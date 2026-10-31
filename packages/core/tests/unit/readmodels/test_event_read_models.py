@@ -1380,8 +1380,9 @@ USAGE_DAY = datetime(2026, 10, 13, tzinfo=UTC)
 
 def _day_usage_events() -> list[Event]:
     """Uses of ``demo`` around ``USAGE_DAY``'s read times: ``review`` at 06:00's 7-day edge,
-    ``plan`` and the ``evaluator`` agent at 12:00's 30-day edge, a ``feature`` use 30 s inside
-    18:00's 90-day edge (30 s outside 18:01's: none within 5 s of a 90-day edge), a typed
+    ``plan`` and the ``evaluator`` agent at 12:00's 30-day edge, an ``old`` use 30 s inside
+    18:00's 90-day edge (30 s outside 18:01's: none within 5 s of a 90-day edge; a name of its
+    own, so from 18:01 only the read-time 90-day filter keeps it out of the windows), a typed
     ``feature`` and its ``Skill`` call yesterday (one use), and ``MAX_USAGE_NAMES - 2`` skills
     used three days before: 501 skills have a 30-day use up to 12:00:00, 500 after."""
     agent: dict[str, object] = {
@@ -1401,9 +1402,7 @@ def _day_usage_events() -> list[Event]:
         _signal_at("s-review", six - timedelta(days=7), _typed("/review")),
         _signal_at("s-plan", noon - timedelta(days=30), _typed("/plan")),
         _signal_at("s-agent", noon - timedelta(days=30), agent),
-        _signal_at(
-            "s-old", six_pm + timedelta(seconds=30) - timedelta(days=90), _typed("/feature")
-        ),
+        _signal_at("s-old", six_pm + timedelta(seconds=30) - timedelta(days=90), _typed("/old")),
         _signal_at("s-feature", yesterday, _typed("/feature")),
         _signal_at("s-feature", yesterday + timedelta(seconds=2), skill),
         *(
@@ -1424,16 +1423,16 @@ def _sessions_of(events: Sequence[Event]) -> dict[str, list[StoredEvent]]:
 @pytest.mark.parametrize(
     ("time_of_day", "expected"),
     [
-        # Each row: review's 7-day runs, evaluator's 30-day runs, feature's 90-day runs and
-        # whether the 30-day map is truncated.
-        (timedelta(seconds=6), (1, 1, 2, True)),
-        (timedelta(hours=6), (1, 1, 2, True)),
-        (timedelta(hours=6, seconds=1), (0, 1, 2, True)),
-        (timedelta(hours=12), (0, 1, 2, True)),
-        (timedelta(hours=12, seconds=1), (0, 0, 2, False)),
-        (timedelta(hours=18), (0, 0, 2, False)),
-        (timedelta(hours=18, minutes=1), (0, 0, 1, False)),
-        (timedelta(hours=23, minutes=59, seconds=59), (0, 0, 1, False)),
+        # Each row: review's 7-day runs, evaluator's 30-day runs, old's 90-day runs (None once
+        # it has left the 90 days: no windows entry) and whether the 30-day map is truncated.
+        (timedelta(seconds=6), (1, 1, 1, True)),
+        (timedelta(hours=6), (1, 1, 1, True)),
+        (timedelta(hours=6, seconds=1), (0, 1, 1, True)),
+        (timedelta(hours=12), (0, 1, 1, True)),
+        (timedelta(hours=12, seconds=1), (0, 0, 1, False)),
+        (timedelta(hours=18), (0, 0, 1, False)),
+        (timedelta(hours=18, minutes=1), (0, 0, None, False)),
+        (timedelta(hours=23, minutes=59, seconds=59), (0, 0, None, False)),
     ],
     ids=[
         "00-00-06",
@@ -1447,25 +1446,95 @@ def _sessions_of(events: Sequence[Event]) -> dict[str, list[StoredEvent]]:
     ],
 )
 def test_counts_like_fresh_fold_when_cached_usage_read_later_in_day(
-    time_of_day: timedelta, expected: tuple[int, int, int, bool]
+    monkeypatch: pytest.MonkeyPatch,
+    time_of_day: timedelta,
+    expected: tuple[int, int, int | None, bool],
 ) -> None:
+    folded = _count_uses_folds(monkeypatch)
     events = _day_usage_events()
     store = InMemoryEventStore()
     store.append(events)
     service, clock = _service(store, USAGE_DAY + timedelta(seconds=5))
     service.skill_usage("demo")
+    cached = list(folded)
     clock.now = USAGE_DAY + time_of_day
 
     usage = service.skill_usage("demo")
 
+    old = usage.windows_by_skill.get("old")
     assert (
         usage.windows_by_skill["review"].runs_7d,
         usage.windows_by_agent["evaluator"].runs_30d,
-        usage.windows_by_skill["feature"].runs_90d,
+        None if old is None else old.runs_90d,
         usage.truncated,
     ) == expected
     assert usage.since == clock.now - timedelta(days=30)
     assert usage == fold_skill_usage(_sessions_of(events), project="demo", now=clock.now)
+    # One fold, the 00:00:05 read's: the read at the table time counts the cached uses.
+    assert cached == folded == [("demo", USAGE_DAY - timedelta(days=90))]
+
+
+def test_folds_uses_outside_lock_at_new_mark_when_session_read_moved_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Between the usage read's mark and its fold, a new use is stored and a session read
+    loads it: the fold runs with ``_folding`` released, at the store's new mark, and the index
+    is not copied (``up_to``)."""
+    store = _skill_usage_store()
+    service = _service(store, NOW)[0]
+    locked: list[bool] = []
+    copies: list[int] = []
+    up_to = event_read_models._EventIndex.up_to
+    get = service._usage.get
+
+    def spying_fold(sessions: Any, *, project: str, start: datetime) -> Any:
+        locked.append(service._folding.locked())
+        return skill_usage.fold_skill_uses(sessions, project=project, start=start)
+
+    def counting_up_to(index: Any, hwm: int) -> Any:
+        copies.append(hwm)
+        return up_to(index, hwm)
+
+    def moving_get(key: Any, *, hwm: int, compute: Callable[[], Any]) -> Any:
+        store.append([_usage_signal("s-review", 300, _typed("/review"))])
+        service.list_sessions(SessionFilter())
+        return get(key, hwm=hwm, compute=compute)
+
+    monkeypatch.setattr(event_read_models, "fold_skill_uses", spying_fold)
+    monkeypatch.setattr(event_read_models._EventIndex, "up_to", counting_up_to)
+    monkeypatch.setattr(service._usage, "get", moving_get)
+
+    usage = service.skill_usage("demo")
+
+    assert locked == [False]
+    assert copies == []
+    assert usage.by_skill.get("review") == Usage(
+        count=1, user_count=1, model_count=0, last_used_at=SCENARIO_START + timedelta(seconds=300)
+    )
+
+
+def test_folds_each_project_once_when_nine_projects_read_three_times(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Home's usage table reads every registered project on each load: with no new event, the
+    memo keeps an entry per project, so three loads over nine projects fold each one once."""
+    folded = _count_uses_folds(monkeypatch)
+    projects = [f"hub-{letter}" for letter in "abcdefghi"]
+    store = InMemoryEventStore()
+    store.append(
+        [
+            _usage_signal(f"s-{project}", 60, _typed("/feature"), project=project)
+            for project in projects
+        ]
+    )
+    service, clock = _service(store, NOW)
+
+    for load in range(3):
+        clock.now = NOW + timedelta(seconds=2 * load)
+        for project in projects:
+            service.skill_usage(project)
+
+    assert sorted(project for project, _ in folded) == projects
 
 
 def test_links_scenario_run_to_its_page_when_search_finds_it() -> None:

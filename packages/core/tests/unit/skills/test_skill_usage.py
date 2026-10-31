@@ -394,7 +394,11 @@ def test_keeps_thirty_day_usage_when_ninety_day_names_over_cap() -> None:
             id="window-edges",
         ),
         pytest.param(
-            [_prompt_days_ago(1, session="s-1"), _prompt_days_ago(90.25, session="s-early")],
+            # A name of its own, so only the read-time 90-day filter keeps it out of the windows.
+            [
+                _prompt_days_ago(1, session="s-1"),
+                _named_days_ago("/early", 90.25, session="s-early"),
+            ],
             id="folded-before-ninety-day-edge",
         ),
         pytest.param(
