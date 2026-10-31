@@ -32,8 +32,9 @@ GUARDED_TOOLS = "^(Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetc
 
 
 def read_stdin() -> bytes | None:
-    """The bytes on stdin; None when reading them fails (a closed stdin). With no stdin at all
-    (sys.stdin is None) it raises, as guard.py's read_event does, and main asks."""
+    """The bytes on stdin; None on a read error (OSError or ValueError), which parse_event takes
+    as an unreadable event. With no stdin at all (fd 0 closed when the hook started, so sys.stdin
+    is None) it raises, as guard.py's read_event does, and main asks."""
     try:
         return sys.stdin.buffer.read()
     except (OSError, ValueError):
