@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentType } from "react";
 import { createMemoryRouter, RouterProvider } from "react-router";
@@ -144,6 +144,44 @@ describe("RouteError", () => {
       expect(screen.getByRole("banner")).toBeInTheDocument();
     },
   );
+
+  it("keeps a page skeleton shown on a first load its 300 ms before it says the page could not load", async () => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    let fail: (error: Error) => void = () => undefined;
+    const failed = new Promise<never>((_loaded, reject) => {
+      fail = reject;
+    });
+    renderAt("/sessions", { path: "sessions", ...lazyScreen(() => failed, "SessionsListScreen") });
+    const main = screen.getByRole("main");
+    const wait = (ms: number) => {
+      act(() => {
+        vi.advanceTimersByTime(ms);
+      });
+    };
+    wait(300);
+    expect(main.querySelector(".ah-skel")).not.toBeNull();
+
+    // The chunk fails 50 ms after the skeleton showed.
+    wait(50);
+    await act(async () => {
+      fail(new TypeError(CHROMIUM));
+      await failed.catch(() => undefined);
+    });
+    wait(249);
+    expect(screen.queryByRole("heading", { name: "This page could not load" })).toBeNull();
+    expect(main.querySelector(".ah-skel")).not.toBeNull();
+    expect(main).toHaveAttribute("aria-busy", "true");
+
+    wait(1);
+    expect(
+      within(main).getByRole("heading", { level: 1, name: "This page could not load" }),
+    ).toBeInTheDocument();
+    expect(main.querySelector(".ah-skel")).toBeNull();
+    expect(main).not.toHaveAttribute("aria-busy");
+  });
 
   it("reloads the page when Reload page is pressed", async () => {
     const reload = stubLocationReload();

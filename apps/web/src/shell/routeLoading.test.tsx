@@ -281,6 +281,28 @@ describe("route loading", () => {
     },
   );
 
+  it.each(ENTRIES)(
+    "keeps the page skeleton drawn until a redirect's target screen renders, once its 300 ms are up (%s)",
+    async (entry) => {
+      const sessions = deferredSessions();
+      const { router } = await startLoading(entry, sessions, "/live");
+      wait(300);
+      await sessions.arrive();
+
+      // The skeleton has had its time, and the redirect is drawn: the router has yet to land.
+      wait(300);
+      expect(router.state.location.pathname).toBe("/live");
+      expect(skeleton()).not.toBeNull();
+      expect(main()).toHaveAttribute("aria-busy", "true");
+
+      await settle();
+      expect(skeleton()).toBeNull();
+      expect(
+        screen.getByRole("heading", { level: 1, name: "Sessions stand-in" }),
+      ).toBeInTheDocument();
+    },
+  );
+
   it.each(ENTRIES)("announces Loading page only after 1 s (%s)", async (entry) => {
     await startLoading(entry, deferredSessions());
 
@@ -307,6 +329,25 @@ describe("route loading", () => {
     wait(1);
     expect(within(main()).getByText(wholeText(STILL_LOADING))).toBeInTheDocument();
   });
+
+  it.each(ENTRIES)(
+    "says the page is still loading from the status beside main after 10 s (%s)",
+    async (entry) => {
+      await startLoading(entry, deferredSessions());
+
+      wait(300);
+      wait(700);
+      wait(9000);
+
+      // The line under the skeleton is inside the busy main, which a screen reader may not read.
+      const said = screen
+        .getAllByText(wholeText(STILL_LOADING))
+        .filter((node) => node.closest("[aria-busy='true']") === null);
+      expect(said).toHaveLength(1);
+      expect(said[0]?.closest("[role='status'], [aria-live='polite']")).not.toBeNull();
+      expect(screen.queryByText(wholeText("Loading page"))).toBeNull();
+    },
+  );
 
   it("keeps the top bar and the nav mounted while a deep link's code loads", async () => {
     const sessions = deferredSessions();
