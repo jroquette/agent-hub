@@ -272,6 +272,60 @@ class AgentSessionStoreContract:
         _check(agent_session_store.link_of("other", CLAUDE_ID) is None, "per project")
         _check(agent_session_store.link_of("demo", "unknown") is None, "unknown: no link")
 
+    def test_finds_each_link_as_link_of_when_ids_are_batched(
+        self, agent_session_store: AgentSessionStore
+    ) -> None:
+        fourth = "01929a4e-7a11-7c00-8a00-00000000b004"
+        other_id = "5091b986-0000-4000-8000-0000000000b3"
+        late_id = "5091b986-0000-4000-8000-0000000000b4"
+        store = agent_session_store
+        store.create(_session(FIRST, 0, claude_session_id=CLAUDE_ID))
+        store.create(_session(SECOND, 1, claude_session_id=CLAUDE_ID))
+        store.create(_session(THIRD, 2, project="other", claude_session_id=other_id))
+        store.create(_session(fourth, 3, claude_session_id=late_id))
+        unknown = [f"5091b986-0000-4000-9000-{number:012d}" for number in range(1_000)]
+        asked = [CLAUDE_ID, other_id, "unknown", *unknown, late_id]
+        _check(len(asked) == 1_004, f"1,004 ids, more than two chunks of 500: {len(asked)}")
+
+        found = dict(store.links_of("demo", asked))
+
+        one_by_one = {
+            claude_id: link
+            for claude_id in asked
+            if (link := store.link_of("demo", claude_id)) is not None
+        }
+        _check(found == one_by_one, f"each id answers as link_of: {found} != {one_by_one}")
+        _check(found == {CLAUDE_ID: SECOND, late_id: fourth}, f"the newest, the last id: {found}")
+        _check(dict(store.links_of("demo", [])) == {}, "no id asked: no link")
+
+    def test_reads_first_record_of_kinds_when_sessions_are_batched(
+        self, agent_session_store: AgentSessionStore
+    ) -> None:
+        def record(kind: RecordKind, seq: int) -> LogRecord:
+            return a_log_record(kind, seq, at=T0 + timedelta(seconds=seq))
+
+        store = agent_session_store
+        for minutes, agent_session_id in enumerate((FIRST, SECOND, THIRD)):
+            store.create(_session(agent_session_id, minutes))
+        first_log = [
+            record("init", 1),
+            record("user.message", 2),
+            record("text", 3),
+            record("user.message", 4),
+        ]
+        third_prompt = record("user.message", 1)
+        store.append(FIRST, first_log)
+        store.append(SECOND, [record("init", 1), record("text", 2)])
+        store.append(THIRD, [third_prompt])
+        synthetic = [f"01929a4e-7a11-7c00-9a00-{number:012d}" for number in range(600)]
+        asked = [FIRST, SECOND, "unknown", *synthetic, THIRD]
+        _check(asked.index(THIRD) >= 500, "THIRD is asked in the second chunk of 500 ids")
+
+        found = dict(store.first_records(asked, kinds={"user.message"}))
+
+        expected = {FIRST: first_log[1], THIRD: third_prompt}
+        _check(found == expected, f"each session's first record of the kinds: {found}")
+
     def test_ends_unfinished_when_server_restarts(
         self, agent_session_store: AgentSessionStore
     ) -> None:
