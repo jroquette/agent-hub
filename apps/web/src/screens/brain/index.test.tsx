@@ -844,11 +844,26 @@ function layOutTree() {
 const brainNotes = () => screen.getByRole("navigation", { name: "Brain notes" });
 
 /** Opens the Brain at `path` on `listing` (the 600-note brain by default), once its tree lists. */
-async function openTree(path: string, listing = aBrainTreeOf(600)) {
-  const shown = open(path, { [TREE]: listing });
+async function openTree(path: string, listing = aBrainTreeOf(600), routes: ApiRoutes = {}) {
+  const shown = open(path, { [TREE]: listing, ...routes });
   const nav = brainNotes();
   await within(nav).findByRole("region", { name: "Folders" }, { timeout: 5_000 });
   return { ...shown, nav };
+}
+
+/** Answers each note path with a note that links to `href`, as its text writes it. */
+function notesLinkingTo(href: string) {
+  return (request: Request) => {
+    const path = new URL(request.url).searchParams.get("path") ?? "";
+    return aBrainNote({ path, markdown: `# Note ${path}\n\nSee [the far note](${href}).\n` });
+  };
+}
+
+/** The tree's own scroll box: the element its groups sit in. */
+function treeBox(nav: HTMLElement): HTMLElement {
+  const box = within(nav).getByRole("region", { name: "Start here" }).parentElement;
+  if (box === null) throw new Error("the tree has no box");
+  return box;
 }
 
 /** The selected note's row, once the tree renders it. */
@@ -1291,6 +1306,32 @@ describe("BrainScreen tree", () => {
     });
   });
 
+  it("starts another project's tree afresh: only its selected note's folders open, at the top, entering on that note", async () => {
+    const user = userEvent.setup();
+    const { nav, router } = await openTree("/projects/agent-hub/brain", aBrainTreeOf(600), {
+      "/api/v1/projects/other/brain": { ...aBrainTreeOf(600), project: "other" },
+      "/api/v1/projects/other/brain/note": notes,
+    });
+    await openByHand(user, nav, "tree-2, 100 notes");
+    scrollTreeTo(nav, 1_200);
+    expect(treeBox(nav).scrollTop).toBe(1_200);
+
+    // Another project, then back to the first, whose listing is cached: each starts afresh.
+    for (const project of ["other", "agent-hub"]) {
+      await act(() => router.navigate(`/projects/${project}/brain`));
+      await within(nav).findByRole("region", { name: "Folders" }, { timeout: 5_000 });
+
+      expect(treeBox(nav).scrollTop).toBe(0);
+      for (const folder of ["tree-1", "tree-2", "tree-3", "tree-4", "tree-5", "tree-6"]) {
+        expect(folderRow(nav, `${folder}, 100 notes`)).toHaveAttribute("aria-expanded", "false");
+      }
+      const stops = [...nav.querySelectorAll<HTMLElement>("li a, li button")].filter(
+        (row) => row.tabIndex >= 0,
+      );
+      expect(stops).toEqual([within(nav).getByRole("link", { name: "Index" })]);
+    }
+  });
+
   it("scrolls the selected row into view on a deep link without moving focus", async () => {
     const { nav } = await openTree(MIDDLE_NOTE);
     expect(await selectedRow(nav)).toHaveAccessibleName("note-050.md");
@@ -1301,6 +1342,63 @@ describe("BrainScreen tree", () => {
     });
     expect(queryNoteRow(nav, "Index")).toBeNull();
     expect(document.body).toHaveFocus();
+  });
+
+  it("scrolls the selected row into view when a link in the note or Back opens another note, focus left where it was", async () => {
+    const user = userEvent.setup();
+    const { nav, router } = await openTree(MIDDLE_NOTE, aBrainTreeOf(600), {
+      [NOTE]: notesLinkingTo("../tree-6/note-090.md"),
+    });
+    await selectedRow(nav);
+    expect(noteLink(nav, "tree-6/note-090.md")).toBeNull();
+
+    await user.click(await screen.findByRole("link", { name: "the far note" }));
+
+    expect(router.state.location.pathname).toBe("/projects/agent-hub/brain/tree-6/note-090.md");
+    expect(await selectedRow(nav)).toHaveAttribute(
+      "href",
+      "/projects/agent-hub/brain/tree-6/note-090.md",
+    );
+    // The current row is always rendered: the rows around it show that the box moved there.
+    await vi.waitFor(() => {
+      expect(noteLink(nav, "tree-6/note-085.md")).not.toBeNull();
+      expect(noteLink(nav, "tree-6/note-095.md")).not.toBeNull();
+    });
+    expect(noteLink(nav, "tree-3/note-050.md")).toBeNull();
+    expect(nav.contains(document.activeElement)).toBe(false);
+
+    await act(() => router.navigate(-1));
+
+    expect(await selectedRow(nav)).toHaveAccessibleName("note-050.md");
+    await vi.waitFor(() => {
+      expect(noteLink(nav, "tree-3/note-045.md")).not.toBeNull();
+      expect(noteLink(nav, "tree-3/note-055.md")).not.toBeNull();
+    });
+    expect(noteLink(nav, "tree-6/note-090.md")).toBeNull();
+    expect(nav.contains(document.activeElement)).toBe(false);
+  });
+
+  it.each([
+    { keys: "o", key: "o" },
+    { keys: "Enter", key: "{Enter}" },
+  ])("leaves the box where it is when a note is opened from the tree ($keys)", async ({ key }) => {
+    const user = userEvent.setup();
+    const { nav, router } = await openTree("/projects/agent-hub/brain");
+    await openByHand(user, nav, "tree-2, 100 notes");
+    await user.keyboard("{ArrowDown}");
+    expectFocusOn(nav, "note-001.md");
+    // The wheel takes the row out of view; the tree's current row stays rendered.
+    scrollTreeTo(nav, 2_000);
+    expect(treeBox(nav).scrollTop).toBe(2_000);
+
+    await user.keyboard(key);
+
+    expect(router.state.location.pathname).toBe("/projects/agent-hub/brain/tree-2/note-001.md");
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Note tree-2/note-001.md" }),
+    ).toBeInTheDocument();
+    expect(treeBox(nav).scrollTop).toBe(2_000);
+    expectFocusOn(nav, "note-001.md");
   });
 
   it.each(["j", "k", "o"])(
