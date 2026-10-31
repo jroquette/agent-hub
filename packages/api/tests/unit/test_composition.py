@@ -2,7 +2,8 @@ import asyncio
 import json
 import sys
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import closing, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -458,21 +459,23 @@ def test_builds_no_control_when_in_container(
 
     app = _build(_session_settings(tmp_path, sessions_off=True), tmp_path)
 
-    ports = app.state.ports
-    assert (ports.agent_sessions, ports.cloud_sessions, ports.agent_session_links) == (
-        None,
-        None,
-        None,
-    )
+    with TestClient(app):
+        ports = app.state.ports
+        assert (ports.agent_sessions, ports.cloud_sessions, ports.agent_session_links) == (
+            None,
+            None,
+            None,
+        )
 
 
 def test_wires_control_cloud_and_links_when_sessions_on(tmp_path: Path) -> None:
     app = _build(_session_settings(tmp_path), tmp_path, session_driver=InMemorySessionDriver())
 
-    ports = app.state.ports
-    assert isinstance(ports.agent_sessions, AgentSessionControl)
-    assert isinstance(ports.cloud_sessions, CloudSessions)
-    assert isinstance(ports.agent_session_links, AgentSessionLinks)
+    with TestClient(app):
+        ports = app.state.ports
+        assert isinstance(ports.agent_sessions, AgentSessionControl)
+        assert isinstance(ports.cloud_sessions, CloudSessions)
+        assert isinstance(ports.agent_session_links, AgentSessionLinks)
 
 
 def test_wires_capture_when_app_built(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -485,20 +488,22 @@ def test_wires_capture_when_app_built(tmp_path: Path, monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(composition, "hub_read_models", spy)
 
-    _build(_session_settings(tmp_path), tmp_path, session_driver=InMemorySessionDriver())
+    app = _build(_session_settings(tmp_path), tmp_path, session_driver=InMemorySessionDriver())
 
-    capture = passed["capture"]
-    assert isinstance(capture, CaptureItemVersions)
-    # One store on the app's database, behind the same file reader the hub reads use.
-    assert isinstance(capture._store, SqliteItemVersionStore)  # noqa: SLF001 - the wiring
-    assert capture._store._engine.url.database == str(tmp_path / "agent-hub.db")  # noqa: SLF001
-    assert capture._reader is passed["reader"]  # noqa: SLF001 - one reader for both
+    with TestClient(app):
+        capture = passed["capture"]
+        assert isinstance(capture, CaptureItemVersions)
+        # One store on the app's database, behind the same file reader the hub reads use.
+        assert isinstance(capture._store, SqliteItemVersionStore)  # noqa: SLF001 - the wiring
+        assert capture._store._engine.url.database == str(tmp_path / "agent-hub.db")  # noqa: SLF001
+        assert capture._reader is passed["reader"]  # noqa: SLF001 - one reader for both
 
 
 def test_wires_workflow_reads_when_app_built(tmp_path: Path) -> None:
     app = _build(_session_settings(tmp_path), tmp_path, session_driver=InMemorySessionDriver())
 
-    assert isinstance(app.state.ports.workflow_reads, ReadWorkflows)
+    with TestClient(app):
+        assert isinstance(app.state.ports.workflow_reads, ReadWorkflows)
 
 
 def test_reads_hub_workflows_when_hub_has_a_pack(tmp_path: Path) -> None:
@@ -567,14 +572,14 @@ def test_names_no_absolute_path_when_hub_workflows_have_problems(tmp_path: Path)
 
 def test_ends_unfinished_sessions_when_app_starts(tmp_path: Path) -> None:
     settings = _session_settings(tmp_path)
-    open_event_store(settings.db_path)
-    store = open_agent_session_store(settings.db_path)
-    store.create(an_agent_session(status=AgentSessionStatus.RUNNING, last_seq=0))
-    app = _build(settings, tmp_path, session_driver=InMemorySessionDriver())
+    open_event_store(settings.db_path).close()
+    with closing(open_agent_session_store(settings.db_path)) as store:
+        store.create(an_agent_session(status=AgentSessionStatus.RUNNING, last_seq=0))
+        app = _build(settings, tmp_path, session_driver=InMemorySessionDriver())
 
-    before = store.get(AGENT_SESSION_ID)
-    with TestClient(app):
-        after = store.get(AGENT_SESSION_ID)
+        before = store.get(AGENT_SESSION_ID)
+        with TestClient(app):
+            after = store.get(AGENT_SESSION_ID)
 
     assert before.status == AgentSessionStatus.RUNNING
     assert after.status == AgentSessionStatus.ENDED
@@ -675,8 +680,10 @@ def test_wires_scheduler_when_sessions_on_and_none_when_off(
     monkeypatch.setattr(composition, "ScheduledStartsRuntime", record)
     events = ScriptedEventSource()
 
-    _build(_session_settings(tmp_path, sessions_off=True), tmp_path, event_source=events)
-    assert built == []
+    with TestClient(
+        _build(_session_settings(tmp_path, sessions_off=True), tmp_path, event_source=events)
+    ):
+        assert built == []
 
     app = _build(
         _session_settings(tmp_path),
@@ -696,10 +703,12 @@ def test_wires_scheduler_when_sessions_on_and_none_when_off(
 # Knowledge reads (AGH-393, P-10)
 
 
+@contextmanager
 def _knowledge_app(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, environ: dict[str, str]
-) -> tuple[TestClient, FakeKnowledgeCheckout]:
-    """``build_app`` with a registered hub ``demo`` whose checkout is a fake: git never runs."""
+) -> Iterator[tuple[TestClient, FakeKnowledgeCheckout]]:
+    """``build_app`` with a registered hub ``demo`` whose checkout is a fake: git never runs.
+    The app's lifespan runs while the block does, so its stores close when the block ends."""
     hub = tmp_path / "demo-hub"
     hub.mkdir()
     (hub / "hub.json").write_bytes(_without())
@@ -713,12 +722,12 @@ def _knowledge_app(
         brain_changes=InMemoryBrainChangeRequests(FakeBrainOrigin()),
         environ=environ,
     )
-    client = TestClient(app, base_url="http://127.0.0.1:7420", raise_server_exceptions=False)
-    registered = client.post(
-        "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
-    )
-    assert registered.status_code == 201
-    return client, checkout
+    with TestClient(app, base_url="http://127.0.0.1:7420", raise_server_exceptions=False) as client:
+        registered = client.post(
+            "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+        )
+        assert registered.status_code == 201
+        yield client, checkout
 
 
 def _git_folder(tmp_path: Path) -> str:
@@ -745,14 +754,14 @@ def test_opens_knowledge_index_lazily_when_first_search_runs(
         return real_open(path)
 
     monkeypatch.setattr(composition, "open_knowledge_index", counting_open)
-    client, _ = _knowledge_app(tmp_path, monkeypatch, {"PATH": _git_folder(tmp_path)})
-    built = len(opened)
-    search = "/api/v1/projects/demo/knowledge/search?q=marker"
+    with _knowledge_app(tmp_path, monkeypatch, {"PATH": _git_folder(tmp_path)}) as (client, _):
+        built = len(opened)
+        search = "/api/v1/projects/demo/knowledge/search?q=marker"
 
-    failed = client.get(search)
-    first = client.get(search)
-    second = client.get(search)
-    backlinks = client.get("/api/v1/projects/demo/brain/backlinks?path=now.md")
+        failed = client.get(search)
+        first = client.get(search)
+        second = client.get(search)
+        backlinks = client.get("/api/v1/projects/demo/brain/backlinks?path=now.md")
 
     assert built == 0
     assert (failed.status_code, failed.json()["title"]) == (503, "Search unavailable")
@@ -767,12 +776,11 @@ def test_finds_git_per_call_when_path_changes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     environ: dict[str, str] = {"PATH": str(tmp_path / "empty")}
-    client, _ = _knowledge_app(tmp_path, monkeypatch, environ)
-
-    missing = client.get("/api/v1/projects/demo/knowledge/search?q=marker")
-    no_backlinks = client.get("/api/v1/projects/demo/brain/backlinks?path=now.md")
-    environ["PATH"] = _git_folder(tmp_path)
-    found = client.get("/api/v1/projects/demo/knowledge/search?q=marker")
+    with _knowledge_app(tmp_path, monkeypatch, environ) as (client, _):
+        missing = client.get("/api/v1/projects/demo/knowledge/search?q=marker")
+        no_backlinks = client.get("/api/v1/projects/demo/brain/backlinks?path=now.md")
+        environ["PATH"] = _git_folder(tmp_path)
+        found = client.get("/api/v1/projects/demo/knowledge/search?q=marker")
 
     assert (missing.status_code, missing.json()["title"]) == (502, "Could not read the hub's files")
     assert missing.json()["detail"] == "git is not on PATH; install git"
@@ -789,12 +797,11 @@ def test_answers_problem_when_lazy_index_open_fails_migration(
         raise MigrationError(adapter_line)
 
     monkeypatch.setattr(composition, "open_knowledge_index", failing_open)
-    client, _ = _knowledge_app(tmp_path, monkeypatch, {"PATH": _git_folder(tmp_path)})
-
-    responses = [
-        client.get("/api/v1/projects/demo/knowledge/search?q=marker"),
-        client.get("/api/v1/projects/demo/brain/backlinks?path=now.md"),
-    ]
+    with _knowledge_app(tmp_path, monkeypatch, {"PATH": _git_folder(tmp_path)}) as (client, _):
+        responses = [
+            client.get("/api/v1/projects/demo/knowledge/search?q=marker"),
+            client.get("/api/v1/projects/demo/brain/backlinks?path=now.md"),
+        ]
 
     for response in responses:
         assert response.status_code == 503
