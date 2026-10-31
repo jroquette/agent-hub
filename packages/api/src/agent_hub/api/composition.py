@@ -180,7 +180,7 @@ from agent_hub.storage.errors import Fts5UnavailableError, MigrationError
 from agent_hub.storage.event_store import DatabaseBusyError, SqliteEventStore, open_event_store
 from agent_hub.storage.hub_registry import JsonHubRegistry
 from agent_hub.storage.item_version_store import open_item_version_store
-from agent_hub.storage.knowledge_index import open_knowledge_index
+from agent_hub.storage.knowledge_index import SqliteKnowledgeIndex, open_knowledge_index
 from agent_hub.tracker_linear.graphql import LinearGraphqlTrackerClient
 from agent_hub.tracker_linear.graphql_reader import LinearGraphqlTrackerReader
 from agent_hub.tracker_linear.graphql_transport import LINEAR_API_KEY_VARIABLE, Post
@@ -717,6 +717,8 @@ def build_app(
     The scheduled and event starts (ADR 0048) poll GitHub through ``event_source`` (default
     ``GhEventSource`` over ``environ``); like the run launcher, none is built when
     ``settings.sessions_off``.
+    The stores close when the app's lifespan ends, after the agent sessions' shutdown and the
+    scheduled starts.
     ``DatabaseAccessError`` when the store cannot be opened.
     """
     store = open_event_store(settings.db_path)
@@ -735,8 +737,10 @@ def build_app(
         read_git=_files_only if read_git is None else read_git,
     )
     observed = _ObservedSessions()
+    agent_store = None if settings.sessions_off else open_agent_session_store(settings.db_path)
     sessions = _agent_sessions(
         settings,
+        store=agent_store,
         registry=registry,
         reader=reader,
         environ=environ,
@@ -812,6 +816,7 @@ def build_app(
             tracker_of=tracker_client_of(env, linear_environ),
             today=lambda: settings.clock().astimezone().date(),
         )
+    knowledge = _LazyKnowledgeIndex(settings.db_path)
     ports = ApiPorts(
         event_read_models=events,
         hub_read_models=hubs,
@@ -869,7 +874,7 @@ def build_app(
             sessions.control, hubs, HubDiscoveryFiles(), clock=settings.clock
         ),
         scenario_investigations=None if sessions is None else sessions.investigations,
-        knowledge_reads=_knowledge_reads(settings, hubs, environ=environ),
+        knowledge_reads=_knowledge_reads(hubs, environ=environ, index=knowledge),
         scenario_reads=scenario_reads,
         scenario_commands=scenario_commands,
         linear=LinearConnection(
@@ -879,12 +884,21 @@ def build_app(
             post=linear_post,
         ),
     )
+    closers = [store.close, versions.close, knowledge.close]
+    if agent_store is not None:
+        closers.append(agent_store.close)
     return create_app(
         settings,
         ports=ports,
         problems=COMPOSED_PROBLEMS,
         web_dist=web_dist,
-        lifecycle=_lifecycle(None if sessions is None else sessions.runtime, scheduler),
+        # First, so it stops last: the stores close after the sessions' shutdown writes and the
+        # scheduler have ended.
+        lifecycle=_lifecycle(
+            _CloseOnStop(*closers),
+            None if sessions is None else sessions.runtime,
+            scheduler,
+        ),
     )
 
 
@@ -894,6 +908,24 @@ def _lifecycle(*parts: AppLifecycle | None) -> AppLifecycle | None:
     return CombinedLifecycle(*present) if present else None
 
 
+class _CloseOnStop:
+    """An ``AppLifecycle`` part that only stops: it calls each closer, in order."""
+
+    def __init__(self, *closers: Callable[[], None]) -> None:
+        self._closers = closers
+
+    async def start(self) -> None:
+        """Nothing to start."""
+
+    def begin_exit(self) -> None:
+        """Nothing to begin; the closers run at ``stop``."""
+
+    async def stop(self) -> None:
+        """Call each closer, in order."""
+        for close in self._closers:
+            close()
+
+
 # Why a knowledge read fails when the server's PATH has no git (AGH-391's line, no prefix).
 NO_GIT: Final = "git is not on PATH; install git"
 
@@ -901,12 +933,12 @@ NO_GIT: Final = "git is not on PATH; install git"
 class _LazyKnowledgeIndex:
     """The knowledge index in the web's database, opened by the first knowledge read and kept
     (P-10): ``build_app`` starts on a Python without FTS5, and an open that fails (no FTS5, the
-    database busy) is tried again by the next read."""
+    database busy) is tried again by the next read. ``close`` closes it and forgets it."""
 
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
         self._lock = threading.Lock()
-        self._index: KnowledgeIndex | None = None
+        self._index: SqliteKnowledgeIndex | None = None
 
     def __call__(self) -> KnowledgeIndex:
         with self._lock:
@@ -914,13 +946,20 @@ class _LazyKnowledgeIndex:
                 self._index = open_knowledge_index(self._db_path)
             return self._index
 
+    def close(self) -> None:
+        """Close the index when it was opened, and forget it: a later read opens it again."""
+        with self._lock:
+            if self._index is not None:
+                self._index.close()
+                self._index = None
+
 
 def _knowledge_reads(
-    settings: ApiSettings, hubs: HubReadModels, *, environ: Mapping[str, str] | None
+    hubs: HubReadModels, *, environ: Mapping[str, str] | None, index: _LazyKnowledgeIndex
 ) -> ReadKnowledge:
     """The knowledge search and backlinks over the registered hubs (AGH-393): each read lists the
     hub with ``git`` found on ``environ``'s ``PATH`` at that call, keyed by the registered hub's
-    path (AM-6), in the lazily opened index."""
+    path (AM-6), in the lazily opened ``index``."""
 
     def sources(hub_path: str, repo_dirs: tuple[str, ...]) -> KnowledgeSources:
         env: Mapping[str, str] = os.environ if environ is None else environ
@@ -931,12 +970,13 @@ def _knowledge_reads(
             Path(hub_path), repo_dirs, git=os.path.abspath(found), environ=env
         )
 
-    return ReadKnowledge(hubs, sources=sources, index=_LazyKnowledgeIndex(settings.db_path))
+    return ReadKnowledge(hubs, sources=sources, index=index)
 
 
 def _agent_sessions(  # noqa: PLR0913 -- build_app's session options, passed on
     settings: ApiSettings,
     *,
+    store: AgentSessionStore | None,
     registry: HubRegistry,
     reader: HubFileReader,
     environ: Mapping[str, str] | None,
@@ -944,7 +984,8 @@ def _agent_sessions(  # noqa: PLR0913 -- build_app's session options, passed on
     cloud_launcher: CloudLauncher | None,
     observed_sessions: ObservedSessionLookup,
 ) -> AgentSessionWiring | None:
-    if settings.sessions_off:
+    # build_app opens no store when the sessions are off (settings.sessions_off).
+    if store is None:
         return None
     env: Mapping[str, str] = os.environ if environ is None else environ
     # The title is read from the CLI's own files, so only with the CLI's own driver.
@@ -955,7 +996,7 @@ def _agent_sessions(  # noqa: PLR0913 -- build_app's session options, passed on
         cloud_launcher = cloud_launcher or launcher
     return wire_agent_sessions(
         settings,
-        store=open_agent_session_store(settings.db_path),
+        store=store,
         workdirs=RegisteredWorkdirs(
             registry=registry, reader=reader, running_version=settings.running_version
         ),

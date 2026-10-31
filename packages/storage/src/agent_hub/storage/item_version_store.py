@@ -111,6 +111,14 @@ class SqliteItemVersionStore:
         with self._reading() as connection:
             return connection.execute(statement).first() is not None
 
+    def close(self) -> None:
+        """Close the idle connections the store's engine keeps; a later use opens new ones.
+
+        One checked out at that moment is not closed here: it goes back to the old pool when it
+        returns, and closes when that pool is garbage collected.
+        """
+        self._engine.dispose()
+
     @contextmanager
     def _writing(self) -> Iterator[Connection]:
         try:

@@ -227,15 +227,18 @@ def build(path: Path, *, events: int, seed: int) -> None:
     _remove_partials(path)
     try:
         store = open_event_store(partial)
-        batch: list[Event] = []
-        for event in _all_events(events, seed):
-            batch.append(event)
-            if len(batch) == BATCH:
+        try:
+            batch: list[Event] = []
+            for event in _all_events(events, seed):
+                batch.append(event)
+                if len(batch) == BATCH:
+                    store.append(batch)
+                    batch = []
+            if batch:
                 store.append(batch)
-                batch = []
-        if batch:
-            store.append(batch)
-        # The store's engine keeps no pooled connection, so the file is free to switch modes.
+        finally:
+            store.close()
+        # The store's connections are closed above, so this one can leave WAL.
         connection = sqlite3.connect(partial)
         try:
             # Leaving WAL mode checkpoints the log and removes -wal and -shm: one file to copy.

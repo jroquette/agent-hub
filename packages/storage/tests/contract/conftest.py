@@ -1,5 +1,6 @@
 """The contract suites run here against the SQLite adapters, on a migrated file."""
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -15,20 +16,28 @@ from agent_hub.storage.knowledge_index import open_knowledge_index
 
 
 @pytest.fixture
-def event_store(tmp_path: Path) -> EventStore:
-    return open_event_store(tmp_path / "events.db")
+def event_store(tmp_path: Path) -> Iterator[EventStore]:
+    store = open_event_store(tmp_path / "events.db")
+    yield store
+    store.close()
 
 
 @pytest.fixture
-def agent_session_store(tmp_path: Path) -> AgentSessionStore:
-    return open_agent_session_store(tmp_path / "events.db")
+def agent_session_store(tmp_path: Path) -> Iterator[AgentSessionStore]:
+    store = open_agent_session_store(tmp_path / "events.db")
+    yield store
+    store.close()
 
 
 @pytest.fixture
-def item_version_store(tmp_path: Path) -> ItemVersionStore:
-    return open_item_version_store(tmp_path / "events.db")
+def item_version_store(tmp_path: Path) -> Iterator[ItemVersionStore]:
+    store = open_item_version_store(tmp_path / "events.db")
+    yield store
+    store.close()
 
 
 @pytest.fixture
-def knowledge_index(tmp_path: Path) -> KnowledgeIndex:
-    return open_knowledge_index(tmp_path / "events.db")
+def knowledge_index(tmp_path: Path) -> Iterator[KnowledgeIndex]:
+    index = open_knowledge_index(tmp_path / "events.db")
+    yield index
+    index.close()

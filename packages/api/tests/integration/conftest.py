@@ -137,6 +137,7 @@ def open_composed(
 ) -> Iterator[Callable[..., Composed]]:
     """Opens ``build_app`` on the temp paths; ``build_app`` keywords may be overridden."""
     clients: list[TestClient] = []
+    stores: list[SqliteEventStore] = []
 
     def opened(settings: ApiSettings = composed_settings, **options: Any) -> Composed:
         app = build_app(
@@ -146,16 +147,15 @@ def open_composed(
         client = TestClient(app, base_url=COMPOSED_URL, raise_server_exceptions=False)
         client.__enter__()
         clients.append(client)
-        return Composed(
-            client=client,
-            settings=settings,
-            projects=projects_root,
-            store=open_event_store(settings.db_path),
-        )
+        store = open_event_store(settings.db_path)
+        stores.append(store)
+        return Composed(client=client, settings=settings, projects=projects_root, store=store)
 
     yield opened
     for client in clients:
         client.__exit__(None, None, None)
+    for store in stores:
+        store.close()
 
 
 @pytest.fixture
