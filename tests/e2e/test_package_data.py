@@ -15,6 +15,7 @@ from agent_hub.core.hub_files.rendered_link import RenderedLink
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.generator.registry import REGISTRY
 from agent_hub.generator.render_hub import render_hub
+from tests.e2e.conftest import REPO_ROOT
 
 SHIPPED_SCHEMA = "agent_hub/core/hub_config/hub.schema.json"
 SHIPPED_OUTPUT_SCHEMAS = (
@@ -27,6 +28,9 @@ SHIPPED_OUTPUT_SCHEMAS = (
 GENERATOR_PACKAGE = "agent_hub.generator"
 SHIPPED_PARSED_BUILTINS = "agent_hub/generator/parsed_builtins.json"
 INSTALL_TIMEOUT_SECONDS = 300
+# The built web app the api wheel ships (D26), and where the wheel puts it.
+WEB_DIST = REPO_ROOT / "packages" / "api" / "src" / "agent_hub" / "api" / "web_dist"
+SHIPPED_WEB_DIST = "agent_hub/api/web_dist"
 
 # Run by the scratch venv's python, from a cwd outside the repo: renders the demo config with the
 # installed wheels and prints where core and the generator were imported from, one row per file
@@ -140,6 +144,34 @@ def test_ships_parsed_builtins_when_generator_wheel_built(
     assert [name for name in names if name.endswith("/parsed_builtins.json")] == [
         SHIPPED_PARSED_BUILTINS
     ]
+
+
+def test_ships_every_web_dist_file_when_api_wheel_built(
+    tmp_path: Path, run: Callable[..., CompletedProcess[str]]
+) -> None:
+    """Q-N3 (AGH-614): the api wheel ships the committed web build whole, the Vite manifest in
+    the dot folder ``.vite/`` and the Brotli variants included, so an installed ``hub web``
+    serves the same files."""
+    uv = _uv()
+    committed = sorted(
+        f"{SHIPPED_WEB_DIST}/{path.relative_to(WEB_DIST).as_posix()}"
+        for path in WEB_DIST.rglob("*")
+        if path.is_file()
+    )
+    assert f"{SHIPPED_WEB_DIST}/index.html" in committed
+    command = [uv, "build", "--package", "agent-hub-api", "--wheel", "--out-dir", str(tmp_path)]
+
+    result = run(command)
+
+    assert result.returncode == 0, result.stderr
+    [wheel] = tmp_path.glob("agent_hub_api-*.whl")
+    with zipfile.ZipFile(wheel) as archive:
+        names = set(archive.namelist())
+    assert f"{SHIPPED_WEB_DIST}/.vite/manifest.json" in names
+    assert any(
+        name.startswith(f"{SHIPPED_WEB_DIST}/assets/") and name.endswith(".br") for name in names
+    )
+    assert [name for name in committed if name not in names] == []
 
 
 def test_renders_same_files_when_installed_wheels_run_outside_repo(

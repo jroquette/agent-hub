@@ -45,6 +45,14 @@ runs (always live: ``hub web`` runs the installed hub as its child), approves th
 detail and cancels the resumed run there; the run ends cancelled and its gate approved, with no
 console error and no serious axe violation.
 
+AGH-614 (perf-smooth-web AC-1, AC-2, AC-5, AC-7): the committed build splits the app by route.
+Its Vite manifest gives every screen module ``routes.tsx`` loads through ``import()`` a chunk of
+its own, and the entry chunk ``index.html`` loads stays under 400,000 B. Its own test
+(``-k route_chunks``) runs ``apps/web/e2e/routes.spec.ts``: a first ``/sessions`` visit fetches
+only the entry, vendor, shared and Sessions chunks (its request log is in the output), every nav
+destination opens in the app, deep links open from a full load, and an aborted Sessions chunk
+shows "This page could not load" in the shell while the other routes still open.
+
 The page smoke runs every other test of ``smoke.spec.ts``.
 """
 
@@ -75,6 +83,15 @@ pytestmark = pytest.mark.serial
 
 WEB_DIR = REPO_ROOT / "apps" / "web"
 WEB_DIST = REPO_ROOT / "packages" / "api" / "src" / "agent_hub" / "api" / "web_dist"
+# AGH-614: the build's Vite manifest (which chunk holds each module), and the route table.
+MANIFEST = WEB_DIST / ".vite" / "manifest.json"
+ROUTES_SOURCE = WEB_DIR / "src" / "routes.tsx"
+# AC-1 (O4): one chunk per routed screen module, 31 today (42 ``*Screen`` names and
+# ``LegacyWorkflowRedirect``); the one screen import left static is a small helper, no screen.
+SCREEN_MODULES = 31
+EAGER_SCREEN_IMPORTS = ["./screens/sessions-list/liveRedirect"]
+# AC-1 (O1): the limit of the entry chunk alone, raw.
+ENTRY_LIMIT_BYTES = 400_000
 PLAYWRIGHT_SECONDS = 300
 REQUEST_SECONDS = 10
 LONG_SESSION_EVENTS = 5_000
@@ -152,6 +169,8 @@ SKILLS_SPEC = "Skills"
 # the demo hub's workflow it runs: a sign-off gate, then a shell node that works until cancelled
 # (no longer than the test's budget, so a failed run never outlives the test by much).
 WORKFLOWS_SPEC = "Web-driven workflow run"
+# The Playwright tests of routes.spec.ts (AGH-614): every title starts with it.
+ROUTES_SPEC = "Route chunks"
 SMOKE_WORKFLOW = "workflows/smoke/smoke.yaml"
 SMOKE_WORKFLOW_TEXT = """\
 version: 1
@@ -246,6 +265,9 @@ INERT_BUNDLE_URLS = frozenset(
     }
 )
 _ABSOLUTE_URL = re.compile(r"https?://[A-Za-z0-9.\-\[\]:]+(?:/[A-Za-z0-9._~/\-]*)?")
+_LAZY_SCREEN = re.compile(r"""\bimport\(\s*["'](\./screens/[^"']+)["']\s*\)""")
+_EAGER_SCREEN = re.compile(r"""\b(?:from|import)\s*["'](\./screens/[^"']+)["']""")
+_MODULE_SCRIPT = re.compile(r'<script type="module"[^>]*\ssrc="/([^"]+)"')
 
 
 def bundle_urls(dist: Path) -> set[str]:
@@ -282,6 +304,60 @@ def test_bundle_check_fails_when_bundle_loads_external_font_or_script(tmp_path: 
         "https://fonts.example.org/geist.woff2",
         "https://reactjs.org/api",
     }
+
+
+def _screen_module(specifier: str) -> str:
+    """The manifest key of a ``./screens/…`` import of ``routes.tsx``, resolved as Vite does."""
+    stem = specifier.removeprefix("./")
+    for candidate in (f"{stem}.tsx", f"{stem}.ts", f"{stem}/index.tsx", f"{stem}/index.ts"):
+        if (WEB_DIR / "src" / candidate).is_file():
+            return f"src/{candidate}"
+    pytest.fail(f"routes.tsx imports {specifier}, which names no module")
+
+
+def _eager_files(manifest: Mapping[str, Mapping[str, Any]]) -> set[str]:
+    """The files a first load fetches before any route runs: the entry and its static imports."""
+    pending = [key for key, chunk in manifest.items() if chunk.get("isEntry")]
+    assert len(pending) == 1, pending
+    files: set[str] = set()
+    while pending:
+        chunk = manifest[pending.pop()]
+        if chunk["file"] not in files:
+            files.add(chunk["file"])
+            pending.extend(chunk.get("imports", []))
+    return files
+
+
+def test_loads_each_route_screen_from_own_chunk_when_web_app_built() -> None:
+    """AC-1 (O4, Q-N1): each screen module ``routes.tsx`` loads through ``import()`` is a dynamic
+    entry of the committed build, in a chunk of its own: no other screen module's, not the
+    entry's and none a first load fetches. The only static screen import left is a helper."""
+    source = ROUTES_SOURCE.read_text(encoding="utf-8")
+    lazy = sorted({_screen_module(specifier) for specifier in _LAZY_SCREEN.findall(source)})
+    assert len(lazy) == SCREEN_MODULES, lazy
+    assert "src/screens/workflows/index.tsx" in lazy
+    assert sorted(set(_EAGER_SCREEN.findall(source))) == EAGER_SCREEN_IMPORTS
+
+    assert MANIFEST.is_file(), f"no {MANIFEST.relative_to(REPO_ROOT)}: the build has no chunks"
+    manifest: dict[str, dict[str, Any]] = json.loads(MANIFEST.read_text(encoding="utf-8"))
+
+    without = [module for module in lazy if not manifest.get(module, {}).get("isDynamicEntry")]
+    assert without == [], f"screen modules with no chunk of their own: {without}"
+    files = {module: manifest[module]["file"] for module in lazy}
+    eager = _eager_files(manifest)
+    assert sorted(module for module, file in files.items() if file in eager) == []
+    shared = sorted(module for module, file in files.items() if [*files.values()].count(file) > 1)
+    assert shared == []
+
+
+def test_keeps_entry_chunk_under_budget_when_web_app_built() -> None:
+    """AC-1 (O1): the entry chunk the committed ``index.html`` loads is under 400,000 B raw."""
+    scripts = _MODULE_SCRIPT.findall((WEB_DIST / "index.html").read_text(encoding="utf-8"))
+    assert len(scripts) == 1, scripts
+
+    size = (WEB_DIST / scripts[0]).stat().st_size
+
+    assert size < ENTRY_LIMIT_BYTES, f"{scripts[0]}: {size:,} B, limit {ENTRY_LIMIT_BYTES:,} B"
 
 
 @dataclass(frozen=True)
@@ -756,7 +832,7 @@ def test_loads_pages_without_console_error_or_axe_violation_when_scenario_ingest
         run=run,
         selection=(
             "--grep-invert",
-            f"{TICKETS_SPEC}|{SKILLS_SPEC}|{AGENT_SESSION_SPEC}|{WORKFLOWS_SPEC}",
+            f"{TICKETS_SPEC}|{SKILLS_SPEC}|{AGENT_SESSION_SPEC}|{WORKFLOWS_SPEC}|{ROUTES_SPEC}",
         ),
     )
 
@@ -766,6 +842,35 @@ def test_loads_pages_without_console_error_or_axe_violation_when_scenario_ingest
     # long-session timing and six control-plane clarity checks, none skipped.
     assert re.search(r"\b15 passed\b", result.stdout), result.stdout
     assert "skipped" not in result.stdout, result.stdout
+
+
+def test_loads_route_chunks_on_demand_when_built_app_served(
+    hub_web: RunningWeb,
+    *,
+    installed_hub: InstalledHub,
+    hub_origin: HubOrigin,
+    tmp_path: Path,
+    run: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    """AGH-614 (AC-2, AC-5, AC-7): routes.spec.ts over the committed build. A first ``/sessions``
+    visit fetches only the entry, vendor, shared and Sessions chunks, and prints its request log;
+    every nav destination opens in the app and three deep links from a full load, each with its
+    heading, no console error and axe clean; an aborted Sessions chunk shows the route error in
+    the shell, and the other routes still open."""
+    result = _playwright(
+        hub_web,
+        installed_hub,
+        tmp_path,
+        origin=hub_origin,
+        run=run,
+        selection=("--grep", ROUTES_SPEC),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert re.search(r"\b4 passed\b", result.stdout), result.stdout
+    assert "skipped" not in result.stdout, result.stdout
+    log = r"First /sessions visit: \d+ scripts and styles, \d+ B on the wire"
+    assert re.search(log, result.stdout), result.stdout
 
 
 def test_shows_plan_notice_when_feature_tickets_opened(
