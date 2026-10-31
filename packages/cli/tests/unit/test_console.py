@@ -50,7 +50,8 @@ CHECK_LINE = b"check  2 nodes  Lint, then test.\n"
 BROKEN_YAML = "version: 1\nname: broken\nname: again\n"
 
 # What the console entry's own listing must not load (AC-33): Typer, the read models behind the
-# hub, feature and item-version views, and the chain that reads hub.json and hub.local.json.
+# hub, feature and item-version views, the chain that reads hub.json and hub.local.json, and the
+# hub.json environments model, of which a workflow's name takes only its length limit.
 NOT_FOR_LISTING = (
     "typer",
     "agent_hub.core.workflows.workflow_reads",
@@ -60,6 +61,7 @@ NOT_FOR_LISTING = (
     "agent_hub.cli.hub_config_reader",
     "agent_hub.core.hub_config.effective_environments",
     "agent_hub.core.hub_config.local_config",
+    "agent_hub.core.hub_config.environments",
 )
 
 # Launcher lines that write to PROBE_OUT, at exit, which of NOT_FOR_LISTING the run loaded, then
