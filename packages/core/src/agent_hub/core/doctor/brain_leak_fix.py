@@ -1,7 +1,7 @@
 """``hub doctor --fix`` for ``brain.leak``: every leak fixed at once, on the brain side.
 
-A leak is a brain line that a repo file also holds. The repo text is the published one (an ADR
-promoted from a brain draft, a doc that grew out of a note), so the fix rewrites the brain note
+A leak is a brain line that a repo file also holds. The repo text is the published one (a doc
+that grew out of a note, a plan quoted in an ADR), so the fix rewrites the brain note
 and never touches a repo: each leaked brain line, and each run of them (blank lines between two
 leaked lines belong to the run), becomes one pointer line ``[in ../<dir>/<path>:<first>-<last>]``
 with the run's indent, so the note keeps what the repo does not hold (the leaked text is in the
@@ -15,9 +15,9 @@ trimming, same minimum length, frontmatter, fences and table rows skipped on the
 file's line endings and its final newline are kept. Pure: it returns the new texts; the caller
 writes them.
 
-An ADR draft (``brain_leak_rule.is_adr_draft``) whose lines a repo holds under ``docs/adr/`` is
-no leak, as the rule says, so only the repo files outside that folder count for it: a draft that
-became an ADR is left as it is.
+An ADR draft (``brain_leak_rule.is_adr_draft``) is judged only by the repo files outside
+``docs/adr/``, as the rule judges it: a draft line that only ``docs/adr/`` holds is kept, unless
+most of the draft was copied elsewhere and the whole draft becomes a stub.
 """
 
 from collections import Counter
@@ -90,7 +90,7 @@ def brain_leak_edits(snapshot: DoctorSnapshot) -> tuple[BrainEdit, ...]:
 
 
 def _repo_lines(snapshot: DoctorSnapshot, *, min_length: int) -> tuple[RepoLines, RepoLines]:
-    """Every repo line, and apart the lines of the repo files outside ``docs/adr/``."""
+    """Every repo line, and separately the lines of the repo files outside ``docs/adr/``."""
     every: RepoLines = {}
     outside_adr: RepoLines = {}
     for checkout in snapshot.repos:

@@ -14,8 +14,8 @@ The brain is the hub's private memory, so its text must not land in a code repo.
   and so is one that could not be listed (E36).
 - One exception: an ADR draft (``is_adr_draft``) is written to become an ADR, so its lines are
   no leak in a repo file under ``docs/adr/``, whatever the ADR's number (drafts are renumbered
-  when they land). There a line counts only when another brain file holds it, and the error
-  names that file. Anywhere else in a repo, a draft's line is a leak like any other.
+  when they land). There a line counts only when a brain file that is no ADR draft holds it,
+  and the error names that file. Anywhere else in a repo, a draft's line is a leak like any other.
 
 Scale: the brain lines go into two dicts once per run (every line, and the lines of the files
 that are no ADR draft), and each file is split once, so a run is linear in the total size of
@@ -40,7 +40,7 @@ ADR_FOLDER: Final = "docs/adr/"
 LEAK_FIX: Final = "reword or remove the line here, or reword the brain note if it quotes this file"
 
 # An ADR draft's brain path: `adr-drafts/<n>-<slug>.md`, `adr-draft.md`, `adr-draft-<slug>.md`
-# or `adr-<n>-draft.md`, as a whole path segment (`my-adr-draft.md` is no draft).
+# or `adr-<n>-draft.md`, at the start of a path segment (`my-adr-draft.md` is no draft).
 _ADR_DRAFT: Final = re.compile(r"(?:^|/)adr-(?:\d+-)?draft")
 _TABLE_ROW: Final = "|"
 
@@ -70,7 +70,7 @@ def _brain_leak(snapshot: DoctorSnapshot) -> Iterator[Finding]:
 def _brain_lines(
     hub: HubFiles, *, min_length: int
 ) -> tuple[dict[str, tuple[str, int]], dict[str, tuple[str, int]]]:
-    """Every brain line, and apart the lines of the brain files that are no ADR draft."""
+    """Every brain line, and separately the lines of the brain files that are no ADR draft."""
     every: dict[str, tuple[str, int]] = {}
     notes: dict[str, tuple[str, int]] = {}
     for path in hub.listed:
