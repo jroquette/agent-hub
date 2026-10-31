@@ -712,9 +712,8 @@ def _infra_sed(words: list[str]) -> dict[int, str]:
     scripts: list[tuple[int, str, bool]] = []  # (option's index, as shown, whether it runs text)
     operands: list[tuple[int, str]] = []
     take, taken_at = "", 0
-    is_sed = INFRA_SED.match  # bound once: a lazy pattern's lookup per word costs more than its match
     for index, word in enumerate(words):
-        sed = is_sed(word.rsplit("/", 1)[-1])
+        sed = INFRA_SED.match(word.rsplit("/", 1)[-1])
         if not seds:
             if sed:
                 seds.append((index, word))
@@ -772,30 +771,27 @@ def _infra_risky(cmd: str) -> tuple[str, str] | None:
     as `then`, `time`, `command`), or env's -i/-u in any spelling among its options (then "env
     <option>") (E23); parallel anywhere, or a sed that runs text (then "sed <script>") (E24);
     else None."""
-    # the patterns' methods bound once: a lazy pattern's lookup per word costs more than its match
-    risky, runs, clears = INFRA_RISKY.match, INFRA_RUNS.match, INFRA_ENV_CLEAR.match
-    assigns = INFRA_ASSIGNMENT.match
     for part in INFRA_PART.split(cmd):
         command, env, value = True, "", False
         words = part.split()
         seds = _infra_sed(words)
         for index, word in enumerate(words):
             name = word.rsplit("/", 1)[-1]
-            if word == "--" or risky(name):
+            if word == "--" or INFRA_RISKY.match(name):
                 return INFRA_RISKY_REASON, word
-            if runs(name):
+            if INFRA_RUNS.match(name):
                 return INFRA_RUNS_REASON, word
             if index in seds:
                 return INFRA_RUNS_REASON, seds[index]
             if env and (value or word.startswith("-")):
-                if not value and clears(word):
+                if not value and INFRA_ENV_CLEAR.match(word):
                     return INFRA_RISKY_REASON, f"{env} {word}"
                 value = not value and word in INFRA_ENV_VALUE
                 continue
             env = ""
             if command and word == ".":
                 return INFRA_RISKY_REASON, word
-            if command and (assigns(word) or word in INFRA_PREFIX_WORDS or word.startswith("-")):
+            if command and (INFRA_ASSIGNMENT.match(word) or word in INFRA_PREFIX_WORDS or word.startswith("-")):
                 continue
             command = False
             env = word if word.rsplit("/", 1)[-1] == "env" else ""
@@ -806,11 +802,10 @@ def _infra_repeated(cmd: str) -> str | None:
     """The first environment setting (E24's names and flags) that a part of cmd (a command of safe
     characters only, so a part is one call) sets a second time, as its name; else (E25) the first
     two spellings of one setting in a part, as `first`/`second`; else None."""
-    setting = INFRA_ENV_SETTING.match  # bound once, as in _infra_risky
     for part in INFRA_PART.split(cmd):
         names = []
         for word in part.split():
-            found = setting(word)
+            found = INFRA_ENV_SETTING.match(word)
             if found:
                 name = found.group(1) or found.group(2)
                 names.append(name[1:] if name in ("--chdir", "--var-file") else name)
@@ -828,22 +823,19 @@ def _infra_selectors(cmd: str, allow: list[re.Pattern[str]]) -> str | None:
     """The first environment selector (E27) in a part of cmd (a command of safe characters only,
     so a part is one call, with no quote or comment) that lies inside no allow match on that part,
     as written (a flag with the word after it, blanks collapsed); else None."""
-    # bound once, as in _infra_risky
-    env_word, glued_word = INFRA_SELECTOR_ENV.search, INFRA_SELECTOR_GLUED.match
-    flag_word, pulumi_word = INFRA_SELECTOR_FLAG.match, INFRA_PULUMI_FLAG.match
     for part in INFRA_PART.split(cmd):
         tools = {mention.group(1) for mention in INFRA_TOOL.finditer(part)}
         words = [(word.start(), word.end()) for word in INFRA_BLANK_WORD.finditer(part)]
         selectors = []
         for index, (start, end) in enumerate(words):
-            if env_word(part, start, end) or glued_word(part, start, end):
+            if INFRA_SELECTOR_ENV.search(part, start, end) or INFRA_SELECTOR_GLUED.match(part, start, end):
                 selectors.append((start, end))
                 continue
             flag = None
             if tools:
-                flag = flag_word(part, start, end)
+                flag = INFRA_SELECTOR_FLAG.match(part, start, end)
                 if not flag and "pulumi" in tools:
-                    flag = pulumi_word(part, start, end)
+                    flag = INFRA_PULUMI_FLAG.match(part, start, end)
             if flag:
                 with_value = not flag.group(1) and index + 1 < len(words)
                 selectors.append((start, words[index + 1][1] if with_value else end))
