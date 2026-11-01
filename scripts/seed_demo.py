@@ -5,8 +5,9 @@ Against the app at ``--url`` (``make run`` or ``make up``), it:
 1. reads the server's database path (``/api/v1/collector/status``);
 2. makes a demo hub (``hub init demo``, tracker team ``AGH``, then ``git init``) with a feature
    folder (spec, plan, a legacy ``eval.md``, ``features.json`` with a ticket plan whose tickets
-   block each other, an ``evals/<delivery>.md`` and a ``reviews/<ticket>.md``) and an inbox note,
-   next to that database (``<database folder>/demo``), and registers it (``POST /api/v1/hubs``);
+   block each other, an ``evals/<delivery>.md`` and a ``reviews/<ticket>.md``), an inbox note
+   and the scenario files of step 6, next to that database (``<database folder>/demo``), and
+   then registers it (``POST /api/v1/hubs``), so its first background check reads every file;
 3. posts hook envelopes: a live ``/feature`` session for AGH-7 (its worktree names the issue)
    that runs a Skill, starts an ``Explore`` subagent, recovers from a failed check (a problem
    the agent handled) and has a push denied; an idle session whose failed ``make test`` needs
@@ -22,7 +23,9 @@ Against the app at ``--url`` (``make run`` or ``make up``), it:
    ``demo-order-status``), the scenario ``demo-order-roundtrip`` that calls them, and a ``local``
    environment with a value (``hub.local.json``); then three scenario runs, passed, failed and
    running, as their records (``.agent-runs/workflows/<run>/records.jsonl``) and their events
-   (``hub collect``), so the scenario screens have content.
+   (``hub collect``), so the scenario screens have content;
+7. waits until ``GET /api/v1/hubs`` shows the demo hub's ``checked_at`` (its first background
+   doctor run ended, AGH-608), so its health shows at once; 60 s at most.
 
 Everything is synthetic, built from ``agent_hub.core.testing``; nothing is read from
 ``~/.claude``. ``--via compose`` runs ``hub`` and writes the files inside the Compose service
@@ -36,6 +39,7 @@ import json
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -67,6 +71,9 @@ from agent_hub.core.workflows.ports import RunEnd, RunStatus, StepEnd, StepStart
 DEFAULT_URL = "http://127.0.0.1:7420"
 REQUEST_SECONDS = 10
 COMMAND_SECONDS = 120
+# The wait for the demo hub's first background doctor run (AGH-608), and how often it asks.
+CHECK_WAIT_SECONDS = 60
+CHECK_POLL_SECONDS = 0.5
 SERVICE = "agent-hub"
 CONTAINER_DEMO_DIR = PurePosixPath("/data/demo")
 DEMO_PROJECT = "demo"
@@ -797,8 +804,46 @@ def _checked_hub(target: Target, arguments: Sequence[str], *, tolerate: str = ""
         raise SeedError(f"hub {arguments[0]} failed: {result.stderr.strip()}")
 
 
-def seed(client: httpx.Client, target: Target, *, db_path: str, now: datetime) -> None:
-    """Every step of the demo against ``client``'s server, files and commands on ``target``."""
+def _wait_for_check(
+    client: httpx.Client,
+    hub: PurePosixPath,
+    *,
+    clock: Callable[[], float],
+    sleep: Callable[[float], None],
+    wait_seconds: float,
+) -> None:
+    """Poll ``GET /api/v1/hubs`` every ``CHECK_POLL_SECONDS`` until the demo hub's
+    ``checked_at`` is set (its first background doctor run ended, AGH-608); ``SeedError``
+    naming the hub after ``wait_seconds`` by ``clock``."""
+    deadline = clock() + wait_seconds
+    while True:
+        listed = client.get("/api/v1/hubs")
+        if listed.status_code != httpx.codes.OK:
+            raise SeedError(f"listing the hubs failed: {listed.status_code} {listed.text}")
+        items: list[dict[str, Any]] = listed.json()["items"]
+        if any(item.get("project") == DEMO_PROJECT and item.get("checked_at") for item in items):
+            return
+        if clock() >= deadline:
+            raise SeedError(f"no background check of {hub} within {wait_seconds:.0f} s")
+        sleep(CHECK_POLL_SECONDS)
+
+
+def seed(  # noqa: PLR0913 -- the demo's clients and the wait's clock, all keyword-only
+    client: httpx.Client,
+    target: Target,
+    *,
+    db_path: str,
+    now: datetime,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+    wait_seconds: float = CHECK_WAIT_SECONDS,
+) -> None:
+    """Every step of the demo against ``client``'s server, files and commands on ``target``.
+
+    Every hub file is written before the hub is registered, so the hub's first background check
+    reads them all; at the end the seed waits for that check (``clock`` and ``sleep`` time the
+    wait, at most ``wait_seconds``). On a reload (409) the same files are rewritten with the
+    same text, and the hub's existing check stands for them."""
     hub = target.workdir / "demo-hub"
     _checked_hub(
         target, ["init", DEMO_PROJECT, *HUB_FLAGS, "--dir", str(hub)], tolerate=ALREADY_A_HUB
@@ -808,7 +853,7 @@ def seed(client: httpx.Client, target: Target, *, db_path: str, now: datetime) -
     initialized = target.git(["init", "-q", str(hub)])
     if initialized.returncode != 0:
         raise SeedError(f"git init failed: {initialized.stderr.strip()}")
-    for path, text in hub_files(hub).items():
+    for path, text in (hub_files(hub) | scenario_files(hub)).items():
         target.write(path, text)
     base = client.base_url
     origin = f"{base.scheme}://{base.netloc.decode('ascii')}"
@@ -829,12 +874,11 @@ def seed(client: httpx.Client, target: Target, *, db_path: str, now: datetime) -
     target.write(transcript, demo_transcript(now))
     _checked_hub(target, ["collect", "--transcript", str(transcript), *labels])
     store_chat(target, db_path=db_path, now=now)
-    for path, text in scenario_files(hub).items():
-        target.write(path, text)
     scenario_events = target.workdir / "runs" / "scenario-runs.jsonl"
     events = scenario_runs()[0]
     target.write(scenario_events, "".join(json.dumps(event) + "\n" for event in events))
     _checked_hub(target, ["collect", str(scenario_events), "--db", db_path])
+    _wait_for_check(client, hub, clock=clock, sleep=sleep, wait_seconds=wait_seconds)
 
 
 def main(

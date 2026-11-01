@@ -51,6 +51,7 @@ from scripts.perf.web_probes import (
     route_probes,
     start_web,
     stop_web,
+    wait_for_check,
 )
 from scripts.perf.web_probes import (
     restart_rows as measure_restarts,
@@ -291,11 +292,13 @@ def _web_argv(suite: Suite) -> list[str]:
 
 
 def web_rows(suite: Suite) -> list[Row]:
-    """Start ``hub web``, register the hub, then the route and page rows; stop it."""
+    """Start ``hub web``, register the hub and wait for its first background check (so no
+    doctor run overlaps the rows), then the route and page rows; stop it."""
     print("perf: hub web routes and pages", flush=True)
     web = start_web(_web_argv(suite), suite.env)
     try:
         register_hub(web.base_url, suite.hub_dir)
+        wait_for_check(web.base_url, suite.hub_dir)
         rows = [
             suite.row(
                 probe.kind,

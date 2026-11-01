@@ -2,7 +2,9 @@
 
 ``hub web`` prints its URL line before uvicorn serves, so ``start_web`` takes the token from that
 line and then polls ``GET /`` until it answers 200. ``register_hub`` posts the temp hub with the
-server's own ``Origin``, as the registry write requires. ``measure_route`` sends one warm-up
+server's own ``Origin``, as the registry write requires, and ``wait_for_check`` polls
+``GET /api/v1/hubs`` until that hub's first background doctor run has ended (its ``checked_at``
+set, AGH-608), so no run overlaps the measured rows. ``measure_route`` sends one warm-up
 request, then times ``runs`` more; any answer but 200, an empty ``/api/v1/sessions`` page (the
 fixture always lists sessions, so an empty one means the server read the wrong database) or a
 request that fails raises ``SuiteError`` naming the path. A row named ``<path> (6 parallel)``
@@ -15,6 +17,7 @@ right after that row's answer, then stops it with SIGINT.
 Processes, requests, the clock and sleeps are injected, so the unit tests start nothing.
 """
 
+import os
 import queue
 import re
 import signal
@@ -59,6 +62,8 @@ START_SECONDS = 120.0
 STOP_SECONDS = 15.0
 REQUEST_SECONDS = 120.0
 POLL_SECONDS = 0.05
+# How often ``wait_for_check`` asks whether the hub's first background check has ended.
+CHECK_POLL_SECONDS = 0.5
 _URL_LINE = re.compile(r"(http://[^/\s]+)/\?token=(\S+)")
 
 Get = Callable[..., httpx.Response]
@@ -209,8 +214,25 @@ def wait_for_check(
     sleep: Sleep = time.sleep,
     limit_seconds: float = 60,
 ) -> None:
-    """RED stub for AGH-608 (plan DOC-2 commit 16c), with no logic yet."""
-    raise NotImplementedError
+    """Poll ``GET /api/v1/hubs`` every ``CHECK_POLL_SECONDS`` until the hub's ``checked_at``
+    is set, its first background doctor run ended (AGH-608), so no run overlaps the measured
+    rows; ``SuiteError`` naming the hub after ``limit_seconds`` of sleeps or on a failed read."""
+    paths = {str(hub_dir), os.path.realpath(hub_dir)}
+    waited = 0.0
+    while True:
+        try:
+            response = get(f"{base_url}/api/v1/hubs", timeout=REQUEST_SECONDS)
+        except httpx.HTTPError as error:
+            raise SuiteError(f"GET /api/v1/hubs: {type(error).__name__}: {error}") from error
+        if response.status_code != 200:
+            raise SuiteError(f"GET /api/v1/hubs: answered {response.status_code}")
+        items: list[dict[str, Any]] = response.json()["items"]
+        if any(item.get("path") in paths and item.get("checked_at") for item in items):
+            return
+        if waited >= limit_seconds:
+            raise SuiteError(f"no background check of {hub_dir} within {limit_seconds:.0f} s")
+        sleep(CHECK_POLL_SECONDS)
+        waited += CHECK_POLL_SECONDS
 
 
 def route_probes() -> list[RouteProbe]:
