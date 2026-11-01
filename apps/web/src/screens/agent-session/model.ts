@@ -215,6 +215,7 @@ export interface TranscriptState {
   endReason: EndReason | null;
   model: string | null;
   effort: EffortLevel | null;
+  ultracode: boolean | null;
   mode: PermissionMode | null;
   /** The `/` menu: the init record's slash commands and skills, bounded (`commandsOf`). */
   slashCommands: string[];
@@ -249,6 +250,7 @@ export function initialTranscript(): TranscriptState {
     endReason: null,
     model: null,
     effort: null,
+    ultracode: null,
     mode: null,
     slashCommands: [],
     lastSeq: 0,
@@ -966,6 +968,11 @@ function applySettings(state: TranscriptState, record: LogRecord): TranscriptSta
     parts.push(`${parts.length ? "effort" : "Effort"} set to ${effort.label}`);
     next = { ...next, effort: effort.value };
   }
+  const ultracode = record.body.ultracode;
+  if (typeof ultracode === "boolean") {
+    parts.push(`Ultracode ${ultracode ? "on" : "off"}`);
+    next = { ...next, ultracode };
+  }
   return notice(next, record.seq, parts.join(", ") || "Settings changed");
 }
 
@@ -1223,6 +1230,7 @@ export function applySnapshot(state: TranscriptState, session: AgentSession): Tr
     mode: session.mode,
     model: session.model ?? state.model,
     effort: session.effort ?? state.effort,
+    ultracode: session.ultracode,
   };
   const open = session.open_permission;
   if (!open) return next;

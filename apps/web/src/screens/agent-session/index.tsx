@@ -58,7 +58,7 @@ import {
 } from "./model";
 import { useStickToBottom } from "./useStickToBottom";
 
-const DEFAULT_MODELS = ["default", "opus", "sonnet", "haiku"];
+const DEFAULT_MODELS = ["default", "opus", "fable", "sonnet", "haiku"];
 const short = (id: string) => id.replace(/-/g, "").slice(0, 8);
 
 function problemText(error: unknown): string {
@@ -564,6 +564,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             model={model}
             models={models}
             effort={state.effort ?? session.effort ?? null}
+            ultracode={state.ultracode ?? session.ultracode}
             onSend={(text, screenshots, files) =>
               transcript.send(
                 text,
@@ -600,6 +601,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             mode,
             model,
             effort: state.effort ?? session.effort ?? null,
+            ultracode: state.ultracode ?? session.ultracode,
           }}
           onClose={() => {
             setForking(false);

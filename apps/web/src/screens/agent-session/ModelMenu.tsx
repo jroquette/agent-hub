@@ -36,6 +36,9 @@ export interface ModelMenuProps {
   disabled?: boolean | undefined;
   onModel: (model: string) => void;
   onEffort: (effort: EffortLevel) => void;
+  /** Whether Claude may run workflows of many agents on its own. */
+  ultracode?: boolean | undefined;
+  onUltracode?: ((on: boolean) => void) | undefined;
   /** An extra row after the models, such as "Other model id…"; `checked` when it is the choice. */
   extra?: { label: string; checked: boolean; onPick: () => void } | undefined;
 }
@@ -47,6 +50,8 @@ export function ModelMenu({
   disabled = false,
   onModel,
   onEffort,
+  ultracode = false,
+  onUltracode,
   extra,
 }: ModelMenuProps) {
   const [open, setOpen] = useState(false);
@@ -168,7 +173,10 @@ export function ModelMenu({
 
   const row = rowOf(model, models);
   const rows = row === null && !extra?.checked ? [...models, model] : models;
-  const costly = effort === "max";
+  const costly = effort === "max" || ultracode;
+  const effortText = [effort ? effortLabel(effort) : null, ultracode ? "Ultracode" : null]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <div className="as-model-menu" ref={root}>
@@ -177,7 +185,7 @@ export function ModelMenu({
         type="button"
         className="as-pill as-model-trigger"
         title="Model and effort"
-        aria-label={`Model and effort: ${extra?.checked ? extra.label : modelLabel(model)}${effort ? `, ${effortLabel(effort)}` : ""}`}
+        aria-label={`Model and effort: ${extra?.checked ? extra.label : modelLabel(model)}${effort ? `, ${effortLabel(effort)}` : ""}${ultracode ? ", Ultracode" : ""}`}
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={disabled}
@@ -188,12 +196,23 @@ export function ModelMenu({
       >
         <span className="as-pill-value">{extra?.checked ? extra.label : modelLabel(model)}</span>
         {effort && <span className="as-model-effort">{effortLabel(effort)}</span>}
+        {ultracode && <span className="as-model-ultra">Ultracode</span>}
         {costly && <Icon name="triangle-alert" size="sm" className="as-model-warn" />}
         <Icon name="chevron-down" size="sm" className="as-pill-caret" />
       </button>
       {open &&
         createPortal(
-          <div ref={layer}>
+          // React still bubbles a portal's events to the parents: a press here is not on the box.
+          <div
+            ref={layer}
+            role="presentation"
+            onMouseDown={(event) => {
+              event.stopPropagation();
+            }}
+            onClick={(event) => {
+              event.stopPropagation();
+            }}
+          >
             <div
               ref={main}
               className="ah-pop as-model-pop"
@@ -262,7 +281,7 @@ export function ModelMenu({
                 }}
               >
                 <span className="as-model-name">Effort</span>
-                <span className="as-model-hint">{effort ? effortLabel(effort) : "Default"}</span>
+                <span className="as-model-hint">{effortText || "Default"}</span>
                 {costly && <Icon name="triangle-alert" size="sm" className="as-model-warn" />}
                 <Icon name="chevron-right" size="sm" className="as-pill-caret" />
               </button>
@@ -304,6 +323,28 @@ export function ModelMenu({
                     )}
                   </button>
                 ))}
+                {onUltracode && (
+                  <>
+                    <div className="as-model-rule" role="separator" />
+                    {/* Stays open, as a switch does: the effort above may still change. */}
+                    <button
+                      type="button"
+                      role="menuitemcheckbox"
+                      aria-checked={ultracode}
+                      className="as-model-option as-model-switch-row"
+                      onClick={() => {
+                        onUltracode(!ultracode);
+                      }}
+                    >
+                      <span className="as-model-name">Ultracode</span>
+                      <span className="as-model-switch" data-on={ultracode || undefined} />
+                    </button>
+                    <p className="as-model-note">
+                      Claude may start many agents on its own for a task. Uses far more of your
+                      limits.
+                    </p>
+                  </>
+                )}
               </div>
             )}
           </div>,

@@ -156,6 +156,8 @@ export function NewSessionDialog({
   );
   // A fork keeps its session's effort; else the one last picked in this browser.
   const [effort, setEffort] = useState(forkOf ? (forkOf.effort ?? null) : rememberedEffort);
+  // Not remembered as the effort is: it may cost far more, so each session asks for it.
+  const [ultracode, setUltracode] = useState(forkOf?.ultracode ?? false);
   const [prompt, setPrompt] = useState(initialPrompt ?? "");
   const [attachError, setAttachError] = useState<string | null>(null);
   const [firstProject] = useState(project);
@@ -232,6 +234,7 @@ export function NewSessionDialog({
       mode,
       model: chosenModel,
       ...(effort ? { effort } : {}),
+      ...(ultracode ? { ultracode } : {}),
       prompt: text ? text : null,
       resume_session_id: forkOf?.claude_session_id ?? null,
       fork: forkOf !== undefined,
@@ -536,6 +539,8 @@ export function NewSessionDialog({
                     rememberEffort(next);
                     setEffort(next);
                   }}
+                  ultracode={ultracode}
+                  onUltracode={setUltracode}
                   extra={{
                     label: "Other model id…",
                     checked: model === OTHER_MODEL,

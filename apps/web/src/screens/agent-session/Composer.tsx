@@ -49,6 +49,7 @@ export interface SettingsChange {
   mode?: PermissionMode;
   model?: string;
   effort?: EffortLevel;
+  ultracode?: boolean;
 }
 
 export interface ComposerProps {
@@ -59,6 +60,8 @@ export interface ComposerProps {
   models: readonly string[];
   /** How hard Claude works; null leaves it to the CLI. */
   effort?: EffortLevel | null | undefined;
+  /** Whether Claude may run workflows of many agents on its own. */
+  ultracode?: boolean | undefined;
   /** Sends the text, with the PNG data URLs of the images pasted in it (`acceptsImages`) and the
    * files attached to it (`acceptsFiles`). */
   onSend: (
@@ -115,6 +118,7 @@ export function Composer({
   model,
   models,
   effort = null,
+  ultracode = false,
   onSend,
   onInterrupt,
   onSettings,
@@ -403,6 +407,10 @@ export function Composer({
             onEffort={(next) => {
               rememberEffort(next);
               run(() => onSettings({ effort: next }), "change the effort");
+            }}
+            ultracode={ultracode}
+            onUltracode={(on) => {
+              run(() => onSettings({ ultracode: on }), "change Ultracode");
             }}
           />
         </div>
