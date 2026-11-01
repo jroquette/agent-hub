@@ -48,7 +48,7 @@ function values(select: HTMLElement) {
 /** Opens the model and effort menu and picks a model row. */
 async function pickModel(dialog: HTMLElement, name: string) {
   await userEvent.click(within(dialog).getByRole("button", { name: /^Model and effort/ }));
-  await userEvent.click(within(dialog).getByRole("menuitemradio", { name }));
+  await userEvent.click(screen.getByRole("menuitemradio", { name }));
 }
 
 vi.mock("../../lib/devCheckout", async (importOriginal) => {
@@ -89,11 +89,13 @@ describe("NewSessionDialog (new-session)", () => {
     ]);
     expect(dialog).not.toHaveTextContent(/bypass/i);
     await userEvent.click(within(dialog).getByRole("button", { name: /^Model and effort/ }));
-    expect(
-      within(dialog)
-        .getAllByRole("menuitemradio")
-        .map((row) => row.textContent),
-    ).toEqual(["Default", "Opus", "Sonnet", "Haiku", "Other model id…"]);
+    expect(screen.getAllByRole("menuitemradio").map((row) => row.textContent)).toEqual([
+      "Default",
+      "Opus",
+      "Sonnet",
+      "Haiku",
+      "Other model id…",
+    ]);
   });
 
   it("marks the current model in the model and effort menu", async () => {
@@ -101,15 +103,15 @@ describe("NewSessionDialog (new-session)", () => {
 
     await userEvent.click(within(dialog).getByRole("button", { name: /^Model and effort/ }));
 
-    expect(within(dialog).getByRole("menuitemradio", { name: "Default" })).toBeChecked();
+    expect(screen.getByRole("menuitemradio", { name: "Default" })).toBeChecked();
   });
 
   it("sends the effort picked and keeps it for the next new session", async () => {
     window.localStorage.removeItem("ah.session.effort");
     const { dialog, props, view } = open();
     await userEvent.click(within(dialog).getByRole("button", { name: /^Model and effort/ }));
-    await userEvent.click(within(dialog).getByRole("menuitem", { name: /Effort/ }));
-    await userEvent.click(within(dialog).getByRole("menuitemradio", { name: /^High/ }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /Effort/ }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: /^High/ }));
 
     await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
 
