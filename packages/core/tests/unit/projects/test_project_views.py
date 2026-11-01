@@ -67,6 +67,7 @@ def test_serializes_project_detail_and_now_when_dumped() -> None:
         platform_version="0.8.0",
         lock_version=None,
         lock_state="not_adopted",
+        checked_at=None,
         modules=(),
     )
     now = ProjectNow(project="demo", focus=(), next=(), watch=(), source_path=None)

@@ -558,6 +558,7 @@ export function aNoteBacklinks(overrides: Partial<NoteBacklinks> = {}): NoteBack
 
 export function aProjectSummary(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
   return {
+    checked_at: T0,
     cost_daily: ["1.0000", "2.0000", "0.5000", "3.0000", "1.5000", "0.0000", "2.5000"],
     cost_period: "10.5000",
     cost_previous_period: "8.0000",
@@ -586,6 +587,7 @@ export function aProjectDetail(
 ): Schemas["ProjectDetail"] {
   return {
     branch_prefix: "dev/",
+    checked_at: T0,
     default_branch: "main",
     hub_id: anId(20, "0192dddd"),
     hub_path: "/home/dev/agent-hub-hub",
@@ -956,6 +958,7 @@ export function aFinding(overrides: Partial<FindingView> = {}): FindingView {
 export function aHub(overrides: Partial<HubView> = {}): HubView {
   return {
     added_at: T0,
+    checked_at: T0,
     guard_ask_before_edit: ["docs/adr"],
     id: anId(20, "0192dddd"),
     lock_state: "in_sync",

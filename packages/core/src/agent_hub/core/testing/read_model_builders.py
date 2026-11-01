@@ -198,7 +198,7 @@ def a_learning(**overrides: object) -> Learning:
 
 
 def a_project_summary(**overrides: object) -> ProjectSummary:
-    """A Portfolio card of the synthetic project ``demo``."""
+    """A Portfolio card of the synthetic project ``demo``, its hub checked (``hub_health``)."""
     fields: dict[str, object] = {
         "name": "demo",
         "hub_id": HUB_ID,
@@ -209,6 +209,7 @@ def a_project_summary(**overrides: object) -> ProjectSummary:
         "lock_state": "in_sync",
         "repos": ("demo-api",),
         "hub_health": "ok",
+        "checked_at": STARTED,
         "live_sessions": 1,
         "runs_in_flight_by_stage": {Stage.IMPLEMENTING: 1},
         "failed_runs_7d": 0,
@@ -275,7 +276,7 @@ def a_golden_path(**overrides: object) -> GoldenPath:
 
 
 def a_hub_view(**overrides: object) -> HubView:
-    """A valid synthetic registered hub."""
+    """A valid synthetic registered hub, checked by the doctor (its ``lock_state``)."""
     fields: dict[str, object] = {
         "id": HUB_ID,
         "path": "/home/demo/demo-hub",
@@ -285,6 +286,7 @@ def a_hub_view(**overrides: object) -> HubView:
         "running_version": "0.8.0",
         "lock_version": "0.8.0",
         "lock_state": "in_sync",
+        "checked_at": STARTED,
         "modules": ("cloud",),
         "guard_ask_before_edit": ("demo-api/docs/adr",),
         "repos": ("demo-api",),

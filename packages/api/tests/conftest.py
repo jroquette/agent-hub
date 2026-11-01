@@ -28,7 +28,7 @@ from agent_hub.core.events.stored_event import StoredEvent
 from agent_hub.core.features.feature_view import FeatureCost, FeatureDetail, FeatureView
 from agent_hub.core.features.ticket_view import FeatureTickets, TicketRecords
 from agent_hub.core.hub_config.config_view import HubConfigView
-from agent_hub.core.hubs.finding_view import FindingView
+from agent_hub.core.hubs.finding_view import DoctorFindings, FindingView
 from agent_hub.core.hubs.registered_hub import HubView
 from agent_hub.core.ingestion.hook_envelope import HookEnvelope
 from agent_hub.core.ingestion.ingestion_ports import HookMapping
@@ -305,6 +305,9 @@ class FakeHubReadModels:
         hub = _found({item.id: item for item in self.hubs}, "hub", hub_id)
         self.hubs.remove(hub)
 
+    def reread_hubs(self, written: str | None = None) -> None:
+        self._call("reread_hubs", written)
+
     def list_projects(self) -> Page[ProjectSummary]:
         self._call("list_projects", None)
         return _page(self.projects)
@@ -342,9 +345,12 @@ class FakeHubReadModels:
         self._call("ticket_records", (project, slug, ticket))
         return _found(self.ticket_views, "ticket", f"{project}/{slug}/{ticket}")
 
-    def doctor_findings(self, scope: Scope) -> Page[FindingView]:
+    def doctor_findings(self, scope: Scope) -> DoctorFindings:
         self._call("doctor_findings", scope)
-        return _page(self.findings)
+        findings = tuple(self.findings)
+        return DoctorFindings(
+            items=findings, next_cursor=None, total_estimate=len(findings), checked_at=None
+        )
 
     def settings(self) -> SettingsView:
         self._call("settings", None)

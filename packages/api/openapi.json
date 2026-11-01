@@ -2984,6 +2984,53 @@
         ],
         "type": "string"
       },
+      "DoctorFindings": {
+        "additionalProperties": false,
+        "description": "The findings of the scoped hubs' last checks; ``checked_at`` is when the oldest of those\nchecks ended, None while one of the hubs has not been checked yet.",
+        "properties": {
+          "checked_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FindingView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total_estimate": {
+            "minimum": 0.0,
+            "title": "Total Estimate",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_estimate",
+          "checked_at"
+        ],
+        "title": "DoctorFindings",
+        "type": "object"
+      },
       "DoctorFixRequest": {
         "additionalProperties": false,
         "description": "The empty JSON body of the fix: a cross-site form cannot send one (S7).",
@@ -5303,10 +5350,20 @@
       },
       "HubView": {
         "additionalProperties": false,
-        "description": "A registered hub as read now.\n\n``valid`` is false when ``hub.json`` is unreadable or does not match the schema\n(``validation_errors``). A pin other than the running version is read anyway and shows as\na warning (\"pinned X, running Y\").",
+        "description": "A registered hub as read now.\n\n``valid`` is false when ``hub.json`` is unreadable or does not match the schema\n(``validation_errors``). A pin other than the running version is read anyway and shows as\na warning (\"pinned X, running Y\"). ``checked_at`` is when the hub's last doctor check\nended, None before its first one.",
         "properties": {
           "added_at": {
             "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "guard_ask_before_edit": {
             "items": {
@@ -5414,6 +5471,7 @@
           "running_version",
           "lock_version",
           "lock_state",
+          "checked_at",
           "modules",
           "guard_ask_before_edit",
           "repos",
@@ -8311,41 +8369,6 @@
         "title": "Page[FeatureView]",
         "type": "object"
       },
-      "Page_FindingView_": {
-        "additionalProperties": false,
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/FindingView"
-            },
-            "title": "Items",
-            "type": "array"
-          },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "maxLength": 512,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
-          },
-          "total_estimate": {
-            "minimum": 0.0,
-            "title": "Total Estimate",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "items",
-          "total_estimate"
-        ],
-        "title": "Page[FindingView]",
-        "type": "object"
-      },
       "Page_HubView_": {
         "additionalProperties": false,
         "properties": {
@@ -9441,7 +9464,7 @@
       },
       "ProjectDetail": {
         "additionalProperties": false,
-        "description": "The Project overview header.",
+        "description": "The Project overview header; ``checked_at`` is when the hub's last doctor check ended,\nNone before its first one.",
         "properties": {
           "branch_prefix": {
             "anyOf": [
@@ -9453,6 +9476,16 @@
               }
             ],
             "title": "Branch Prefix"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "default_branch": {
             "anyOf": [
@@ -9536,6 +9569,7 @@
           "platform_version",
           "lock_version",
           "lock_state",
+          "checked_at",
           "modules"
         ],
         "title": "ProjectDetail",
@@ -9605,8 +9639,18 @@
       },
       "ProjectSummary": {
         "additionalProperties": false,
-        "description": "A Portfolio card: hub config plus the project's activity; PRs and issues need sources\nnot connected in Phase 2 (``null``).",
+        "description": "A Portfolio card: hub config plus the project's activity; PRs and issues need sources\nnot connected in Phase 2 (``null``). ``hub_health`` comes from the hub's last doctor check,\nwhich ended at ``checked_at``; both are None before its first one.",
         "properties": {
+          "checked_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "cost_daily": {
             "default": [],
             "items": {
@@ -9762,6 +9806,7 @@
           "lock_state",
           "repos",
           "hub_health",
+          "checked_at",
           "live_sessions",
           "runs_in_flight_by_stage",
           "failed_runs_7d",
@@ -19148,7 +19193,7 @@
     },
     "/api/v1/doctor/findings": {
       "get": {
-        "description": "Findings of every (or one) project, as ``hub doctor --json`` reports them.",
+        "description": "Findings of every (or one) project, as ``hub doctor --json`` reports them, from the last\nbackground check, with when the oldest of those checks ended.",
         "operationId": "list_doctor_findings_api_v1_doctor_findings_get",
         "parameters": [
           {
@@ -19175,7 +19220,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_FindingView_"
+                  "$ref": "#/components/schemas/DoctorFindings"
                 }
               }
             },

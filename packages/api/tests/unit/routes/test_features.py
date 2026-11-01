@@ -153,6 +153,7 @@ def _signoff_hub(tmp_path: Path, wired: Any, verdict: str) -> Path:
         platform_version="0.8.0",
         lock_version="0.8.0",
         lock_state="in_sync",
+        checked_at=None,
         modules=(),
     )
     sign_off = SignOffOwnerSteps(

@@ -174,6 +174,7 @@ def _decision_hub(
         platform_version="0.8.0",
         lock_version="0.8.0",
         lock_state="in_sync",
+        checked_at=None,
         modules=(),
     )
     launcher = _Launcher()

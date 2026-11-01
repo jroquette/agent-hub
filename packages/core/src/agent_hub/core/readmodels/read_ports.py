@@ -15,7 +15,7 @@ from agent_hub.core.events.event import EventType
 from agent_hub.core.features.feature_view import FeatureCost, FeatureDetail, FeatureView
 from agent_hub.core.features.ticket_view import FeatureTickets, TicketRecords
 from agent_hub.core.hub_config.config_view import HubConfigView
-from agent_hub.core.hubs.finding_view import FindingView
+from agent_hub.core.hubs.finding_view import DoctorFindings
 from agent_hub.core.hubs.registered_hub import HubView
 from agent_hub.core.learnings.learning import Learning
 from agent_hub.core.projects.project_views import (
@@ -177,6 +177,12 @@ class HubReadModels(Protocol):
         """Forget a hub; its events stay in the store."""
         ...
 
+    def reread_hubs(self, written: str | None = None) -> None:
+        """Read the registry and each hub's ``hub.json`` and ``hub.lock`` again after a write
+        through the app; ``written``, the hub that write changed, has its doctor run at the next
+        background tick."""
+        ...
+
     def list_projects(self) -> Page[ProjectSummary]:
         """A Portfolio card per registered, valid hub."""
         ...
@@ -215,8 +221,10 @@ class HubReadModels(Protocol):
         when the feature does not list the ticket."""
         ...
 
-    def doctor_findings(self, scope: Scope) -> Page[FindingView]:
-        """Doctor findings of every scoped hub (cached 15 min per hub)."""
+    def doctor_findings(self, scope: Scope) -> DoctorFindings:
+        """Doctor findings of every scoped hub from its last background check, and when the
+        oldest of those checks ended (None before one of them ran); a read never runs the
+        doctor."""
         ...
 
     def settings(self) -> SettingsView:

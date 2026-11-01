@@ -9,6 +9,7 @@ pin and the doctor has not checked the hub yet (``has_drift`` answers None).
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 
 from agent_hub.core.doctor.snapshot import LockAbsent, LockState
 from agent_hub.core.hub_config.model import HubConfig
@@ -57,11 +58,6 @@ class ListHubs:
         """Every registered hub as read now."""
         return tuple(self.read(entry) for entry in self._registry.entries())
 
-    def documents(self) -> tuple[tuple[RegisteredHub, HubDocument], ...]:
-        """Every registered hub's entry and ``hub.json`` document, in registration order; its
-        lock is not read, so no drift check runs (the item writes' lookups, AGH-298)."""
-        return tuple((entry, self._document(entry)) for entry in self._registry.entries())
-
     def _document(self, entry: RegisteredHub) -> HubDocument:
         """One registered hub's ``hub.json`` document, its lock not read."""
         return read_hub_document(
@@ -78,6 +74,7 @@ class ListHubs:
             lock,
             running_version=self._running,
             has_drift=lambda: self._has_drift(entry.path, document),
+            checked_at=None,
         )
 
 
@@ -88,9 +85,10 @@ def hub_read(
     *,
     running_version: str,
     has_drift: Callable[[], bool | None],
+    checked_at: datetime | None,
 ) -> HubRead:
-    """A registered hub's read from its document and lock as already read; the lock counts
-    only for a valid ``hub.json``."""
+    """A registered hub's read from its document and lock as already read (the lock counts
+    only for a valid ``hub.json``), and when its last doctor check ended."""
     state: LockStateName | None = None
     version: str | None = None
     if document.config is not None:
@@ -98,7 +96,9 @@ def hub_read(
     return HubRead(
         entry=entry,
         document=document,
-        view=_view(entry, document, running=running_version, lock=(state, version)),
+        view=_view(
+            entry, document, running=running_version, lock=(state, version), checked_at=checked_at
+        ),
     )
 
 
@@ -125,6 +125,7 @@ def _view(
     *,
     running: str,
     lock: tuple[LockStateName | None, str | None],
+    checked_at: datetime | None,
 ) -> HubView:
     config = document.config
     state, version = lock
@@ -137,6 +138,7 @@ def _view(
         running_version=running,
         lock_version=version,
         lock_state=state,
+        checked_at=checked_at,
         modules=() if config is None else module_ids(config),
         guard_ask_before_edit=() if config is None else config.guard.ask_before_edit,
         repos=() if config is None else tuple(repo.dir for repo in config.repos),

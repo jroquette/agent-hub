@@ -508,7 +508,8 @@ export interface paths {
     };
     /**
      * List Doctor Findings
-     * @description Findings of every (or one) project, as ``hub doctor --json`` reports them.
+     * @description Findings of every (or one) project, as ``hub doctor --json`` reports them, from the last
+     *     background check, with when the oldest of those checks ended.
      */
     get: operations["list_doctor_findings_api_v1_doctor_findings_get"];
     put?: never;
@@ -3412,6 +3413,20 @@ export interface components {
     /** @enum {string} */
     DiscoveryState: "running" | "finished" | "failed" | "stopped";
     /**
+     * DoctorFindings
+     * @description The findings of the scoped hubs' last checks; ``checked_at`` is when the oldest of those
+     *     checks ended, None while one of the hubs has not been checked yet.
+     */
+    DoctorFindings: {
+      checked_at: components["schemas"]["ApiTimestamp"] | null;
+      /** Items */
+      items: components["schemas"]["FindingView"][];
+      /** Next Cursor */
+      next_cursor?: string | null;
+      /** Total Estimate */
+      total_estimate: number;
+    };
+    /**
      * DoctorFixRequest
      * @description The empty JSON body of the fix: a cross-site form cannot send one (S7).
      */
@@ -4270,10 +4285,12 @@ export interface components {
      *
      *     ``valid`` is false when ``hub.json`` is unreadable or does not match the schema
      *     (``validation_errors``). A pin other than the running version is read anyway and shows as
-     *     a warning ("pinned X, running Y").
+     *     a warning ("pinned X, running Y"). ``checked_at`` is when the hub's last doctor check
+     *     ended, None before its first one.
      */
     HubView: {
       added_at: components["schemas"]["ApiTimestamp"];
+      checked_at: components["schemas"]["ApiTimestamp"] | null;
       /** Guard Ask Before Edit */
       guard_ask_before_edit: string[];
       /** Id */
@@ -5306,15 +5323,6 @@ export interface components {
       /** Total Estimate */
       total_estimate: number;
     };
-    /** Page[FindingView] */
-    Page_FindingView_: {
-      /** Items */
-      items: components["schemas"]["FindingView"][];
-      /** Next Cursor */
-      next_cursor?: string | null;
-      /** Total Estimate */
-      total_estimate: number;
-    };
     /** Page[HubView] */
     Page_HubView_: {
       /** Items */
@@ -5688,11 +5696,13 @@ export interface components {
       | "hook_failed";
     /**
      * ProjectDetail
-     * @description The Project overview header.
+     * @description The Project overview header; ``checked_at`` is when the hub's last doctor check ended,
+     *     None before its first one.
      */
     ProjectDetail: {
       /** Branch Prefix */
       branch_prefix: string | null;
+      checked_at: components["schemas"]["ApiTimestamp"] | null;
       /** Default Branch */
       default_branch: string | null;
       /** Hub Id */
@@ -5738,9 +5748,11 @@ export interface components {
     /**
      * ProjectSummary
      * @description A Portfolio card: hub config plus the project's activity; PRs and issues need sources
-     *     not connected in Phase 2 (``null``).
+     *     not connected in Phase 2 (``null``). ``hub_health`` comes from the hub's last doctor check,
+     *     which ended at ``checked_at``; both are None before its first one.
      */
     ProjectSummary: {
+      checked_at: components["schemas"]["ApiTimestamp"] | null;
       /**
        * Cost Daily
        * @default []
@@ -9737,7 +9749,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["Page_FindingView_"];
+          "application/json": components["schemas"]["DoctorFindings"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

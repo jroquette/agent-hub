@@ -26,7 +26,8 @@ class HubView(ViewModel):
 
     ``valid`` is false when ``hub.json`` is unreadable or does not match the schema
     (``validation_errors``). A pin other than the running version is read anyway and shows as
-    a warning ("pinned X, running Y").
+    a warning ("pinned X, running Y"). ``checked_at`` is when the hub's last doctor check
+    ended, None before its first one.
     """
 
     id: str
@@ -37,6 +38,7 @@ class HubView(ViewModel):
     running_version: str
     lock_version: str | None
     lock_state: LockState | None
+    checked_at: ApiTimestamp | None
     modules: tuple[str, ...]
     guard_ask_before_edit: tuple[str, ...]
     repos: tuple[str, ...]

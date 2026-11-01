@@ -1,22 +1,21 @@
-"""The doctor of a registered hub, run in process as ``hub doctor`` runs it (D22), and its cache.
+"""The doctor of a registered hub, run in process as ``hub doctor`` runs it (D22).
 
 ``run_doctor`` follows ``hub doctor``'s pipeline with every rule selected: ``hub.json`` read
 once into its config (a pin other than the running release is a ``platform.version`` finding
 and nothing else runs; an unusable file is ``config.schema`` findings), the hub's
 ``hub.local.json``, then the snapshot the selected rules read. The findings equal
-``hub doctor --json`` run in that hub. ``DoctorCache`` keeps one run per hub for
-``DOCTOR_TTL``, or until a watched file's modification time changes (``hub.json``,
-``hub.lock``, ``hub.local.json``, every path the run looked at, the ``workflows/`` folders
-above them, whose times change when a workflow file is added or removed, ``scenarios/`` and its
-pack folders, whose times change when a scenario is added, removed or rewritten by a rename, and
-the item folders ``items.leftovers`` scanned, whose times change when a temp entry appears or
-goes).
+``hub doctor --json`` run in that hub. A run also names the paths whose change makes its
+findings stale (``hub.json``, ``hub.lock``, ``hub.local.json``, every path the run looked at,
+the ``workflows/`` folders above them, whose times change when a workflow file is added or
+removed, ``scenarios/`` and its pack folders, whose times change when a scenario is added,
+removed or rewritten by a rename, and the item folders ``items.leftovers`` scanned, whose times
+change when a temp entry appears or goes); ``HubSnapshot`` runs it again when one of their
+modification times changes, or after ``DOCTOR_TTL``.
 """
 
-import threading
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Final
 
 from agent_hub.core.doctor.config_rules import config_state
@@ -102,46 +101,3 @@ def _workflow_folders(paths: Iterable[str]) -> set[str]:
             top = min(len(parts), _WATCHED_DEPTH + 1)
             found.update("/".join(parts[:end]) for end in range(1, top))
     return found
-
-
-@dataclass(frozen=True, kw_only=True, slots=True)
-class _Cached:
-    run: DoctorRun
-    at: datetime
-    times: tuple[int | None, ...]
-
-
-class DoctorCache:
-    """One doctor run per hub, reused while fresh."""
-
-    def __init__(
-        self,
-        reader: HubFileReader,
-        *,
-        running_version: str,
-        clock: Callable[[], datetime],
-        ttl: timedelta = DOCTOR_TTL,
-    ) -> None:
-        self._reader = reader
-        self._running = running_version
-        self._clock = clock
-        self._ttl = ttl
-        self._runs: dict[str, _Cached] = {}
-        self._lock = threading.Lock()
-
-    def findings(self, hub_path: str) -> tuple[Finding, ...]:
-        """The hub's findings, from the cache when fresh."""
-        with self._lock:
-            cached = self._runs.get(hub_path)
-            now = self._clock()
-            if cached is not None and self._is_fresh(hub_path, cached, now=now):
-                return cached.run.findings
-            run = run_doctor(self._reader, hub_path, running_version=self._running)
-            times = self._reader.modified_times(hub_path, run.watched)
-            self._runs[hub_path] = _Cached(run=run, at=now, times=times)
-            return run.findings
-
-    def _is_fresh(self, hub_path: str, cached: _Cached, *, now: datetime) -> bool:
-        if now - cached.at >= self._ttl:
-            return False
-        return self._reader.modified_times(hub_path, cached.run.watched) == cached.times

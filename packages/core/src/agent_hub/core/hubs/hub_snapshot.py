@@ -244,6 +244,7 @@ class HubSnapshot:
             hub.lock,
             running_version=self._running,
             has_drift=lambda: None if check is None else _drifted(check),
+            checked_at=None if check is None else check.checked_at,
         )
         return HubState(read=read, lock=hub.lock, check=check)
 
