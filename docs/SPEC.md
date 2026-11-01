@@ -1106,11 +1106,12 @@ The recommendations are a starting point.
 
 **1. Workflow: declarative YAML executed by a Python engine.**
 
-- The workflow is a declarative document (YAML or JSON) validated by a Pydantic schema. It holds the nodes, the type of each one (`agent`, `shell`, `script`, `loop`, `loop_group`, `approval`, `wait`, `halt`, `include`, and since AGH-350 `action` and `expect`), their joins and conditions, inputs, outputs and what to execute.
+- The workflow is a declarative document (YAML or JSON) validated by a Pydantic schema. It holds the nodes, the type of each one (`agent`, `shell`, `script`, `loop`, `loop_group`, `approval`, `wait`, `halt`, `include`, and since AGH-350 `action` and `expect`; `agent` nodes may also take a `for_each` key), their joins and conditions, inputs, outputs and what to execute.
 - A deterministic Python engine reads the document and drives the steps. Orchestration spends no tokens: the LLM only runs inside `agent` steps and only receives that step's instruction, not the whole workflow.
 - Deterministic work (tests, lint, contract sync, opening a PR) becomes a `script` step, with no LLM.
 - The UI edits the same document. It is stored on the platform with a version and history, and each execution records the workflow version it used.
 - The format and the engine: [ADR 0032](adr/0032-workflow-engine.md) (proposed; it supersedes [ADR 0027](adr/0027-workflow-format-and-minimum-engine.md) and keeps its invariants) and [docs/design/workflow-schema.md](design/workflow-schema.md).
+- One agent per item of a list a run produced is a `for_each` key on `agent` nodes, not a node type: [ADR 0056](adr/0056-for-each-over-a-run-list.md) (proposed; it extends ADR 0032). AGH-661 makes the engine run it.
 - A run starts by hand, from hub web, or by itself: `hub web` starts the `schedules` and `events` declared in `hub.json` (cron in UTC, GitHub polled through `gh` every 5 minutes), recording `trigger` in the run's start record ([ADR 0048](adr/0048-scheduled-and-event-starts-in-hub-web.md), proposed).
 
 **2. Brain: stays in the hub repo, which is private and ours only.**

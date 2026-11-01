@@ -50,6 +50,16 @@ together. The format is the schema's contract; the reasons are in [ADR 0032](../
   sets `context: fresh` itself (a reviewer that starts afresh each round).
 - A group's body counts toward the 512-node cap of an expansion.
 
+### for_each
+
+The contract is in [workflow-schema.md](workflow-schema.md) § Nodes; AGH-661 makes the engine run it.
+
+- The parent holds no permit, like a group. Each iteration takes the run-wide permits, so at most 4 attempts run at once.
+- Attempts, retries, the timeout and the read-only check are per iteration.
+- On resume a completed parent is reused whole. Otherwise each iteration decides alone: completed and not stale is
+  `prior_success`, any other runs again. A stale parent makes every iteration stale.
+- A debug pause stops before the parent only.
+
 ### Concurrent layers
 
 - A layer's nodes run concurrently in threads; at most 4 attempts run at once across the run, nested group layers
@@ -120,7 +130,7 @@ only nodes: the run-control port maps blocks to the nodes they enter by, and dec
 
 ## Decisions
 
-- [ADR 0032](../adr/0032-workflow-engine.md) (format, engine), [workflow-schema.md](workflow-schema.md) (the contract).
+- [ADR 0032](../adr/0032-workflow-engine.md) (format, engine), [workflow-schema.md](workflow-schema.md) (the contract), [ADR 0056](../adr/0056-for-each-over-a-run-list.md) (`for_each`).
 
 ## Open questions
 

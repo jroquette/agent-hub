@@ -36,7 +36,7 @@ pause: [workflow-engine-rules.md](workflow-engine-rules.md) § Run control), `ti
 
 | `type` | Keys | What happens |
 |---|---|---|
-| `agent` | `prompt` or `prompt_file` (one), `with`, `model`, `limits`, `context`, `cwd` | one `claude -p` session under the hub's hooks (a repo `cwd`: through `--settings`) |
+| `agent` | `prompt` or `prompt_file` (one), `with`, `model`, `limits`, `context`, `cwd`, `for_each` | one `claude -p` session under the hub's hooks (a repo `cwd`: through `--settings`); with `for_each`, one session per item of a list |
 | `shell` | `command` (argv list), `cwd`, `env`, `stdin`, `effect` (`read`, `write`, `destroy`: under an `environment`, the policy's input, `write` when absent) | runs the program, never through a shell; exit 0 passes |
 | `script` | `runtime` (`sh` or `python`), `script`, `args`, `cwd`, `env`, `stdin`, `effect` (as `shell`'s) | `sh <file>` or `uv run <file>`; exit 0 passes |
 | `loop` | the `agent` keys, `max_iterations`, `until`, `until_field`, `until_bash`, `fresh_context` | repeats one agent turn until done |
@@ -53,7 +53,30 @@ pause: [workflow-engine-rules.md](workflow-engine-rules.md) § Run control), `ti
   `hub.json` → `models.tiers` tier (default `medium`); `limits` is `{max_turns, max_cost_usd}` (default 40 and 3.0);
   `context` is `fresh` (default; an explicit one in a `loop_group` body never resumes) or `{resume: <upstream agent node id>}`.
   A `cwd` (an agent's may be a reference) stays in the hub or a repo (else `config`); there an agent runs as `hub run`'s. `stdin`: a literal or one whole reference.
-- No child gets `LINEAR_API_KEY`. Agents run with `session_env`, other commands with `untrusted_env`; `env` adds no
+- `for_each` (one whole `$<node>.output[.path]` reference) runs one copy of an `agent` node per item of a list the run
+  produced ([ADR 0056](../adr/0056-for-each-over-a-run-list.md)). AGH-661 makes the engine run it; until then the key
+  only loads. A prompt reads the item as `$WITH.item` (objects as compact JSON), bound to the item so its text is read
+  once and never rescanned.
+  - Load errors: the key on any other type (a `loop` takes the `agent` keys but not this one); a `for_each` agent in a
+    `loop_group` body; `mutates_checkout` not written as `false` (parallel writers on one checkout are never safe);
+    `always_run: true`; `context: {resume}`; a `with` named `item`; a reference path into its output (`$<id>.output`
+    alone is allowed; an `output_format` describes one iteration, not the list); `returns` or a `context.resume` naming
+    the node.
+  - A value that is not a list when the node starts, or a list over 24 items, fails the node `config` and starts no
+    iteration. An output can be 1 MiB and is stored twice (its step and the parent's output), so 24 keeps a run under
+    the 64 MiB records limit.
+  - The run records one step for the parent and one per iteration, `<id>__<n>` from 1, each with its own attempts.
+  - The output is a list in item order, whatever order the iterations finish in: `{"item": …, "state": "completed",
+    "output": …}` or `{"item": …, "state": "failed", "failure_kind": …}`. A failed iteration never stops the others.
+  - The node completes when iterations failed, even all of them, and with `[]` when the list is empty. So a workflow
+    that does not read the results goes on after every iteration failed: it must read them to decide what a failure
+    means.
+  - On resume a completed node is reused whole; otherwise a completed iteration is reused unless the node is stale, and
+    the rest run again ([workflow-engine-rules.md](workflow-engine-rules.md) § for_each).
+  - A fixture stubs each `<id>__<n>`, never the parent; a missing stub fails as for any node.
+- No child gets `LINEAR_API_KEY`. Agents run with `session_env`, other commands with `untrusted_env`, which is the
+  environment of the process running the node minus the tracker and GitHub tokens and the declared credential names,
+  so a pack script that must not pass variables on builds a clean environment itself; `env` adds no
   token; every child gets the run's id as `AGENT_HUB_RUN_ID` (a node's `env` cannot set it). A `hub step` node
   (`command[0:2]` is `[hub, step]`) runs the engine's own hub with `child_env`, refuses `env`
   and a referenced `cwd`, and narrows per call (`push_env` only for fetch, push, gh). Tracker writes (ADR 0030) are the
@@ -92,7 +115,7 @@ the origin node, carried down the chain), `condition`, `condition_parse_error`, 
 
 References are `$INPUTS.<name>`, `$<node>.output`, `$<node>.output.<path>` (dot segments, `.0` for an array item; a path
 needs the producer's `output_format`), `$LOOP_PREV…`, `$WITH.<name>`, `$CTX.<name>`, `$self…` (scenario), in prompts, `command`,
-`args`, `cwd`, `env`, `stdin`, `with`, `until_bash`, `wait.until`, `message` and `reason`, resolved in one pass (never
+`args`, `cwd`, `env`, `stdin`, `with`, `for_each`, `until_bash`, `wait.until`, `message` and `reason`, resolved in one pass (never
 rescanned). An undeclared input or a path outside the producer's schema is a load error; a failed producer fails the
 node (`config`). Values render as canonical text: strings as is, numbers and booleans as JSON, null as empty, objects
 and arrays as compact JSON with sorted keys. In argv a reference fills a whole element, never `command[0]` nor a `-c`
@@ -153,7 +176,7 @@ that runs out, fails the test, but an approval or wait with none pauses the run 
 
 ## Decisions
 
-- [ADR 0032](../adr/0032-workflow-engine.md) (format, engine), [ADR 0030](../adr/0030-run-outcomes-in-the-tracker.md) (outcomes, tracker writes), [ADR 0019](../adr/0019-metadata-only-events-and-redaction.md) (metadata-only events), [ADR 0041](../adr/0041-scenarios-actions-and-enforced-access.md) (`environment`, `effect`).
+- [ADR 0032](../adr/0032-workflow-engine.md) (format, engine), [ADR 0030](../adr/0030-run-outcomes-in-the-tracker.md) (outcomes, tracker writes), [ADR 0019](../adr/0019-metadata-only-events-and-redaction.md) (metadata-only events), [ADR 0041](../adr/0041-scenarios-actions-and-enforced-access.md) (`environment`, `effect`), [ADR 0056](../adr/0056-for-each-over-a-run-list.md) (`for_each`).
 
 ## Open questions
 
