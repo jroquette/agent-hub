@@ -50,6 +50,24 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `hub doctor --fix` now judges a draft only by the repo files outside `docs/adr/` (AGH-622).
 - The Stop hook now runs `check_fast` when a new code file has ` -> ` in its name, such as `x -> y.py` (AGH-619).
 
+## [0.29.0] - 2026-11-01
+
+### Changed
+
+- `hub web` sends the web app's scripts and styles Brotli-compressed to a browser that accepts `br`, at about a fifth
+  of their size. The browser keeps each content-hashed file under `/assets/` for a year. It still checks `index.html`
+  on every load, so it picks up a new release at once (AGH-615).
+- The `hub web` app loads each page's code when that page first opens, so it starts with much less to fetch. If a
+  page's code takes more than 300 ms, a page skeleton shows until it arrives. A page whose code cannot load, or that
+  fails while drawing, now shows "This page could not load" or "This page could not be shown" inside the app, with
+  "Reload page", instead of a blank window. Answers from `hub web` also no longer wait about 40 ms on a kept-alive
+  connection (AGH-614).
+- The Brain's note tree in `hub web` draws only the rows in view, so a brain of hundreds of notes stays fast. The tree
+  is one Tab stop: the arrow keys, `j`/`k` and `Home`/`End` move between rows, `→`, `←`, `Enter`, `o` and `Space` open
+  and close folders, and `↓` in the empty search field goes into the tree. Folders stay open until you close them,
+  and the tree stays beside a long note as it scrolls. To find a note anywhere in the brain, search with `/`
+  (AGH-617).
+
 ## [0.28.0] - 2026-10-30
 
 ### Added
@@ -1487,7 +1505,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.28.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.29.0...HEAD
+[0.29.0]: https://github.com/jroquette/agent-hub/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/jroquette/agent-hub/compare/v0.27.1...v0.28.0
 [0.27.1]: https://github.com/jroquette/agent-hub/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/jroquette/agent-hub/compare/v0.26.0...v0.27.0

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import signal
 import socket
@@ -54,6 +55,33 @@ def test_raises_port_in_use_naming_port_when_port_taken() -> None:
 
     assert raised.value.port == port
     assert str(raised.value) == f"port {port} is in use"
+
+
+def test_turns_nagle_off_on_each_connection_when_socket_bound() -> None:
+    # uvicorn serves the bound socket through asyncio, which turns Nagle off only on a socket
+    # made for TCP. With Nagle on, a body sent after its headers on a kept-alive connection waits
+    # for the client's delayed ACK, about 40 ms.
+    sock = bind_loopback(0)
+    nodelay: list[int] = []
+
+    class Accepted(asyncio.Protocol):
+        def connection_made(self, transport: asyncio.BaseTransport) -> None:
+            accepted = transport.get_extra_info("socket")
+            nodelay.append(accepted.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY))
+            transport.close()
+
+    async def accept_one() -> None:
+        server = await asyncio.get_running_loop().create_server(Accepted, sock=sock)
+        async with server:
+            _, writer = await asyncio.open_connection(*sock.getsockname())
+            while not nodelay:
+                await asyncio.sleep(0.01)
+            writer.close()
+
+    asyncio.run(asyncio.wait_for(accept_one(), timeout=10))
+
+    assert len(nodelay) == 1
+    assert nodelay[0] != 0, "TCP_NODELAY is off on the accepted connection"
 
 
 def _get(url: str, host: str | None = None) -> tuple[int, dict[str, Any]]:

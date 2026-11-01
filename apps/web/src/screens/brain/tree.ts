@@ -36,9 +36,20 @@ export function noteName(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1);
 }
 
-/** How many notes a folder holds, its subfolders included. */
+/**
+ * Each folder's count, kept with the folder object: the tree's rows are listed again on every open
+ * and close, while a listing's folders never change once built. A new listing has new folders.
+ */
+const noteCounts = new WeakMap<BrainFolder, number>();
+
+/** How many notes a folder holds, its subfolders included, counted once per folder of a listing. */
 export function countNotes(folder: BrainFolder): number {
-  return folder.notes.length + folder.folders.reduce((sum, child) => sum + countNotes(child), 0);
+  let count = noteCounts.get(folder);
+  if (count === undefined) {
+    count = folder.notes.length + folder.folders.reduce((sum, child) => sum + countNotes(child), 0);
+    noteCounts.set(folder, count);
+  }
+  return count;
 }
 
 /** The root notes every brain starts from, by the name the tree shows them under. */
@@ -56,4 +67,132 @@ export function matchNotes<T extends { path: string }>(entries: readonly T[], qu
   return needle === ""
     ? [...entries]
     : entries.filter((entry) => entry.path.toLowerCase().includes(needle));
+}
+
+/** One row of the Brain tree, in the flat list the virtual tree renders. */
+export interface TreeRow {
+  kind: "note" | "folder";
+  /** A note's path, or a folder's path with its trailing `/`. */
+  path: string;
+  /** The name the row shows: a start note's ("Index"), a note's file name or a folder's name. */
+  name: string;
+  /** 0 for the top rows of a section, one more per folder level. */
+  depth: number;
+  /** The section that lists the row: "Start here", "Folders" or "Inbox · unreviewed". */
+  group: "start" | "folders" | "inbox";
+  /** How many rows share the row's folder (at depth 0, its section). */
+  setSize: number;
+  /** The row's place among them, from 1. */
+  posInSet: number;
+  /** A folder's notes, its subfolders' included; 0 on a note's row. */
+  count: number;
+}
+
+/** The name a root note is shown under in "Start here", when it is one of the start notes. */
+function startName(path: string): string | undefined {
+  return Object.hasOwn(START_NOTES, path) ? START_NOTES[path] : undefined;
+}
+
+/** Notes and folders that share a parent: an open folder's content, or a section's top rows. */
+interface Siblings {
+  notes: readonly BrainEntry[];
+  folders: readonly BrainFolder[];
+}
+
+/** The siblings' rows at one level: the notes, then the folders, each open folder with its rows. */
+function siblingRows(
+  siblings: Siblings,
+  open: ReadonlySet<string>,
+  level: Pick<TreeRow, "group" | "depth">,
+): TreeRow[] {
+  const setSize = siblings.notes.length + siblings.folders.length;
+  const rows = siblings.notes.map((note, index): TreeRow => ({
+    kind: "note",
+    path: note.path,
+    name: startName(note.path) ?? noteName(note.path),
+    ...level,
+    setSize,
+    posInSet: index + 1,
+    count: 0,
+  }));
+  siblings.folders.forEach((folder, index) => {
+    rows.push({
+      kind: "folder",
+      path: folder.path,
+      name: folder.name,
+      ...level,
+      setSize,
+      posInSet: siblings.notes.length + index + 1,
+      count: countNotes(folder),
+    });
+    if (open.has(folder.path)) {
+      rows.push(...siblingRows(folder, open, { group: level.group, depth: level.depth + 1 }));
+    }
+  });
+  return rows;
+}
+
+/**
+ * The rows of the tree's three sections, in order: each folder in `open` lists its notes, then its
+ * subfolders.
+ */
+export function treeRows(root: BrainFolder, open: ReadonlySet<string>): TreeRow[] {
+  const start = [
+    ...root.notes.filter((note) => startName(note.path) !== undefined),
+    ...root.notes.filter((note) => startName(note.path) === undefined),
+  ];
+  const folders = root.folders.filter((folder) => folder.name !== INBOX_FOLDER);
+  const inbox = root.folders.filter((folder) => folder.name === INBOX_FOLDER);
+  return [
+    ...siblingRows({ notes: start, folders: [] }, open, { group: "start", depth: 0 }),
+    ...siblingRows({ notes: [], folders }, open, { group: "folders", depth: 0 }),
+    ...siblingRows({ notes: [], folders: inbox }, open, { group: "inbox", depth: 0 }),
+  ];
+}
+
+/** The section that lists a row, from its path alone. */
+function groupOf(path: string): TreeRow["group"] {
+  if (!path.includes("/")) return "start";
+  return path.startsWith(`${INBOX_FOLDER}/`) ? "inbox" : "folders";
+}
+
+const GROUP_ORDER: readonly TreeRow["group"][] = ["start", "folders", "inbox"];
+
+/**
+ * Whether the row of path `a` comes before the row of path `b` in the order `treeRows` lists
+ * them, even when one of them is not listed: by section; in "Start here" the start notes first;
+ * in a folder, its row, then its notes, then its folders, each in the listing's path order.
+ */
+export function comesBefore(a: string, b: string): boolean {
+  const sections = GROUP_ORDER.indexOf(groupOf(a)) - GROUP_ORDER.indexOf(groupOf(b));
+  if (sections !== 0) return sections < 0;
+  if (groupOf(a) === "start") {
+    const starts = Number(startName(b) !== undefined) - Number(startName(a) !== undefined);
+    return starts === 0 ? a < b : starts < 0;
+  }
+  const left = a.split("/");
+  const right = b.split("/");
+  for (let level = 0; level < Math.min(left.length, right.length); level += 1) {
+    const x = left[level] ?? "";
+    const y = right[level] ?? "";
+    // A folder's path ends with "/", so its last part is "": its row comes before its content.
+    if (x === "" || y === "") return x === "" && y !== "";
+    const xFolder = level < left.length - 1;
+    if (xFolder !== level < right.length - 1) return !xFolder;
+    // Folders sort as the listing's paths do, with their "/" ("a-b/" before "a/").
+    if (x !== y) return xFolder ? `${x}/` < `${y}/` : x < y;
+  }
+  return false;
+}
+
+/**
+ * The folders a note sits in, as folder paths with their trailing `/`: the tree opens them for the
+ * selected note.
+ */
+export function foldersOf(path: string): string[] {
+  const folders: string[] = [];
+  for (let end = path.indexOf("/"); end !== -1; end = path.indexOf("/", end + 1)) {
+    folders.push(path.slice(0, end + 1));
+  }
+  return folders;
 }

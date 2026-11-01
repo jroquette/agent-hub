@@ -37,7 +37,7 @@ Makefile uses.
 | docker | The image and its Compose service, built and run, checked from the host (`tests/e2e/test_docker.py`, marker `docker`) | root `tests/e2e/` | `make test-docker` and its CI job, never `make check` |
 | live agent | A real `claude -p` session in a temp hub, seen through `hub web`, and a session `hub web` drives whose `git push origin main` the guard denies (`tests/e2e/test_live_agent.py`, marker `live("claude")`) | root `tests/e2e/` | `make test-live`, by hand |
 | web | The React app: Vitest + Testing Library in jsdom for components and screens (states, a11y with `axe-core`), against `src/testing/builders.ts` fixtures and a mocked API (`renderWithApi`) | `apps/web/src/**/*.test.{ts,tsx}` beside the code | `make check-fast` (`web-fast`) |
-| web smoke | The built app on an installed `hub web`: Playwright (Chromium) opens the printed token URL, visits the nine P2 pages of a synthetic scenario, and drives an agent session against the stub `claude` through two reloads | `apps/web/e2e/smoke.spec.ts`, driven by root `tests/e2e/test_web_smoke.py` | `make check` (`test-e2e`) |
+| web smoke | The built app on an installed `hub web`: Playwright (Chromium) opens the printed token URL, visits the nine P2 pages of a synthetic scenario, drives an agent session against the stub `claude` through two reloads, and loads the route chunks on demand | `apps/web/e2e/smoke.spec.ts` and `routes.spec.ts`, driven by root `tests/e2e/test_web_smoke.py` | `make check` (`test-e2e`) |
 | web visual | Each screen the owner validated in the playground (AGH-314), on the demo data (`seed_demo`) at 1440 × 900, dark theme, clock frozen at 2026-01-01T12:00:00Z, `<time>` masked, against its export PNG (`e2e/visual/baselines/<area>/<route>.png`, `maxDiffPixelRatio` 0.05: text renders differently per machine and Chromium build, so it catches a broken layout, not a copy change) | `apps/web/e2e/visual/<area>.spec.ts`, driven by root `tests/e2e/test_web_visual.py` | `make check` (`test-e2e`) |
 
 A port's suite is written once, as reusable tests in `agent_hub.core.testing.contracts`, and each implementation's
@@ -261,8 +261,34 @@ dev dependency of the workspace.
 - Every screen has a `-t states` test (loading skeleton after 300 ms, empty copy, a region-scoped problem with "Try
   again", stale and offline) and a `-t a11y` test (no `axe-core` violation of impact serious or critical,
   `src/testing/axe.ts`). Fixtures come only from `src/testing/builders.ts`; ESLint refuses a `*.json` import in a test.
+- A test that holds a module's code with an async `vi.mock` factory (it awaits a promise the test resolves) imports
+  that module once per test file. While the factory waits, Vitest's mocker can give a second import of the same
+  module the real one at once, past the hold, so such a test passes or fails by timing. `routes.studioNew.test.ts`
+  and `routes.studioEdit.test.ts` each open one Studio route for this reason; a file of its own also means no other
+  test has loaded the module first.
 - Coverage: Vitest with V8, 80% of lines and of branches over `src/` (the generated `schema.d.ts`, `main.tsx` and
   `src/testing/` excluded), in `web-fast`.
+- The build plugins' tests (`src/build/*.test.ts`) run in Vitest's node environment (`// @vitest-environment node`),
+  not jsdom, on a temp folder from `mkdtemp`: `compressAssets.test.ts` checks which files get a Brotli variant
+  (`<name>.br`), that each variant decodes to its file's exact bytes, that two runs write the same bytes, and that no
+  variant outlives its file. `bundlePlugins.test.ts` checks that the plugin writes the variants into the output folder
+  Vite names, and stops the build when Vite names none. `bundleBudget.test.ts` checks the size budget: it passes and
+  prints the entry chunk's and the vendor chunk's sizes in bytes when both are under their limits, fails naming the
+  file, its size and the limit when one is 1 B over, fails when the bundle has no entry chunk, and its plugin stops
+  the build with `this.error` when the check fails. The plugin checks once the build is written, because Vite empties
+  the output folder before it renders: a real Vite build over the budget fails and leaves its new files in the folder,
+  so a failed `make web-build` leaves `web_dist/` with that build, never empty. `vite build` runs that plugin on every
+  build (`bundlePlugins.test.ts` checks that `vite.config.ts` lists it, before the Brotli plugin), so
+  `make web-build`, `make web-dist-check` (in `make check`), CI's `web` job and the image all fail over the budget.
+- The variants' bytes also depend on the Brotli encoder that Node bundles (`node -p process.versions.brotli`), and two
+  Node builds check them against the committed `web_dist/`: CI's `web` job runs `make web-dist-check` on the 22.x that
+  `actions/setup-node` picks for `apps/web/.node-version` (`22`), and the `docker` job's
+  `test_serves_committed_web_app_when_image_built` compares `web_dist/` with the image's own build, made on the Node
+  of the `Dockerfile`'s `NODE_IMAGE` digest. If a Node update changes the encoder, the two builds write different
+  `.br` bytes, and a rebuild on one fails the other. Then, in one PR, make both bundle the same Brotli: move
+  `NODE_IMAGE` to a `node:22-slim` digest whose `docker run --rm <image> node -p process.versions.brotli` matches
+  CI's Node (or pin `apps/web/.node-version` to the image's exact Node), run `make web-build` on a Node with that
+  Brotli, and commit `web_dist/`.
 - The smoke: `tests/e2e/test_web_smoke.py` installs `hub`, starts `hub web` on a temp database and registry, registers
   two synthetic hubs (`hub init`), ingests a synthetic scenario (two projects, one live session with a guard denial,
   one session waiting on a guard ask, one failed run, one 5,000-event session) through `POST /events/hooks` and
@@ -271,15 +297,38 @@ dev dependency of the workspace.
   detail of the 5,000-event session must be complete in under 2 s. Playwright never downloads a browser here: the test
   passes the Chromium headless shell found under `PLAYWRIGHT_BROWSERS_PATH` (else Playwright's cache) as
   `AGENT_HUB_CHROMIUM`. Without npm or a Chromium it skips locally and fails under `CI`.
+- The route chunks (AGH-614) have a run of their own on the same server (`-k route_chunks`): it plays
+  `apps/web/e2e/routes.spec.ts`, whose test titles all start with `Route chunks:` (the page run leaves them out). A
+  first `/sessions` visit fetches only the entry, vendor, shared and Sessions chunks, and prints its request log (each
+  script and style with its bytes on the wire), which the pytest test prints again, so
+  `pytest -rP -k route_chunks` shows it on a pass; every nav destination opens by in-app navigation with its heading;
+  a Brain note, a session and a settings section open from a full page load; and with the Sessions chunk's request
+  aborted, "This page could not load" shows inside the shell while the other routes still open. The in-app and
+  full-load pages pass the page run's checks (`watch` and `expectAccessible`, shared through
+  `apps/web/e2e/pageChecks.ts`), and the failed-chunk page the axe one. The test reads
+  the committed Vite manifest (`web_dist/.vite/manifest.json`) for the chunk files, as do two tests that need no
+  browser: each screen module `routes.tsx` loads with `import()` has a chunk of its own that a first load does not
+  fetch (`-k own_chunk`), and the manifest's vendor chunk is under 350,000 B (`-k vendor_chunk`). Three more need no
+  browser: the entry chunk `index.html` loads is under 400,000 B (`-k entry_chunk`), which with the vendor limit
+  repeats the build check's limits, so they hold even if that check stops running; `index.html` links every
+  stylesheet of the build (`-k every_stylesheet`), so a deep-linked screen has the classes it borrows from another
+  screen's styles; and the one sheet keeps the base styles after the screens' (`-k orders_base_styles`), as the
+  one-bundle build did. In Vitest,
+  `src/styles/cascade.test.ts` checks the list that sets that order: every stylesheet once, the base styles last,
+  and imported first by `main.tsx`.
+  `tests/e2e/test_package_data.py -k web_dist` builds the api wheel and checks that it ships every `web_dist` file,
+  the manifest and the `.br` variants included.
 - The same module checks the committed bundle for absolute URLs (AC-200.56): only an exact list of inert strings is
   allowed (React's and React Router's error-text doc links, XML namespace ids, React Router's `http://localhost`
-  parsing base); any other URL, such as an external font, script or API, fails.
+  parsing base); any other URL, such as an external font, script or API, fails. It reads every script, style and
+  HTML file of the build, each route chunk included.
 
 ## Performance (`make perf`)
 
 `make perf` (`$R python -m scripts.perf.run_suite`, code in `scripts/perf/`) measures how long the interactive paths
 take on a synthetic 400,000-event database spread over 90 days. It builds or reuses the fixture, copies it into a fresh
-temp root, renders a synthetic hub there (`hub init`, `git init` and one commit), then measures, one at a time:
+temp root, renders a synthetic hub there (`hub init`, a brain of six folders of a hundred synthetic notes under
+`brain/tree-<n>/`, `git init` and one commit), then measures, one at a time:
 
 - `cli`: `hub --version`, `./hub --version (local uvx stand-in)`, `hub brief --no-network`, and the list commands
   `hub repo list`, `hub env list`, `hub action list`, `hub scenario list`, `hub workflow list`, run in the temp hub;
@@ -290,8 +339,11 @@ temp root, renders a synthetic hub there (`hub init`, `git init` and one commit)
   temp hub, so every run reads a cache under the 5 min refresh floor, starts no refresh and runs no `uvx` in the
   foreground;
 - `route`: seven `hub web` routes (`/api/v1/sessions`, `/api/v1/features`, `/api/v1/search?q=make`, ...);
-- `page`: four pages in Playwright's Chromium (`apps/web/e2e/perf.spec.ts`), ready when no `/api/v1/` request is in
-  flight for 500 ms after `load`, with the number of API calls;
+- `page`: six pages in Playwright's Chromium (`apps/web/e2e/perf.spec.ts`): `/`, `/features`,
+  `/features/perf/search-index`, `/sessions/perf-00000`, `/sessions`, and the Brain note
+  `/projects/perf/brain/tree-3/note-050.md` (a note in a 100-note folder, so an open folder is measured). A page is
+  ready when no `/api/v1/` request is in flight for 500 ms after `load`; each row has the number of API calls and
+  `dom_nodes`, the most elements on the page in one run once it is ready;
 - `restart`: `hub web start → GET /` and `hub web start → /api/v1/sessions`, with peak RSS (Linux only, else `null`).
 
 These names are the canonical paths: the table, `perf.json` and the budgets all use the same strings. The child
@@ -306,10 +358,11 @@ the build. On a 4 vCPU Linux machine a first run takes about 7 minutes (the fixt
 one about 6.5.
 
 It prints one table and writes `perf.json`: a list of rows, each with `kind`, `path`, `runs`, `median_ms`, `p95_ms`,
-`budget`, `status` (`pass`, `over`, `no budget` or `skipped`, with a `reason`), `api_calls` (pages), `rss_mb`
-(restarts) and the run's `events`, `seed`, `commit` and `machine`. The budgets are data in `scripts/perf/budgets.json`,
-one entry per `(kind, path)` with `p95_ms`, `api_calls` or `rss_mb`; every entry's `source` is "AGH-601 proposed" until
-the ADR that sets them is accepted. A path with no entry shows `no budget`. Without npm, Chromium or
+`budget`, `status` (`pass`, `over`, `no budget` or `skipped`, with a `reason`), `api_calls` (pages), `dom_nodes`
+(pages; a reported field only, with no budget and no table column, `null` elsewhere), `rss_mb` (restarts) and the
+run's `events`, `seed`, `commit` and `machine`. The budgets are data in `scripts/perf/budgets.json`, one entry per
+`(kind, path)` with `p95_ms`, `api_calls` or `rss_mb`; an entry's `source` is "AGH-601 proposed" (the proposed
+numbers) or "ADR 0053" (a row at that ADR's ceilings). A path with no entry shows `no budget`. Without npm, Chromium or
 `apps/web/node_modules`, the page rows are `skipped`; `make perf` itself runs `npm ci` first, so on a machine without
 npm run `uv run --locked --all-packages python -m scripts.perf.run_suite` instead. The runner's exit code: 0, also
 when a row is over; 1 when `PERF_STRICT=1` and a row is `over`; 2 when the suite itself fails (a bad budgets file or

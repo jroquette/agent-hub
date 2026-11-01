@@ -6,6 +6,9 @@ import type { components } from "../../api/schema";
 
 export type Session = components["schemas"]["Session"];
 
+/** How many of the newest sessions the list groups (the API's page limit). */
+export const SESSIONS_READ = 200;
+
 /**
  * The skills of the feature path, `/implement` (a feature ticket's flow, ADR 0043) among them: an
  * issue they worked on is a feature's ticket.

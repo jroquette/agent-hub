@@ -18,7 +18,7 @@ from alembic.script import ScriptDirectory
 from agent_hub.core.testing.loopback import closed_url
 from agent_hub.storage.migration import alembic_config
 from scripts.perf.environment import child_env, create_hub, make_tool_bin, transcript_path
-from scripts.perf.fixture import PAGE_SESSION
+from scripts.perf.fixture import BRAIN_PAGE_NOTE, PAGE_SESSION, PROJECT
 from scripts.perf.process_probes import hook_probes
 
 type Run = Callable[..., subprocess.CompletedProcess[str]]
@@ -66,6 +66,8 @@ EXPECTED_ROWS = {
     ("page", "/features"),
     ("page", "/features/perf/search-index"),
     ("page", f"/sessions/{PAGE_SESSION}"),
+    ("page", "/sessions"),
+    ("page", f"/projects/{PROJECT}/brain/{BRAIN_PAGE_NOTE}"),
     ("restart", "hub web start → GET /"),
     ("restart", "hub web start → /api/v1/sessions"),
 }

@@ -786,27 +786,35 @@ function RunBody({ run }: { run: WorkflowRun }) {
   );
 }
 
+/**
+ * Run detail's skeleton while its run loads, and, with `redirect`, while the page a scenario run
+ * moves to loads: that page's code may still be on its way, and the skeleton stays drawn until it
+ * lands.
+ */
+function RunLoading({ redirect }: { redirect?: string }) {
+  return (
+    <div style={{ padding: "16px 32px" }} className="ah-stack" aria-busy="true">
+      <Skeleton width={420} height={28} />
+      <Skeleton width={680} height={14} />
+      <Skeleton width={560} height={14} />
+      <div style={{ display: "flex", gap: 0, marginTop: 12 }}>
+        {Array.from({ length: 6 }, (_, i) => (
+          <Skeleton key={i} height={64} radius={0} style={{ flex: 1, marginLeft: i ? 2 : 0 }} />
+        ))}
+      </div>
+      {Array.from({ length: 5 }, (_, i) => (
+        <Skeleton key={i} width={`${String(30 + ((i * 23) % 50))}%`} height={16} />
+      ))}
+      {redirect !== undefined && <Navigate to={redirect} replace />}
+    </div>
+  );
+}
+
 /** Run detail (spec 13, screen 2): where the run stopped, why, and what to open next. */
 export function RunDetailScreen() {
   const { runId = "" } = useParams();
   const run = useRun(runId);
-  if (run.isPending) {
-    return (
-      <div style={{ padding: "16px 32px" }} className="ah-stack" aria-busy="true">
-        <Skeleton width={420} height={28} />
-        <Skeleton width={680} height={14} />
-        <Skeleton width={560} height={14} />
-        <div style={{ display: "flex", gap: 0, marginTop: 12 }}>
-          {Array.from({ length: 6 }, (_, i) => (
-            <Skeleton key={i} height={64} radius={0} style={{ flex: 1, marginLeft: i ? 2 : 0 }} />
-          ))}
-        </div>
-        {Array.from({ length: 5 }, (_, i) => (
-          <Skeleton key={i} width={`${String(30 + ((i * 23) % 50))}%`} height={16} />
-        ))}
-      </div>
-    );
-  }
+  if (run.isPending) return <RunLoading />;
   if (run.isError) {
     if (run.error.status === 404) return <RunNotFound runId={runId} />;
     return (
@@ -823,7 +831,7 @@ export function RunDetailScreen() {
   // A scenario run lives on its own page (AGH-350 E-15): Back skips this hop.
   const scenario = run.data.kind === "scenario" ? scenarioOfLabel(run.data.workflow) : null;
   if (scenario !== null) {
-    return <Navigate to={scenarioRunHref(run.data.project, scenario, run.data.id)} replace />;
+    return <RunLoading redirect={scenarioRunHref(run.data.project, scenario, run.data.id)} />;
   }
   return <RunBody run={run.data} />;
 }

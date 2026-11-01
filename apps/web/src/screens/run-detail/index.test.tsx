@@ -1,5 +1,6 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { createMemoryRouter, RouterProvider } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
@@ -13,6 +14,10 @@ import {
   at,
   aWorkflowDetail,
   renderWithApi,
+  stubApi,
+  stubEventSource,
+  testQueryClient,
+  TestProviders,
   type ApiRoutes,
   type WorkflowRun,
 } from "../../testing/builders";
@@ -710,6 +715,58 @@ describe("RunDetailScreen", () => {
           "/scenarios/demo/order-lifecycle/runs/3f2a91c0",
         );
       });
+      expect(router.state.historyAction).toBe("REPLACE");
+    });
+
+    it("keeps the run's skeleton while the scenario run page's code loads", async () => {
+      const scenarioRun = anEngineRun({
+        id: "3f2a91c0",
+        project: "demo",
+        workflow: "scenario:order-lifecycle",
+        kind: "scenario",
+      });
+      stubApi({ "/api/v1/workflow-runs/3f2a91c0": scenarioRun });
+      stubEventSource();
+      let arrive: () => void = () => undefined;
+      const scenarioCode = new Promise<void>((loaded) => {
+        arrive = loaded;
+      });
+      const router = createMemoryRouter(
+        [
+          { path: "/runs/:runId", element: <RunDetailScreen /> },
+          {
+            path: "/scenarios/:project/:name/runs/:runId",
+            lazy: async () => {
+              await scenarioCode;
+              return { element: <h1>Scenario run stand-in</h1> };
+            },
+          },
+        ],
+        { initialEntries: ["/runs/3f2a91c0"] },
+      );
+      const { container } = render(
+        <TestProviders client={testQueryClient()}>
+          <RouterProvider router={router} />
+        </TestProviders>,
+      );
+
+      // The run is a scenario run, so the page heads for its scenario run page.
+      await waitFor(() => {
+        expect(router.state.navigation.location?.pathname).toBe(
+          "/scenarios/demo/order-lifecycle/runs/3f2a91c0",
+        );
+      });
+      expect(container.querySelector("[aria-busy='true']")).not.toBeNull();
+      expect(router.state.location.pathname).toBe("/runs/3f2a91c0");
+
+      await act(async () => {
+        arrive();
+        await scenarioCode;
+      });
+      expect(
+        await screen.findByRole("heading", { level: 1, name: "Scenario run stand-in" }),
+      ).toBeInTheDocument();
+      expect(container.querySelector("[aria-busy='true']")).toBeNull();
       expect(router.state.historyAction).toBe("REPLACE");
     });
   });
