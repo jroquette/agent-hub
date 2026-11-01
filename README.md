@@ -11,7 +11,7 @@
   <a href="https://github.com/jroquette/agent-hub/actions/workflows/ci.yml"><img alt="CI status" src="https://github.com/jroquette/agent-hub/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python 3.14" src="https://img.shields.io/badge/python-3.14-3776AB?logo=python&logoColor=white">
   <!-- Static badge: bump with each release tag (scripts/check_release.py keeps the package versions in lockstep; follow-up: automate). -->
-  <img alt="Version 0.28.0" src="https://img.shields.io/badge/version-0.28.0-blue">
+  <img alt="Version 0.29.0" src="https://img.shields.io/badge/version-0.29.0-blue">
   <img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-orange">
 </p>
 
@@ -139,14 +139,14 @@ hub's `README.md`, **Join this hub**); the steps below create a new hub.
 little longer.
 
 ```bash
-uvx --from 'git+https://github.com/jroquette/agent-hub@v0.28.0#subdirectory=packages/agent-hub' hub --version
+uvx --from 'git+https://github.com/jroquette/agent-hub@v0.29.0#subdirectory=packages/agent-hub' hub --version
 ```
 
-You should see `0.28.0`.
+You should see `0.29.0`.
 
 > [!TIP]
 > To have `hub` on your `PATH`, install it once with
-> `uv tool install 'git+https://github.com/jroquette/agent-hub@v0.28.0#subdirectory=packages/agent-hub'`.
+> `uv tool install 'git+https://github.com/jroquette/agent-hub@v0.29.0#subdirectory=packages/agent-hub'`.
 > Generated hubs never need this: their `./hub` shim runs the release pinned in `hub.json`.
 
 **2. Create an empty folder for the hub.** It should be a sibling of the project's repos.
@@ -161,7 +161,7 @@ mkdir -p demo-hub && cd demo-hub && git init
 from your git `user.name` and `user.email` unless you pass `--author-name` and `--author-email`.
 
 ```bash
-uvx --from 'git+https://github.com/jroquette/agent-hub@v0.28.0#subdirectory=packages/agent-hub' \
+uvx --from 'git+https://github.com/jroquette/agent-hub@v0.29.0#subdirectory=packages/agent-hub' \
   hub init demo --repos acme/backend,acme/frontend --tracker linear:DEMO --branch-prefix jdoe/ --hub-repo acme/demo-hub
 ```
 
@@ -291,7 +291,7 @@ overrides a built-in of the same name.
 ./hub workflow list                          # the workflows that load; problems as <file>:<line>: <key>: <message>
 ./hub workflow run deliver --input issue=DEM-7 --input repo=api --input issue_text="..."  # dry: what would run
 ./hub workflow run spike --input question="..." --input slug=brief-cache --live  # a spike; answer its pick with respond
-./hub workflow run upgrade --input issue=DEM-8 --input repo=api --input package=httpx --input to=0.29.0 --live
+./hub workflow run upgrade --input issue=DEM-8 --input repo=api --input package=httpx --input to=0.28.1 --live
 ./hub workflow run deliver --input issue=DEM-7 --input repo=api --input issue_text="..." --live
 ./hub workflow run doc-drift --input repo=api --input sha=<merge sha> --live  # sha blank: the last month
 ./hub workflow run --resume <run>            # continue a failed or paused run; --abandon ends it
@@ -856,7 +856,7 @@ Example (synthetic project):
 {
   "$schema": "./hub.schema.json",
   "schema_version": 1,
-  "platform": { "version": "0.28.0" },         // the release ./hub runs
+  "platform": { "version": "0.29.0" },         // the release ./hub runs
   "project": {
     "name": "demo",
     "hub_repo": "acme/demo-hub",
