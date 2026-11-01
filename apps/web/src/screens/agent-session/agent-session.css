@@ -3626,12 +3626,15 @@ button.as-bg-head {
 .as-model-tag[data-costly] {
   color: var(--waiting);
 }
-.as-model-pop {
+/* Two classes: the shared `.ah-pop` (absolute, under a dialog) may come later in the built sheet. */
+.ah-pop.as-model-pop {
   position: fixed;
+  /* Over the dialog the pill may sit in. */
+  z-index: var(--z-palette);
   width: min(240px, calc(100vw - 16px));
   min-width: 0;
 }
-.as-model-sub {
+.ah-pop.as-model-sub {
   width: min(280px, calc(100vw - 16px));
 }
 .as-model-option {

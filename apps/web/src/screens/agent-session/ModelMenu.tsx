@@ -1,6 +1,7 @@
 /* The composer's model and effort picker: the model list, and the effort levels in a side menu. */
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent } from "react";
+import { createPortal } from "react-dom";
 
 import { Icon } from "../../components";
 import { EFFORTS, effortLabel, type EffortLevel } from "./effort";
@@ -53,6 +54,7 @@ export function ModelMenu({
   const [mainAt, setMainAt] = useState<CSSProperties>({});
   const [subAt, setSubAt] = useState<CSSProperties>({});
   const root = useRef<HTMLDivElement>(null);
+  const layer = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const main = useRef<HTMLDivElement>(null);
   const sub = useRef<HTMLDivElement>(null);
@@ -72,19 +74,25 @@ export function ModelMenu({
     )?.focus({
       preventScroll: true,
     });
+    const dismiss = () => {
+      setOpen(false);
+      setEfforts(false);
+    };
     const onDown = (event: MouseEvent) => {
-      if (!root.current?.contains(event.target as Node)) {
-        setOpen(false);
-        setEfforts(false);
-      }
+      const target = event.target as Node;
+      if (!root.current?.contains(target) && !layer.current?.contains(target)) dismiss();
     };
     document.addEventListener("mousedown", onDown);
+    // Placed once against the window: a resize would leave them away from the pill.
+    window.addEventListener("resize", dismiss);
     return () => {
       document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("resize", dismiss);
     };
   }, [open]);
 
-  // Placed against the window, so a scrolling parent (the new session dialog) cannot clip them.
+  // In a portal on the body and placed against the window: a parent that scrolls (the new session
+  // dialog) or is a container (the chat's page) would clip them or move what `fixed` measures from.
   useLayoutEffect(() => {
     if (!open || !trigger.current || !main.current) return;
     const pill = trigger.current.getBoundingClientRect();
@@ -131,7 +139,7 @@ export function ModelMenu({
   };
 
   const onMainKey = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape") {
+    if (event.key === "Escape" || event.key === "Tab") {
       event.preventDefault();
       event.stopPropagation();
       close();
@@ -146,7 +154,10 @@ export function ModelMenu({
 
   const onSubKey = (event: KeyboardEvent<HTMLDivElement>) => {
     event.stopPropagation();
-    if (event.key === "Escape" || event.key === "ArrowLeft") {
+    if (event.key === "Tab") {
+      event.preventDefault();
+      close();
+    } else if (event.key === "Escape" || event.key === "ArrowLeft") {
       event.preventDefault();
       closeEfforts();
     } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -180,120 +191,124 @@ export function ModelMenu({
         {costly && <Icon name="triangle-alert" size="sm" className="as-model-warn" />}
         <Icon name="chevron-down" size="sm" className="as-pill-caret" />
       </button>
-      {open && (
-        <div
-          ref={main}
-          className="ah-pop as-model-pop"
-          style={mainAt}
-          role="menu"
-          tabIndex={-1}
-          aria-label="Model and effort"
-          onKeyDown={onMainKey}
-        >
-          {rows.map((option) => (
-            <button
-              key={option}
-              type="button"
-              role="menuitemradio"
-              aria-checked={!extra?.checked && (option === row || option === model)}
-              className="as-model-option"
-              onMouseEnter={() => {
-                setEfforts(false);
-              }}
-              onClick={() => {
-                if (option !== row && option !== model) onModel(option);
-                close();
-              }}
-            >
-              <span className="as-model-name">
-                {option === row ? modelLabel(model) : modelLabel(option)}
-              </span>
-              {!extra?.checked && (option === row || option === model) && (
-                <Icon name="check" size="sm" className="as-model-check" />
-              )}
-            </button>
-          ))}
-          {extra && (
-            <button
-              type="button"
-              role="menuitemradio"
-              aria-checked={extra.checked}
-              className="as-model-option"
-              onMouseEnter={() => {
-                setEfforts(false);
-              }}
-              onClick={() => {
-                extra.onPick();
-                close();
-              }}
-            >
-              <span className="as-model-name">{extra.label}</span>
-              {extra.checked && <Icon name="check" size="sm" className="as-model-check" />}
-            </button>
-          )}
-          <div className="as-model-rule" role="separator" />
-          <button
-            ref={effortRow}
-            type="button"
-            role="menuitem"
-            aria-haspopup="menu"
-            aria-expanded={efforts}
-            className="as-model-option as-model-effort-row"
-            data-open={efforts || undefined}
-            onMouseEnter={() => {
-              setEfforts(true);
-            }}
-            onClick={() => {
-              // Hover has usually opened it already: a click must not close it again.
-              setEfforts(true);
-            }}
-          >
-            <span className="as-model-name">Effort</span>
-            <span className="as-model-hint">{effort ? effortLabel(effort) : "Default"}</span>
-            {costly && <Icon name="triangle-alert" size="sm" className="as-model-warn" />}
-            <Icon name="chevron-right" size="sm" className="as-pill-caret" />
-          </button>
-          {efforts && (
+      {open &&
+        createPortal(
+          <div ref={layer}>
             <div
-              ref={sub}
-              className="ah-pop as-model-pop as-model-sub"
-              style={subAt}
+              ref={main}
+              className="ah-pop as-model-pop"
+              style={mainAt}
               role="menu"
               tabIndex={-1}
-              aria-label="Effort"
-              onKeyDown={onSubKey}
+              aria-label="Model and effort"
+              onKeyDown={onMainKey}
             >
-              <p className="as-model-note">
-                More effort means fuller answers, but it takes longer and uses your limits faster.
-              </p>
-              {EFFORTS.map((option) => (
+              {rows.map((option) => (
                 <button
-                  key={option.value}
+                  key={option}
                   type="button"
                   role="menuitemradio"
-                  aria-checked={option.value === effort}
+                  aria-checked={!extra?.checked && (option === row || option === model)}
                   className="as-model-option"
+                  onMouseEnter={() => {
+                    setEfforts(false);
+                  }}
                   onClick={() => {
-                    if (option.value !== effort) onEffort(option.value);
+                    if (option !== row && option !== model) onModel(option);
                     close();
                   }}
                 >
-                  <span className="as-model-name">{option.label}</span>
-                  {option.tag && (
-                    <span className="as-model-tag" data-costly={option.costly ?? undefined}>
-                      {option.costly && <Icon name="triangle-alert" size="sm" />}
-                      {option.tag}
-                    </span>
-                  )}
-                  {option.value === effort && (
+                  <span className="as-model-name">
+                    {option === row ? modelLabel(model) : modelLabel(option)}
+                  </span>
+                  {!extra?.checked && (option === row || option === model) && (
                     <Icon name="check" size="sm" className="as-model-check" />
                   )}
                 </button>
               ))}
+              {extra && (
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={extra.checked}
+                  className="as-model-option"
+                  onMouseEnter={() => {
+                    setEfforts(false);
+                  }}
+                  onClick={() => {
+                    extra.onPick();
+                    close();
+                  }}
+                >
+                  <span className="as-model-name">{extra.label}</span>
+                  {extra.checked && <Icon name="check" size="sm" className="as-model-check" />}
+                </button>
+              )}
+              <div className="as-model-rule" role="separator" />
+              <button
+                ref={effortRow}
+                type="button"
+                role="menuitem"
+                aria-haspopup="menu"
+                aria-expanded={efforts}
+                className="as-model-option as-model-effort-row"
+                data-open={efforts || undefined}
+                onMouseEnter={() => {
+                  setEfforts(true);
+                }}
+                onClick={() => {
+                  // Hover has usually opened it already: a click must not close it again.
+                  setEfforts(true);
+                }}
+              >
+                <span className="as-model-name">Effort</span>
+                <span className="as-model-hint">{effort ? effortLabel(effort) : "Default"}</span>
+                {costly && <Icon name="triangle-alert" size="sm" className="as-model-warn" />}
+                <Icon name="chevron-right" size="sm" className="as-pill-caret" />
+              </button>
             </div>
-          )}
-        </div>
-      )}
+            {efforts && (
+              <div
+                ref={sub}
+                className="ah-pop as-model-pop as-model-sub"
+                style={subAt}
+                role="menu"
+                tabIndex={-1}
+                aria-label="Effort"
+                onKeyDown={onSubKey}
+              >
+                <p className="as-model-note">
+                  More effort means fuller answers, but it takes longer and uses your limits faster.
+                </p>
+                {EFFORTS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={option.value === effort}
+                    className="as-model-option"
+                    onClick={() => {
+                      if (option.value !== effort) onEffort(option.value);
+                      close();
+                    }}
+                  >
+                    <span className="as-model-name">{option.label}</span>
+                    {option.tag && (
+                      <span className="as-model-tag" data-costly={option.costly ?? undefined}>
+                        {option.costly && <Icon name="triangle-alert" size="sm" />}
+                        {option.tag}
+                      </span>
+                    )}
+                    {option.value === effort && (
+                      <Icon name="check" size="sm" className="as-model-check" />
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
