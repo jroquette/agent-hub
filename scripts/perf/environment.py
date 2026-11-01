@@ -6,7 +6,8 @@ XDG folders sit under the temp root, and ``PATH`` is the root's ``bin/`` only. T
 (``make_tool_bin``) holds links to ``git``, ``python3`` and ``sh`` (``npm exec`` runs its command
 through ``sh``) and a ``uvx`` stand-in that runs the worktree's ``hub``, so ``./hub`` and
 ``session_start`` do real work offline. ``create_hub`` makes a ``hub init`` hub under the root
-with the fixture's feature folder, a brain of six folders of a hundred synthetic notes
+with the fixture's feature folder and 29 more (``perf-feature-NN``, each naming its own issue),
+a brain of six folders of a hundred synthetic notes
 (``brain/tree-<n>/``), a synthetic transcript, a release commit in its ``hub.lock`` (ADR 0054, so
 ``./hub`` takes the one-call commit path that a synced hub takes; the stand-in ignores
 ``--from``), and one commit by a made-up author.
@@ -58,6 +59,8 @@ HUB_FLAGS = (
 RELEASE_COMMIT = "0123456789abcdef0123456789abcdef01234567"
 # Git reads no config of the developer's: no global file, no system file.
 GIT_ISOLATION = {"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"}
+# The ``perf-feature-NN`` folders written beside the fixture's: thirty features with issues.
+OTHER_FEATURES = 29
 
 
 class Runner(Protocol):
@@ -169,6 +172,41 @@ def _feature_files(hub: Path) -> None:
     (folder / "features.json").write_text(json.dumps(record, indent=2) + "\n", "utf-8")
 
 
+def _features(hub: Path) -> None:
+    """``OTHER_FEATURES`` folders beside the fixture's, each a well-formed record naming its own
+    issue (``AGH-8`` on, so the feature page's ``AGH-7`` sessions stay its own) in its spec,
+    ``linear``, one planned ticket and two ACs, so the features list reads thirty features with
+    issues."""
+    for number in range(1, OTHER_FEATURES + 1):
+        slug = f"perf-feature-{number:02d}"
+        issue = f"AGH-{FEATURE_ISSUE + number}"
+        folder = hub / "brain" / "features" / slug
+        folder.mkdir(parents=True, exist_ok=True)
+        spec = (
+            f"---\ntype: spec\nprocess_size: bounded\nrepos: [{REPO}]\nlinear: [{issue}]\n---\n"
+            f"# Perf feature {number:02d}\n\nA synthetic perf feature.\n\n"
+            "- AC-1: the first synthetic criterion.\n- AC-2: the second synthetic criterion.\n"
+        )
+        (folder / "spec.md").write_text(spec, "utf-8")
+        record = {
+            "feature": slug,
+            "linear": [issue],
+            "tickets": [{"key": "T1", "id": issue, "title": f"Perf feature {number:02d}"}],
+            "acs": [
+                {
+                    "id": f"AC-{ac}",
+                    "description": f"The {ordinal} synthetic criterion.",
+                    "repo": REPO,
+                    "verification": "make test",
+                    "passes": False,
+                    "ticket": "T1",
+                }
+                for ac, ordinal in ((1, "first"), (2, "second"))
+            ],
+        }
+        (folder / "features.json").write_text(json.dumps(record, indent=2) + "\n", "utf-8")
+
+
 def _brain_tree(hub: Path) -> None:
     for folder in range(1, BRAIN_FOLDERS + 1):
         directory = hub / "brain" / f"tree-{folder}"
@@ -226,12 +264,13 @@ def create_hub(root: Path, *, runner: Runner, env: Mapping[str, str]) -> Path:
     """Make the temp hub under ``root`` and return its folder.
 
     ``hub init`` runs through the ``uvx`` stand-in on ``env``'s ``PATH``; then the lock gets its
-    release commit, the feature folder, the brain notes and the transcript are written, and
-    ``git init``, ``git add -A`` and one commit follow."""
+    release commit, the feature folder and the 29 others, the brain notes and the transcript are
+    written, and ``git init``, ``git add -A`` and one commit follow."""
     hub = root / HUB_DIR
     runner(["uvx", "hub", "init", PROJECT, *HUB_FLAGS, "--dir", str(hub)], cwd=root, env=env)
     _release_commit(hub)
     _feature_files(hub)
+    _features(hub)
     _brain_tree(hub)
     _transcript(env)
     git_env = {**env, **GIT_ISOLATION}

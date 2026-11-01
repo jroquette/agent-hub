@@ -317,8 +317,9 @@ dev dependency of the workspace.
 
 `make perf` (`$R python -m scripts.perf.run_suite`, code in `scripts/perf/`) measures how long the interactive paths
 take on a synthetic 400,000-event database spread over 90 days. It builds or reuses the fixture, copies it into a fresh
-temp root, renders a synthetic hub there (`hub init`, a brain of six folders of a hundred synthetic notes under
-`brain/tree-<n>/`, `git init` and one commit), then measures, one at a time:
+temp root, renders a synthetic hub there (`hub init`; thirty feature folders, `search-index` and 29 `perf-feature-NN`,
+each naming an issue; a brain of six folders of a hundred synthetic notes under `brain/tree-<n>/`; `git init` and one
+commit), then measures, one at a time:
 
 - `cli`: `hub --version`, `./hub --version (local uvx stand-in)`, `hub brief --no-network`, and the list commands
   `hub repo list`, `hub env list`, `hub action list`, `hub scenario list`, `hub workflow list`, run in the temp hub;
@@ -326,7 +327,10 @@ temp root, renders a synthetic hub there (`hub init`, a brain of six folders of 
   `session_start (local uvx stand-in)`, ...). The `session_start` row keeps its pinned name but measures the cached
   path (ADR 0055): building the probe runs `hub brief --write-cache` once in the temp hub, so every run reads a cache
   under the 5 min refresh floor, starts no refresh and runs no `uvx` in the foreground;
-- `route`: seven `hub web` routes (`/api/v1/sessions`, `/api/v1/features`, `/api/v1/search?q=make`, ...);
+- `route`: nine `hub web` route rows (`/api/v1/sessions`, `/api/v1/features`, `/api/v1/search?q=make`, ...). The
+  last two read the Brain list: `/api/v1/projects/perf/brain` one request at a time, and
+  `/api/v1/projects/perf/brain (6 parallel)` six at once (ADR 0053: no slower than six in sequence), from six threads
+  made once and released together, each sample from the release to the last answer;
 - `page`: six pages in Playwright's Chromium (`apps/web/e2e/perf.spec.ts`): `/`, `/features`,
   `/features/perf/search-index`, `/sessions/perf-00000`, `/sessions`, and the Brain note
   `/projects/perf/brain/tree-3/note-050.md` (a note in a 100-note folder, so an open folder is measured). A page is

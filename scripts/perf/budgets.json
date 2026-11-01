@@ -24,6 +24,8 @@
     {"kind": "route", "path": "/api/v1/projects/perf/skills", "p95_ms": 150, "source": "AGH-601 proposed"},
     {"kind": "route", "path": "/api/v1/search?q=make", "p95_ms": 150, "source": "AGH-601 proposed"},
     {"kind": "route", "path": "/api/v1/live-sessions", "p95_ms": 150, "source": "AGH-601 proposed"},
+    {"kind": "route", "path": "/api/v1/projects/perf/brain", "p95_ms": 150, "source": "ADR 0053"},
+    {"kind": "route", "path": "/api/v1/projects/perf/brain (6 parallel)", "p95_ms": 150, "source": "ADR 0053"},
     {"kind": "page", "path": "/", "p95_ms": 800, "api_calls": 5, "source": "AGH-601 proposed"},
     {"kind": "page", "path": "/features", "p95_ms": 800, "api_calls": 5, "source": "AGH-601 proposed"},
     {"kind": "page", "path": "/features/perf/search-index", "p95_ms": 800, "api_calls": 5, "source": "AGH-601 proposed"},
