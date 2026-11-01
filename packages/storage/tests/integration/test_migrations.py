@@ -20,7 +20,7 @@ PHASE_ZERO_INSERT = (
     "VALUES ('demo', 'session-1', 'tool.call', 'claude_code', ?, "
     "'2026-09-27 08:00:00.000000', '{}')"
 )
-HEAD = "0011"
+HEAD = "0012"
 AGENT_SESSION_TABLES = {"agent_sessions", "agent_session_records"}
 ITEM_VERSION_TABLES = {"item_versions"}
 KNOWLEDGE_TABLES = {

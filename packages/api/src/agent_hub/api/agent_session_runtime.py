@@ -127,6 +127,10 @@ class UnavailableSessionDriver:
         """No session exists to change."""
         raise self._refuse()
 
+    async def set_ultracode(self, handle: DriverHandle, *, on: bool) -> None:  # noqa: ARG002 -- same
+        """No session exists to change."""
+        raise self._refuse()
+
     async def close(self, handle: DriverHandle) -> None:  # noqa: ARG002 -- same
         """Nothing to close."""
 

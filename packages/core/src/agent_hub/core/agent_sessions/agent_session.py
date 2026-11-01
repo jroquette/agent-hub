@@ -146,6 +146,7 @@ class AgentSession(ViewModel):
     mode: PermissionMode
     model: str | None = None
     effort: EffortLevel | None = None
+    ultracode: bool = False
     title: str | None = Field(default=None, max_length=MAX_TITLE_CHARS)
     created_at: ApiTimestamp
     updated_at: ApiTimestamp
@@ -294,6 +295,7 @@ class CreateAgentSession(ViewModel):
     mode: PermissionMode = "default"
     model: ModelName | None = None
     effort: EffortLevel | None = None
+    ultracode: bool | None = None
     prompt: str | None = Field(default=None, min_length=1)
     resume_session_id: str | None = Field(default=None, pattern=UUID_PATTERN)
     fork: bool = False
@@ -370,16 +372,18 @@ class PermissionDecision(ViewModel):
 
 
 class SessionSettings(ViewModel):
-    """``POST /{id}/settings``: a new mode, model or effort (at least one)."""
+    """``POST /{id}/settings``: a new mode, model, effort or Ultracode (at least one)."""
 
     mode: PermissionMode | None = None
     model: ModelName | None = None
     effort: EffortLevel | None = None
+    ultracode: bool | None = None
 
     @model_validator(mode="after")
     def _needs_one(self) -> SessionSettings:
-        if self.mode is None and self.model is None and self.effort is None:
-            msg = "give mode, model or effort"
+        given = (self.mode, self.model, self.effort, self.ultracode)
+        if all(value is None for value in given):
+            msg = "give mode, model, effort or ultracode"
             raise ValueError(msg)
         return self
 

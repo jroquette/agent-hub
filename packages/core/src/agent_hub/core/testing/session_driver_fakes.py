@@ -195,6 +195,10 @@ class InMemorySessionDriver:
         """Record the new effort."""
         self._open(handle, "set_effort", effort)
 
+    async def set_ultracode(self, handle: DriverHandle, *, on: bool) -> None:
+        """Record the new Ultracode state."""
+        self._open(handle, "set_ultracode", on)
+
     async def close(self, handle: DriverHandle) -> None:
         """End the process (exit code 0); a second close does nothing."""
         self.calls.append(DriverCall("close", handle))

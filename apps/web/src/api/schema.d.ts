@@ -348,7 +348,7 @@ export interface paths {
     put?: never;
     /**
      * Change Agent Session Settings
-     * @description Change the permission mode, the model or the effort.
+     * @description Change the permission mode, the model, the effort or Ultracode.
      */
     post: operations["change_agent_session_settings_api_v1_agent_sessions__agent_session_id__settings_post"];
     delete?: never;
@@ -2701,6 +2701,11 @@ export interface components {
       status: components["schemas"]["AgentSessionStatus"];
       /** Title */
       title?: string | null;
+      /**
+       * Ultracode
+       * @default false
+       */
+      ultracode: boolean;
       updated_at: components["schemas"]["ApiTimestamp"];
       /** Url */
       url?: string | null;
@@ -3280,6 +3285,8 @@ export interface components {
       screenshot?: components["schemas"]["Screenshot"] | null;
       /** Screenshots */
       screenshots?: components["schemas"]["Screenshot"][] | null;
+      /** Ultracode */
+      ultracode?: boolean | null;
       /** Workdir Id */
       workdir_id: string;
     };
@@ -3465,6 +3472,7 @@ export interface components {
        * @default [
        *       "default",
        *       "opus",
+       *       "fable",
        *       "sonnet",
        *       "haiku"
        *     ]
@@ -7192,12 +7200,14 @@ export interface components {
     };
     /**
      * SessionSettings
-     * @description ``POST /{id}/settings``: a new mode, model or effort (at least one).
+     * @description ``POST /{id}/settings``: a new mode, model, effort or Ultracode (at least one).
      */
     SessionSettings: {
       effort?: components["schemas"]["EffortLevel"] | null;
       mode?: components["schemas"]["PermissionMode"] | null;
       model?: components["schemas"]["ModelName"] | null;
+      /** Ultracode */
+      ultracode?: boolean | null;
     };
     /**
      * SessionStatus

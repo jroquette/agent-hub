@@ -456,6 +456,25 @@ async def test_passes_effort_to_driver_and_stores_it_when_settings_change(
     assert calls == [("set_effort", ("max",))]
 
 
+async def test_turns_ultracode_off_and_on_through_driver_when_settings_change(
+    make_rig: MakeRig,
+) -> None:
+    rig = make_rig()
+    created = await rig.create()
+
+    changed = await rig.control.change_settings(created.id, SessionSettings(ultracode=True))
+    assert changed.ultracode is True
+    changed = await rig.control.change_settings(created.id, SessionSettings(ultracode=False))
+
+    assert changed.ultracode is False
+    assert [record.body for record in rig.records(created.id)] == [
+        {"ultracode": True},
+        {"ultracode": False},
+    ]
+    calls = [(call.method, call.args) for call in rig.driver.calls if call.method.startswith("set")]
+    assert calls == [("set_ultracode", (True,)), ("set_ultracode", (False,))]
+
+
 async def test_closes_once_when_closed_twice(make_rig: MakeRig) -> None:
     rig = make_rig()
     created = await rig.create("Say hello.")

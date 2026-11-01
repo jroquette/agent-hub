@@ -1185,6 +1185,11 @@
             ],
             "title": "Title"
           },
+          "ultracode": {
+            "default": false,
+            "title": "Ultracode",
+            "type": "boolean"
+          },
           "updated_at": {
             "$ref": "#/components/schemas/ApiTimestamp"
           },
@@ -2699,6 +2704,17 @@
             ],
             "title": "Screenshots"
           },
+          "ultracode": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ultracode"
+          },
           "workdir_id": {
             "pattern": "^[0-9a-f]{16}$",
             "title": "Workdir Id",
@@ -3120,6 +3136,7 @@
             "default": [
               "default",
               "opus",
+              "fable",
               "sonnet",
               "haiku"
             ],
@@ -13639,7 +13656,7 @@
       },
       "SessionSettings": {
         "additionalProperties": false,
-        "description": "``POST /{id}/settings``: a new mode, model or effort (at least one).",
+        "description": "``POST /{id}/settings``: a new mode, model, effort or Ultracode (at least one).",
         "properties": {
           "effort": {
             "anyOf": [
@@ -13670,6 +13687,17 @@
                 "type": "null"
               }
             ]
+          },
+          "ultracode": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ultracode"
           }
         },
         "title": "SessionSettings",
@@ -18631,7 +18659,7 @@
     },
     "/api/v1/agent-sessions/{agent_session_id}/settings": {
       "post": {
-        "description": "Change the permission mode, the model or the effort.",
+        "description": "Change the permission mode, the model, the effort or Ultracode.",
         "operationId": "change_agent_session_settings_api_v1_agent_sessions__agent_session_id__settings_post",
         "parameters": [
           {

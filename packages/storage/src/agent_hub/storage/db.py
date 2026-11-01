@@ -23,6 +23,7 @@ from sqlalchemy import (
     Table,
     TypeDecorator,
     UniqueConstraint,
+    false,
     text,
 )
 
@@ -106,6 +107,7 @@ agent_sessions = Table(
     Column("mode", String, nullable=False),
     Column("model", String, nullable=True),
     Column("effort", String, nullable=True),
+    Column("ultracode", Boolean, nullable=False, server_default=false()),
     Column("title", String, nullable=True),
     Column("created_at", UtcDateTime, nullable=False),
     Column("updated_at", UtcDateTime, nullable=False),
