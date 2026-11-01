@@ -499,22 +499,38 @@ def first_line(stream: IO[bytes], *, wait: float) -> bytes:
     return data
 
 
+def closed_now(stream: IO[bytes]) -> bool:
+    """Whether the pipe behind ``stream`` is at its end now, without waiting: no writer holds it
+    any more and nothing is left on it."""
+    fd = stream.fileno()
+    ready, _, _ = select.select([fd], [], [], 0)
+    return bool(ready) and os.read(fd, 65_536) == b""
+
+
 # AC-22: the verdict is on stdout before the sensor sends, and one deadline bounds both envelopes
-# (a denied call sends two) when hub web accepts and never answers.
+# (a denied call sends two) when hub web accepts and never answers. The verdict is whole by then:
+# the hook closes its stdout before it connects, so even an allowed call's empty output is final.
 @pytest.mark.serial
+@pytest.mark.parametrize(
+    ("command", "decision"),
+    [("ls", None), ("git push origin main", "deny")],
+    ids=["allowed", "denied"],
+)
 def test_prints_verdict_before_send_when_server_hangs(
+    command: str,
+    decision: str | None,
     hub: Path,
-    hanging_server: Listener,
     *,
+    hanging_server: Listener,
     hook_python: str,
     run_hook_file: RunHook,
     tmp_path: Path,
 ) -> None:
-    stdin = bash("git push origin main")(hub)
+    stdin = bash(command)(hub)
     verdict = run_hook_file(
         hook_python, hub / GUARD, stdin=stdin, cwd=hub, env=home_env(tmp_path)
     ).stdout
-    assert decision_of(verdict) == "deny"
+    assert decision_of(verdict) == decision
     env = {
         "PATH": os.environ.get("PATH", os.defpath),
         "GIT_CONFIG_NOSYSTEM": "1",
@@ -538,12 +554,14 @@ def test_prints_verdict_before_send_when_server_hangs(
         process.stdin.close()
         connected = hanging_server.accepted.wait(START_WAIT)
         printed = first_line(process.stdout, wait=VERDICT_WAIT) if connected else b""
+        closed = closed_now(process.stdout) if connected else False
         returncode = process.wait(timeout=START_WAIT)
         exited_at = time.monotonic()
         rest, stderr = process.stdout.read(), process.stderr.read()
 
     assert connected, f"the hook never connected; exit {returncode}: {stderr[-300:]!r}"
     assert printed == verdict
+    assert closed, "stdout was still open while the listener held the connection"
     assert (returncode, rest) == (0, b"")
     assert exited_at - hanging_server.accepted_at[0] < SEND_DEADLINE + EXIT_MARGIN
 
@@ -594,6 +612,51 @@ def test_prints_only_verdict_when_sensor_part_raises(
 
     completed = run(hub / HOOK)
 
+    assert (completed.returncode, completed.stdout) == (0, verdict)
+
+
+# AC-22 (Q16): the sensor loads, then one of its own functions fails while the hook sends: the
+# verdict still stands alone. Appended to the real event_sensor.py, it replaces the function
+# ``name``, which logs its call to ``calls``, then fails as the one line ``failure`` does.
+REPLACED_SENSOR_FUNCTION = """
+
+def {name}(*args, **kwargs):
+    with open({calls!r}, "a", encoding="utf-8") as fh:
+        fh.write({name!r} + "\\n")
+    {failure}
+"""
+SENSOR_FUNCTION_FAILURES = {
+    "build-envelope-raises": ("build_envelope", 'raise RuntimeError("sensor broken")'),
+    "post-envelope-exits-after-writing": (
+        "post_envelope",
+        'print("printed"); os.write(1, b"written\\n"); raise SystemExit(3)',
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("name", "failure"), SENSOR_FUNCTION_FAILURES.values(), ids=SENSOR_FUNCTION_FAILURES.keys()
+)
+def test_prints_only_verdict_when_sensor_function_raises(
+    name: str,
+    failure: str,
+    hub: Path,
+    *,
+    hook_python: str,
+    run_hook_file: RunHook,
+    tmp_path: Path,
+) -> None:
+    stdin, calls = bash("git push origin main")(hub), tmp_path / "calls.txt"
+    run = partial(run_hook_file, hook_python, stdin=stdin, cwd=hub, env=home_env(tmp_path))
+    verdict = run(hub / GUARD).stdout
+    assert decision_of(verdict) == "deny"
+    sensor = (hub / SENSOR).read_text(encoding="utf-8")
+    replaced = REPLACED_SENSOR_FUNCTION.format(name=name, calls=str(calls), failure=failure)
+    (hub / SENSOR).write_text(sensor + replaced, encoding="utf-8")
+
+    completed = run(hub / HOOK)
+
+    assert calls.read_text(encoding="utf-8").splitlines() == [name]
     assert (completed.returncode, completed.stdout) == (0, verdict)
 
 
