@@ -29,11 +29,15 @@ def test_registers_hub_with_project_pin_lock_and_repos_when_path_is_a_hub(
     view = response.json()
     assert view["project"] == "demo"
     assert view["platform_pin"] == composed.settings.running_version
-    assert view["lock_state"] is not None
+    # A lock matching the pin needs the doctor's drift check: unknown until the first tick.
+    assert view["lock_state"] is None
     assert view["repos"] == ["demo-api"]
     assert view["valid"] is True
     assert view["path"] == str(hub.resolve())
     assert [item["id"] for item in composed.client.get(HUBS).json()["items"]] == [view["id"]]
+    composed.refresh()
+    [checked] = composed.client.get(HUBS).json()["items"]
+    assert checked["lock_state"] is not None
 
 
 def test_writes_registry_only_its_owner_can_read_when_hub_registered(

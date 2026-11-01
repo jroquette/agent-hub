@@ -12,7 +12,9 @@ six threads, each sample from their release to the last answer; ``restart_rows(a
 runs, spawn, get, clock, sleep, peak_rss)`` returns items with ``kind``, ``path``, ``samples_ms``
 and ``rss_mb``; ``peak_rss_mb(pid, *, proc)``. ``spawn`` is called like ``subprocess.Popen`` (text
 mode) and ``get``/``post`` like ``httpx.get``/``httpx.post``; a suite failure raises
-``SuiteError`` naming the path."""
+``SuiteError`` naming the path. ``wait_for_check(base_url, hub_dir, *, get, sleep,
+limit_seconds)`` polls ``GET /api/v1/hubs`` until the hub's ``checked_at`` is set, else raises
+``SuiteError`` naming the hub."""
 
 import io
 import re
@@ -36,6 +38,7 @@ from scripts.perf.web_probes import (
     restart_rows,
     route_probes,
     start_web,
+    wait_for_check,
 )
 
 PORT = 7431
@@ -197,6 +200,45 @@ def test_registers_the_hub_with_the_server_origin_when_started(tmp_path: Path) -
     headers = kwargs.get("headers")
     assert isinstance(headers, dict)
     assert {str(k).lower(): v for k, v in headers.items()}.get("origin") == BASE_URL
+
+
+def _hubs_page(hub: Path, checked_at: str | None) -> object:
+    item = {"id": "h1", "path": str(hub), "project": "perf", "checked_at": checked_at}
+    return {"items": [item], "next_cursor": None, "total_estimate": 1}
+
+
+def test_waits_for_first_check_when_hub_registered(tmp_path: Path) -> None:
+    """AGH-608 (review finding 7): no background doctor run overlaps the measured rows."""
+    hub = tmp_path / "perf-root" / "hub"
+    hub.mkdir(parents=True)
+    clock = FakeClock()
+
+    def checked_on_second_poll(url: str, call: int) -> httpx.Response:
+        checked_at = None if call == 1 else "2026-11-01T10:00:02.000Z"
+        return _response(url, 200, _hubs_page(hub, checked_at))
+
+    get = FakeGet(clock, checked_on_second_poll)
+
+    wait_for_check(BASE_URL, hub, get=get, sleep=clock.sleep)
+
+    assert get.urls == [f"{BASE_URL}/api/v1/hubs"] * 2
+    assert clock.slept != []
+
+
+def test_fails_the_suite_naming_the_hub_when_first_check_never_ends(tmp_path: Path) -> None:
+    hub = tmp_path / "perf-root" / "hub"
+    hub.mkdir(parents=True)
+    clock = FakeClock()
+    get = FakeGet(clock, lambda url, _call: _response(url, 200, _hubs_page(hub, None)))
+
+    def sleep(seconds: float) -> None:
+        assert len(clock.slept) < 1000, "wait_for_check never gave up"
+        clock.sleep(seconds)
+
+    with pytest.raises(SuiteError, match=re.escape(str(hub))):
+        wait_for_check(BASE_URL, hub, get=get, sleep=sleep, limit_seconds=2)
+
+    assert 2 <= sum(clock.slept) <= 2 + max(clock.slept)
 
 
 def test_lists_the_canonical_routes_and_restarts_when_probes_are_built() -> None:

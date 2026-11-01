@@ -201,6 +201,18 @@ def register_hub(base_url: str, hub_dir: Path, *, post: Get = httpx.post) -> Non
         raise SuiteError(f"POST /api/v1/hubs: answered {response.status_code}")
 
 
+def wait_for_check(
+    base_url: str,
+    hub_dir: Path,
+    *,
+    get: Get = httpx.get,
+    sleep: Sleep = time.sleep,
+    limit_seconds: float = 60,
+) -> None:
+    """RED stub for AGH-608 (plan DOC-2 commit 16c), with no logic yet."""
+    raise NotImplementedError
+
+
 def route_probes() -> list[RouteProbe]:
     """The route rows, in table order."""
     return [_route_probe(path) for path in ROUTE_PATHS]

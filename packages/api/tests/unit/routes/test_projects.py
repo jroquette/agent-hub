@@ -3,6 +3,7 @@ from typing import Any
 
 import pytest
 
+from agent_hub.api.routes import projects as project_routes
 from agent_hub.core.brain.brain_note import BrainNoteNotFoundError, BrainNoteTooLargeError
 from agent_hub.core.brain.brain_path import BrainPathError
 from agent_hub.core.hub_config.config_view import HubConfigView, hub_config_view
@@ -16,6 +17,10 @@ from agent_hub.core.testing.read_model_builders import (
     a_brain_tree,
     a_project_summary,
 )
+
+# The hub of ``_config()``, and this server's Origin, which the config writes require.
+HUB_PATH = "/home/demo/demo-hub"
+OWN = {"Origin": "http://127.0.0.1:7420"}
 
 
 def _detail() -> ProjectDetail:
@@ -159,6 +164,62 @@ def test_answers_config_view_when_project_config_requested(wired: Any) -> None:
     assert body["model_tiers"] == {"small": "haiku", "medium": "sonnet", "large": "opus"}
     assert body["author_email"]["source"] == "team"
     assert wired.hubs.calls == [("hub_config", "demo")]
+
+
+# AGH-608 AC-26 (review round 2, N5): a config write marks its hub due at the next tick once
+# the write is done, before the answer reads the hub's config again; an unknown project marks
+# nothing.
+@pytest.mark.parametrize(
+    ("writer", "method", "path", "body"),
+    [
+        pytest.param(
+            "write_local_settings", "PUT", "config/local", {"branch_prefix": "jdoe/"}, id="local"
+        ),
+        pytest.param(
+            "write_environment_edit",
+            "POST",
+            "config/environments",
+            {"op": "add_environment", "scope": "team", "name": "qa", "access": "read"},
+            id="environments",
+        ),
+        pytest.param(
+            "write_repo_edit",
+            "POST",
+            "config/repos",
+            {"op": "add_repo", "dir": "demo-web", "github": "acme/demo-web", "check": "make check"},
+            id="repos",
+        ),
+    ],
+)
+def test_marks_written_hub_due_when_write_route_answers(
+    wired: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    writer: str,
+    method: str,
+    path: str,
+    body: dict[str, Any],
+) -> None:
+    wired.hubs.configs["demo"] = _config()
+
+    def write(hub_path: str, edit: object) -> None:
+        wired.hubs.calls.append((writer, hub_path))
+
+    monkeypatch.setattr(project_routes, writer, write)
+    unknown = wired.client.request(method, f"/api/v1/projects/nope/{path}", json=body, headers=OWN)
+    assert unknown.status_code == 404, unknown.text
+    assert "reread_hubs" not in {name for name, _ in wired.hubs.calls}
+
+    response = wired.client.request(method, f"/api/v1/projects/demo/{path}", json=body, headers=OWN)
+
+    assert response.status_code == 200, response.text
+    calls = wired.hubs.calls
+    assert (writer, HUB_PATH) in calls
+    assert calls[calls.index((writer, HUB_PATH)) :] == [
+        (writer, HUB_PATH),
+        ("reread_hubs", HUB_PATH),
+        ("hub_config", "demo"),
+    ]
 
 
 # AC-PG-38.1: an unknown project answers 404.
