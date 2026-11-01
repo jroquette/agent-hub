@@ -26,6 +26,13 @@ from agent_hub.core.workflows.nodes import (
 
 NODE: TypeAdapter[Any] = TypeAdapter(Node)
 DONE_SCHEMA = {"type": "object", "properties": {"done": {"type": "boolean"}}, "required": ["done"]}
+FOR_EACH_AGENT: dict[str, object] = {
+    "id": "s",
+    "type": "agent",
+    "prompt": "x",
+    "for_each": "$a.output.items",
+    "mutates_checkout": False,
+}
 
 
 def errors_of(raw: dict[str, object]) -> list[tuple[tuple[str | int, ...], str]]:
@@ -287,6 +294,82 @@ def test_refuses_the_wait_when_its_condition_is_missing_or_malformed(
     keys: dict[str, object],
 ) -> None:
     assert errors_of({"id": "nap", "type": "wait"} | keys)
+
+
+@pytest.mark.parametrize("keys", [{}, {"mutates_checkout": True}])
+def test_refuses_for_each_when_node_may_write_checkout(keys: dict[str, object]) -> None:
+    raw = {"id": "s", "type": "agent", "prompt": "x", "for_each": "$a.output.items"} | keys
+
+    [(loc, message)] = errors_of(raw)
+    assert loc == ("agent",)
+    assert "'for_each' needs 'mutates_checkout: false'" in message
+
+
+def test_refuses_for_each_when_node_always_runs() -> None:
+    [(loc, message)] = errors_of(FOR_EACH_AGENT | {"always_run": True})
+
+    assert loc == ("agent",)
+    assert "'for_each' does not take 'always_run: true'" in message
+
+
+def test_refuses_for_each_when_node_resumes_a_session() -> None:
+    [(loc, message)] = errors_of(FOR_EACH_AGENT | {"context": {"resume": "a"}})
+
+    assert loc == ("agent",)
+    assert "'for_each' does not take 'context: {resume}'" in message
+
+
+def test_refuses_for_each_when_with_names_item() -> None:
+    [(loc, message)] = errors_of(FOR_EACH_AGENT | {"with": {"item": 1}})
+
+    assert loc == ("agent",)
+    assert "'for_each' sets $WITH.item: no 'with' value may be named \"item\"" in message
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"id": "s", "type": "loop", "prompt": "x", "max_iterations": 2, "until": "DONE"},
+        {"id": "s", "type": "shell", "command": ["true"]},
+        {"id": "s", "type": "script", "runtime": "sh", "script": "a.sh"},
+        {"id": "s", "type": "approval", "message": "x"},
+    ],
+)
+def test_refuses_for_each_when_node_is_not_an_agent(raw: dict[str, object]) -> None:
+    [(loc, message)] = errors_of(raw | {"for_each": "$a.output.items"})
+
+    assert loc == (raw["type"], "for_each")
+    assert message == "Extra inputs are not permitted"
+
+
+@pytest.mark.parametrize(
+    ("value", "problem"),
+    [
+        ("$INPUTS.x", "must be a node output reference"),
+        ("$WITH.x", "must be a node output reference"),
+        ("a $b.output", "not one whole reference"),
+        ("x", "not one whole reference"),
+    ],
+)
+def test_refuses_for_each_when_value_is_not_an_output_ref(value: str, problem: str) -> None:
+    [(loc, message)] = errors_of(FOR_EACH_AGENT | {"for_each": value})
+
+    assert loc == ("agent", "for_each")
+    assert problem in message
+
+
+def test_loads_for_each_when_read_only_agent_reads_an_output() -> None:
+    node = NODE.validate_python(FOR_EACH_AGENT)
+
+    assert node.for_each == "$a.output.items"
+    assert node.mutates_checkout is False
+
+
+def test_keeps_with_named_item_when_for_each_is_absent() -> None:
+    node = NODE.validate_python({"id": "s", "type": "agent", "prompt": "x", "with": {"item": 1}})
+
+    assert node.for_each is None
+    assert node.with_["item"] == 1
 
 
 def _models_in(annotation: object) -> Iterator[type[BaseModel]]:

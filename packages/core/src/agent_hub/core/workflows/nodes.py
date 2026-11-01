@@ -291,6 +291,27 @@ class _AgentKeys(_Executable):
 
 class AgentNode(_AgentKeys):
     type: Literal["agent"]
+    # Here and not on ``_AgentKeys``: a ``loop`` refuses it as an unknown key.
+    for_each: OutputRef | None = None
+
+    @model_validator(mode="after")
+    def _for_each_copies_can_run_together(self) -> Self:
+        if self.for_each is None:
+            return self
+        # Iterations share one checkout, and the key's default would let each of them write to it.
+        if self.mutates_checkout:
+            msg = "'for_each' needs 'mutates_checkout: false'"
+            raise ValueError(msg)
+        if self.always_run:
+            msg = "'for_each' does not take 'always_run: true'"
+            raise ValueError(msg)
+        if isinstance(self.context, ResumeContext):
+            msg = "'for_each' does not take 'context: {resume}'"
+            raise ValueError(msg)
+        if "item" in self.with_:
+            msg = "'for_each' sets $WITH.item: no 'with' value may be named \"item\""
+            raise ValueError(msg)
+        return self
 
 
 class ShellNode(_Executable):
