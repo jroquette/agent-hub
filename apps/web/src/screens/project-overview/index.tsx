@@ -39,7 +39,7 @@ import { budgetOf, durationSeconds, finishedCosts, median } from "../runs-list/m
 import type { WorkflowRun } from "../runs-list/queries";
 import { ScenarioRunBadge } from "../scenarios/parts";
 import { scenarioOfLabel, scenarioRunHref } from "../scenarios/queries";
-import { TicketItem } from "../tickets";
+import { TicketItem } from "../tickets/TicketItem";
 import { ticketsOf } from "../tickets/model";
 import {
   daysSince,

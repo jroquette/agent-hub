@@ -515,6 +515,22 @@ the chat's own keys are in [agent-sessions.md](../../agent-sessions.md#chat-beha
 
 The keys are off while focus is in a text field, except `⌘S`. See [23-scenarios.md](23-scenarios.md).
 
+### Brain tree (AGH-617)
+
+| Keys | Action |
+|---|---|
+| `↓` / `j`, `↑` / `k` | On the tree's rows (one tab stop), next / previous row across its groups; `↑` on the first row returns to the search field, `k` stays there |
+| `Home` / `End` | First / last row |
+| `→` | Open a closed folder; on an open folder, go to its first row |
+| `←` | Close an open folder; on a note or a closed folder, go to its folder's row |
+| `Enter` / `o` | Open the focused note, or open or close the focused folder |
+| `Space` | Open or close the focused folder |
+| `↓` in the empty search field | Go to the tree's current row (with a query, to the first result) |
+
+The keys work only while a row of the tree has focus, and not while typing in a field. While a `g` sequence waits, `k`
+and `o` are its second key (`g k`, `g o`); the other keys still act on the tree. See
+[19-brain-and-skills.md](19-brain-and-skills.md).
+
 ### Learnings triage (P3)
 
 `a` accept, `r` reject (opens reason field), `s` snooze, `j`/`k` move. These are scoped to the triage list and override nothing global.

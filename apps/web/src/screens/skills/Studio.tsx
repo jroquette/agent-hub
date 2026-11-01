@@ -7,7 +7,7 @@ import "./Studio.css";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Navigate, useNavigate, useParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
 
 import {
   AppLink,
@@ -26,6 +26,7 @@ import type { components } from "../../api/schema";
 import { ApiProblem } from "../../lib/api";
 import { useNow } from "../../lib/clock";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
+import { Redirect } from "../../shell/routeLoading";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "../agent-session/Composer";
 import { DiscussChatView } from "../agent-session/DiscussChat";
 import { unifiedDiff, type PermissionMode } from "../agent-session/model";
@@ -193,9 +194,8 @@ export function EditDraftScreen() {
     saveDraft(id, { project, kind: valid }, { target, name });
     return id;
   });
-  if (draftId === null)
-    return <Navigate to={`/projects/${encodeURIComponent(project)}/skills`} replace />;
-  return <Navigate to={studioRoute(project, draftId)} replace />;
+  if (draftId === null) return <Redirect to={`/projects/${encodeURIComponent(project)}/skills`} />;
+  return <Redirect to={studioRoute(project, draftId)} />;
 }
 
 /** `/projects/:project/skills/new/:kind`: issues a draft id and opens it in the Studio. */
@@ -204,8 +204,8 @@ export function NewDraftScreen() {
   const valid = KINDS.find((k) => k === kind);
   const [draftId] = useState(() => (valid ? newDraftId(valid) : null));
   if (!valid || draftId === null)
-    return <Navigate to={`/projects/${encodeURIComponent(project)}/skills`} replace />;
-  return <Navigate to={studioRoute(project, draftId)} replace />;
+    return <Redirect to={`/projects/${encodeURIComponent(project)}/skills`} />;
+  return <Redirect to={studioRoute(project, draftId)} />;
 }
 
 /** `/projects/:project/skills/drafts/:draftId`: one draft, its conversation and its preview. */

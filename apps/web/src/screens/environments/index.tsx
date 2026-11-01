@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Navigate, useNavigate, useParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
 
 import { Banner, Button, ProblemError, Skeleton, Tooltip } from "../../components";
 import { useApi } from "../../lib/api";
@@ -7,6 +7,7 @@ import { useScope } from "../../lib/scope";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { useDiscuss, useDiscussTarget } from "../../shell/discuss";
 import type { DiscussStarter } from "../../shell/discuss";
+import { Redirect } from "../../shell/routeLoading";
 import { ADD_ENVIRONMENT_ID, EnvironmentsSection } from "../hub-config/EnvironmentsSection";
 import { addEnvironmentPath, environmentsPage } from "../hub-config/environments";
 import { SavedToast, UncommittedNotice, useSaveNotices } from "../hub-config/notices";
@@ -173,7 +174,7 @@ export function EnvironmentsScreen() {
 /** `/environments`: the project in scope's environments, else a project picker. */
 export function EnvironmentsPickerScreen() {
   const [scope] = useScope();
-  if (scope !== null) return <Navigate to={environmentsPage(scope)} replace />;
+  if (scope !== null) return <Redirect to={environmentsPage(scope)} />;
   return (
     <KnowledgeProjectIndex
       title="Environments"

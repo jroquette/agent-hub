@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import { Link, Navigate, useParams } from "react-router";
+import { Link, useParams } from "react-router";
 
 import type { components } from "../../api/schema";
 import {
@@ -26,6 +26,7 @@ import { useNow } from "../../lib/clock";
 import { fmtAgo, fmtClock, fmtInt } from "../../lib/format";
 import { usePreferences, type ThemeChoice } from "../../lib/preferences";
 import { useCollectorState } from "../../shell/GlobalStream";
+import { Redirect } from "../../shell/routeLoading";
 import { NotFoundBody } from "../not-found";
 import { RegisterHubForm } from "./RegisterHubForm";
 import {
@@ -977,7 +978,7 @@ export function SettingsScreen() {
   const { state, asOf } = useCollectorState();
   const { tz } = usePreferences();
   const alias = ALIASES[section];
-  if (alias !== undefined) return <Navigate to={`/settings/${alias}`} replace />;
+  if (alias !== undefined) return <Redirect to={`/settings/${alias}`} />;
   const body = BODIES[section];
   if (body === undefined) return <NotFoundBody />;
   return (

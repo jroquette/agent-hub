@@ -46,10 +46,6 @@ export function featureTicketHref(row: TicketRow, doc = "tickets"): string | nul
   return `${base}?${query.toString()}`;
 }
 
-export function ticketHref(project: string, issue: string): string {
-  return `/tickets/${encodeURIComponent(project)}/${encodeURIComponent(issue)}`;
-}
-
 /** One ticket: the code its sessions changed, each session, and its feature's records. */
 export function TicketDetailScreen() {
   const { project = "", issue: rawIssue = "" } = useParams();

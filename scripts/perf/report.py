@@ -28,7 +28,10 @@ class Summary(NamedTuple):
 
 @dataclass(frozen=True)
 class Row:
-    """One ``perf.json`` item; ``reason`` is set for skipped rows only."""
+    """One ``perf.json`` item; ``reason`` is set for skipped rows only.
+
+    ``dom_nodes`` is a page row's most elements in one run: written to ``perf.json`` only, with
+    no budget and no table column; ``None`` on every other row."""
 
     kind: str
     path: str
@@ -44,6 +47,7 @@ class Row:
     seed: int
     commit: str
     machine: Mapping[str, object]
+    dom_nodes: int | None = None
 
 
 def summarize(samples: Sequence[float]) -> Summary:

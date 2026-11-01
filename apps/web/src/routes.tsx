@@ -1,60 +1,41 @@
-import { Navigate, Outlet, useLocation } from "react-router";
+import type { QueryClient } from "@tanstack/react-query";
+import { Outlet, useLocation } from "react-router";
 import type { RouteObject } from "react-router";
 
-import { useApi } from "./lib/api";
-import { AgentSessionScreen } from "./screens/agent-session";
-import { BrainPickerScreen, BrainScreen } from "./screens/brain";
-import { FeatureDetailScreen } from "./screens/feature-detail";
-import { FeaturesScreen } from "./screens/features";
-import { NewFeatureScreen } from "./screens/features/NewFeature";
-import { TicketDetailScreen } from "./screens/ticket-detail";
-import { TicketsScreen } from "./screens/tickets";
-import { HealthScreen } from "./screens/health";
-import { DiscoverScreen } from "./screens/environments/DiscoverPage";
-import { EnvironmentsPickerScreen, EnvironmentsScreen } from "./screens/environments";
-import { ReviewScreen } from "./screens/environments/ReviewPage";
-import { EnvironmentScreen } from "./screens/environments/EnvironmentPage";
-import { HubConfigPickerScreen, HubConfigScreen } from "./screens/hub-config";
-import { AddEnvironmentScreen } from "./screens/hub-config/AddEnvironmentFlow";
-import { AddServiceScreen } from "./screens/hub-config/AddServiceFlow";
-import { KnowledgePhase3Screen } from "./screens/knowledge-phase3";
-import { LearningsScreen } from "./screens/learnings";
-import { NotFoundScreen } from "./screens/not-found";
-import { PortfolioScreen } from "./screens/portfolio";
-import { ProjectOverviewScreen } from "./screens/project-overview";
-import { RunDetailScreen } from "./screens/run-detail";
-import { RunsListScreen } from "./screens/runs-list";
-import {
-  NewScenarioScreen,
-  ScenarioDetailScreen,
-  ScenarioRunScreen,
-  ScenariosScreen,
-} from "./screens/scenarios";
-import { SessionDetailScreen } from "./screens/session-detail";
-import { SessionsListScreen } from "./screens/sessions-list";
+import { apiQuery, useApi } from "./lib/api";
 import { liveRedirectTarget } from "./screens/sessions-list/liveRedirect";
-import { SettingsScreen } from "./screens/settings";
-import { SkillDetailScreen, SkillsPickerScreen, SkillsScreen } from "./screens/skills";
-import { EditDraftScreen, NewDraftScreen, StudioScreen } from "./screens/skills/Studio";
-import { WelcomeScreen } from "./screens/welcome";
-import { LegacyWorkflowRedirect, WorkflowDetailScreen, WorkflowsScreen } from "./screens/workflows";
-import { NewWorkflowScreen } from "./screens/workflows/NewWorkflow";
 import { AppShell } from "./shell/AppShell";
+import { RouteError } from "./shell/RouteError";
+import { lazyRedirect, lazyScreen, Redirect, RouteSkeleton } from "./shell/routeLoading";
+
+/**
+ * Asks `client` for the hub gate's list at once. The app does it before its router starts loading
+ * the first page's code: on a first run the list is then in when the gate first draws, so the gate
+ * draws only its redirect to Welcome, never the page under it.
+ */
+export function askForHubList(client: QueryClient): void {
+  // Nothing to do on a failure: the gate reads it from the query, and its page shows.
+  client.query(apiQuery("/api/v1/hubs")).catch(() => undefined);
+}
 
 /**
  * With no registered hub every route but `/settings/*` (and `/welcome` itself) redirects to
  * `/welcome` (AC-200.54). While the hub list loads, or when it cannot be read, the page shows.
+ * Once the list comes back empty only the redirect is drawn, so the page's own empty state never
+ * stands in for Welcome, and a page skeleton shown by then stays until Welcome renders. It
+ * redirects again from each page it lands on: a later navigation cancels the one before.
  */
 export function HubGate() {
   const hubs = useApi("/api/v1/hubs");
-  if (hubs.data?.items.length === 0) return <Navigate to="/welcome" replace />;
+  const { key } = useLocation();
+  if (hubs.data?.items.length === 0) return <Redirect key={key} to="/welcome" />;
   return <Outlet />;
 }
 
 /** A `/live` bookmark opens the Sessions grid; a replace, so Back skips it (AC-234.2). */
 function LiveRedirect() {
   const { search } = useLocation();
-  return <Navigate to={liveRedirectTarget(search)} replace />;
+  return <Redirect to={liveRedirectTarget(search)} />;
 }
 
 /**
@@ -62,77 +43,254 @@ function LiveRedirect() {
  * and export `<Name>Screen`; hidden destinations (Metrics, Bench, Tracker) fall to 404.
  * A project's Brain is `projects/:project/brain/<note path>` (AGH-201 D3); its Skills are
  * `projects/:project/skills[/<kind>/<source>/<name>]` (AGH-164).
+ *
+ * Each screen's module loads on demand, in its own chunk; only the shell and the
+ * redirects defined here are in the entry, and each redirect waits for its target screen's code,
+ * as `/workflows`, a screen that only redirects, does. Under the shell, a route whose code does
+ * not load, or whose screen throws, shows `RouteError`, and a first load shows the page skeleton
+ * until its screen's code arrives.
  */
 export const appRoutes: RouteObject[] = [
   {
     element: <AppShell />,
     children: [
       {
-        element: <HubGate />,
+        errorElement: <RouteError />,
+        hydrateFallbackElement: <RouteSkeleton />,
         children: [
-          { index: true, element: <PortfolioScreen /> },
-          { path: "projects/:project", element: <ProjectOverviewScreen /> },
-          { path: "projects/:project/brain/*", element: <BrainScreen /> },
-          { path: "projects/:project/config", element: <HubConfigScreen /> },
           {
-            path: "projects/:project/environments/new",
-            element: <AddEnvironmentScreen />,
+            element: <HubGate />,
+            children: [
+              {
+                index: true,
+                ...lazyScreen(() => import("./screens/portfolio"), "PortfolioScreen"),
+              },
+              {
+                path: "projects/:project",
+                ...lazyScreen(() => import("./screens/project-overview"), "ProjectOverviewScreen"),
+              },
+              {
+                path: "projects/:project/brain/*",
+                ...lazyScreen(() => import("./screens/brain"), "BrainScreen"),
+              },
+              {
+                path: "projects/:project/config",
+                ...lazyScreen(() => import("./screens/hub-config"), "HubConfigScreen"),
+              },
+              {
+                path: "projects/:project/environments/new",
+                ...lazyScreen(
+                  () => import("./screens/hub-config/AddEnvironmentFlow"),
+                  "AddEnvironmentScreen",
+                ),
+              },
+              {
+                path: "projects/:project/environments/services/new",
+                ...lazyScreen(
+                  () => import("./screens/hub-config/AddServiceFlow"),
+                  "AddServiceScreen",
+                ),
+              },
+              {
+                path: "config",
+                ...lazyScreen(() => import("./screens/hub-config"), "HubConfigPickerScreen"),
+              },
+              {
+                path: "projects/:project/environments",
+                ...lazyScreen(() => import("./screens/environments"), "EnvironmentsScreen"),
+              },
+              {
+                path: "projects/:project/environment/:name",
+                ...lazyScreen(
+                  () => import("./screens/environments/EnvironmentPage"),
+                  "EnvironmentScreen",
+                ),
+              },
+              {
+                path: "projects/:project/environments/discover",
+                ...lazyScreen(
+                  () => import("./screens/environments/DiscoverPage"),
+                  "DiscoverScreen",
+                ),
+              },
+              {
+                path: "projects/:project/environments/discover/:discoveryId",
+                ...lazyScreen(() => import("./screens/environments/ReviewPage"), "ReviewScreen"),
+              },
+              {
+                path: "environments",
+                ...lazyScreen(() => import("./screens/environments"), "EnvironmentsPickerScreen"),
+              },
+              {
+                path: "projects/:project/skills",
+                ...lazyScreen(() => import("./screens/skills"), "SkillsScreen"),
+              },
+              {
+                path: "projects/:project/skills/new/:kind",
+                // An invalid kind redirects to the Toolkit, whose code loads with it.
+                ...lazyScreen(
+                  () => import("./screens/skills/Studio"),
+                  "NewDraftScreen",
+                  () => import("./screens/skills"),
+                ),
+              },
+              {
+                path: "projects/:project/skills/drafts/:draftId",
+                ...lazyScreen(() => import("./screens/skills/Studio"), "StudioScreen"),
+              },
+              // Workflows are a tab of the Toolkit; static segments rank before `:kind/:source/:name`.
+              {
+                path: "projects/:project/skills/workflows/new",
+                ...lazyScreen(() => import("./screens/workflows/NewWorkflow"), "NewWorkflowScreen"),
+              },
+              {
+                path: "projects/:project/skills/workflows/:name",
+                ...lazyScreen(() => import("./screens/workflows"), "WorkflowDetailScreen"),
+              },
+              {
+                path: "projects/:project/skills/:kind/:source/:name",
+                ...lazyScreen(() => import("./screens/skills"), "SkillDetailScreen"),
+              },
+              {
+                path: "projects/:project/skills/:kind/:source/:name/edit",
+                // As a new draft's: an invalid kind redirects to the Toolkit.
+                ...lazyScreen(
+                  () => import("./screens/skills/Studio"),
+                  "EditDraftScreen",
+                  () => import("./screens/skills"),
+                ),
+              },
+              {
+                path: "live",
+                ...lazyRedirect(() => import("./screens/sessions-list"), <LiveRedirect />),
+              },
+              {
+                path: "sessions",
+                ...lazyScreen(() => import("./screens/sessions-list"), "SessionsListScreen"),
+              },
+              {
+                path: "sessions/:sessionId",
+                ...lazyScreen(() => import("./screens/session-detail"), "SessionDetailScreen"),
+              },
+              {
+                path: "agent-sessions/:agentSessionId",
+                ...lazyScreen(() => import("./screens/agent-session"), "AgentSessionScreen"),
+              },
+              {
+                path: "runs",
+                ...lazyScreen(() => import("./screens/runs-list"), "RunsListScreen"),
+              },
+              {
+                path: "runs/:runId",
+                ...lazyScreen(() => import("./screens/run-detail"), "RunDetailScreen"),
+              },
+              // Scenarios carry their project (AM-17): names are unique per project only.
+              {
+                path: "scenarios",
+                ...lazyScreen(() => import("./screens/scenarios"), "ScenariosScreen"),
+              },
+              {
+                path: "scenarios/new",
+                ...lazyScreen(() => import("./screens/scenarios"), "NewScenarioScreen"),
+              },
+              {
+                path: "scenarios/:project/:name",
+                ...lazyScreen(() => import("./screens/scenarios"), "ScenarioDetailScreen"),
+              },
+              {
+                path: "scenarios/:project/:name/runs/:runId",
+                ...lazyScreen(() => import("./screens/scenarios"), "ScenarioRunScreen"),
+              },
+              {
+                path: "knowledge",
+                ...lazyRedirect(
+                  () => import("./screens/learnings"),
+                  <Redirect to="/knowledge/learnings" />,
+                ),
+              },
+              {
+                path: "knowledge/learnings",
+                ...lazyScreen(() => import("./screens/learnings"), "LearningsScreen"),
+              },
+              {
+                path: "knowledge/learnings/:learningId",
+                ...lazyScreen(() => import("./screens/learnings"), "LearningsScreen"),
+              },
+              {
+                path: "knowledge/brain",
+                ...lazyScreen(() => import("./screens/brain"), "BrainPickerScreen"),
+              },
+              // Before `knowledge/:section`, which would show the Phase 3 placeholder.
+              {
+                path: "knowledge/skills",
+                ...lazyScreen(() => import("./screens/skills"), "SkillsPickerScreen"),
+              },
+              {
+                path: "knowledge/:section",
+                ...lazyScreen(() => import("./screens/knowledge-phase3"), "KnowledgePhase3Screen"),
+              },
+              {
+                path: "features",
+                ...lazyScreen(() => import("./screens/features"), "FeaturesScreen"),
+              },
+              {
+                path: "features/new",
+                ...lazyScreen(() => import("./screens/features/NewFeature"), "NewFeatureScreen"),
+              },
+              {
+                path: "features/:project/:slug",
+                ...lazyScreen(() => import("./screens/feature-detail"), "FeatureDetailScreen"),
+              },
+              {
+                path: "tickets",
+                ...lazyScreen(() => import("./screens/tickets"), "TicketsScreen"),
+              },
+              {
+                path: "tickets/:project/:issue",
+                ...lazyScreen(() => import("./screens/ticket-detail"), "TicketDetailScreen"),
+              },
+              // Older links: Workflows moved into the Toolkit.
+              {
+                path: "workflows",
+                // It only redirects to the Toolkit, whose code loads with it.
+                ...lazyScreen(
+                  () => import("./screens/workflows"),
+                  "WorkflowsScreen",
+                  () => import("./screens/skills"),
+                ),
+              },
+              {
+                path: "workflows/new",
+                ...lazyScreen(() => import("./screens/workflows/NewWorkflow"), "NewWorkflowScreen"),
+              },
+              {
+                path: "workflows/:project/:name",
+                ...lazyScreen(() => import("./screens/workflows"), "LegacyWorkflowRedirect"),
+              },
+              {
+                path: "health",
+                ...lazyScreen(() => import("./screens/health"), "HealthScreen"),
+              },
+              {
+                path: "*",
+                ...lazyScreen(() => import("./screens/not-found"), "NotFoundScreen"),
+              },
+            ],
           },
-          { path: "projects/:project/environments/services/new", element: <AddServiceScreen /> },
-          { path: "config", element: <HubConfigPickerScreen /> },
-          { path: "projects/:project/environments", element: <EnvironmentsScreen /> },
-          { path: "projects/:project/environment/:name", element: <EnvironmentScreen /> },
-          { path: "projects/:project/environments/discover", element: <DiscoverScreen /> },
           {
-            path: "projects/:project/environments/discover/:discoveryId",
-            element: <ReviewScreen />,
+            path: "settings",
+            ...lazyRedirect(() => import("./screens/settings"), <Redirect to="/settings/hubs" />),
           },
-          { path: "environments", element: <EnvironmentsPickerScreen /> },
-          { path: "projects/:project/skills", element: <SkillsScreen /> },
-          { path: "projects/:project/skills/new/:kind", element: <NewDraftScreen /> },
-          { path: "projects/:project/skills/drafts/:draftId", element: <StudioScreen /> },
-          // Workflows are a tab of the Toolkit; static segments rank before `:kind/:source/:name`.
-          { path: "projects/:project/skills/workflows/new", element: <NewWorkflowScreen /> },
-          { path: "projects/:project/skills/workflows/:name", element: <WorkflowDetailScreen /> },
-          { path: "projects/:project/skills/:kind/:source/:name", element: <SkillDetailScreen /> },
           {
-            path: "projects/:project/skills/:kind/:source/:name/edit",
-            element: <EditDraftScreen />,
+            path: "settings/:section",
+            ...lazyScreen(() => import("./screens/settings"), "SettingsScreen"),
           },
-          { path: "live", element: <LiveRedirect /> },
-          { path: "sessions", element: <SessionsListScreen /> },
-          { path: "sessions/:sessionId", element: <SessionDetailScreen /> },
-          { path: "agent-sessions/:agentSessionId", element: <AgentSessionScreen /> },
-          { path: "runs", element: <RunsListScreen /> },
-          { path: "runs/:runId", element: <RunDetailScreen /> },
-          // Scenarios carry their project (AM-17): names are unique per project only.
-          { path: "scenarios", element: <ScenariosScreen /> },
-          { path: "scenarios/new", element: <NewScenarioScreen /> },
-          { path: "scenarios/:project/:name", element: <ScenarioDetailScreen /> },
-          { path: "scenarios/:project/:name/runs/:runId", element: <ScenarioRunScreen /> },
-          { path: "knowledge", element: <Navigate to="/knowledge/learnings" replace /> },
-          { path: "knowledge/learnings", element: <LearningsScreen /> },
-          { path: "knowledge/learnings/:learningId", element: <LearningsScreen /> },
-          { path: "knowledge/brain", element: <BrainPickerScreen /> },
-          // Before `knowledge/:section`, which would show the Phase 3 placeholder.
-          { path: "knowledge/skills", element: <SkillsPickerScreen /> },
-          { path: "knowledge/:section", element: <KnowledgePhase3Screen /> },
-          { path: "features", element: <FeaturesScreen /> },
-          { path: "features/new", element: <NewFeatureScreen /> },
-          { path: "features/:project/:slug", element: <FeatureDetailScreen /> },
-          { path: "tickets", element: <TicketsScreen /> },
-          { path: "tickets/:project/:issue", element: <TicketDetailScreen /> },
-          // Older links: Workflows moved into the Toolkit.
-          { path: "workflows", element: <WorkflowsScreen /> },
-          { path: "workflows/new", element: <NewWorkflowScreen /> },
-          { path: "workflows/:project/:name", element: <LegacyWorkflowRedirect /> },
-          { path: "health", element: <HealthScreen /> },
-          { path: "*", element: <NotFoundScreen /> },
+          {
+            path: "welcome",
+            ...lazyScreen(() => import("./screens/welcome"), "WelcomeScreen"),
+          },
         ],
       },
-      { path: "settings", element: <Navigate to="/settings/hubs" replace /> },
-      { path: "settings/:section", element: <SettingsScreen /> },
-      { path: "welcome", element: <WelcomeScreen /> },
     ],
   },
 ];

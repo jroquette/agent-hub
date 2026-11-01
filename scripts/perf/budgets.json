@@ -28,6 +28,8 @@
     {"kind": "page", "path": "/features", "p95_ms": 800, "api_calls": 5, "source": "AGH-601 proposed"},
     {"kind": "page", "path": "/features/perf/search-index", "p95_ms": 800, "api_calls": 5, "source": "AGH-601 proposed"},
     {"kind": "page", "path": "/sessions/perf-00000", "p95_ms": 800, "api_calls": 5, "source": "AGH-601 proposed"},
+    {"kind": "page", "path": "/sessions", "p95_ms": 800, "api_calls": 5, "source": "ADR 0053"},
+    {"kind": "page", "path": "/projects/perf/brain/tree-3/note-050.md", "p95_ms": 800, "api_calls": 5, "source": "ADR 0053"},
     {"kind": "restart", "path": "hub web start → GET /", "p95_ms": 1000, "rss_mb": 300, "source": "AGH-601 proposed"},
     {"kind": "restart", "path": "hub web start → /api/v1/sessions", "p95_ms": 1000, "rss_mb": 300, "source": "AGH-601 proposed"}
   ]

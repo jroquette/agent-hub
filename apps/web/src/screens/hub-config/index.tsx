@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Link, Navigate, useLocation, useParams, useSearchParams } from "react-router";
+import { Link, useLocation, useParams, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
 import { Banner, Button, Icon, ProblemError, Skeleton, Tooltip } from "../../components";
@@ -13,6 +13,7 @@ import { useDiscuss, useDiscussTarget } from "../../shell/discuss";
 import { useAgentCapabilities } from "../sessions-list/queries";
 import { sessionControlUnavailable } from "../sessions-list/control";
 import type { DiscussReference, DiscussStarter } from "../../shell/discuss";
+import { Redirect } from "../../shell/routeLoading";
 import { KnowledgeProjectIndex } from "../knowledge-index";
 import { count, environmentsPage } from "./environments";
 import { SavedToast, UncommittedNotice, useSaveNotices } from "./notices";
@@ -1291,7 +1292,7 @@ export function HubConfigScreen() {
 /** `/config`: the project in scope's configuration, else a project picker. */
 export function HubConfigPickerScreen() {
   const [scope] = useScope();
-  if (scope !== null) return <Navigate to={configHome(scope)} replace />;
+  if (scope !== null) return <Redirect to={configHome(scope)} />;
   return (
     <KnowledgeProjectIndex
       title="Hub configuration"
