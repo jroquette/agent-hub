@@ -330,7 +330,7 @@ class StubSession:
         ]
         models = [
             {"value": alias, "displayName": alias}
-            for alias in ("default", "opus", "sonnet", "haiku")
+            for alias in ("default", "opus", "fable", "sonnet", "haiku")
         ]
         return {
             "commands": commands,

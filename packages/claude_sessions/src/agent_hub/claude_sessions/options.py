@@ -21,6 +21,7 @@ reaches the network is removed as well (``disallowed_tools``) and no MCP server 
 still run; ``PermissionBridge`` denies any other request such a session still makes.
 """
 
+import json
 import os
 import shutil
 from collections.abc import Mapping
@@ -138,6 +139,8 @@ def sdk_options(
         permission_mode=spec.mode,
         model=spec.model,
         effort=spec.effort,
+        # The CLI has no flag for it: it is a setting of this session only.
+        settings=json.dumps({"ultracode": True}) if spec.ultracode else None,
         resume=spec.resume,
         fork_session=spec.fork,
         session_id=spec.session_id,

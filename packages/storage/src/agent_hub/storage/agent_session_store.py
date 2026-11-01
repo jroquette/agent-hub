@@ -278,6 +278,7 @@ def _to_row(session: AgentSession) -> dict[str, Any]:
         "mode": session.mode,
         "model": session.model,
         "effort": session.effort,
+        "ultracode": session.ultracode,
         "title": session.title,
         "created_at": session.created_at,
         "updated_at": session.updated_at,

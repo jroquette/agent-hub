@@ -42,6 +42,7 @@ class AgentSessionFields(TypedDict, total=False):
     mode: PermissionMode
     model: str | None
     effort: EffortLevel | None
+    ultracode: bool
     title: str | None
     updated_at: datetime
     ended_at: datetime | None

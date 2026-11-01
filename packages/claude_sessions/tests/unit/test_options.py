@@ -93,6 +93,15 @@ def test_passes_effort_only_when_spec_names_it() -> None:
     assert (chosen.effort, left.effort) == ("xhigh", None)
 
 
+def test_passes_ultracode_setting_only_when_spec_turns_it_on() -> None:
+    chosen = sdk_options(
+        _spec(ultracode=True), can_use_tool=_can_use_tool, cli_path=CLI, environ={}
+    )
+    left = sdk_options(_spec(), can_use_tool=_can_use_tool, cli_path=CLI, environ={})
+
+    assert (chosen.settings, left.settings) == ('{"ultracode": true}', None)
+
+
 def test_passes_child_environment_when_spec_adds_web_url() -> None:
     spec = _spec(environment_extra={WEB_URL_VARIABLE: "http://127.0.0.1:7420"})
 
