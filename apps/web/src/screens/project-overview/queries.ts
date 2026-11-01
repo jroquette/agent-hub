@@ -1,7 +1,9 @@
 import type { components } from "../../api/schema";
 import { useApi } from "../../lib/api";
+import { useCheckPoll } from "../../lib/checkPoll";
 import { SESSIONS_READ } from "../tickets/model";
 
+type DoctorFindings = components["schemas"]["DoctorFindings"];
 export type ProjectDetail = components["schemas"]["ProjectDetail"];
 export type NowItem = components["schemas"]["NowItem"];
 export type RepoView = components["schemas"]["RepoView"];
@@ -38,8 +40,10 @@ export function useProjectSessions(project: string) {
   });
 }
 
+/** The hub's findings, read again until its first background check has ended (AGH-608). */
 export function useFindings(project: string) {
-  return useApi("/api/v1/doctor/findings", { query: { project } });
+  const refetchInterval = useCheckPoll((data: DoctorFindings) => data.checked_at === null);
+  return useApi("/api/v1/doctor/findings", { query: { project } }, { refetchInterval });
 }
 
 /** The project's effective hub configuration, the same query the Hub config screen reads. */

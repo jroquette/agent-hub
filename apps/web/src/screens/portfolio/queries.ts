@@ -3,8 +3,10 @@ import { useEffect, useRef } from "react";
 
 import type { components } from "../../api/schema";
 import { useApi, type GetPath } from "../../lib/api";
+import { useCheckPoll } from "../../lib/checkPoll";
 import { useGlobalStream } from "../../shell/GlobalStream";
 
+type ProjectPage = components["schemas"]["Page_ProjectSummary_"];
 export type ProjectSummary = components["schemas"]["ProjectSummary"];
 export type NeedsYouItem = components["schemas"]["NeedsYouItem"];
 export type ActivityItem = components["schemas"]["ActivityItem"];
@@ -33,8 +35,13 @@ export function useRefreshOnCounts(paths: readonly GetPath[]): void {
   }, [key, families, client]);
 }
 
+/** The Portfolio cards, read again while a hub's first background check has not ended, since
+ * its card says the doctor has not run (AGH-608). */
 export function useProjects(project: string | null) {
-  return useApi("/api/v1/projects", { query: { project } });
+  const refetchInterval = useCheckPoll((data: ProjectPage) =>
+    data.items.some((item) => item.checked_at === null),
+  );
+  return useApi("/api/v1/projects", { query: { project } }, { refetchInterval });
 }
 
 export function useNeedsYou(project: string | null) {

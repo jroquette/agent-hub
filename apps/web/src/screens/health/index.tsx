@@ -16,6 +16,7 @@ import {
   ProblemError,
   Skeleton,
   StatusBadge,
+  Time,
   Tooltip,
   copyText,
   useCopied,
@@ -23,6 +24,7 @@ import {
   type IconName,
   type Status,
 } from "../../components";
+import { useNow } from "../../lib/clock";
 import { fmtClock } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import { useScope } from "../../lib/scope";
@@ -515,17 +517,39 @@ function PlatformLine({ hub, named }: { hub: HubView; named: boolean }) {
   );
 }
 
+/** The check's age, kept current while the screen is open; the `<time>` holds the exact time in
+ * its tooltip. */
+function CheckAge({ iso }: { iso: string }) {
+  const now = useNow(1_000);
+  return <Time iso={iso} ago={Math.max(0, (now - Date.parse(iso)) / 1000)} />;
+}
+
+/** When the last check of the scoped hubs ended (the oldest one's, from the doctor hub web runs
+ * in the background, AGH-608), or that a hub's first check has not ended yet. */
+function CheckedAt({ checkedAt }: { checkedAt: string | null | undefined }) {
+  if (checkedAt === undefined) return null;
+  if (checkedAt === null) return <>The first check is running · </>;
+  return (
+    <>
+      Checked <CheckAge iso={checkedAt} />
+      {" · "}
+    </>
+  );
+}
+
 function Summary({
   counts,
   sev,
   onSev,
   hubs,
+  checkedAt,
   loading,
 }: {
   counts: Record<Severity, number>;
   sev: Record<Severity, boolean>;
   onSev: (s: Severity) => void;
   hubs: HubView[];
+  checkedAt: string | null | undefined;
   loading: boolean;
 }) {
   const command =
@@ -579,7 +603,9 @@ function Summary({
         </div>
         <span style={{ width: 1, alignSelf: "stretch", background: "var(--border)" }} />
         <span className="ah-small">
-          <span className="ah-subtle">Checked on request, cached up to 15 min · </span>
+          <span className="ah-subtle">
+            <CheckedAt checkedAt={checkedAt} />
+          </span>
           <span className="ah-mono">./hub doctor</span> · exit {counts.error ? 1 : 0}
         </span>
         <span className="ah-grow" />
@@ -768,6 +794,7 @@ export function HealthScreen() {
           toggle("severity", s);
         }}
         hubs={scopedHubs}
+        checkedAt={findings.data?.checked_at}
         loading={findings.isPending}
       />
       {findings.isSuccess && hubs.isSuccess && <FixStrip all={all} hubs={scopedHubs} />}

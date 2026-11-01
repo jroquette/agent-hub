@@ -127,6 +127,14 @@ changes one rule of spec 22:
 - **Route loading.** Route changes keep the previous screen until the new screen's code loads and show the page
   skeleton after 300 ms; the 2 px progress bar of spec 22 is not built.
 
+AGH-608 (`hub web` runs the doctor in the background, [specs/16-health.md](specs/16-health.md)) changes one item of
+spec 16:
+
+- **Check age.** Health's summary strip says "Checked <age> ago", the end of the last background run, where spec 16
+  shows `AsOfStamp` "Last run … (2 h ago)" (`16-health.md:21,68`); no stale variant, the age says it. The age is a
+  `<time>` with the exact time in its tooltip; before a hub's first background run ends, the strip says "The first
+  check is running".
+
 ## Design system
 
 The control plane of agent-hub is an observability and governance console for teams of AI coding agents. It answers five questions: how are my projects doing (Portfolio), what are the agents doing right now (Live sessions), why did the agent do that (Session timeline), what does it know and what did it learn (Knowledge), and how should work flow and where does it get stuck (Workflows). A busy engineering lead should understand any screen in five seconds and be able to trust it.
