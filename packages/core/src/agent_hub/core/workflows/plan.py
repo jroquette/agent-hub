@@ -13,6 +13,9 @@ concurrently: a read-only node (``mutates_checkout: false``) never shares one wi
 may change the checkout, and two agents resuming one session never share one.
 
 An agent's ``for_each`` is one more reference to check, and its node also reads ``$WITH.item``.
+Such a node is never in a ``loop_group`` body and never named by ``returns`` or
+``context.resume``; a reference reads its output whole, since its ``output_format`` describes one
+iteration and not the list.
 
 A ``loop_group``'s body is planned the same way inside the group: its ids unique and new to the
 document, its ``depends_on`` inside the body, no cycle. A body node reads body nodes upstream of
@@ -322,7 +325,7 @@ class _Graph:
     def resumable(self, target: str, node: Node) -> bool:
         """Whether ``node`` may resume the session of the agent ``target``."""
         producer = self.producers.get(target)
-        is_agent = isinstance(producer, AgentNode | LoopNode)
+        is_agent = isinstance(producer, AgentNode | LoopNode) and not _has_for_each(producer)
         return is_agent and self.upstream.contains(target, node.id)
 
 
@@ -362,6 +365,10 @@ class _BodyGraph(_Graph):
         if target in self.producers:
             return super().resumable(target, node)
         return self.outer.resumable(target, self.group)
+
+
+def _has_for_each(node: Node | None) -> bool:
+    return isinstance(node, AgentNode) and node.for_each is not None
 
 
 def _with_names(node: Node) -> frozenset[str]:
@@ -411,6 +418,7 @@ def _group_problems(graph: _Graph) -> Iterator[WorkflowProblem]:
             if namespace + node.id in graph.producers
             for message in [f"the body id {echo(node.id)} is already a node id"]
         ]
+        problems += _body_for_each_problems(body)
         if not problems:
             layers, leftover = _kahn_layers(body)
             if leftover:
@@ -425,6 +433,15 @@ def _group_problems(graph: _Graph) -> Iterator[WorkflowProblem]:
         yield from _resume_problems(inside, body, (*where, "nodes"))
         yield from _reference_problems(inside, [group], where, until=True)
         yield from _unordered_gates(body, upstream, where)
+
+
+def _body_for_each_problems(body: Sequence[Node]) -> list[WorkflowProblem]:
+    message = "a for_each agent cannot be in a loop_group body"
+    return [
+        WorkflowProblem(("nodes", position, "for_each"), message)
+        for position, node in enumerate(body)
+        if _has_for_each(node)
+    ]
 
 
 def _suspendable(node: Node) -> bool:
@@ -776,6 +793,9 @@ def _strings(value: JsonValue) -> Iterator[str]:
 
 
 def _has_path(producer: Node, segments: Sequence[str]) -> bool:
+    if _has_for_each(producer):
+        # Its ``output_format`` describes one iteration; the output is the list of them.
+        return False
     if isinstance(producer, ActionNode | ExpectNode):
         # The action's ``output_format`` is in its own document, read when the scenario is.
         return True
@@ -814,7 +834,8 @@ def _resume_problems(
             target = node.context.resume
             if not graph.resumable(target, node):
                 loc = (*prefix, index, "context", "resume")
-                yield WorkflowProblem(loc, f"{echo(target)} is not an upstream agent or loop node")
+                message = f"{echo(target)} is not an upstream agent or loop node without for_each"
+                yield WorkflowProblem(loc, message)
 
 
 def _outcome_problems(document: WorkflowDocument) -> Iterator[WorkflowProblem]:
@@ -825,6 +846,11 @@ def _outcome_problems(document: WorkflowDocument) -> Iterator[WorkflowProblem]:
     returned = next((node for node in document.nodes if node.id == document.returns), None)
     if returned is None:
         yield WorkflowProblem(("returns",), f"no node has the id {echo(document.returns)}")
+        return
+    if _has_for_each(returned):
+        yield WorkflowProblem(
+            ("returns",), f"{echo(returned.id)} has for_each, so 'returns' cannot name it"
+        )
         return
     if document.outcome_field is None:
         return

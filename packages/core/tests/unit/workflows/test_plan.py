@@ -225,7 +225,10 @@ def test_refuses_resume_when_target_is_not_an_upstream_agent(
     plan = {"id": "plan", "type": "agent", "prompt": "Plan"}
 
     assert problems_of(shell("a"), plan, resumer) == [
-        ("nodes[2].context.resume", f'"{target}" is not an upstream agent or loop node')
+        (
+            "nodes[2].context.resume",
+            f'"{target}" is not an upstream agent or loop node without for_each',
+        )
     ]
 
 
@@ -621,3 +624,108 @@ def test_refuses_with_item_when_for_each_is_absent() -> None:
     node = {"id": "study", "type": "agent", "prompt": "Study $WITH.item"}
 
     assert problems_of(node) == [("nodes[0].prompt", "no 'with' value is named \"item\"")]
+
+
+def test_refuses_for_each_when_in_loop_group_body() -> None:
+    group = {
+        "id": "g",
+        "type": "loop_group",
+        "max_iterations": 2,
+        "until_bash": ["true"],
+        "depends_on": ["x"],
+        "nodes": [
+            shell("first"),
+            fan_out("one", "$x.output.files"),
+            fan_out("two", "$x.output.files"),
+        ],
+    }
+
+    assert problems_of(shell("x", output_format=REPORT_SCHEMA), group) == [
+        ("nodes[1].nodes[1].for_each", "a for_each agent cannot be in a loop_group body"),
+        ("nodes[1].nodes[2].for_each", "a for_each agent cannot be in a loop_group body"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("schema", "path"),
+    [
+        (REPORT_SCHEMA, "delivery"),
+        (REPORT_SCHEMA, "files.0.path"),
+        (REPORT_SCHEMA["properties"]["files"], "0"),
+    ],
+)
+def test_refuses_path_into_for_each_output_when_schema_has_it(
+    schema: dict[str, object], path: str
+) -> None:
+    nodes = (
+        shell("x", output_format=REPORT_SCHEMA),
+        fan_out("study", "$x.output.files", "x", output_format=schema),
+        shell("b", "study", cwd=f"$study.output.{path}"),
+    )
+
+    assert problems_of(*nodes) == [
+        ("nodes[2].cwd", f'the path "{path}" is not in the output of "study"')
+    ]
+
+
+def test_reads_whole_for_each_output_when_no_path_is_given() -> None:
+    nodes = (
+        shell("x", output_format=REPORT_SCHEMA),
+        fan_out("study", "$x.output.files", "x", output_format=REPORT_SCHEMA),
+        shell("b", "study", cwd="$study.output"),
+    )
+
+    assert plan_of(*nodes).layers == (("x",), ("study",), ("b",))
+
+
+@pytest.mark.parametrize("top", [{}, {"outcome_field": "delivery"}, {"outcome_field": "ghost"}])
+def test_refuses_returns_when_node_has_for_each(top: dict[str, str]) -> None:
+    nodes = (
+        shell("x", output_format=REPORT_SCHEMA),
+        fan_out("study", "$x.output.files", "x", output_format=REPORT_SCHEMA),
+    )
+
+    assert problems_of(*nodes, returns="study", **top) == [
+        ("returns", "\"study\" has for_each, so 'returns' cannot name it")
+    ]
+
+
+def test_refuses_resume_when_target_has_for_each() -> None:
+    fix = {
+        "id": "fix",
+        "type": "agent",
+        "prompt": "Fix",
+        "depends_on": ["study"],
+        "context": {"resume": "study"},
+    }
+    nodes = (shell("x", output_format=REPORT_SCHEMA), fan_out("study", "$x.output.files", "x"), fix)
+
+    assert problems_of(*nodes) == [
+        (
+            "nodes[2].context.resume",
+            '"study" is not an upstream agent or loop node without for_each',
+        )
+    ]
+
+
+def test_refuses_resume_when_body_node_targets_outer_for_each() -> None:
+    group = {
+        "id": "g",
+        "type": "loop_group",
+        "max_iterations": 2,
+        "until_bash": ["true"],
+        "depends_on": ["study"],
+        "nodes": [{"id": "fix", "type": "agent", "prompt": "Fix", "context": {"resume": "study"}}],
+    }
+    nodes = (
+        shell("x", output_format=REPORT_SCHEMA),
+        fan_out("study", "$x.output.files", "x"),
+        group,
+    )
+
+    assert problems_of(*nodes) == [
+        (
+            "nodes[2].nodes[0].context.resume",
+            '"study" is not an upstream agent or loop node without for_each',
+        )
+    ]
