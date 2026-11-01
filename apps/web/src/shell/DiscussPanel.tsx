@@ -18,6 +18,7 @@ import { ApiProblem, apiPost } from "../lib/api";
 import { captureScreen } from "../lib/screenCapture";
 import type { MessageFile } from "../lib/messageFile";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "../screens/agent-session/Composer";
+import { rememberedEffort } from "../screens/agent-session/effort";
 import { DiscussChat } from "../screens/agent-session/DiscussChat";
 import {
   DRAWER_MIN,
@@ -412,6 +413,7 @@ function StartDiscussion({
   } = useStartDiscussion(target.project);
   const [mode, setMode] = useState<PermissionMode>("default");
   const [model, setModel] = useState<string | null>(null);
+  const [effort, setEffort] = useState(rememberedEffort);
   // A screen's ask with no conversation yet starts one with that message.
   const { outbox, takeOutbox } = useDiscuss();
   useEffect(() => {
@@ -426,6 +428,7 @@ function StartDiscussion({
       capture: null,
       mode,
       model,
+      effort,
     }).then((id) => {
       if (id) onStarted(id);
     });
@@ -440,6 +443,7 @@ function StartDiscussion({
     references,
     mode,
     model,
+    effort,
     onStarted,
   ]);
 
@@ -470,6 +474,7 @@ function StartDiscussion({
       capture: screen?.screenshot,
       mode,
       model,
+      effort,
     });
     if (id) onStarted(id);
   };
@@ -522,11 +527,13 @@ function StartDiscussion({
             mode={mode}
             model={model}
             models={capabilities.data?.models ?? DEFAULT_MODELS}
+            effort={effort}
             onSend={start}
             onInterrupt={() => undefined}
             onSettings={(change) => {
               if (change.mode) setMode(change.mode);
               if (change.model) setModel(change.model);
+              if (change.effort) setEffort(change.effort);
               return undefined;
             }}
             maxBytes={DEFAULT_MESSAGE_MAX_BYTES}

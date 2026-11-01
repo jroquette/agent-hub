@@ -22,6 +22,8 @@ import { readStored, writeStored } from "../../lib/storage";
 import { useAutoGrow } from "../../lib/useAutoGrow";
 import { offeredModes, DEFAULT_MESSAGE_MAX_BYTES } from "../agent-session/Composer";
 import { modeLabel, type PermissionMode } from "../agent-session/model";
+import { rememberEffort, rememberedEffort } from "../agent-session/effort";
+import { ModelMenu } from "../agent-session/ModelMenu";
 import { useSlashMenu, type SlashOption } from "../agent-session/SlashMenu";
 
 type Schemas = components["schemas"];
@@ -152,6 +154,8 @@ export function NewSessionDialog({
   const [otherModel, setOtherModel] = useState(
     kept !== null && !capabilities.models.includes(kept) ? kept : "",
   );
+  // A fork keeps its session's effort; else the one last picked in this browser.
+  const [effort, setEffort] = useState(forkOf ? (forkOf.effort ?? null) : rememberedEffort);
   const [prompt, setPrompt] = useState(initialPrompt ?? "");
   const [attachError, setAttachError] = useState<string | null>(null);
   const [firstProject] = useState(project);
@@ -173,7 +177,6 @@ export function NewSessionDialog({
   const whereId = useId();
   const reasonId = useId();
   const modeField = useId();
-  const modelField = useId();
   const otherField = useId();
   const otherHint = useId();
   const promptField = useId();
@@ -228,6 +231,7 @@ export function NewSessionDialog({
       ...where,
       mode,
       model: chosenModel,
+      ...(effort ? { effort } : {}),
       prompt: text ? text : null,
       resume_session_id: forkOf?.claude_session_id ?? null,
       fork: forkOf !== undefined,
@@ -522,30 +526,24 @@ export function NewSessionDialog({
                   </span>
                   <Icon name="chevron-down" size="sm" className="as-pill-caret" />
                 </label>
-                <label htmlFor={modelField} className="as-pill" title="Model">
-                  <Icon name="cpu" size="sm" />
-                  <span className="ah-sr">Model</span>
-                  <select
-                    id={modelField}
-                    className="as-pill-select"
-                    value={model}
-                    disabled={pending}
-                    onChange={(event) => {
-                      setModel(event.target.value);
-                    }}
-                  >
-                    {capabilities.models.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
-                    ))}
-                    <option value={OTHER_MODEL}>Other model id…</option>
-                  </select>
-                  <span className="as-pill-value" aria-hidden="true">
-                    {model === OTHER_MODEL ? "Other model id…" : model}
-                  </span>
-                  <Icon name="chevron-down" size="sm" className="as-pill-caret" />
-                </label>
+                <ModelMenu
+                  model={model === OTHER_MODEL ? "default" : model}
+                  models={capabilities.models}
+                  effort={effort}
+                  disabled={pending}
+                  onModel={setModel}
+                  onEffort={(next) => {
+                    rememberEffort(next);
+                    setEffort(next);
+                  }}
+                  extra={{
+                    label: "Other model id…",
+                    checked: model === OTHER_MODEL,
+                    onPick: () => {
+                      setModel(OTHER_MODEL);
+                    },
+                  }}
+                />
               </div>
             </div>
           </div>

@@ -45,6 +45,12 @@ function values(select: HTMLElement) {
     .map((o) => o.getAttribute("value"));
 }
 
+/** Opens the model and effort menu and picks a model row. */
+async function pickModel(dialog: HTMLElement, name: string) {
+  await userEvent.click(within(dialog).getByRole("button", { name: /^Model and effort/ }));
+  await userEvent.click(within(dialog).getByRole("menuitemradio", { name }));
+}
+
 vi.mock("../../lib/devCheckout", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../lib/devCheckout")>();
   return { ...actual, servedCheckout: vi.fn(() => null) };
@@ -66,7 +72,7 @@ describe("NewSessionDialog (new-session)", () => {
     vi.mocked(servedCheckout).mockReturnValue(null);
   });
 
-  it("offers only the listed workdirs, the three modes and the capabilities' models", () => {
+  it("offers only the listed workdirs, the three modes and the capabilities' models", async () => {
     const { dialog } = open();
 
     const folder = within(dialog).getByRole("combobox", { name: "Working folder" });
@@ -82,13 +88,49 @@ describe("NewSessionDialog (new-session)", () => {
       "plan",
     ]);
     expect(dialog).not.toHaveTextContent(/bypass/i);
-    expect(values(within(dialog).getByRole("combobox", { name: "Model" }))).toEqual([
-      "default",
-      "opus",
-      "sonnet",
-      "haiku",
-      "__other__",
-    ]);
+    await userEvent.click(within(dialog).getByRole("button", { name: /^Model and effort/ }));
+    expect(
+      within(dialog)
+        .getAllByRole("menuitemradio")
+        .map((row) => row.textContent),
+    ).toEqual(["Default", "Opus", "Sonnet", "Haiku", "Other model id…"]);
+  });
+
+  it("marks the current model in the model and effort menu", async () => {
+    const { dialog } = open();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: /^Model and effort/ }));
+
+    expect(within(dialog).getByRole("menuitemradio", { name: "Default" })).toBeChecked();
+  });
+
+  it("sends the effort picked and keeps it for the next new session", async () => {
+    window.localStorage.removeItem("ah.session.effort");
+    const { dialog, props, view } = open();
+    await userEvent.click(within(dialog).getByRole("button", { name: /^Model and effort/ }));
+    await userEvent.click(within(dialog).getByRole("menuitem", { name: /Effort/ }));
+    await userEvent.click(within(dialog).getByRole("menuitemradio", { name: /^High/ }));
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    expect(props.onSubmit).toHaveBeenCalledWith(expect.objectContaining({ effort: "high" }));
+    view.unmount();
+    const next = open();
+    expect(
+      within(next.dialog).getByRole("button", { name: "Model and effort: Default, High" }),
+    ).toBeInTheDocument();
+    window.localStorage.removeItem("ah.session.effort");
+  });
+
+  it("sends no effort when none was picked", async () => {
+    window.localStorage.removeItem("ah.session.effort");
+    const { dialog, props } = open();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    expect(props.onSubmit).toHaveBeenCalledWith(
+      expect.not.objectContaining({ effort: expect.anything() as unknown }),
+    );
   });
 
   it("submits the chosen folder, mode, model and first prompt", async () => {
@@ -99,7 +141,7 @@ describe("NewSessionDialog (new-session)", () => {
       "0123456789abcdef",
     );
     await userEvent.selectOptions(within(dialog).getByRole("combobox", { name: "Mode" }), "plan");
-    await userEvent.selectOptions(within(dialog).getByRole("combobox", { name: "Model" }), "opus");
+    await pickModel(dialog, "Opus");
     await userEvent.type(
       within(dialog).getByRole("textbox", { name: "Prompt" }),
       "  Fix the flaky test  ",
@@ -133,10 +175,7 @@ describe("NewSessionDialog (new-session)", () => {
   it("checks a free model id against the pattern before submitting", async () => {
     const { dialog, props } = open();
 
-    await userEvent.selectOptions(
-      within(dialog).getByRole("combobox", { name: "Model" }),
-      "__other__",
-    );
+    await pickModel(dialog, "Other model id…");
     const id = within(dialog).getByRole("textbox", { name: "Model id" });
     await userEvent.type(id, "bad id;rm");
     const start = within(dialog).getByRole("button", { name: "Start session" });
@@ -222,13 +261,11 @@ describe("NewSessionDialog (new-session)", () => {
 
     expect(valueOf("Project")).toHaveTextContent("agent-hub");
     expect(valueOf("Mode")).toHaveTextContent("Ask before edits");
-    expect(valueOf("Model")).toHaveTextContent("default");
+    const modelPill = () => within(dialog).getByRole("button", { name: /^Model and effort/ });
+    expect(modelPill()).toHaveTextContent("Default");
     expect(valueOf("Working folder")).toBeNull();
-    await userEvent.selectOptions(
-      within(dialog).getByRole("combobox", { name: "Model" }),
-      "__other__",
-    );
-    expect(valueOf("Model")).toHaveTextContent("Other model id…");
+    await pickModel(dialog, "Other model id…");
+    expect(modelPill()).toHaveTextContent("Other model id…");
     expect(valueOf("Mode")).toHaveAttribute("aria-hidden", "true");
   });
 
@@ -461,7 +498,9 @@ describe("NewSessionDialog (new-session-dialog)", () => {
     );
     expect(within(dialog).getByRole("textbox", { name: "Prompt" })).toHaveFocus();
     expect(within(dialog).getByRole("combobox", { name: "Mode" })).toHaveValue("default");
-    expect(within(dialog).getByRole("combobox", { name: "Model" })).toHaveValue("default");
+    expect(within(dialog).getByRole("button", { name: /^Model and effort/ })).toHaveTextContent(
+      "Default",
+    );
     expect(within(dialog).getByRole("button", { name: "Attach a file" })).toBeEnabled();
     expect(within(dialog).queryByRole("combobox", { name: "Start from" })).toBeNull();
     expect(within(dialog).queryByRole("checkbox", { name: /Fork/ })).toBeNull();
@@ -586,10 +625,7 @@ describe("NewSessionDialog (new-session-dialog)", () => {
     const start = within(dialog).getByRole("button", { name: "Start session" });
     expect(start).not.toHaveAttribute("aria-describedby");
 
-    await userEvent.selectOptions(
-      within(dialog).getByRole("combobox", { name: "Model" }),
-      "__other__",
-    );
+    await pickModel(dialog, "Other model id…");
     expect(start).toHaveAccessibleDescription("The model id is not valid.");
     await userEvent.type(within(dialog).getByRole("textbox", { name: "Model id" }), "opus");
 
