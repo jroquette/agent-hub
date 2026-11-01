@@ -1,8 +1,10 @@
 import hashlib
 import json
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from typing import Any
 
 import pytest
 
@@ -12,7 +14,7 @@ from agent_hub.core.brain.brain_note import (
     BrainNoteTooLargeError,
 )
 from agent_hub.core.brain.brain_path import MAX_NOTE_BYTES, BrainPathError
-from agent_hub.core.doctor.snapshot import LockAbsent
+from agent_hub.core.doctor.snapshot import DoctorSnapshot, LockAbsent, LockState
 from agent_hub.core.events.event import EventSource
 from agent_hub.core.features.feature_status import FeatureFolder, RecordHead
 from agent_hub.core.features.feature_tickets import NOT_CONNECTED_NOTICE
@@ -26,6 +28,7 @@ from agent_hub.core.hubs.hub_registry import (
     HubInvalidError,
     UnreadHubFile,
 )
+from agent_hub.core.hubs.registered_hub import RegisteredHub
 from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions
 from agent_hub.core.projects.project_views import ProjectActivity
 from agent_hub.core.readmodels.filters import Scope
@@ -156,6 +159,7 @@ def test_names_drift_when_doctor_finds_lock_drift() -> None:
     hub = a_demo_hub()
     hub.lock = a_lock()
     models, _, _ = read_models({DEMO: hub}, DEMO)
+    models.refresh()
 
     [view] = models.list_hubs().items
 
@@ -185,6 +189,7 @@ def test_refuses_registration_when_invalid_or_conflicting() -> None:
 
 def test_cards_valid_projects_with_activity_when_listed() -> None:
     models, _, activity = read_models({DEMO: a_demo_hub()}, DEMO, OTHER)
+    models.refresh()
 
     [card] = models.list_projects().items
 
@@ -225,6 +230,7 @@ def test_lists_project_hubs_without_running_doctor_when_lock_matches_pin() -> No
 
     assert hubs == [("demo", DEMO)]
     assert reader.snapshots == {}
+    models.refresh()
     assert models.get_project("demo").lock_state == "drift"
     assert reader.snapshots == {DEMO: 1}
 
@@ -328,6 +334,7 @@ def test_lists_features_with_problem_when_one_malformed() -> None:
 
 def test_lists_findings_in_doctor_shape_when_scoped() -> None:
     models, reader, _ = read_models({DEMO: a_demo_hub()}, DEMO, OTHER)
+    models.refresh()
 
     findings = models.doctor_findings(Scope(project="demo")).items
     again = models.doctor_findings(Scope()).items
@@ -337,6 +344,109 @@ def test_lists_findings_in_doctor_shape_when_scoped() -> None:
     assert findings[0].severity in set(Severity)
     assert again == findings
     assert reader.snapshots == {DEMO: 1}
+
+
+def test_answers_null_health_when_never_refreshed() -> None:
+    hub = a_demo_hub()
+    hub.lock = a_lock()
+    models, reader, _ = read_models({DEMO: hub}, DEMO)
+
+    [card] = models.list_projects().items
+    detail = models.get_project("demo")
+    [view] = models.list_hubs().items
+    findings = models.doctor_findings(Scope())
+
+    assert card.hub_health is None
+    assert card.checked_at is None
+    # A lock matching the pin is named from the doctor's lock.drift: unknown until the check.
+    assert (detail.lock_state, detail.checked_at) == (None, None)
+    assert (view.lock_state, view.checked_at) == (None, None)
+    assert (findings.items, findings.checked_at) == ((), None)
+    assert reader.snapshots == {}
+
+
+def test_carries_checked_at_on_card_detail_hub_and_findings_when_refreshed() -> None:
+    models, _, _ = read_models({DEMO: a_demo_hub()}, DEMO)
+    models.refresh()
+
+    [card] = models.list_projects().items
+    detail = models.get_project("demo")
+    [view] = models.list_hubs().items
+    findings = models.doctor_findings(Scope(project="demo"))
+
+    # The clock reads NOW throughout, so the run that the refresh made ended at NOW.
+    assert (card.checked_at, detail.checked_at, view.checked_at, findings.checked_at) == (
+        NOW,
+        NOW,
+        NOW,
+        NOW,
+    )
+
+
+class CountingFiles(FakeHubFileReader):
+    """A reader that notes each hub file read and doctor run asked of it."""
+
+    def __init__(self, hubs: dict[str, FakeHub]) -> None:
+        super().__init__(hubs)
+        self.calls: list[str] = []
+
+    def read_hub_json(self, hub_path: str) -> bytes | UnreadHubFile:
+        self.calls.append("read_hub_json")
+        return super().read_hub_json(hub_path)
+
+    def read_lock(self, hub_path: str) -> LockState | None:
+        self.calls.append("read_lock")
+        return super().read_lock(hub_path)
+
+    def modified_times(self, hub_path: str, paths: Sequence[str]) -> tuple[int | None, ...]:
+        self.calls.append("modified_times")
+        return super().modified_times(hub_path, paths)
+
+    def doctor_snapshot(self, hub_path: str, **kwargs: Any) -> DoctorSnapshot:
+        self.calls.append("doctor_snapshot")
+        return super().doctor_snapshot(hub_path, **kwargs)
+
+
+class CountingRegistry(InMemoryHubRegistry):
+    """A registry that counts its reads."""
+
+    def __init__(self) -> None:
+        super().__init__(clock=lambda: NOW)
+        self.reads = 0
+
+    def entries(self) -> tuple[RegisteredHub, ...]:
+        self.reads += 1
+        return super().entries()
+
+
+def test_reads_no_hub_file_when_projects_listed_after_refresh() -> None:
+    hub = a_demo_hub()
+    hub.lock = a_lock()
+    registry = CountingRegistry()
+    registry.add(DEMO)
+    reader = CountingFiles({DEMO: hub})
+    models = HubFilesReadModels(
+        registry=registry,
+        reader=reader,
+        activity=FakeActivity(),
+        running_version=RUNNING,
+        settings=SETTINGS,
+        clock=lambda: NOW,
+    )
+    models.refresh()
+    assert {"read_hub_json", "read_lock", "doctor_snapshot"} <= set(reader.calls)
+    assert registry.reads > 0
+    reader.calls.clear()
+    registry.reads = 0
+
+    models.list_projects()
+    models.list_hubs()
+    models.get_project("demo")
+    models.doctor_findings(Scope(project="demo"))
+    list(models.project_hubs())
+
+    assert reader.calls == []
+    assert registry.reads == 0
 
 
 def test_raises_not_found_when_scoped_project_has_no_readable_hub() -> None:
@@ -717,7 +827,8 @@ def test_resolves_item_lookups_without_doctor_when_lock_matches_pin() -> None:
     assert marked.unit.unit_path == "plugin/demo/agents/scout.md"
     assert unknown.value.entity == "project"
     assert reader.snapshots == {}
-    # The hub card still asks the doctor.
+    # The refresh runs the doctor for each hub that names a project, the card's included.
+    models.refresh()
     models.list_hubs()
     assert reader.snapshots == {DEMO: 1, OTHER: 1}
 

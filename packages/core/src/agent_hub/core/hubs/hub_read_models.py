@@ -65,6 +65,7 @@ from agent_hub.core.hubs.doctor_cache import DoctorCache
 from agent_hub.core.hubs.finding_view import FindingView
 from agent_hub.core.hubs.hub_document import HubDocument
 from agent_hub.core.hubs.hub_registry import HubFileReader, HubRegistry, UnreadHubFile
+from agent_hub.core.hubs.hub_snapshot import RefreshReport
 from agent_hub.core.hubs.list_hubs import HubRead, ListHubs, module_ids
 from agent_hub.core.hubs.now_note import now_sections
 from agent_hub.core.hubs.register_hub import RegisterHub
@@ -159,6 +160,10 @@ class HubFilesReadModels:
             registry, reader, running_version=running_version, has_drift=self._has_drift
         )
         self._remove = RemoveHub(registry)
+
+    def refresh(self) -> RefreshReport:
+        """RED stub for AGH-608 (plan DOC-1 commit 14c): one tick of the hub snapshot."""
+        raise NotImplementedError
 
     def list_hubs(self) -> Page[HubView]:
         """Every registered hub, valid or not."""

@@ -564,3 +564,28 @@ def test_checks_hub_with_invalid_config_when_it_names_project() -> None:
     check = state_of(snapshot, HUB).check
     assert check is not None
     assert CONFIG_SCHEMA_RULE in {finding.rule for finding in check.findings}
+
+
+def test_runs_hub_at_next_tick_when_written_through_app_within_min_interval() -> None:
+    clock = Clock()
+    reader = ScriptedReader({HUB: a_hub(), OTHER: an_other_hub()}, clock)
+    reader.failing.add(OTHER)
+    snapshot = HubSnapshot(
+        a_registry(clock, HUB, OTHER), reader, running_version=RUNNING, clock=clock
+    )
+    tick(snapshot, clock, 0, 2)
+    # OTHER failed twice, so its backoff holds it until 12 s.
+    assert (reader.seconds(HUB), reader.seconds(OTHER)) == ([0], [0, 2])
+    clock.now = START + timedelta(seconds=3)
+    reader.hubs[HUB].mtimes["AGENTS.md"] = 4
+    snapshot.reread(written=HUB)
+    snapshot.reread(written=OTHER)
+
+    tick(snapshot, clock, 4)
+    marked = (reader.seconds(HUB), reader.seconds(OTHER))
+    tick(snapshot, clock, 6)
+
+    # Both run at the next tick: HUB 4 s after its last run, OTHER within its backoff.
+    assert marked == ([0, 4], [0, 2, 4])
+    # The mark clears when the run starts: 2 s later, with no write, HUB runs nothing.
+    assert reader.seconds(HUB) == [0, 4]
