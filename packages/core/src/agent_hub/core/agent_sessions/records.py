@@ -148,10 +148,11 @@ class PermissionDecisionBody(RecordBody):
 
 
 class SettingsBody(RecordBody):
-    """``settings``: the mode or model the owner (or a plan approval) set."""
+    """``settings``: the mode, model or effort the owner (or a plan approval) set."""
 
     mode: PermissionMode | None = None
     model: str | None = None
+    effort: str | None = None
 
 
 class LogTruncatedBody(RecordBody):

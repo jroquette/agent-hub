@@ -105,6 +105,7 @@ agent_sessions = Table(
     Column("status", String, nullable=False),
     Column("mode", String, nullable=False),
     Column("model", String, nullable=True),
+    Column("effort", String, nullable=True),
     Column("title", String, nullable=True),
     Column("created_at", UtcDateTime, nullable=False),
     Column("updated_at", UtcDateTime, nullable=False),

@@ -137,6 +137,7 @@ def sdk_options(
         cwd=spec.cwd,
         permission_mode=spec.mode,
         model=spec.model,
+        effort=spec.effort,
         resume=spec.resume,
         fork_session=spec.fork,
         session_id=spec.session_id,

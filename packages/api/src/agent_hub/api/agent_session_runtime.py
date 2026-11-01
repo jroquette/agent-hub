@@ -39,6 +39,7 @@ from agent_hub.core.agent_sessions.driver import (
     DriverFile,
     DriverHandle,
     DriverImage,
+    EffortLevel,
     PastSession,
     PermissionMode,
     StartSpec,
@@ -119,6 +120,10 @@ class UnavailableSessionDriver:
         raise self._refuse()
 
     async def set_model(self, handle: DriverHandle, model: str | None) -> None:  # noqa: ARG002 -- same
+        """No session exists to change."""
+        raise self._refuse()
+
+    async def set_effort(self, handle: DriverHandle, effort: EffortLevel) -> None:  # noqa: ARG002 -- same
         """No session exists to change."""
         raise self._refuse()
 

@@ -442,6 +442,20 @@ async def test_logs_settings_when_mode_and_model_changed(make_rig: MakeRig) -> N
     ]
 
 
+async def test_passes_effort_to_driver_and_stores_it_when_settings_change(
+    make_rig: MakeRig,
+) -> None:
+    rig = make_rig()
+    created = await rig.create()
+
+    changed = await rig.control.change_settings(created.id, SessionSettings(effort="max"))
+
+    assert changed.effort == "max"
+    assert [record.body for record in rig.records(created.id)] == [{"effort": "max"}]
+    calls = [(call.method, call.args) for call in rig.driver.calls if call.method.startswith("set")]
+    assert calls == [("set_effort", ("max",))]
+
+
 async def test_closes_once_when_closed_twice(make_rig: MakeRig) -> None:
     rig = make_rig()
     created = await rig.create("Say hello.")

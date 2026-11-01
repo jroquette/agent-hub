@@ -293,6 +293,7 @@ class SessionDriverContract:
             await session_driver.set_mode(handle, "plan")
             await session_driver.set_mode(handle, "acceptEdits")
             await session_driver.set_model(handle, "opus")
+            await session_driver.set_effort(handle, "high")
             await session_driver.send(handle, scenario.hello)
             turn = await pump.turn()
 

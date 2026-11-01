@@ -54,6 +54,7 @@ from agent_hub.core.agent_sessions.driver import (
     DriverFile,
     DriverHandle,
     DriverImage,
+    EffortLevel,
     Exited,
     PastSession,
     PermissionMode,
@@ -263,6 +264,18 @@ class ClaudeSdkSessionDriver:
     async def set_model(self, handle: DriverHandle, model: str | None) -> None:
         """Change the model (None: the CLI's default)."""
         await self._open(handle).client.set_model(model)
+
+    async def set_effort(self, handle: DriverHandle, effort: EffortLevel) -> None:
+        """Change the effort: the CLI applies it from its next request to the model.
+
+        The SDK only offers it at start (``options.effort``), so this sends the CLI's own control
+        request through the client's query, the way ``set_model`` does."""
+        query = self._open(handle).client._query  # noqa: SLF001
+        if query is None:
+            raise SessionTerminalError(handle, status="ended")
+        await query._send_control_request(  # noqa: SLF001
+            {"subtype": "apply_flag_settings", "settings": {"effortLevel": effort}}
+        )
 
     async def close(self, handle: DriverHandle) -> None:
         """Deny what is pending and end ``claude``; a second close waits for the first."""

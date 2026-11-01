@@ -20,7 +20,7 @@ PHASE_ZERO_INSERT = (
     "VALUES ('demo', 'session-1', 'tool.call', 'claude_code', ?, "
     "'2026-09-27 08:00:00.000000', '{}')"
 )
-HEAD = "0010"
+HEAD = "0011"
 AGENT_SESSION_TABLES = {"agent_sessions", "agent_session_records"}
 ITEM_VERSION_TABLES = {"item_versions"}
 KNOWLEDGE_TABLES = {
@@ -302,6 +302,7 @@ def test_creates_and_drops_agent_session_tables_when_upgraded_and_downgraded(
         "cloud_id",
         "url",
         "model",
+        "effort",
         "title",
         "ended_at",
         "end_reason",
