@@ -49,6 +49,7 @@ export interface StartDiscussionRequest {
   mode?: PermissionMode | undefined;
   model?: string | null | undefined;
   effort?: EffortLevel | null | undefined;
+  ultracode?: boolean | undefined;
 }
 
 export interface StartDiscussion {
@@ -92,6 +93,7 @@ export function useStartDiscussion(project: string | null): StartDiscussion {
     mode = "default",
     model = null,
     effort = null,
+    ultracode = false,
   }: StartDiscussionRequest): Promise<string | null> => {
     if (!hub) return null;
     const session = await create.mutateAsync({
@@ -101,6 +103,7 @@ export function useStartDiscussion(project: string | null): StartDiscussion {
       fork: false,
       ...(model && model !== "default" ? { model } : {}),
       ...(effort ? { effort } : {}),
+      ...(ultracode ? { ultracode } : {}),
       ...(capture ? { screenshot: capture.body } : {}),
       ...(images.length > 0 ? { screenshots: images.map(screenshotBody) } : {}),
       ...(files.length > 0 ? { files: files.map(fileBody) } : {}),

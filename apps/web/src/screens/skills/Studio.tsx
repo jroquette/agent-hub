@@ -71,7 +71,7 @@ import { forgetDraft, openEditDraft, patchDraft, saveDraft, storedDraft } from "
 type CatalogItem = components["schemas"]["CatalogItem"];
 type SkillDetail = components["schemas"]["SkillDetail"];
 
-const DEFAULT_MODELS = ["default", "opus", "sonnet", "haiku"];
+const DEFAULT_MODELS = ["default", "opus", "fable", "sonnet", "haiku"];
 
 /** S9's warning, in Publish's words: shown before a managed item is published over. */
 export const PUBLISH_MANAGED_WARNING =

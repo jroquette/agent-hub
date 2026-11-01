@@ -1151,6 +1151,7 @@ export function aSuggestions(): PermissionSuggestion[] {
 /** An idle local agent session in the hub's workdir, linked to Claude session `anId(1, "5091b986")`. */
 export function anAgentSession(overrides: Partial<AgentSession> = {}): AgentSession {
   return {
+    ultracode: false,
     changed_files: [],
     review_targets: [],
     claude_session_id: anId(1, "5091b986"),

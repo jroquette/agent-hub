@@ -176,6 +176,30 @@ describe("Composer (composer)", () => {
     window.localStorage.removeItem("ah.session.effort");
   });
 
+  it("toggles Ultracode from the effort menu, which stays open", async () => {
+    const { props } = open({ ultracode: true });
+    const pill = screen.getByRole("button", { name: /^Model and effort/ });
+    expect(pill).toHaveTextContent("Ultracode");
+    await userEvent.click(pill);
+    await userEvent.click(screen.getByRole("menuitem", { name: /Effort/ }));
+    const toggle = screen.getByRole("menuitemcheckbox", { name: "Ultracode" });
+    expect(toggle).toBeChecked();
+
+    await userEvent.click(toggle);
+
+    expect(props.onSettings).toHaveBeenCalledWith({ ultracode: false });
+    expect(screen.getByRole("menuitemcheckbox", { name: "Ultracode" })).toBeInTheDocument();
+  });
+
+  it("opens the menu on the body, so no parent can clip or move it", async () => {
+    open();
+    await userEvent.click(screen.getByRole("button", { name: /^Model and effort/ }));
+
+    const menu = screen.getByRole("menu", { name: "Model and effort" });
+    expect(menu.closest("form")).toBeNull();
+    expect(menu).toHaveClass("ah-pop", "as-model-pop");
+  });
+
   it("walks the effort levels by keyboard and closes one menu per Esc", async () => {
     open({ effort: "low" });
     await userEvent.click(screen.getByRole("button", { name: /^Model and effort/ }));
