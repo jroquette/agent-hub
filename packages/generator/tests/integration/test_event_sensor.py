@@ -422,6 +422,62 @@ def test_writes_host_as_http_client_when_host_is_ipv6_or_port_is_default(
     assert found == HOST_CASES
 
 
+# AGH-621 (AC-25): the sensor reads at most 4 KiB of hub web's answer, however long it is. The
+# child sends one envelope through a socket.create_connection whose connection answers 16 KiB and
+# records the size of each recv; it prints those sizes.
+RECV_SIZES = r"""
+import json, socket
+import event_sensor
+
+ANSWER = b"HTTP/1.1 202 Accepted\r\nContent-Length: 16384\r\n\r\n" + b"x" * 16384
+asked = []
+
+
+class Answering:
+    def __init__(self):
+        self.left = ANSWER
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def settimeout(self, timeout):
+        pass
+
+    def sendall(self, data):
+        pass
+
+    def recv(self, size, flags=0):
+        asked.append(size)
+        chunk, self.left = self.left[:size], self.left[size:]
+        return chunk
+
+
+def create_connection(address, timeout=None):
+    return Answering()
+
+
+socket.create_connection = create_connection
+event_sensor.post_envelope({"v": 1})
+print(json.dumps(asked))
+"""
+MAX_ANSWER_BYTES = 4096
+
+
+def test_reads_at_most_4_kib_when_server_answers_more(
+    hub: Path, *, hook_python: str, run_python: Callable[..., Any], tmp_path: Path
+) -> None:
+    # the child's loopback URL (child_env's) is never reached: its connection is the fake one
+    asked = run_python(
+        hook_python, RECV_SIZES, path=hub / HOOKS, cwd=hub, env={"HOME": str(tmp_path)}
+    )
+
+    assert asked, "the sensor never read the answer"
+    assert sum(asked) <= MAX_ANSWER_BYTES
+
+
 # AGH-621 (AC-25, Q16): a guard deny records its decision without loading http.client,
 # email.parser or ssl. argv: a hook file and a file holding one event. Runs the hook as __main__
 # in this process with the event on stdin, then lists which of those modules are loaded, before

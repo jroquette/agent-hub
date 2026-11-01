@@ -701,3 +701,31 @@ def test_loads_no_http_client_when_allowed_call_runs(
     assert found["code"] in (0, None)
     assert found["stdout"] == ""
     assert found["after"] == []
+
+
+# AC-25: the same run with hub web up: the sensor's POST reaches a recording loopback server,
+# which answers it, and still none of those modules is loaded.
+def test_loads_no_http_client_when_allowed_call_sent(
+    hub: Path,
+    *,
+    hook_python: str,
+    run_python: Callable[..., Any],
+    event_server: Any,
+    sensor_env: dict[str, str],
+    tmp_path: Path,
+) -> None:
+    event = tmp_path / "event.json"
+    event.write_bytes(bash("ls")(hub))
+
+    found = run_python(
+        hook_python,
+        RUN_AND_LIST_MODULES,
+        path=hub / HOOKS,
+        args=[str(hub / HOOK), str(event)],
+        cwd=hub,
+        env=sensor_env | home_env(tmp_path),
+    )
+
+    assert (found["before"], found["code"], found["stdout"]) == ([], 0, "")
+    assert len(event_server.bodies()) == 1
+    assert found["after"] == []
