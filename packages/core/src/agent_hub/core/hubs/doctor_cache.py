@@ -33,6 +33,11 @@ from agent_hub.core.workflows.catalog import HUB_WORKFLOWS_FOLDER
 
 DOCTOR_TTL: Final = timedelta(minutes=15)
 HUB_JSON: Final = "hub.json"
+# What every run watches, whatever it reads: the files it starts from, and the folders whose
+# times change when a workflow or a scenario pack is added.
+ALWAYS_WATCHED: Final = tuple(
+    sorted((HUB_JSON, HUB_LOCK_PATH, LOCAL_FILE, HUB_WORKFLOWS_FOLDER, HUB_SCENARIOS_FOLDER))
+)
 # A failed config reads no file: only the config rules run, and they read hub.json alone.
 _NO_FILES: Final = HubFiles(entries={}, listed=(), problem=None, paths_read=True)
 
@@ -74,14 +79,12 @@ def run_doctor(reader: HubFileReader, hub_path: str, *, running_version: str) ->
         )
     looked_at = {*snapshot.hub.entries, *snapshot.hub.listed}
     folders = {
-        HUB_WORKFLOWS_FOLDER,
         *snapshot.workflow_folders,
-        HUB_SCENARIOS_FOLDER,
         *snapshot.scenario_folders,
         *snapshot.item_folders,
         *_workflow_folders(looked_at),
     }
-    watched = tuple(sorted({HUB_JSON, HUB_LOCK_PATH, LOCAL_FILE, *looked_at, *folders}))
+    watched = tuple(sorted({*ALWAYS_WATCHED, *looked_at, *folders}))
     return DoctorRun(findings=run_rules(selection, snapshot), watched=watched)
 
 
