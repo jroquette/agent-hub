@@ -45,6 +45,7 @@
         "cwd": null,
         "depends_on": [],
         "description": null,
+        "for_each": null,
         "id": "plan",
         "limits": {
           "max_cost_usd": 3.0,
@@ -355,6 +356,18 @@
           ],
           "default": null,
           "title": "Description"
+        },
+        "for_each": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "For Each"
         },
         "id": {
           "pattern": "^[a-z][a-z0-9_-]*$",
@@ -1143,6 +1156,18 @@
               ],
               "default": null,
               "title": "Description"
+            },
+            "for_each": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "For Each"
             },
             "id": {
               "pattern": "^[a-z][a-z0-9_-]*$",
@@ -3047,6 +3072,18 @@
               ],
               "default": null,
               "title": "Description"
+            },
+            "for_each": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "For Each"
             },
             "id": {
               "pattern": "^[a-z][a-z0-9_-]*$",
