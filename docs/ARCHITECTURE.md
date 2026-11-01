@@ -75,11 +75,14 @@ fetches the Studio's). So code that other screens use (a row, a link, a constant
 screen, for example `screens/skills/routes.ts`, `screens/tickets/TicketItem.tsx` or
 `screens/workflows/WorkflowList.tsx`. While a screen's code loads, `main#main` keeps the previous screen and shows the
 page skeleton after 300 ms, then for at least 300 ms, on a first load too; the redirects `routes.tsx` defines
-(`lazyRedirect`) wait for their target screen's code the same way, and so does `/workflows`, a screen that only
-redirects to the Toolkit (`lazyScreen`'s third argument loads the Toolkit's code with it). A page that only redirects
-draws `Redirect` (`src/shell/routeLoading.tsx`), which keeps a page skeleton shown at that moment until the router
-lands on the target; a page that shows something before it redirects (the first-run gate, Run detail for a scenario
-run) keeps that drawn next to its `<Navigate>` until then, since the target's code may still be loading. A chunk that
+(`lazyRedirect`) wait for their target screen's code the same way, and so do `/workflows`, a screen that only
+redirects to the Toolkit, and the Studio's two routes, which fall back to the Toolkit on an unknown kind
+(`lazyScreen`'s third argument loads the Toolkit's code with theirs). A page that only redirects draws `Redirect`
+(`src/shell/routeLoading.tsx`), which keeps a page skeleton shown at that moment until the router lands on the target;
+Run detail for a scenario run keeps its skeleton drawn next to its `<Navigate>` until then, since the target's code
+may still be loading. The first-run gate (`HubGate`) reads the hub list, which `App.tsx` asks for before it creates
+the router (`askForHubList`): while the list loads, or when it cannot be read, the page shows; once it comes back
+empty, the gate draws only `Redirect` to `/welcome`, so the page's own empty state never stands in for Welcome. A chunk that
 fails to load, or a screen that throws while it renders, shows `RouteError` (`src/shell/RouteError.tsx`) inside the
 shell, after a page skeleton shown on a first load has had its 300 ms
 ([spec 22](design/control-plane/specs/22-first-run-and-errors.md)).
