@@ -5,10 +5,12 @@ answer, hub registration with the server's ``Origin``, the canonical route and r
 Every process, request and clock is injected, so no test starts ``hub web`` or opens a socket.
 Seam: ``start_web(argv, env, *, spawn, get, clock, sleep)`` returns an object with
 ``base_url`` and ``token``; ``register_hub(base_url, hub_dir, *, post)``; ``route_probes()``
-(items with ``kind`` and ``path``) and the ``ROUTE_PATHS`` and ``RESTART_PATHS`` constants;
-``measure_route(base_url, probe, *, runs, get, clock)``; ``restart_rows(argv, env, *, runs, spawn,
-get, clock, sleep, peak_rss)`` returns items with ``kind``, ``path``, ``samples_ms`` and
-``rss_mb``; ``peak_rss_mb(pid, *, proc)``. ``spawn`` is called like ``subprocess.Popen`` (text
+(items with ``kind``, ``path``, ``url_path``, the path requested, and ``width``, 1 or 6) and the
+``ROUTE_PATHS`` and ``RESTART_PATHS`` constants; ``measure_route(base_url, probe, *, runs, get,
+clock)``, which for a width of 6 sends a warm-up round, then per sample six requests at once from
+six threads, each sample from their release to the last answer; ``restart_rows(argv, env, *,
+runs, spawn, get, clock, sleep, peak_rss)`` returns items with ``kind``, ``path``, ``samples_ms``
+and ``rss_mb``; ``peak_rss_mb(pid, *, proc)``. ``spawn`` is called like ``subprocess.Popen`` (text
 mode) and ``get``/``post`` like ``httpx.get``/``httpx.post``; a suite failure raises
 ``SuiteError`` naming the path."""
 
@@ -40,6 +42,9 @@ PORT = 7431
 BASE_URL = f"http://127.0.0.1:{PORT}"
 URL_NONCE = "synthetic-token"
 URL_LINE = f"agent-hub at {BASE_URL}/?token={URL_NONCE}\n"
+BRAIN_ROUTE = "/api/v1/projects/perf/brain"
+# The same route as six requests sent at once (ADR 0053: no slower than six in sequence).
+PARALLEL_ROUTE = f"{BRAIN_ROUTE} (6 parallel)"
 # The route and restart rows, written out by hand.
 ROUTES = (
     "/api/v1/sessions",
@@ -49,6 +54,8 @@ ROUTES = (
     "/api/v1/projects/perf/skills",
     "/api/v1/search?q=make",
     "/api/v1/live-sessions",
+    BRAIN_ROUTE,
+    PARALLEL_ROUTE,
 )
 RESTARTS = ("hub web start → GET /", "hub web start → /api/v1/sessions")
 # One page of GET /api/v1/sessions (docs/API.md, "Pagination").
@@ -198,6 +205,13 @@ def test_lists_the_canonical_routes_and_restarts_when_probes_are_built() -> None
     assert sorted(probe.path for probe in probes) == sorted(ROUTES)
     assert {probe.kind for probe in probes} == {"route"}
     assert sorted(ROUTE_PATHS) == sorted(ROUTES)
+    assert tuple(ROUTE_PATHS[-2:]) == (BRAIN_ROUTE, PARALLEL_ROUTE)
+    # Each row requests its own path, one request at a time, except the parallel row: its
+    # path without the suffix, six at once.
+    assert {(probe.path, probe.url_path, probe.width) for probe in probes} == {
+        *((path, path, 1) for path in ROUTES if path != PARALLEL_ROUTE),
+        (PARALLEL_ROUTE, BRAIN_ROUTE, 6),
+    }
     assert sorted(RESTART_PATHS) == sorted(RESTARTS)
 
 
@@ -219,6 +233,66 @@ def test_fails_the_suite_when_sessions_is_empty() -> None:
 
     with pytest.raises(SuiteError, match=re.escape("/api/v1/sessions")):
         measure_route(BASE_URL, _route("/api/v1/sessions"), runs=2, get=empty, clock=clock)
+
+
+# Each answer of the parallel fake moves the clock 5 ms, as a server that answers one request at
+# a time does: the sixth answer comes 30 ms after the six are released.
+ANSWER_SECONDS = 0.005
+PARALLEL_SAMPLE_MS = 30.0
+
+
+class ParallelGet:
+    """A ``get`` for six threads at once: numbers each call under a lock, holds it on a
+    ``threading.Barrier(6)`` until six calls are in flight (a prober that sends them one after
+    another breaks the barrier after 5 s), then moves the clock ``ANSWER_SECONDS`` and gives
+    ``answer(url, call_number)``. The prober reads the clock at the release, before any answer."""
+
+    def __init__(self, clock: FakeClock, answer: Answer) -> None:
+        self.clock = clock
+        self.answer = answer
+        self.urls: list[str] = []
+        self.lock = threading.Lock()
+        self.barrier = threading.Barrier(6, timeout=5)
+
+    def __call__(self, url: object, **_: object) -> httpx.Response:
+        with self.lock:
+            self.urls.append(str(url))
+            call = len(self.urls)
+        self.barrier.wait()
+        with self.lock:
+            self.clock.now += ANSWER_SECONDS
+        return self.answer(str(url), call)
+
+
+def test_sends_six_requests_at_once_when_parallel_row_measured() -> None:
+    clock = FakeClock()
+    get = ParallelGet(clock, _healthy)
+    probe = _route(PARALLEL_ROUTE)
+
+    samples = measure_route(BASE_URL, probe, runs=3, get=get, clock=clock)
+
+    # One warm-up round, then one round of six per sample, each to the path without the suffix.
+    assert get.urls == [f"{BASE_URL}{BRAIN_ROUTE}"] * 6 * 4
+    # Each sample runs from the release to the sixth answer.
+    assert samples == pytest.approx([PARALLEL_SAMPLE_MS] * 3)
+
+
+def test_fails_the_suite_naming_the_row_when_one_parallel_answer_is_not_ok() -> None:
+    clock = FakeClock()
+
+    def third_of_first_sample_unavailable(url: str, call: int) -> httpx.Response:
+        # Calls 1-6 are the warm-up round; 7-12 the first sample's.
+        if call == 9:
+            return _response(url, 503, {"title": "failed"})
+        return _healthy(url, call)
+
+    get = ParallelGet(clock, third_of_first_sample_unavailable)
+    probe = _route(PARALLEL_ROUTE)
+
+    with pytest.raises(SuiteError, match=re.escape(PARALLEL_ROUTE)):
+        measure_route(BASE_URL, probe, runs=3, get=get, clock=clock)
+
+    assert len(get.urls) >= 9
 
 
 def test_gives_two_rows_per_start_when_restarts_are_measured() -> None:
