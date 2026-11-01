@@ -11,6 +11,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-11-01
+
 ### Added
 
 - `make check-changed` runs the checks (format, lint, mypy, test layout, version lockstep) on the whole tree, and only
@@ -1511,7 +1513,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.29.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.30.0...HEAD
+[0.30.0]: https://github.com/jroquette/agent-hub/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/jroquette/agent-hub/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/jroquette/agent-hub/compare/v0.27.1...v0.28.0
 [0.27.1]: https://github.com/jroquette/agent-hub/compare/v0.27.0...v0.27.1
