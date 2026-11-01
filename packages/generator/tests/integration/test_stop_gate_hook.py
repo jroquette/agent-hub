@@ -1354,6 +1354,38 @@ def test_runs_each_repo_choice_when_two_repos_changed(
 
 
 @pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        pytest.param("check_stop", "check_fast", id="check_stop_first"),
+        pytest.param("check_fast", "check_stop", id="check_fast_first"),
+    ],
+)
+def test_names_second_repo_not_run_when_check_stop_and_check_fast_share_budget(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, first: str, second: str
+) -> None:
+    # Both kinds of command run on the one budget, here 3 s: app's run, first from the hub, is
+    # cut by it, and web's never starts, whichever of the two repos chose check_stop.
+    transcript = touch_both(workspace, tmp_path)
+    started = tmp_path / "web-started"
+    web_check = f"touch {shlex.quote(str(started))}; sleep 30"
+    repos = [{"dir": "app", first: "sleep 30"}, {"dir": "web", second: web_check}]
+
+    start = time.monotonic()
+    output = run_hook(repos, workspace / "demo-hub", transcript=transcript, constant=("BUDGET", 3))
+    took = time.monotonic() - start
+
+    assert took < 20
+    assert not started.exists()
+    assert "decision" not in output
+    message = output.get("systemMessage", "")
+    assert message.startswith(
+        "[hub stop-gate] check_stop/check_fast did not finish in every changed repo;"
+    )
+    assert "app (app): not run: budget" in message
+    assert "web (web): not run: budget" in message
+
+
+@pytest.mark.parametrize(
     "check_stop",
     [
         pytest.param(None, id="absent"),
