@@ -1,4 +1,9 @@
-"""``/hubs``: the hub registry (registering and removing are the only writes of Phase 2)."""
+"""``/hubs``: the hub registry (registering and removing are the only writes of Phase 2).
+
+A hub action (platform sync, doctor fix) reads its hub again once it is done, whatever its
+outcome (a failed run may have changed files), so the next read shows it and the background
+doctor checks that hub at its next tick (AGH-608).
+"""
 
 from typing import Annotated
 
@@ -51,9 +56,9 @@ def sync_hub_platform(
     if hub is None:
         raise EntityNotFoundError(entity="hub", entity_id=hub_id)
     try:
-        return sync_platform(hub.id, hub.path, running_version=hub.running_version)
+        result = sync_platform(hub.id, hub.path, running_version=hub.running_version)
     except PlatformSyncError as error:
-        return PlatformSyncResult(
+        result = PlatformSyncResult(
             hub_id=hub.id,
             previous_version=hub.platform_pin,
             version=hub.platform_pin or hub.running_version,
@@ -62,6 +67,8 @@ def sync_hub_platform(
             output=(str(error),),
             changed_files=(),
         )
+    models.reread_hubs(written=hub.path)
+    return result
 
 
 @router.post("/hubs/{hub_id}/doctor-fix")
@@ -74,4 +81,6 @@ def fix_hub_findings(
     hub = next((view for view in models.list_hubs().items if view.id == hub_id), None)
     if hub is None:
         raise EntityNotFoundError(entity="hub", entity_id=hub_id)
-    return fix_hub(hub.id, hub.path)
+    result = fix_hub(hub.id, hub.path)
+    models.reread_hubs(written=hub.path)
+    return result

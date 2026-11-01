@@ -106,6 +106,7 @@ def test_closes_every_store_connection_when_app_stops(
     projects_root: Path,
     web_dist: Path,
     hub_world: Any,
+    manual_tickers: dict[str, Any],
 ) -> None:
     """AC-8: once the lifespan has ended, every connection the pools opened is closed, also
     those the stop wrote the idle session's end through."""
@@ -121,6 +122,7 @@ def test_closes_every_store_connection_when_app_stops(
             web_dist=web_dist,
             session_driver=InMemorySessionDriver(),
             environ={},
+            **manual_tickers,
         )
         with TestClient(app, base_url=origin, raise_server_exceptions=False) as client:
             client.cookies.set(cookie_name(settings.port), TOKEN)

@@ -160,7 +160,7 @@ def open_composed(
     def opened(settings: ApiSettings = composed_settings, **options: Any) -> Composed:
         app = build_app(
             settings,
-            **({"projects_root": projects_root, "web_dist": web_dist} | options),
+            **({"projects_root": projects_root, "web_dist": web_dist} | manual_tickers | options),
         )
         client = TestClient(app, base_url=COMPOSED_URL, raise_server_exceptions=False)
         client.__enter__()

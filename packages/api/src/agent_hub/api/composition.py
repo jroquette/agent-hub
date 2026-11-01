@@ -56,6 +56,7 @@ from agent_hub.api.change_feed import ChangeFeed, SystemTimer
 from agent_hub.api.change_request_files import HubDecisionWriter
 from agent_hub.api.dependencies import ApiPorts
 from agent_hub.api.discovery_files import HubDiscoveryFiles
+from agent_hub.api.doctor_refresher import POLL_SECONDS, DaemonTicker, DoctorRefresher, Ticker
 from agent_hub.api.feature_names import FILE_NAME as FEATURE_NAMES_FILE
 from agent_hub.api.feature_names import FeatureNames
 from agent_hub.api.linear_connection import (
@@ -703,6 +704,8 @@ def build_app(
     cloud_launcher: CloudLauncher | None = None,
     item_writer: HubItemWriter | None = None,
     event_source: EventSource | None = None,
+    hub_reader: HubFileReader | None = None,
+    refresh_ticker: Ticker | None = None,
 ) -> FastAPI:
     """The app of ``hub web``: every route wired to the real adapters.
 
@@ -717,8 +720,13 @@ def build_app(
     The scheduled and event starts (ADR 0048) poll GitHub through ``event_source`` (default
     ``GhEventSource`` over ``environ``); like the run launcher, none is built when
     ``settings.sessions_off``.
-    The stores close when the app's lifespan ends, after the agent sessions' shutdown and the
-    scheduled starts.
+    The hubs' files are read through ``hub_reader`` (default ``HubFileSystem``). The doctor runs
+    only in the background part (``DoctorRefresher``, AGH-608), with the sessions on and off,
+    ticked by ``refresh_ticker`` (default a ``DaemonTicker`` every ``POLL_SECONDS``).
+    The lifespan starts the parts in order and stops them last started first: the background
+    doctor, the scheduled starts, the agent sessions' shutdown, then the stores close. The
+    doctor's stop never waits for a run in progress, so the stores can close under it: it reads
+    hub files only (registry, ``hub.json``, ``hub.lock``, the doctor's reads, git), never a store.
     ``DatabaseAccessError`` when the store cannot be opened.
     """
     store = open_event_store(settings.db_path)
@@ -726,7 +734,9 @@ def build_app(
     tail = TranscriptTail(projects_root or default_projects_root())
     ingest = IngestHook(store, ClaudeHookMapper(), tail, status=counters)
     hub_paths = _HubPaths()
-    reader = HubFileSystem() if read_git is None else HubFileSystem(read_git=read_git)
+    reader = hub_reader or (
+        HubFileSystem() if read_git is None else HubFileSystem(read_git=read_git)
+    )
     versions = open_item_version_store(settings.db_path)
     capture = CaptureItemVersions(versions, reader, settings.clock)
     registry = JsonHubRegistry(settings.registry_path)
@@ -887,17 +897,24 @@ def build_app(
     closers = [store.close, versions.close, knowledge.close]
     if agent_store is not None:
         closers.append(agent_store.close)
+    refresher = DoctorRefresher(
+        hubs,
+        ticker=DaemonTicker(POLL_SECONDS, name="hub-doctor-refresh")
+        if refresh_ticker is None
+        else refresh_ticker,
+    )
     return create_app(
         settings,
         ports=ports,
         problems=COMPOSED_PROBLEMS,
         web_dist=web_dist,
         # First, so it stops last: the stores close after the sessions' shutdown writes and the
-        # scheduler have ended.
+        # scheduler have ended. The background doctor stops first, without waiting for a run.
         lifecycle=_lifecycle(
             _CloseOnStop(*closers),
             None if sessions is None else sessions.runtime,
             scheduler,
+            refresher,
         ),
     )
 

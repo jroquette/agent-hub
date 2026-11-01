@@ -134,6 +134,8 @@ def world(composed: Any, make_hub: Callable[..., Path]) -> Any:
         composed.client.post("/api/v1/hubs", json={"path": str(hub)}, headers=ORIGIN).status_code
         == 201
     )
+    # The findings come from the hub's background check (AGH-608): one tick runs it.
+    composed.refresh()
     return composed
 
 

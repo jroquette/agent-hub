@@ -1,4 +1,9 @@
-"""``/projects``: Portfolio cards and the Project overview."""
+"""``/projects``: Portfolio cards and the Project overview.
+
+A config write reads its hub again once the write is done (``reread_hubs``), before the answer
+reads its config, so the next read shows it and the background doctor checks that hub at its
+next tick (AGH-608).
+"""
 
 from typing import Annotated
 
@@ -68,7 +73,9 @@ def put_project_local_config(
     project: ProjectPath, settings: LocalSettings, models: HubReadModelsDep
 ) -> HubConfigView:
     """Save this developer's ``hub.local.json`` values; the team's ``hub.json`` is untouched."""
-    write_local_settings(models.hub_config(project).hub_path, settings)
+    hub_path = models.hub_config(project).hub_path
+    write_local_settings(hub_path, settings)
+    models.reread_hubs(written=hub_path)
     return models.hub_config(project)
 
 
@@ -80,7 +87,9 @@ def post_project_environment_edit(
 ) -> HubConfigView:
     """Add, change or remove an environment or a service endpoint, in ``hub.json`` (the team's,
     left uncommitted) or ``hub.local.json`` (this developer's), as ``hub env`` does."""
-    write_environment_edit(models.hub_config(project).hub_path, edit)
+    hub_path = models.hub_config(project).hub_path
+    write_environment_edit(hub_path, edit)
+    models.reread_hubs(written=hub_path)
     return models.hub_config(project)
 
 
@@ -92,7 +101,9 @@ def post_project_repo_edit(
 ) -> HubConfigView:
     """Add, change or remove a repo in ``hub.json`` (the team's, left uncommitted), as
     ``hub repo`` does; ``./hub sync`` is left to the owner."""
-    write_repo_edit(models.hub_config(project).hub_path, edit)
+    hub_path = models.hub_config(project).hub_path
+    write_repo_edit(hub_path, edit)
+    models.reread_hubs(written=hub_path)
     return models.hub_config(project)
 
 

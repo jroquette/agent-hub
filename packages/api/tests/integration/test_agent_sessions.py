@@ -5,7 +5,7 @@ the RFC 9457 problem each core agent-session error becomes (types
 
 import base64
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import timedelta
@@ -977,13 +977,16 @@ TOKEN = "t" * 43
 
 
 @contextmanager
-def _composed(settings: ApiSettings, projects_root: Path, web_dist: Path) -> Iterator[TestClient]:
+def _composed(
+    settings: ApiSettings, projects_root: Path, web_dist: Path, *, tickers: Mapping[str, Any]
+) -> Iterator[TestClient]:
     app = build_app(
         settings,
         projects_root=projects_root,
         web_dist=web_dist,
         session_driver=InMemorySessionDriver(),
         environ={},
+        **tickers,
     )
     origin = f"http://127.0.0.1:{settings.port}"
     with TestClient(
@@ -1009,10 +1012,11 @@ def test_keeps_log_and_ends_session_when_restart_opens_same_database(
     projects_root: Path,
     web_dist: Path,
     make_hub: Any,
+    manual_tickers: dict[str, Any],
 ) -> None:
     hub = make_hub()
     settings = replace(composed_settings, session_token=TOKEN, clock=lambda: START)
-    with _composed(settings, projects_root, web_dist) as first:
+    with _composed(settings, projects_root, web_dist, tickers=manual_tickers) as first:
         assert (
             first.post(
                 "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
@@ -1027,7 +1031,7 @@ def test_keeps_log_and_ends_session_when_restart_opens_same_database(
         _until(first, created["id"], "idle")
         before = first.get(f"{BASE}/{created['id']}/events").json()["items"]
 
-    with _composed(settings, projects_root, web_dist) as second:
+    with _composed(settings, projects_root, web_dist, tickers=manual_tickers) as second:
         after = second.get(f"{BASE}/{created['id']}").json()
         replayed = second.get(f"{BASE}/{created['id']}/events").json()["items"]
 

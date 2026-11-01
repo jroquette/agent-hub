@@ -419,13 +419,16 @@ def _session_settings(tmp_path: Path, **fields: Any) -> ApiSettings:
     )
 
 
-def _build(settings: ApiSettings, tmp_path: Path, **options: Any) -> Any:
+def _build(
+    settings: ApiSettings, tmp_path: Path, *, tickers: Mapping[str, Any], **options: Any
+) -> Any:
     return build_app(
         settings,
         projects_root=tmp_path / "projects",
         web_dist=tmp_path / "web_dist",
         brain_changes=InMemoryBrainChangeRequests(FakeBrainOrigin()),
         environ={},
+        **tickers,
         **options,
     )
 
@@ -449,7 +452,7 @@ def test_wires_claude_driver_when_extra_installed() -> None:
 
 
 def test_builds_no_control_when_in_container(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manual_tickers: dict[str, Any]
 ) -> None:
     def no_driver(_environ: Mapping[str, str]) -> Any:
         msg = "no driver is built in the container"
@@ -457,7 +460,7 @@ def test_builds_no_control_when_in_container(
 
     monkeypatch.setattr(composition, "claude_adapters", no_driver)
 
-    app = _build(_session_settings(tmp_path, sessions_off=True), tmp_path)
+    app = _build(_session_settings(tmp_path, sessions_off=True), tmp_path, tickers=manual_tickers)
 
     with TestClient(app):
         ports = app.state.ports
@@ -468,8 +471,15 @@ def test_builds_no_control_when_in_container(
         )
 
 
-def test_wires_control_cloud_and_links_when_sessions_on(tmp_path: Path) -> None:
-    app = _build(_session_settings(tmp_path), tmp_path, session_driver=InMemorySessionDriver())
+def test_wires_control_cloud_and_links_when_sessions_on(
+    tmp_path: Path, manual_tickers: dict[str, Any]
+) -> None:
+    app = _build(
+        _session_settings(tmp_path),
+        tmp_path,
+        tickers=manual_tickers,
+        session_driver=InMemorySessionDriver(),
+    )
 
     with TestClient(app):
         ports = app.state.ports
@@ -478,7 +488,9 @@ def test_wires_control_cloud_and_links_when_sessions_on(tmp_path: Path) -> None:
         assert isinstance(ports.agent_session_links, AgentSessionLinks)
 
 
-def test_wires_capture_when_app_built(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_wires_capture_when_app_built(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manual_tickers: dict[str, Any]
+) -> None:
     passed: dict[str, Any] = {}
     real = composition.hub_read_models
 
@@ -488,7 +500,12 @@ def test_wires_capture_when_app_built(tmp_path: Path, monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(composition, "hub_read_models", spy)
 
-    app = _build(_session_settings(tmp_path), tmp_path, session_driver=InMemorySessionDriver())
+    app = _build(
+        _session_settings(tmp_path),
+        tmp_path,
+        tickers=manual_tickers,
+        session_driver=InMemorySessionDriver(),
+    )
 
     with TestClient(app):
         capture = passed["capture"]
@@ -499,8 +516,15 @@ def test_wires_capture_when_app_built(tmp_path: Path, monkeypatch: pytest.Monkey
         assert capture._reader is passed["reader"]  # noqa: SLF001 - one reader for both
 
 
-def test_wires_workflow_reads_when_app_built(tmp_path: Path) -> None:
-    app = _build(_session_settings(tmp_path), tmp_path, session_driver=InMemorySessionDriver())
+def test_wires_workflow_reads_when_app_built(
+    tmp_path: Path, manual_tickers: dict[str, Any]
+) -> None:
+    app = _build(
+        _session_settings(tmp_path),
+        tmp_path,
+        tickers=manual_tickers,
+        session_driver=InMemorySessionDriver(),
+    )
 
     with TestClient(app):
         assert isinstance(app.state.ports.workflow_reads, ReadWorkflows)
@@ -570,12 +594,16 @@ def test_names_no_absolute_path_when_hub_workflows_have_problems(tmp_path: Path)
     assert all(not p.file.startswith("/") for p in problems)
 
 
-def test_ends_unfinished_sessions_when_app_starts(tmp_path: Path) -> None:
+def test_ends_unfinished_sessions_when_app_starts(
+    tmp_path: Path, manual_tickers: dict[str, Any]
+) -> None:
     settings = _session_settings(tmp_path)
     open_event_store(settings.db_path).close()
     with closing(open_agent_session_store(settings.db_path)) as store:
         store.create(an_agent_session(status=AgentSessionStatus.RUNNING, last_seq=0))
-        app = _build(settings, tmp_path, session_driver=InMemorySessionDriver())
+        app = _build(
+            settings, tmp_path, tickers=manual_tickers, session_driver=InMemorySessionDriver()
+        )
 
         before = store.get(AGENT_SESSION_ID)
         with TestClient(app):
@@ -667,7 +695,7 @@ class CountingStarts:
 
 
 def test_wires_scheduler_when_sessions_on_and_none_when_off(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manual_tickers: dict[str, Any]
 ) -> None:
     built: list[CountingStarts] = []
     real = composition.ScheduledStartsRuntime
@@ -681,13 +709,19 @@ def test_wires_scheduler_when_sessions_on_and_none_when_off(
     events = ScriptedEventSource()
 
     with TestClient(
-        _build(_session_settings(tmp_path, sessions_off=True), tmp_path, event_source=events)
+        _build(
+            _session_settings(tmp_path, sessions_off=True),
+            tmp_path,
+            tickers=manual_tickers,
+            event_source=events,
+        )
     ):
         assert built == []
 
     app = _build(
         _session_settings(tmp_path),
         tmp_path,
+        tickers=manual_tickers,
         session_driver=InMemorySessionDriver(),
         event_source=events,
     )
@@ -705,7 +739,11 @@ def test_wires_scheduler_when_sessions_on_and_none_when_off(
 
 @contextmanager
 def _knowledge_app(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, environ: dict[str, str]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    environ: dict[str, str],
+    *,
+    tickers: Mapping[str, Any],
 ) -> Iterator[tuple[TestClient, FakeKnowledgeCheckout]]:
     """``build_app`` with a registered hub ``demo`` whose checkout is a fake: git never runs.
     The app's lifespan runs while the block does, so its stores close when the block ends."""
@@ -721,6 +759,7 @@ def _knowledge_app(
         web_dist=tmp_path / "web_dist",
         brain_changes=InMemoryBrainChangeRequests(FakeBrainOrigin()),
         environ=environ,
+        **tickers,
     )
     with TestClient(app, base_url="http://127.0.0.1:7420", raise_server_exceptions=False) as client:
         registered = client.post(
@@ -742,7 +781,7 @@ def _git_folder(tmp_path: Path) -> str:
 
 
 def test_opens_knowledge_index_lazily_when_first_search_runs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manual_tickers: dict[str, Any]
 ) -> None:
     opened: list[Path] = []
     real_open = composition.open_knowledge_index
@@ -754,7 +793,9 @@ def test_opens_knowledge_index_lazily_when_first_search_runs(
         return real_open(path)
 
     monkeypatch.setattr(composition, "open_knowledge_index", counting_open)
-    with _knowledge_app(tmp_path, monkeypatch, {"PATH": _git_folder(tmp_path)}) as (client, _):
+    with _knowledge_app(
+        tmp_path, monkeypatch, {"PATH": _git_folder(tmp_path)}, tickers=manual_tickers
+    ) as (client, _):
         built = len(opened)
         search = "/api/v1/projects/demo/knowledge/search?q=marker"
 
@@ -773,10 +814,10 @@ def test_opens_knowledge_index_lazily_when_first_search_runs(
 
 
 def test_finds_git_per_call_when_path_changes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manual_tickers: dict[str, Any]
 ) -> None:
     environ: dict[str, str] = {"PATH": str(tmp_path / "empty")}
-    with _knowledge_app(tmp_path, monkeypatch, environ) as (client, _):
+    with _knowledge_app(tmp_path, monkeypatch, environ, tickers=manual_tickers) as (client, _):
         missing = client.get("/api/v1/projects/demo/knowledge/search?q=marker")
         no_backlinks = client.get("/api/v1/projects/demo/brain/backlinks?path=now.md")
         environ["PATH"] = _git_folder(tmp_path)
@@ -789,7 +830,7 @@ def test_finds_git_per_call_when_path_changes(
 
 
 def test_answers_problem_when_lazy_index_open_fails_migration(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manual_tickers: dict[str, Any]
 ) -> None:
     adapter_line = "cannot upgrade /private/path/agent-hub.db: disk image is malformed"
 
@@ -797,7 +838,9 @@ def test_answers_problem_when_lazy_index_open_fails_migration(
         raise MigrationError(adapter_line)
 
     monkeypatch.setattr(composition, "open_knowledge_index", failing_open)
-    with _knowledge_app(tmp_path, monkeypatch, {"PATH": _git_folder(tmp_path)}) as (client, _):
+    with _knowledge_app(
+        tmp_path, monkeypatch, {"PATH": _git_folder(tmp_path)}, tickers=manual_tickers
+    ) as (client, _):
         responses = [
             client.get("/api/v1/projects/demo/knowledge/search?q=marker"),
             client.get("/api/v1/projects/demo/brain/backlinks?path=now.md"),
