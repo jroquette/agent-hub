@@ -1,3 +1,4 @@
+import json
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -6,8 +7,11 @@ from typing import Any
 import pytest
 
 from agent_hub.core.doctor.snapshot import DoctorSnapshot, LockState
+from agent_hub.core.hub_config.doctor_rules import CONFIG_SCHEMA_RULE
+from agent_hub.core.hub_files.hub_lock import HubLock
 from agent_hub.core.hubs.doctor_cache import DOCTOR_TTL
-from agent_hub.core.hubs.hub_registry import HubRegistryError
+from agent_hub.core.hubs.hub_document import read_hub_document
+from agent_hub.core.hubs.hub_registry import HubRegistryError, UnreadHubFile
 from agent_hub.core.hubs.hub_snapshot import MIN_RUN_INTERVAL, HubSnapshot, HubState
 from agent_hub.core.hubs.registered_hub import RegisteredHub
 from agent_hub.core.testing.hub_fakes import (
@@ -66,6 +70,10 @@ def a_registry(clock: Clock, *paths: str) -> InMemoryHubRegistry:
     for path in paths:
         registry.add(path)
     return registry
+
+
+def a_lock() -> HubLock:
+    return HubLock(lock_version=1, platform_version=RUNNING, schema_version=1, modules=(), files={})
 
 
 def nanoseconds(moment: datetime) -> int:
@@ -205,6 +213,62 @@ def test_runs_again_when_item_folder_changes() -> None:
     assert reader.snapshots == {HUB: 2}
 
 
+def test_lists_registered_hubs_without_check_when_never_refreshed() -> None:
+    reader = a_reader(lock=a_lock())
+    snapshot = a_snapshot(reader, Clock())
+
+    [state] = snapshot.hubs()
+
+    assert state.read.entry.path == HUB
+    assert state.check is None
+    # A lock matching the pin needs the doctor's lock.drift to be named: unknown until a check.
+    assert (state.read.view.lock_state, state.read.view.lock_version) == (None, RUNNING)
+    assert reader.snapshots == {}
+
+
+def test_stamps_check_with_clock_at_end_of_run_when_refreshed() -> None:
+    clock = Clock()
+    reader = ScriptedReader({HUB: a_hub()}, clock)
+
+    def three_seconds_pass() -> None:
+        clock.now += timedelta(seconds=3)
+
+    reader.during_run[HUB] = three_seconds_pass
+    snapshot = a_snapshot(reader, clock)
+
+    snapshot.refresh()
+
+    check = state_of(snapshot, HUB).check
+    assert check is not None
+    assert check.checked_at == START + timedelta(seconds=3)
+    assert reader.seconds(HUB) == [0]
+
+
+def test_keeps_previous_check_and_runs_again_when_run_raises() -> None:
+    clock = Clock()
+    reader = ScriptedReader({HUB: a_hub()}, clock)
+    snapshot = a_snapshot(reader, clock)
+    tick(snapshot, clock, 0)
+    before = state_of(snapshot, HUB).check
+    assert before is not None
+    reader.hubs[HUB].mtimes["AGENTS.md"] = 4
+    reader.failing.add(HUB)
+    clock.now = START + timedelta(seconds=10)
+
+    report = snapshot.refresh()
+    kept = state_of(snapshot, HUB).check
+    reader.failing.clear()
+    tick(snapshot, clock, 12)
+
+    assert [failure.hub_path for failure in report.failures] == [HUB]
+    assert kept == before
+    assert before.checked_at == START
+    again = state_of(snapshot, HUB).check
+    assert again is not None
+    assert again.checked_at == START + timedelta(seconds=12)
+    assert reader.seconds(HUB) == [0, 10, 12]
+
+
 def test_backs_off_doubling_when_runs_keep_failing() -> None:
     clock = Clock()
     reader = ScriptedReader({HUB: a_hub()}, clock)
@@ -319,6 +383,60 @@ def test_raises_registry_error_and_keeps_checks_when_registry_cannot_be_read() -
     assert reader.snapshots == {HUB: 1}
 
 
+def test_shows_new_hub_without_check_when_reread_after_registration() -> None:
+    clock = Clock()
+    reader = FakeHubFileReader({HUB: a_hub(), OTHER: an_other_hub()})
+    registry = a_registry(clock, HUB)
+    snapshot = HubSnapshot(registry, reader, running_version=RUNNING, clock=clock)
+    snapshot.refresh()
+
+    registry.add(OTHER)
+    snapshot.reread()
+
+    states = snapshot.hubs()
+    assert [state.read.entry.path for state in states] == [HUB, OTHER]
+    assert states[0].check is not None
+    assert states[1].check is None
+    assert reader.snapshots == {HUB: 1}
+
+
+def test_drops_hub_when_reread_after_removal() -> None:
+    clock = Clock()
+    reader = FakeHubFileReader({HUB: a_hub(), OTHER: an_other_hub()})
+    registry = a_registry(clock, HUB)
+    other = registry.add(OTHER)
+    snapshot = HubSnapshot(registry, reader, running_version=RUNNING, clock=clock)
+    snapshot.refresh()
+    assert len(snapshot.hubs()) == 2
+
+    registry.remove(other.id)
+    snapshot.reread()
+
+    assert [state.read.entry.path for state in snapshot.hubs()] == [HUB]
+
+
+def test_publishes_first_hub_check_when_second_run_is_held() -> None:
+    clock = Clock()
+    reader = ScriptedReader({HUB: a_hub(), OTHER: an_other_hub()}, clock)
+    entered, release, hold = a_hold()
+    reader.during_run[OTHER] = hold
+    snapshot = HubSnapshot(
+        a_registry(clock, HUB, OTHER), reader, running_version=RUNNING, clock=clock
+    )
+    ticking = threading.Thread(target=snapshot.refresh)
+    ticking.start()
+    assert entered.wait(timeout=5)
+
+    held = {state.read.entry.path: state.check for state in snapshot.hubs()}
+    release.set()
+    ticking.join(timeout=5)
+
+    assert held[HUB] is not None
+    assert held[OTHER] is None
+    assert not ticking.is_alive()
+    assert state_of(snapshot, OTHER).check is not None
+
+
 class HeldLockReader(FakeHubFileReader):
     """A reader whose next ``read_lock`` call, once ``armed``, waits for the release."""
 
@@ -385,3 +503,64 @@ def test_drops_check_of_removed_hub_when_its_run_ends_after_removal() -> None:
     snapshot.reread()
     [state] = snapshot.hubs()
     assert state.check is None
+
+
+class CountingReader(FakeHubFileReader):
+    """A reader that counts its ``hub.json`` and ``hub.lock`` reads."""
+
+    def __init__(self, hubs: dict[str, FakeHub]) -> None:
+        super().__init__(hubs)
+        self.json_reads = 0
+        self.lock_reads = 0
+
+    def read_hub_json(self, hub_path: str) -> bytes | UnreadHubFile:
+        self.json_reads += 1
+        return super().read_hub_json(hub_path)
+
+    def read_lock(self, hub_path: str) -> LockState | None:
+        self.lock_reads += 1
+        return super().read_lock(hub_path)
+
+
+def test_reads_hub_json_again_only_when_its_time_changes() -> None:
+    clock = Clock()
+    reader = CountingReader({HUB: a_hub()})
+    snapshot = a_snapshot(reader, clock)
+    tick(snapshot, clock, 0)
+    first = (reader.json_reads, reader.lock_reads)
+
+    snapshot.hubs()
+    snapshot.hubs()
+    tick(snapshot, clock, 2)
+    unchanged = (reader.json_reads, reader.lock_reads)
+    reader.hubs[HUB].mtimes["hub.json"] = 11
+    tick(snapshot, clock, 4)
+    json_changed = (reader.json_reads, reader.lock_reads)
+    tick(snapshot, clock, 6)
+    settled = (reader.json_reads, reader.lock_reads)
+    reader.hubs[HUB].mtimes["hub.lock"] = 12
+    tick(snapshot, clock, 8)
+
+    assert unchanged == first
+    assert json_changed[0] == first[0] + 1
+    assert settled == json_changed
+    assert reader.lock_reads == settled[1] + 1
+    # Only the first tick ran the doctor (the others are within 10 s of it), so every count
+    # after it is a read of the hub's facts.
+    assert reader.snapshots == {HUB: 1}
+
+
+def test_checks_hub_with_invalid_config_when_it_names_project() -> None:
+    document = json.loads(hub_json_bytes(pin=RUNNING))
+    document["tracker"] = "linear"
+    raw = json.dumps(document).encode()
+    read = read_hub_document(raw, running_version=RUNNING)
+    assert (read.project, read.valid) == ("demo", False)
+    reader = a_reader(hub_json=raw)
+    snapshot = a_snapshot(reader, Clock())
+
+    snapshot.refresh()
+
+    check = state_of(snapshot, HUB).check
+    assert check is not None
+    assert CONFIG_SCHEMA_RULE in {finding.rule for finding in check.findings}
