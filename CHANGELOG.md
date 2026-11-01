@@ -22,18 +22,24 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   session changed in that checkout in `HUB_CHANGED_FILES`, one per line (in agent-hub, `make check-changed` reads
   them). When the list is too long or git quotes one of the paths, the variable stays unset and the command finds the
   changes itself. `check_fast_timeout` limits whichever command runs, and no check gets a `HUB_CHANGED_FILES` the hook
-  inherited. Set the key only after bumping `platform.version` to a release that has it (AGH-619).
+  inherited. `hub doctor`'s `config.stop_gate` warning no longer fires for a repo that sets `check_stop` without
+  `check_fast`. Set the key only after bumping `platform.version` to a release that has it (AGH-619).
 
 ### Changed
 
 - A tool call now starts one hook process instead of two: `pre_tool_use.py` runs the guard, then the event sensor. The
   guard answers each call as before, and its decision and the event still reach `hub web`, sent after the answer is
   printed and within one 0.5 s limit for both. The guard also loads less: its patterns are compiled when first used,
-  and the sensor writes its request to a plain socket. The project guard (`plugin/<project>/hooks/project_guard.py`)
-  runs in a fork of the hook instead of a new `python3`, with the same 3 s limit and the same asks when it fails,
-  except that a missing `project_guard_runner.py` now gives `exit 1 (ModuleNotFoundError: …)` as the cause, where it
-  gave `exit 2`. A missing or broken `guard.py` now gets the guard's ask, where it used to block the call or let it
-  through. Run `hub sync` after bumping `platform.version` to get the new hook (AGH-621).
+  and the sensor writes its request to a plain socket. Run `hub sync` after bumping `platform.version` to get the new
+  hook (AGH-621).
+  - The project guard (`plugin/<project>/hooks/project_guard.py`) runs in a fork of the hook instead of a new
+    `python3`, with the same 3 s limit and the same asks when it fails. A missing `project_guard_runner.py` now gives
+    `exit 1 (ModuleNotFoundError: …)` as the cause, where it gave `exit 2`.
+  - A missing or broken `guard.py` now gets the guard's ask, where it used to block the call or let it through.
+  - While blocked words or env files are set, an event the hook cannot read now gets the guard's ask for any tool,
+    where only the tools the guard handled were asked.
+  - In a synced hub, `hub run` checks for `pre_tool_use.py`, the hook the settings now name, so a hub missing only
+    `guard.py` is no longer refused: the merged hook asks on every guarded call instead.
 - `hub workflow list` starts faster. With exactly these arguments, the installed `hub` lists the workflows on a path of
   its own: it loads none of Typer, the `HubConfig` model and the `hub.json` reader, and it turns the garbage collector
   off. The other `hub workflow` commands load less code too (AGH-638).
