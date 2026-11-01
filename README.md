@@ -509,7 +509,8 @@ Hooks are small scripts Claude Code runs on its own at fixed moments; you never 
 - **After each edit** (`PostToolUse`) of a file in a repo, the repo's own formatter and linter run on it (they tidy the
   code and point out mistakes: ruff for Python, prettier and eslint for JavaScript and TypeScript, when the repo has
   them installed), and any problem left over goes back to the agent.
-- **When the agent wants to finish** (`Stop`), the *stop gate* runs `check_fast` in each repo checkout whose code
+- **When the agent wants to finish** (`Stop`), the *stop gate* runs the repo's `check_stop`, or its `check_fast` when
+  it has none, in each repo checkout whose code
   changed during the session: the checkout holding the session's folder, then each one holding a file that the session
   or one of its subagents edited (read from the session's transcripts; never the hub). The session starts at the
   transcript's first timestamp; when none can be read (or it lies in the future), at the transcript file's creation
@@ -520,8 +521,10 @@ Hooks are small scripts Claude Code runs on its own at fixed moments; you never 
   `check_fast_timeout` (150 s if unset), capped by the time left, and is stopped together with everything it started. A
   repo whose check timed out or did not get to run prints a `not run` line instead: it never blocks, and it is never
   silently counted as passing; transcripts read only in part (out of time, or past the newest 1,024 subagent files) add
-  a note. A repo without `check_fast` has no Stop gate: when it changed, the gate names it (`no check_fast configured`)
-  and never blocks; `hub doctor` warns.
+  a note. A repo with neither command has no Stop gate: when it changed, the gate names it (`no check_fast configured`)
+  and never blocks; `hub doctor` warns. A `check_stop` gets the paths the session changed in that checkout in
+  `HUB_CHANGED_FILES`, one per line, so it can test only those (in agent-hub, `make check-changed` does); when the gate
+  cannot hand over the whole list, it leaves the variable unset and the command works out the changes itself.
 - **Before Claude Code shortens a long conversation to free memory** (`PreCompact`), a snapshot (your last request, and
   the branch and changed files of each checkout) is saved to `brain/auto/workspace/session-snapshot.md` (your personal
   memory folder, gitignored) and put back in the context afterwards.
@@ -832,8 +835,9 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `repos[].dir` | yes | | Folder name of the repo, next to the hub |
 | `repos[].github` | yes | | GitHub `owner/name` |
 | `repos[].role` | no | `app` | Free string; `app` is the only known value |
-| `repos[].check_fast` | no | | The repo's fast gate command, run by the Stop hook; unset or blank, the repo has no Stop gate |
-| `repos[].check_fast_timeout` | no | `150` | Seconds the Stop hook gives `check_fast` (1–160, within its 160 s budget) |
+| `repos[].check_fast` | no | | The repo's fast gate command, run by the Stop hook when there is no `check_stop`; unset or blank, and no `check_stop`, the repo has no Stop gate |
+| `repos[].check_fast_timeout` | no | `150` | Seconds the Stop hook gives the command it runs, `check_stop` or `check_fast` (1–160, within its 160 s budget) |
+| `repos[].check_stop` | no | | A narrower command the Stop hook runs instead of `check_fast` (not blank), with the paths the session changed in `HUB_CHANGED_FILES` ([project-config.md](docs/design/project-config.md)); `hub repo` does not set it yet |
 | `repos[].check` | yes | | The repo's full gate command (not blank), run before a PR |
 | `repos[].default_branch` | no | `project.default_branch` | Base of the repo's worktrees and PRs; the guard blocks pushes to it |
 | `repos[].conventions` | no | | Overrides `project.conventions` for this repo, key by key |
@@ -869,7 +873,7 @@ Example (synthetic project):
     {
       "dir": "backend",                         // cloned at ../backend
       "github": "acme/backend",
-      "check_fast": "make check-fast",          // the Stop hook runs this
+      "check_fast": "make check-fast",          // the Stop hook runs this, unless check_stop is set
       "check_fast_timeout": 120,                // seconds the Stop hook gives it (1–160)
       "check": "make check"                     // the full gate before a PR
     }

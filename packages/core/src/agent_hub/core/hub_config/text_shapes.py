@@ -21,3 +21,6 @@ ENVIRONMENT_TEXT_PATTERN: Final = (
 # punctuation. The separator class leaves out ``_``, already a segment character: the hooks'
 # reader copies this pattern into Python's ``re``, which backtracks exponentially on an overlap.
 SAFE_SEGMENT: Final = r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*"
+# The most characters of a name made of one safe segment: an environment's and a workflow's. Here,
+# not in ``environments.py``, so a workflow document loads none of the environments model.
+MAX_NAME_CHARS: Final = 40

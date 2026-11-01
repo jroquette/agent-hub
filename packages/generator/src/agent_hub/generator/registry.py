@@ -346,6 +346,9 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
     _generic_managed(f"{_BASE_PLUGIN}/hooks/hubhooks.py", f"{_BASE_PLUGIN}/hooks/hubhooks.py.tmpl"),
     _hook_entry_point("post_edit"),
     _hook_entry_point("pre_compact"),
+    # The one PreToolUse hook: the guard's verdict, then the sensor's sends (AGH-621). `guard.py`
+    # stays an entry point: settings written before it still run that file.
+    _hook_entry_point("pre_tool_use"),
     # Runs the project's guard extension in a child for `guard.py` (spec Q-2, Q-5).
     _generic_managed(
         f"{_BASE_PLUGIN}/hooks/project_guard_runner.py",

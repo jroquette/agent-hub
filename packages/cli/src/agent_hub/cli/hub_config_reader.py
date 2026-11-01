@@ -14,6 +14,7 @@ from typing import NoReturn
 
 import typer
 
+from agent_hub.cli.hub_root import FILE_LABEL
 from agent_hub.core.hub_config.local_config import LOCAL_FILE
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
@@ -42,7 +43,6 @@ __all__ = [
 
 # The installed release of the hub command, which a hub's pin must equal.
 DISTRIBUTION = "agent-hub-cli"
-FILE_LABEL = "hub.json"
 # An invalid hub.json. Typer keeps 2 for usage errors.
 FAILURE = 1
 

@@ -24,7 +24,7 @@ agent-hub-api = { workspace = true }
 agent-hub-mcp-server = { workspace = true }
 
 [project.scripts]
-hub = "agent_hub.cli.main:app"
+hub = "agent_hub.cli.console:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -4648,6 +4648,158 @@ def test_matches_regex_when_scanning_secret_tokens(
     assert run_python(hook_python, SCAN_AS_REGEX, path=blocked_hub / HOOKS) == []
 
 
+# AGH-621 (AC-25): `import guard` compiles no pattern of the guard, its reader or its helpers; a
+# pattern compiles when first used, once, and keeps its name. ``re.compile`` is wrapped before the
+# import, and each call logs the file of its caller. argv: none.
+COMPILES_ON_IMPORT = r"""
+import json, os, re
+OWN_FILES = ("guard.py", "stdlib_reader.py", "hubhooks.py")
+callers = []
+real_compile = re.compile
+
+
+def logging_compile(*args, **kwargs):
+    callers.append(os.path.basename(sys._getframe(1).f_code.co_filename))
+    return real_compile(*args, **kwargs)
+
+
+re.compile = logging_compile
+import guard
+at_import = [name for name in callers if name in OWN_FILES]
+logged = len(callers)
+matches = [[m.group(0) for m in guard.SECRET_TOKEN.finditer(" .env ")] for _ in range(2)]
+on_use = [name for name in callers[logged:] if name in OWN_FILES]
+print(json.dumps({"at_import": at_import, "matches": matches, "on_use": on_use}))
+"""
+
+
+def test_compiles_no_pattern_when_guard_and_reader_imported(
+    blocked_hub: Path, *, each_python: str, run_python: Callable[..., Any], tmp_path: Path
+) -> None:
+    found = run_python(each_python, COMPILES_ON_IMPORT, path=blocked_hub / HOOKS, cwd=tmp_path)
+
+    assert found["at_import"] == []
+    # two searches, one compile: the second search reuses the pattern the first compiled
+    assert found["matches"] == [[".env"], [".env"]]
+    assert len(found["on_use"]) == 1
+
+
+# AGH-621 (AC-25): every pattern the guard and its reader build at import compiles, so none can
+# first fail while a verdict is printed. ``gc`` finds them all, in tuples, dicts and objects too.
+# argv: none.
+COMPILES_EVERY_PATTERN = r"""
+import gc, json
+import guard
+from stdlib_reader import LazyPattern
+patterns = [found for found in gc.get_objects() if type(found) is LazyPattern]
+failed = []
+for pattern in patterns:
+    try:
+        pattern.pattern
+    except Exception as error:
+        failed.append([repr(pattern._args), type(error).__name__])
+rules = [rule for _, rule in guard.RULE_IDS]
+print(json.dumps({
+    "found": len(patterns),
+    "rules_found": all(any(rule is found for found in patterns) for rule in rules),
+    "rules": len(rules),
+    "failed": failed,
+}))
+"""
+
+
+def test_compiles_every_lazy_pattern_when_guard_imported(
+    blocked_hub: Path, *, each_python: str, run_python: Callable[..., Any], tmp_path: Path
+) -> None:
+    found = run_python(each_python, COMPILES_EVERY_PATTERN, path=blocked_hub / HOOKS, cwd=tmp_path)
+
+    assert found["failed"] == []
+    assert found["rules_found"] is True
+    assert found["found"] > found["rules"]
+
+
+# AGH-621 (AC-25): a pattern is a value that never changes, as a re.Pattern is: a copy or a deep
+# copy is the pattern itself, a pickle loads back as a pattern that finds the same match, compiled
+# or not, and a half-built one (no slots set) has no attribute rather than recursing. argv: none.
+COPIES_LAZY_PATTERN = r"""
+import copy, json, pickle
+from stdlib_reader import LazyPattern
+found = {}
+for state in ("fresh", "compiled"):
+    pattern = LazyPattern(r"a+b", 0)
+    if state == "compiled":
+        pattern.search("")
+    loaded = pickle.loads(pickle.dumps(pattern))
+    found[state] = {
+        "copy": copy.copy(pattern) is pattern,
+        "deepcopy": copy.deepcopy([pattern])[0] is pattern,
+        "loaded": [type(loaded).__name__, loaded.search("xaab").group(0)],
+    }
+found["half_built"] = hasattr(LazyPattern.__new__(LazyPattern), "search")
+print(json.dumps(found))
+"""
+
+
+def test_copies_lazy_pattern_as_itself_when_copied_or_pickled(
+    blocked_hub: Path, *, each_python: str, run_python: Callable[..., Any], tmp_path: Path
+) -> None:
+    found = run_python(each_python, COPIES_LAZY_PATTERN, path=blocked_hub / HOOKS, cwd=tmp_path)
+
+    same = {"copy": True, "deepcopy": True, "loaded": ["LazyPattern", "aab"]}
+    assert found == {"fresh": same, "compiled": same, "half_built": False}
+
+
+# AGH-621 (AC-25): a pattern's first read compiles it and keeps what the hooks read on the
+# instance, so ``__getattr__`` runs once per pattern, never once per part, line or word: deciding
+# on a command twice as long makes as many calls. The child counts the calls while ``decide``
+# checks an allowed infra call followed by one-letter lines. argv: hub, the number of lines.
+# Prints [the verdict, the calls].
+PATTERN_LOOKUPS = r"""
+import json
+from pathlib import Path
+import guard
+from hubhooks import load_config
+from stdlib_reader import LazyPattern
+cfg = load_config(Path(sys.argv[1]))
+command = "aws s3 ls --profile demo-dev" + "\na" * int(sys.argv[2])
+calls = [0]
+lookup = LazyPattern.__getattr__
+
+
+def counted(self, name):
+    calls[0] += 1
+    return lookup(self, name)
+
+
+LazyPattern.__getattr__ = counted
+verdict = guard.decide({"tool_name": "Bash", "tool_input": {"command": command}}, cfg, None)
+print(json.dumps([verdict, calls[0]]))
+"""
+
+
+def test_looks_up_each_pattern_once_when_command_has_many_lines(
+    blocked_hub: Path, *, each_python: str, run_python: Callable[..., Any], tmp_path: Path
+) -> None:
+    write_hub_json(blocked_hub, with_infra_and_words(["prod"]))
+
+    found = [
+        run_python(
+            each_python,
+            PATTERN_LOOKUPS,
+            path=blocked_hub / HOOKS,
+            args=[str(blocked_hub), str(lines)],
+            cwd=tmp_path,
+            env={"HOME": str(tmp_path)},
+        )
+        for lines in (1000, 2000)
+    ]
+
+    assert [verdict for verdict, _ in found] == [None, None]
+    calls = [count for _, count in found]
+    assert calls[0] > 0
+    assert calls[0] == calls[1]
+
+
 # D-order (AC-277.17): the AGH-45 synthetic ``I`` (guard.infra) beside blocked words.
 def with_infra_and_words(words: Sequence[str]) -> dict[str, Any]:
     document = builders.an_environments_document()

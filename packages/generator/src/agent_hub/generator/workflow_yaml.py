@@ -237,6 +237,10 @@ def _parse_yaml(text: str) -> tuple[JsonValue, dict[KeyPath, int]]:
         return value, _key_lines(node)
     finally:
         loader.dispose()
+        # PyYAML fills each collection in a generator. After a refusal, the started ones stay here
+        # and hold the loader: a cycle that piles up file after file while `hub workflow list`
+        # runs with the collector off.
+        loader.state_generators = []
 
 
 def _key_lines(root: Node) -> dict[KeyPath, int]:

@@ -1,3 +1,4 @@
+import ast
 import copy
 import json
 import re
@@ -18,6 +19,7 @@ from agent_hub.generator.built_json import (
     project_settings,
 )
 from agent_hub.generator.json_merge import MergeError, merge_json
+from agent_hub.generator.render_hub import render_hub
 
 
 def a_config_named(name: str) -> HubConfig:
@@ -106,21 +108,35 @@ def test_seeds_empty_marketplace_sibling_when_rendered(project_name: str) -> Non
 # file the command runs, timeout in seconds.
 HOOK_ROWS = (
     ("SessionStart", "startup|resume|clear|compact", "session_start.py", 20),
-    (
-        "PreToolUse",
-        "^(Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch|Task|Agent"
-        "|SendMessage)$|^mcp__",
-        "guard.py",
-        10,
-    ),
+    # AGH-621: one PreToolUse hook for every tool runs the guard, then the sensor.
+    ("PreToolUse", "*", "pre_tool_use.py", 10),
     ("PostToolUse", "Edit|Write|MultiEdit", "post_edit.py", 60),
     ("Stop", None, "stop_gate.py", 180),
     ("PreCompact", None, "pre_compact.py", 20),
     ("SessionEnd", None, "session_end.py", 10),
 )
-# AGH-200 D6 and E2: the hook sensor's eleven events, in the order the managed settings list
-# them; the tool events match every tool (``*``).
+# AGH-200 D6 and E2: the events the hook sensor has a group of its own on, in the order the managed
+# settings list them; the tool events match every tool (``*``). Ten since AGH-621: on PreToolUse
+# the sensor runs inside pre_tool_use.py.
 SENSOR_EVENTS = (
+    "SessionStart",
+    "PostToolUse",
+    "Stop",
+    "PreCompact",
+    "SessionEnd",
+    "UserPromptSubmit",
+    "PostToolUseFailure",
+    "Notification",
+    "SubagentStart",
+    "SubagentStop",
+)
+SENSOR_MATCHERS = {"PostToolUse": "*", "PostToolUseFailure": "*"}
+SENSOR_ROWS = tuple(
+    (event, SENSOR_MATCHERS.get(event), "event_sensor.py", 5) for event in SENSOR_EVENTS
+)
+# The events of the managed settings, in their order: the base hooks' (PreToolUse second, from
+# the pre_tool_use row), then the sensor's own.
+SETTINGS_EVENTS = (
     "SessionStart",
     "PreToolUse",
     "PostToolUse",
@@ -132,10 +148,6 @@ SENSOR_EVENTS = (
     "Notification",
     "SubagentStart",
     "SubagentStop",
-)
-SENSOR_MATCHERS = {"PreToolUse": "*", "PostToolUse": "*", "PostToolUseFailure": "*"}
-SENSOR_ROWS = tuple(
-    (event, SENSOR_MATCHERS.get(event), "event_sensor.py", 5) for event in SENSOR_EVENTS
 )
 # AGH-141 (O-3, E-4): the read-only gate on the two subagent events, no matcher, after the
 # sensor's group: 10 s on SubagentStart, 30 s on SubagentStop.
@@ -164,12 +176,15 @@ def test_lists_base_hooks_then_sensor_when_settings_built(demo_config: HubConfig
             group["matcher"] = matcher
         expected.setdefault(event, []).append(group)
     assert settings["hooks"] == expected
-    assert list(settings["hooks"]) == list(SENSOR_EVENTS)
+    assert list(settings["hooks"]) == list(SETTINGS_EVENTS)
 
 
 # AGH-293 (Q-6): the guard's matcher is anchored, so only these exact names and MCP tools start
 # guard.py; Claude Code reads a matcher holding a regex character as one unanchored regex.
 # Python's ``re`` and JavaScript read this pattern alike: anchors, one group, alternation.
+# AGH-621 (P5): that matcher is now pre_tool_use.py's GUARDED_TOOLS, which picks the calls the one
+# PreToolUse hook hands to the guard.
+PRE_TOOL_USE = "plugin/hub-workflow/hooks/pre_tool_use.py"
 GUARDED_TOOLS = (
     "Bash",
     "Read",
@@ -199,13 +214,25 @@ UNGUARDED_TOOLS = (
 )
 
 
-def test_routes_only_guarded_tools_when_matcher_searched() -> None:
-    (matcher,) = (
-        hook.matcher
-        for hook in HOOK_EVENTS
-        if hook.event == "PreToolUse" and hook.file == "guard.py"
-    )
-    assert matcher is not None
+def module_constant(source: bytes, name: str) -> object:
+    """The literal a module-level ``name = <literal>`` assigns in ``source`` (read, never run)."""
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Assign):
+            targets = [target for target in node.targets if isinstance(target, ast.Name)]
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets = [node.target] if isinstance(node.target, ast.Name) else []
+        else:
+            continue
+        if [target.id for target in targets] == [name]:
+            return ast.literal_eval(node.value)
+    raise AssertionError(f"no module-level {name} = <literal>")
+
+
+def test_routes_only_guarded_tools_when_matcher_searched(demo_config: HubConfig) -> None:
+    rendered = {file.path: file.content for file in render_hub(demo_config).files}
+    assert PRE_TOOL_USE in rendered
+    matcher = module_constant(rendered[PRE_TOOL_USE], "GUARDED_TOOLS")
+    assert isinstance(matcher, str)
 
     routed = {
         name: re.search(matcher, name) is not None for name in GUARDED_TOOLS + UNGUARDED_TOOLS
@@ -227,14 +254,14 @@ def sensor_groups(hooks: object) -> dict[str, list[object]]:
     return found
 
 
-def test_registers_sensor_for_eleven_events_when_settings_built(demo_config: HubConfig) -> None:
+def test_registers_sensor_for_ten_events_when_settings_built(demo_config: HubConfig) -> None:
     settings = managed_settings(demo_config)
     assert isinstance(settings, dict)
 
     found = sensor_groups(settings["hooks"])
 
     assert found == {event: [SENSOR_MATCHERS.get(event)] for event in SENSOR_EVENTS}
-    assert len(found) == 11
+    assert len(found) == 10
     assert sensor_groups(base_hooks_block()) == found
     assert [hook.event for hook in HOOK_EVENTS if hook.file == "event_sensor.py"] == list(
         SENSOR_EVENTS
@@ -282,8 +309,8 @@ def test_registers_readonly_gate_on_subagent_events_when_settings_built(
         for groups in (hooks["SubagentStart"], hooks["SubagentStop"]):
             assert isinstance(groups, list)
             assert all(isinstance(group, dict) and "matcher" not in group for group in groups)
-        # The gate rows come last: the event order stays the sensor's (O-10).
-        assert list(hooks) == list(SENSOR_EVENTS)
+        # The gate rows come last: the event order stays the settings' (O-10).
+        assert list(hooks) == list(SETTINGS_EVENTS)
     assert [hook.event for hook in HOOK_EVENTS if hook.file == "readonly_gate.py"] == [
         "SubagentStart",
         "SubagentStop",

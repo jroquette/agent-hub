@@ -16,8 +16,8 @@ from agent_hub.core.hub_config.effective_environments import (
     SourcedEnvironment,
 )
 from agent_hub.core.hub_config.environments import Access
+from agent_hub.core.scenarios.effect import Effect as Effect
 
-Effect = Literal["read", "write", "destroy"]
 # Who proposed the step: a committed document, a person in a terminal, or an agent.
 Origin = Literal["author", "human", "agent"]
 Decision = Literal["allow", "ask", "deny"]

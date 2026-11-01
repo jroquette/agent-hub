@@ -27,6 +27,8 @@ from pydantic import (
 from agent_hub.core.features.feature_evals import DELIVERY_PATTERN
 from agent_hub.core.features.feature_record import MAX_TICKET_REPOS, TicketKey
 from agent_hub.core.features.feature_view import Verdict
+from agent_hub.core.features.output_paths import ACS_ALL_TAG as ACS_ALL_TAG
+from agent_hub.core.features.output_paths import ACS_LIST_TAG as ACS_LIST_TAG
 from agent_hub.core.features.scope_rules import AC_ID_PATTERN, COMMIT_PATTERN
 
 REVIEW_SCHEMA_ID: Final = "agent-hub/review/1"
@@ -46,9 +48,6 @@ MAX_OWNER_STEPS: Final = 50
 MAX_PREFLIGHT_RUNS: Final = 200
 MAX_BLOCKERS_READ: Final = 50
 MAX_LOCAL_NOTES: Final = 50
-# The tags of an eval's ``acs`` union; pydantic puts the chosen one in an error's ``loc``.
-ACS_ALL_TAG: Final = "all"
-ACS_LIST_TAG: Final = "ids"
 # Text an agent writes on one line: no control character, line breaks included.
 _ONE_LINE: Final = r"^[^\x00-\x1f\x7f-\x9f]*$"
 

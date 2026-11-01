@@ -329,6 +329,7 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "plugin/hub-workflow/hooks/hubhooks.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/post_edit.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/pre_compact.py": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/hooks/pre_tool_use.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/project_guard_runner.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/readonly_gate.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/session_end.py": (Kind.GENERIC, Ownership.MANAGED, None),
@@ -417,7 +418,8 @@ MODULE_EXECUTABLE_PATHS = frozenset({"scripts/cloud-setup.sh", "scripts/contract
 
 # AC-4.3 (Q-3): the base entry points with a `#!` line are executable; every other base file is
 # not: the eight hooks `hooks.json` runs (AGH-200 adds the event sensor, AGH-141 the read-only
-# gate) and the three scripts.
+# gate, AGH-621 pre_tool_use in the guard's place), guard.py (older settings still run it) and the
+# three scripts.
 # Module scripts are listed apart.
 EXECUTABLE_PATHS = frozenset(
     {
@@ -430,6 +432,7 @@ EXECUTABLE_PATHS = frozenset(
                 "guard",
                 "post_edit",
                 "pre_compact",
+                "pre_tool_use",
                 "readonly_gate",
                 "session_end",
                 "session_start",

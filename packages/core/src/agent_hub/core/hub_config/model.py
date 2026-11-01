@@ -365,9 +365,13 @@ class Repo(ConfigObject):
     )
     check_fast_timeout: Annotated[StrictInt, Field(ge=1, le=MAX_CHECK_FAST_TIMEOUT)] | None = (
         absent_by_default(
-            description="Seconds the Stop hook gives check_fast, within its 160 s budget."
-            " Absent: 150."
+            description="Seconds the Stop hook gives the command it runs, check_stop or"
+            " check_fast, within its 160 s budget. Absent: 150."
         )
+    )
+    check_stop: RequiredCommand | None = absent_by_default(
+        description="The command the Stop hook runs in place of check_fast, with the paths the"
+        " session changed in HUB_CHANGED_FILES. Absent: check_fast."
     )
     check: RequiredCommand
     default_branch: BranchName | None = absent_by_default(

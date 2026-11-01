@@ -29,7 +29,7 @@ from typing import Final
 
 from pydantic import JsonValue
 
-from agent_hub.core.features.output_shape import output_path
+from agent_hub.core.features.output_paths import output_path
 from agent_hub.core.workflows.conditions import ConditionParseError, parse_condition
 from agent_hub.core.workflows.document import (
     Loc,
@@ -196,10 +196,13 @@ def _cached_block(name: str, resolver: _Resolver, stack: tuple[str, ...]) -> _Bl
         try:
             resolver.cache[key] = _block(name, resolver, stack)
         except RewriteError as error:
-            resolver.cache[key] = error
+            # Cache a copy that is never raised, and raise a new one below: a raised error's
+            # traceback holds this frame, so caching it makes a cycle through the resolver, which
+            # piles up while `hub workflow list` runs with the collector off.
+            resolver.cache[key] = RewriteError(error.loc, error.message)
     found = resolver.cache[key]
     if isinstance(found, RewriteError):
-        raise found
+        raise RewriteError(found.loc, found.message)
     return found
 
 

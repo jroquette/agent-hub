@@ -30,10 +30,9 @@ from pydantic import (
 )
 
 from agent_hub.core.errors import AgentHubError
-from agent_hub.core.features.output_shape import output_path
-from agent_hub.core.hub_config.environments import MAX_NAME_CHARS
+from agent_hub.core.features.output_paths import output_path
 from agent_hub.core.hub_config.problems import one_line
-from agent_hub.core.hub_config.text_shapes import SAFE_SEGMENT
+from agent_hub.core.hub_config.text_shapes import MAX_NAME_CHARS, SAFE_SEGMENT
 from agent_hub.core.workflows.nodes import (
     READ_ONLY,
     READ_ONLY_VALUE_CONFIG,

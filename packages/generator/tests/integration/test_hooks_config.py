@@ -1222,7 +1222,8 @@ def test_denies_with_bare_hint_when_git_missing(
     assert push.stderr == b""
 
 
-# The identity read's subprocess.run records its keyword arguments, then times out.
+# The identity read's subprocess.run records its keyword arguments, then times out. hubhooks
+# imports subprocess only where it runs git, so the patch is on the module itself.
 TIMEOUT_CODE = """\
 import json, subprocess
 import hubhooks
@@ -1230,7 +1231,7 @@ calls = []
 def timing_out(args, **kwargs):
     calls.append([args, kwargs.get("timeout")])
     raise subprocess.TimeoutExpired("git", 2)
-hubhooks.subprocess.run = timing_out
+subprocess.run = timing_out
 cfg = hubhooks.load_config(None)
 print(json.dumps([cfg.branch_prefix, calls]))
 """

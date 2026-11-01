@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -76,8 +75,9 @@ ACCESS_STRICTNESS = {"write": 0, "ask": 1, "read": 2}
 def read_event() -> tuple[dict, bool]:
     """The event on stdin, and whether stdin was not empty but not a JSON object either.
 
-    An OSError or ValueError (a closed stdin) while reading, bad UTF-8, invalid or truncated JSON, a
-    RecursionError, a list or a string give ({}, True); empty or blank stdin gives ({}, False)."""
+    A read error (OSError or ValueError), bad UTF-8, invalid or truncated JSON, a RecursionError,
+    a list or a string give ({}, True); empty or blank stdin gives ({}, False). With no stdin at
+    all (fd 0 closed when the hook started, so sys.stdin is None) it raises."""
     try:
         raw = sys.stdin.buffer.read()
     except (OSError, ValueError):
@@ -364,6 +364,8 @@ class Config:
         like are dropped, so an exported one cannot answer with another repo's identity."""
         if self.identity_home is None:
             return ""
+        import subprocess  # here, not at the top: a hook that runs no git skips loading it
+
         env = {name: value for name, value in os.environ.items() if name not in GIT_LOCATION_VARIABLES}
         try:
             completed = subprocess.run(
@@ -449,6 +451,8 @@ def checkouts(cfg: Config, names: list[str] | None = None) -> list[tuple[str, Pa
 def git(args: list[str], cwd: str | os.PathLike, timeout: int = 10) -> str:
     """git's stdout without its trailing newlines ("" on an error or timeout). Leading blanks stay: a
     porcelain status line is `XY path`, and an unstaged edit's X is a blank."""
+    import subprocess  # here, not at the top: a hook that runs no git skips loading it
+
     try:
         return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=timeout).stdout.rstrip("\n")
     except (OSError, subprocess.TimeoutExpired):
