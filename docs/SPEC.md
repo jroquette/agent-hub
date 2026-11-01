@@ -529,7 +529,9 @@ out of scope.
 
 **Phase 2 (built).** `hub web` serves the views above that Phase 2 covers: Portfolio, Project overview,
 Approvals (read-only, since retired: AGH-273 answers an approval in its run or its session), Live sessions, Sessions and Session detail (Timeline, Files, Cost, Raw events), Workflow runs and
-Run detail, Features and Feature detail, Health (the doctor rules run in process per hub, cached 15 min), Knowledge ›
+Run detail, Features and Feature detail, Health (the doctor rules run in a background part of `hub web`, per hub, when
+a watched file changes, at most every 10 s except right after a write through the app (then at the next 2 s tick), and
+at least every 15 min; the app shows when they ran), Knowledge ›
 Learnings, Knowledge › Brain and Knowledge › Skills, Workflows (AGH-226, below), Settings and Welcome. Session, WorkflowRun, Learning and Approval are pure folds in core,
 recomputed on read and memoized in process by the store's high-water mark ([event-derivations.md](design/event-derivations.md)).
 Cost is estimated from transcript usage times a dated price table and always labelled so; OpenTelemetry and GitHub

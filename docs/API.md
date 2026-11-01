@@ -221,6 +221,32 @@ filled for the rows of the page only; every one is optional and `null` when ther
 | `failing_notice` | the same gate or command failed 2 times in a row, or 3 tool errors in the last 5 minutes |
 | `sparkline_60s` | an empty list while the session has not ended (the web fills it from the event stream); `null` once it has ended |
 
+## Hub health
+
+The doctor rules run in a background part of `hub web` (AGH-608), never on a request: the hub, project and findings
+reads answer from each hub's last check.
+
+- `GET /api/v1/doctor/findings?project=` → `DoctorFindings`: a page of findings (`items`, `next_cursor`,
+  `total_estimate`) plus `checked_at`, the end of the oldest last check of the scoped hubs, `null` while one of them
+  has none.
+- `checked_at` on `ProjectSummary` (`GET /projects`), `ProjectDetail` (`GET /projects/{project}`) and `HubView`
+  (`GET /hubs`, `POST /hubs`) is when the doctor run whose findings the hub's health shows ended (UTC, ISO 8601). It is
+  `null` before the hub's first check, and so are `hub_health` and a `lock_state` that needs the doctor (a lock
+  matching the pin, whose drift only the doctor sees).
+- Every 2 s a tick reads the registry, reads a hub's `hub.json` and `hub.lock` again when their modification times
+  changed, and runs the doctor of each due hub, one at a time. A hub is due when it has no check yet; when a file the
+  doctor watched changed, at least 10 s after its last run ended; and when its check is 15 min old. A run that raises
+  keeps the previous findings and `checked_at`, runs again at the next tick, then 10 s doubling up to 15 min; the
+  server logs the hub path and the error's type only.
+- A write through the app reads the registry and the hub's files again before it answers, so the next read shows it:
+  registering or removing a hub, the three config writes (`PUT /projects/{project}/config/local`,
+  `POST /projects/{project}/config/environments|repos`) and the hub actions
+  (`POST /hubs/{hub_id}/platform-sync|doctor-fix`, whatever their outcome). The hub a config write or a hub action
+  wrote is checked at the next tick, the 10 s spacing and any backoff skipped; a new hub is checked then too. An
+  answer of 4xx marks nothing.
+- A hub registry that cannot be read answers 503 "Hub registry unreadable", at start as later, until a tick reads it
+  again; `hub web` still starts.
+
 ## Learning decisions
 
 `POST /api/v1/learnings/{learning_id}/accept` with `{"target": "<folder or .md path under brain/>"}` (1 to 200

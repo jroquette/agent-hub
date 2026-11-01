@@ -206,7 +206,7 @@ All paths under `/api/v1`. Shapes are trimmed sketches; lists are paginated.
 
 | Endpoint | Params | Response sketch | Used by |
 |---|---|---|---|
-| `GET /projects` | `period` | `{"items":[{"name":"agent-hub","hub_health":"warning","repos":1,"live_sessions":3,"runs_in_flight_by_stage":{"IMPLEMENTING":1},"open_prs":2,"failed_runs_7d":1,"cost_period":"84.2000","cost_previous_period":"71.3600","ready_issues":4,"platform_version":"0.8.0","lock_state":"sync_pending"}]}` | Portfolio, ProjectSwitcher |
+| `GET /projects` | `period` | `{"items":[{"name":"agent-hub","hub_health":"warning","checked_at":"2026-10-11T12:00:05.000Z","repos":1,"live_sessions":3,"runs_in_flight_by_stage":{"IMPLEMENTING":1},"open_prs":2,"failed_runs_7d":1,"cost_period":"84.2000","cost_previous_period":"71.3600","ready_issues":4,"platform_version":"0.8.0","lock_state":"sync_pending"}]}` | Portfolio, ProjectSwitcher |
 | `GET /projects/{project}` | | `{"name":"agent-hub","hub_repo":"jroquette/agent-hub-hub","tracker":{"kind":"linear","teams":["AGH"]},"platform_version":"0.8.0","lock_state":"sync_pending","modules":["bench","cloud","marketplace"]}` | Project overview header |
 | `GET /projects/{project}/now` | | `{"focus":[{"text":"…","last_verified":"2026-10-01","provenance":"human"}],"next":[],"watch":[]}` | Project overview Now |
 | `GET /projects/{project}/repos` | | `{"items":[{"name":"agent-hub","default_branch":"main","last_ci_default":{"status":"passed"},"open_prs":2,"check_fast":"make check-fast","agents_md_present":true}]}` | Project overview Repos |

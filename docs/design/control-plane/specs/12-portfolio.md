@@ -161,7 +161,7 @@ Merged, reverse-chronological events of interest (not every event): PR merged, r
 | Needs you age | Gate.requested_at, WorkflowRun failure time, Finding.first_seen_at | `GET /needs-you` | as above |
 | Project name, hub repo, teams | Project.name, hub_repo, tracker.teams | `GET /projects` | hub files · < 2 s |
 | Repo count | count Project repos | `GET /projects` | hub files |
-| Health dot | Project.hub_health | `GET /projects` | doctor · ≤ 15 min |
+| Health dot | Project.hub_health, checked_at | `GET /projects` | doctor in the background · seconds after a change, at least every 15 min |
 | Platform version, Sync pending | Hub.platform_version, lock_state | `GET /projects` | hub files · < 2 s |
 | Live sessions | Project.live_sessions | `GET /projects`; `counts` stream | hooks · < 1 s |
 | Runs in flight, stage bar | Project.runs_in_flight_by_stage | `GET /projects` | executor · < 1 s |
