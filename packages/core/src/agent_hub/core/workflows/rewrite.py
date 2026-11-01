@@ -168,6 +168,8 @@ def _agent_update(node: AgentNode | LoopNode, rewrite: Rewrite) -> dict[str, obj
         update["cwd"] = rewrite.text(("cwd",), node.cwd)
     if isinstance(node, LoopNode) and node.until_bash is not None:
         update["until_bash"] = _argv(("until_bash",), node.until_bash, rewrite)
+    if isinstance(node, AgentNode) and node.for_each is not None:
+        update["for_each"] = rewrite.text(("for_each",), node.for_each)
     return update
 
 

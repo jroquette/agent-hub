@@ -601,3 +601,74 @@ def test_refuses_ctx_with_when_scenario_include_given_ctx() -> None:
     assert problems == [
         ("nodes[1].with.ref", "an include's 'with' reads only $INPUTS and node outputs")
     ]
+
+
+FILES = {
+    "type": "object",
+    "properties": {"files": {"type": "array", "items": {"type": "string"}}},
+    "required": ["files"],
+}
+
+
+def fan_out(node_id: str, for_each: str, *depends_on: str) -> dict[str, Any]:
+    return {
+        "id": node_id,
+        "type": "agent",
+        "prompt": "Study $WITH.item",
+        "mutates_checkout": False,
+        "for_each": for_each,
+        "depends_on": list(depends_on),
+    }
+
+
+# A block whose last node runs once per file its first node lists.
+FAN_OUT = document(
+    "fan",
+    shell("list", output_format=FILES),
+    fan_out("study", "$list.output.files", "list"),
+)
+
+
+def test_renames_for_each_reference_when_included() -> None:
+    plan = plan_of(include("inc", "fan"), library=(FAN_OUT,))
+
+    study = nodes_of(plan)["inc__study"]
+    assert isinstance(study, AgentNode)
+    assert study.for_each == "$inc__list.output.files"
+    assert study.prompt == "Study $WITH.item"
+
+
+def test_refuses_for_each_when_included_reads_a_caller_node() -> None:
+    leaky = document("leaky", fan_out("study", "$plan.output.files"))
+
+    [(key, message)] = problems_of(
+        shell("plan", output_format=FILES), include("l", "leaky", "plan"), library=(leaky,)
+    )
+
+    assert key == "nodes[1].include"
+    assert message == '"leaky" reads "$plan.output.files", which is not one of its nodes'
+
+
+def test_refuses_for_each_when_included_in_loop_group_body() -> None:
+    group = {
+        "id": "g",
+        "type": "loop_group",
+        "max_iterations": 2,
+        "until_bash": ["true"],
+        "depends_on": ["list"],
+        "nodes": [fan_out("study", "$list.output.files")],
+    }
+    block = document("looped", shell("list", output_format=FILES), group)
+
+    [(key, message)] = problems_of(include("inc", "looped"), library=(block,))
+
+    assert key == "nodes[0].include"
+    assert message == (
+        '"inc__g": nodes[0].for_each: a for_each agent cannot be in a loop_group body'
+    )
+
+
+def test_refuses_returns_when_included_sink_has_for_each() -> None:
+    problems = problems_of(include("inc", "fan"), library=(FAN_OUT,), returns="inc")
+
+    assert problems == [("returns", "\"inc__study\" has for_each, so 'returns' cannot name it")]
