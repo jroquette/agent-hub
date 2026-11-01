@@ -1624,6 +1624,27 @@ def test_lists_changed_paths_when_check_stop_runs(
     assert "\nchanged: a.py\n" in output["reason"]
 
 
+def test_runs_nothing_when_check_stop_repo_changed_only_non_code(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # The trigger keeps the code-only rule: docs/x.md would be on check_stop's list, but with no
+    # code file changed the gate runs neither command and stays silent.
+    app = workspace / "app"
+    (app / "docs").mkdir()
+    (app / "docs" / "x.md").write_text("# x\n", encoding="utf-8")
+    log = tmp_path / "runs.log"
+    repo = {
+        "dir": "app",
+        "check_fast": appending(log, "check_fast"),
+        "check_stop": appending(log, "check_stop"),
+    }
+
+    output = run_hook([repo], app)
+
+    assert recorded(log) == []
+    assert output == {}
+
+
 @pytest.mark.parametrize(
     ("before", "command", "status", "listed"),
     [
@@ -1818,13 +1839,20 @@ def test_blocks_when_only_change_is_new_file_named_with_arrow(
 
 
 @pytest.mark.parametrize(
-    ("quote_path", "name", "shown", "exit_code", "decision"),
+    ("quote_path", "name", "shown", "exit_code", "decision", "before_session"),
     [
-        pytest.param("true", "café.py", '"caf\\303\\251.py"', 0, None, id="non_ascii"),
-        pytest.param("true", "my notes.md", '"my notes.md"', 3, "block", id="space"),
-        pytest.param("false", "x\u0085y.py", "x\u0085y.py", 0, None, id="raw_next_line"),
-        pytest.param("false", "x\u2028y.py", "x\u2028y.py", 0, None, id="raw_line_separator"),
-        pytest.param("false", "x\u2029y.py", "x\u2029y.py", 0, None, id="raw_paragraph_separator"),
+        pytest.param("true", "café.py", '"caf\\303\\251.py"', 0, None, False, id="non_ascii"),
+        pytest.param("true", "my notes.md", '"my notes.md"', 3, "block", False, id="space"),
+        pytest.param(
+            "true", "my notes.md", '"my notes.md"', 0, None, True, id="space_before_session"
+        ),
+        pytest.param("false", "x\u0085y.py", "x\u0085y.py", 0, None, False, id="raw_next_line"),
+        pytest.param(
+            "false", "x\u2028y.py", "x\u2028y.py", 0, None, False, id="raw_line_separator"
+        ),
+        pytest.param(
+            "false", "x\u2029y.py", "x\u2029y.py", 0, None, False, id="raw_paragraph_separator"
+        ),
     ],
 )
 def test_leaves_changed_files_unset_when_git_quotes_a_path(
@@ -1837,21 +1865,35 @@ def test_leaves_changed_files_unset_when_git_quotes_a_path(
     shown: str,
     exit_code: int,
     decision: str | None,
+    before_session: bool,
 ) -> None:
     # git prints this new name quoted, so a list could only leave it out and come up one path
     # short: check_stop gets no list and finds the changes itself. It still runs, and its exit
     # code decides as usual (a pass or a failure, by row). Under core.quotePath=false git prints
     # a non-ASCII name raw, and Python's splitlines() breaks a line at U+0085, U+2028 and U+2029:
-    # the record would come apart into pieces of names, so no list either.
+    # the record would come apart into pieces of names, so no list either. A quoted name counts
+    # even when its file is older than the session by both dates (before_session): the gate
+    # cannot read the dates of a name it cannot unquote.
     app = workspace / "app"
     git_in(app, tmp_path, "config", "core.quotePath", quote_path)
+    if before_session:
+        (app / name).write_text("x = 1\n", encoding="utf-8")
+    start = start_between_writes()
     (app / "a.py").write_text("x = 1\n", encoding="utf-8")
-    (app / name).write_text("x = 1\n", encoding="utf-8")
+    if not before_session:
+        (app / name).write_text("x = 1\n", encoding="utf-8")
+    dates = (app / name).lstat()
+    assert (max(dates.st_mtime, dates.st_ctime) < start.timestamp()) == before_session
     status = git_in(app, tmp_path, "status", "--porcelain", "--untracked-files=all")
     assert sorted(status.rstrip("\n").split("\n")) == sorted(["?? " + shown, "?? a.py"])
     saved = tmp_path / "changed-files"
+    transcript = write_transcript(tmp_path / "session.jsonl", start=start)
 
-    output = run_hook([{"dir": "app", "check_stop": f"{saving(saved)}; exit {exit_code}"}], app)
+    output = run_hook(
+        [{"dir": "app", "check_stop": f"{saving(saved)}; exit {exit_code}"}],
+        app,
+        transcript=transcript,
+    )
 
     assert saved_bytes(saved) == b"unset"
     assert output.get("decision") == decision
