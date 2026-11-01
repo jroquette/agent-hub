@@ -4,7 +4,7 @@ import "./Skills.css";
 import "./SkillDetail.css";
 
 import { useState } from "react";
-import { Navigate, useNavigate, useParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
 
 import { Button, EmptyState, Icon, ProblemError, Skeleton } from "../../components";
 import type { MarkdownProps } from "../../components";
@@ -14,6 +14,7 @@ import { useScope } from "../../lib/scope";
 import { bundledFileAnchor, resolveSkillLink } from "../../lib/skillLinks";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
+import { Redirect } from "../../shell/routeLoading";
 import { CountCell, KnowledgeProjectIndex, PickFoot } from "../knowledge-index";
 import { HistoryPanel } from "../item-history";
 import { NotFoundBody } from "../not-found";
@@ -354,7 +355,7 @@ function ProblemsFoot({ project }: { project: string }) {
  */
 export function SkillsPickerScreen() {
   const [scope] = useScope();
-  if (scope !== null) return <Navigate to={skillsHome(scope)} replace />;
+  if (scope !== null) return <Redirect to={skillsHome(scope)} />;
   return (
     <KnowledgeProjectIndex
       title="Toolkit"

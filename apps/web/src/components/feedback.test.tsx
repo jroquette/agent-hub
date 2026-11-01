@@ -1,9 +1,17 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../testing/axe";
-import { Banner, ConfirmDialog, EmptyState, ProblemError, Skeleton, Toast } from "./feedback";
+import {
+  Banner,
+  ConfirmDialog,
+  EmptyState,
+  ProblemError,
+  Skeleton,
+  Toast,
+  useSkeleton,
+} from "./feedback";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -25,6 +33,27 @@ describe("Skeleton", () => {
     const { container } = render(<Skeleton lines={3} delay={0} />);
 
     expect(container.querySelectorAll(".ah-skel")).toHaveLength(3);
+  });
+
+  it("keeps a shown skeleton 300 ms after loading ends (useSkeleton)", () => {
+    vi.useFakeTimers();
+    const { result, rerender } = renderHook(({ pending }) => useSkeleton(pending), {
+      initialProps: { pending: true },
+    });
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(result.current).toBe(true);
+
+    rerender({ pending: false });
+    act(() => {
+      vi.advanceTimersByTime(299);
+    });
+    expect(result.current).toBe(true);
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(result.current).toBe(false);
   });
 });
 

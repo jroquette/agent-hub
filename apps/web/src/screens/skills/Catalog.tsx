@@ -49,7 +49,7 @@ import {
   OriginText,
   SkillCard,
 } from "./SkillCard";
-import { WorkflowList } from "../workflows";
+import { WorkflowList } from "../workflows/WorkflowList";
 import { newDraftRoute, studioRoute } from "./Studio";
 import { openDrafts, type StoredDraft } from "./studioDrafts";
 

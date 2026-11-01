@@ -1,31 +1,31 @@
 import "./Brain.css";
 
 import { useEffect, useRef } from "react";
-import type { ReactNode } from "react";
-import { Navigate, useParams, useSearchParams } from "react-router";
+import { useParams, useSearchParams } from "react-router";
 
 import {
-  AppLink,
   Banner,
   Button,
   EmptyState,
   Icon,
   ProblemError,
   Skeleton,
+  useDelayed,
+  useSkeleton,
 } from "../../components";
 import { useScope } from "../../lib/scope";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
+import { Redirect } from "../../shell/routeLoading";
 import { CountCell, KnowledgeProjectIndex, PickFoot } from "../knowledge-index";
 import { useProjectNow } from "../project-overview/queries";
 import { BRAIN_NOTE_STARTERS } from "../learnings/discussLearning";
 import { BrainSearch, NOTE_PATH_ID, focusFirstResult, useSearchTerm } from "./BrainSearch";
+import { BrainTree, focusTreeRow, useBrainTreeState } from "./BrainTree";
 import { LINKED_FROM_ID, LinkedFrom, linkedFromLabel } from "./LinkedFrom";
 import { NOTE_ORIGIN_ID, NoteOrigin, originFields } from "./NoteOrigin";
-import { NoteLink } from "./NoteLink";
 import { NoteView } from "./NoteView";
 import { useBacklinks, useBrainNote, useBrainTree, useNoteLearnings } from "./queries";
-import { INBOX_FOLDER, START_NOTES, buildTree, countNotes, type BrainFolder } from "./tree";
 
 /** The note a project's Brain opens when the URL names none (AC-201.38). */
 export const DEFAULT_NOTE = "index.md";
@@ -33,125 +33,6 @@ export const DEFAULT_NOTE = "index.md";
 /** The in-app route of a project's Brain, on its default note. */
 export function brainHome(project: string): string {
   return `/projects/${encodeURIComponent(project)}/brain`;
-}
-
-function Folder({
-  folder,
-  project,
-  selected,
-}: {
-  folder: BrainFolder;
-  project: string;
-  selected: string;
-}) {
-  return (
-    <ul className="ah-brain-tree" data-root={folder.path === "" || undefined}>
-      {folder.notes.map((entry) => (
-        <li key={entry.path}>
-          <NoteLink project={project} path={entry.path} selected={selected} />
-        </li>
-      ))}
-      {folder.folders.map((child) => (
-        <FolderItem key={child.path} folder={child} project={project} selected={selected} />
-      ))}
-    </ul>
-  );
-}
-
-function FolderItem({
-  folder,
-  project,
-  selected,
-}: {
-  folder: BrainFolder;
-  project: string;
-  selected: string;
-}) {
-  const count = countNotes(folder);
-  return (
-    <li>
-      <details open={selected.startsWith(folder.path)}>
-        <summary
-          className="ah-brain-folder"
-          aria-label={`${folder.name}, ${String(count)} ${count === 1 ? "note" : "notes"}`}
-        >
-          <span className="ah-mono">{folder.name}/</span>
-          <span className="ah-count">{count}</span>
-        </summary>
-        <Folder folder={folder} project={project} selected={selected} />
-      </details>
-    </li>
-  );
-}
-
-function TreeGroup({ id, label, children }: { id: string; label: string; children: ReactNode }) {
-  return (
-    <section className="ah-brain-group" aria-labelledby={id}>
-      <h2 id={id} className="ah-brain-group-label">
-        {label}
-      </h2>
-      {children}
-    </section>
-  );
-}
-
-function GroupedTree({
-  root,
-  project,
-  selected,
-}: {
-  root: BrainFolder;
-  project: string;
-  selected: string;
-}) {
-  const start = root.notes;
-  const folders = root.folders.filter((folder) => folder.name !== INBOX_FOLDER);
-  const inbox = root.folders.find((folder) => folder.name === INBOX_FOLDER);
-  return (
-    <>
-      {start.length > 0 && (
-        <TreeGroup id="brain-start" label="Start here">
-          <ul className="ah-brain-tree" data-root>
-            {[...start]
-              .sort((a, b) => Number(b.path in START_NOTES) - Number(a.path in START_NOTES))
-              .map((entry) => (
-                <li key={entry.path}>
-                  <NoteLink
-                    project={project}
-                    path={entry.path}
-                    selected={selected}
-                    label={START_NOTES[entry.path]}
-                  />
-                </li>
-              ))}
-          </ul>
-        </TreeGroup>
-      )}
-      {folders.length > 0 && (
-        <TreeGroup id="brain-folders" label="Folders">
-          <ul className="ah-brain-tree" data-root>
-            {folders.map((folder) => (
-              <FolderItem key={folder.path} folder={folder} project={project} selected={selected} />
-            ))}
-          </ul>
-        </TreeGroup>
-      )}
-      {inbox && (
-        <TreeGroup id="brain-inbox" label="Inbox · unreviewed">
-          <ul className="ah-brain-tree" data-root>
-            <FolderItem folder={inbox} project={project} selected={selected} />
-          </ul>
-          <AppLink
-            href={`/knowledge/learnings?scope=${encodeURIComponent(project)}`}
-            className="ah-brain-link"
-          >
-            <Icon name="lightbulb" size="sm" />
-            <span>Triage in Learnings</span>
-          </AppLink>
-        </TreeGroup>
-      )}
-    </>
-  );
 }
 
 function typingIn(target: EventTarget | null): boolean {
@@ -180,9 +61,48 @@ function useBrainQuery(): [string, (value: string) => void] {
 
 /** The search field's bound: the knowledge route's longest query. */
 const MAX_QUERY_CHARS = 500;
+/** "Loading brain notes" is said only once the listing has been loading this long (spec 22). */
+const SAY_LOADING_MS = 1_000;
+/** The skeleton's row bars, as wide as notes and folders tend to be. */
+const SKELETON_ROWS = ["40%", "55%", "70%", "45%", "60%", "35%", "65%", "50%", "40%", "55%"];
+
+/**
+ * The panel while the listing loads: after the skeleton delay its shape (the field, a group
+ * heading and 10 rows), and after a second "Loading brain notes", said outside the busy part.
+ */
+function TreeLoading({ shown }: { shown: boolean }) {
+  const said = useDelayed(SAY_LOADING_MS);
+  return (
+    <div className="ah-stack" style={{ gap: 12 }}>
+      {shown && (
+        <div className="ah-stack" style={{ gap: 12 }} aria-busy="true">
+          <Skeleton height={32} radius={6} delay={0} />
+          <div className="ah-brain-skeleton">
+            <Skeleton width={80} height={10} delay={0} style={{ margin: "5px 6px 9px" }} />
+            {SKELETON_ROWS.map((width, row) => (
+              <Skeleton
+                key={row}
+                width={width}
+                height={12}
+                delay={0}
+                style={{ margin: "7px 6px" }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+      <span className="ah-sr" aria-live="polite">
+        {said ? "Loading brain notes" : ""}
+      </span>
+    </div>
+  );
+}
 
 function BrainTreePanel({ project, selected }: { project: string; selected: string }) {
   const tree = useBrainTree(project);
+  const skeleton = useSkeleton(tree.isPending);
+  // Above the tree and the search that replaces it, so a search turn loses nothing.
+  const treeState = useBrainTreeState(selected);
   const [query, setQuery] = useBrainQuery();
   const [term, searchNow] = useSearchTerm(query.trim());
   const fieldRef = useRef<HTMLInputElement>(null);
@@ -209,13 +129,7 @@ function BrainTreePanel({ project, selected }: { project: string; selected: stri
       />
     );
   }
-  if (tree.isPending) {
-    return (
-      <div aria-busy="true">
-        <Skeleton lines={8} />
-      </div>
-    );
-  }
+  if (tree.isPending || skeleton) return <TreeLoading shown={skeleton} />;
   const { entries, truncated, skipped } = tree.data;
   if (entries.length === 0) {
     return (
@@ -247,7 +161,13 @@ function BrainTreePanel({ project, selected }: { project: string; selected: stri
             } else if (event.key === "Enter") {
               event.preventDefault();
               searchNow();
-            } else if (event.key === "ArrowDown" && focusFirstResult(panelRef.current)) {
+            } else if (
+              event.key === "ArrowDown" &&
+              // An empty field goes to the tree's current row, a query to its first result.
+              (query.trim() === ""
+                ? focusTreeRow(panelRef.current)
+                : focusFirstResult(panelRef.current))
+            ) {
               event.preventDefault();
             }
           }}
@@ -261,20 +181,28 @@ function BrainTreePanel({ project, selected }: { project: string; selected: stri
         </Banner>
       )}
       {query.trim() === "" ? (
-        <GroupedTree root={buildTree(entries)} project={project} selected={selected} />
-      ) : (
-        <BrainSearch
+        <BrainTree
           project={project}
           entries={entries}
-          query={query}
-          term={term}
           selected={selected}
+          state={treeState}
           field={fieldRef}
-          onClear={() => {
-            setQuery("");
-            fieldRef.current?.focus();
-          }}
         />
+      ) : (
+        <div className="ah-brain-results">
+          <BrainSearch
+            project={project}
+            entries={entries}
+            query={query}
+            term={term}
+            selected={selected}
+            field={fieldRef}
+            onClear={() => {
+              setQuery("");
+              fieldRef.current?.focus();
+            }}
+          />
+        </div>
       )}
     </div>
   );
@@ -353,8 +281,9 @@ export function BrainScreen() {
         </p>
       </div>
       <div className="ah-brain-layout">
-        <nav aria-label="Brain notes" className="ah-card ah-pad">
-          <BrainTreePanel project={project} selected={path} />
+        <nav aria-label="Brain notes" className="ah-card ah-pad ah-brain-panel">
+          {/* Keyed by project: another project's tree starts with its own folders and rows. */}
+          <BrainTreePanel key={project} project={project} selected={path} />
         </nav>
         <article
           aria-label={path}
@@ -489,7 +418,7 @@ function FocusCell({ project }: { project: string }) {
  */
 export function BrainPickerScreen() {
   const [scope] = useScope();
-  if (scope !== null) return <Navigate to={brainHome(scope)} replace />;
+  if (scope !== null) return <Redirect to={brainHome(scope)} />;
   return (
     <KnowledgeProjectIndex
       title="Brain"

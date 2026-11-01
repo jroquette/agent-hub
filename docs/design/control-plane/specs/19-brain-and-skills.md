@@ -116,7 +116,8 @@ projects, and figures or a problems foot for Hub config.
 
 Folder rows and note links are at least 24 px high. A picker card is an `article` labelled by its name, which is
 the one link that opens it (the card's click is a mouse convenience); the foot link and Retry are their own Tab
-stops and do not open the card. The tree's groups are sections labelled by their headings; the
+stops and do not open the card. The tree's groups are sections labelled by their headings; its folders are buttons
+with `aria-expanded` and the tree is one Tab stop (AGH-617, below); the
 search field has the accessible name "Search brain notes and repo docs" (AGH-393). Count cells are tabular numbers.
 
 ## UX principles applied
@@ -273,6 +274,85 @@ stacked above the note, the focus moves to the note's path line.
 - **AC-393.18** (this screen) axe reports no serious or critical violation with the search results, no match and a
   failure, and with both note sections. Tests: `index.test.tsx` "search panel … (a11y)", `LinkedFrom.test.tsx` and
   `NoteOrigin.test.tsx` "(a11y)".
+
+## Brain tree: rows in view, one Tab stop (AGH-617)
+
+The owner approved this design (AGH-617). The tree renders only the rows in its view, so a brain of hundreds of notes
+stays fast; what it shows, its groups, names and counts are AC-270.9's, unchanged.
+
+**Card.** The tree card is at most the visible part of the page under its header (with or without the offline
+banner), so all of it shows at first paint; a small brain makes a short card. It stays `space-4` under the top bar
+while a long note scrolls. Inside it the search field and the listing banner stay put, and the rows scroll in a box of
+their own (the search's results scroll in the same place when they replace the tree). Below 900 px the card stacks
+above the note and scrolls with the page; its box is at most half the screen high and at least 240 px (a group heading
+and about 8 rows).
+
+**Rows.** Each group ("Start here", "Folders", "Inbox · unreviewed") is a `section` labelled by its `h2`, which stays
+at the top of the box while the group's rows pass under it. Its rows are one `ul` of `li`, indented `space-3` per
+folder level, at fixed heights (26 px for a note, 28 px for a folder); only the rows in view and 12 on each side are in
+the page, and padding on the `ul` stands for the others. Each `li` carries `aria-level` (its depth + 1),
+`aria-setsize` and `aria-posinset` among its siblings, so a screen reader still hears "3 of 12, level 2" when most
+siblings are not rendered.
+
+- A folder is a `button` with `aria-expanded`, a `chevron-right` or `chevron-down`, its name in mono and its count; its
+  accessible name stays "decisions, 12 notes" ("1 note"). A click opens or closes it.
+- A note is a link, as before: `aria-current="page"` on the open note, its path as `title`.
+- "Triage in Learnings" stays at the end of the inbox group, after its rows, always rendered.
+
+**Open folders.** The selected note's folders open. A new selection opens its own folders, and nothing closes by
+itself: only the user closes a folder. The open folders, the current row and the scroll position are kept while the
+Brain shows the project: across notes, scrolling, and the search replacing the tree (`Esc` brings the tree back as it
+was). They start afresh on another project or after leaving the Brain.
+
+**Selection.** On a deep link, and when the note changes from outside the tree (a link in the note, Linked from, Back
+or forward), the box scrolls at once to show the selected row, in the middle of the box; focus does not move. Opening
+a note from the tree does not move the box. A note the listing does not hold has no row, and the box stays where it is.
+
+**Find in page.** The tree shows the rows in view. To find a note anywhere in the brain, search with `/`.
+
+**Keyboard.** The tree is one Tab stop: `Tab` enters on the row last used, else the selected note, else the first
+row, and the next stop is "Triage in Learnings". On a row:
+
+| Keys | Action |
+|---|---|
+| `↓` / `j`, `↑` / `k` | Next / previous row, across the groups; the box scrolls first, so focus is on the next row in the same keystroke. `↑` on the first row returns to the search field; `k` stays there, so a held `k` never types into the field |
+| `Home` / `End` | First / last row |
+| `→` | Closed folder: open it. Open folder: go to its first row |
+| `←` | Open folder: close it. A note or a closed folder: go to its folder's row |
+| `Enter` / `o` | Note: open it (focus stays on the row). Folder: open or close it |
+| `Space` | Folder: open or close it. Note: nothing |
+
+`↓` in the search field with no query goes to the tree's current row (with a query, to the first result, as before).
+The tree takes these keys only while one of its rows has focus, never with `Ctrl`, `⌘` or `Alt`, and never while typing
+in a field. While a `g` sequence waits for its second key, `k` and `o` are the sequence's (`g k`, `g o`); the arrows,
+`Home`, `End`, `j`, `Space` and `Enter` still act on the tree, and end the sequence. Opening or closing a folder keeps focus on
+its row, with a click too. The current row is always rendered, so focus stays on it when the wheel scrolls it out of
+view; when the focused row leaves the list (a new listing drops it), focus moves to its folder's row, else to the row
+before it, never to the page.
+
+**Loading.** Nothing for 300 ms, then a skeleton of the panel (a field bar, a group heading bar and 10 row bars at row
+height) with `aria-busy="true"`, held at least 300 ms. After 1 s a screen reader hears "Loading brain notes", said
+outside the busy part. Empty, failed and partial listings are as before.
+
+- **AC-617.1** Given a brain of 600 notes (six folders of 100) opened on a note of one of them, when the tree renders,
+  then its panel holds fewer than 1,000 elements (and at the listing's 2,000-note cap), and every note is reached by
+  scrolling with every folder open. Tests: `index.test.tsx` "renders fewer than 1,000 elements …", "keeps the tree
+  under 1,000 elements at the listing's 2,000-note cap".
+- **AC-617.2** Given the tree, when the user moves with `↓`/`↑`, `j`/`k`, `Home`/`End`, `→`/`←`, `Enter`, `o` and
+  `Space`, then focus moves row by row in tree order past the rendered rows and back, never to the page, folders open
+  and close on their row, and the tree is one Tab stop. Tests: `index.test.tsx` "moves focus row by row …", "goes to
+  the first and the last row …", "opens and closes a folder …", "keeps the tree one Tab stop …", "goes back to the
+  search field with ↑ on the first row …", "moves focus to the folder's row when a new listing drops the focused
+  note", "moves focus to the row before it when a new listing drops a focused row with no folder listed …", "moves
+  with the arrows, Home, End and j while a g sequence waits …".
+- **AC-617.3** Given folders opened by hand or for an earlier note, when the box scrolls them away and back, another
+  note is picked or the search is cleared with `Esc`, then they are still open and the box is where it was. Tests:
+  `index.test.tsx` "keeps a folder opened by hand open …", "keeps a folder opened for an earlier note open …", "brings
+  back the same open folders and scroll position …", "leaves the box where it is when a note is opened from the tree
+  …".
+- **AC-617.4** Given a 600-note tree scrolled to the middle with a folder open, when axe runs, then it finds no serious
+  or critical violation, and the rows in view carry their level, set size and position. Test: `index.test.tsx` "has
+  no serious a11y violations on a 600-note tree … (a11y)".
 
 ## Toolkit catalog and Edit with Claude (AGH-271)
 
