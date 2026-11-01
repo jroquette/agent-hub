@@ -38,6 +38,9 @@ from agent_hub.core.sessions.session import TokenUsage
 type PermissionMode = Literal["default", "acceptEdits", "plan", "auto"]
 PERMISSION_MODES: Final = ("default", "acceptEdits", "plan", "auto")
 
+# How hard Claude works on a turn (``--effort``). None leaves it to the CLI, which picks by model.
+type EffortLevel = Literal["low", "medium", "high", "xhigh", "max"]
+
 # A model is an alias or an id matching the pattern (L6); an unknown but valid id reaches the
 # CLI, whose refusal becomes an ``error`` record.
 MODEL_ALIASES: Final = ("default", "opus", "sonnet", "haiku")
@@ -80,7 +83,7 @@ class DriverModel(BaseModel):
 
 class StartSpec(DriverModel):
     """What one session starts with: a resolved working directory (never a free path from the
-    browser), the mode, an optional model, an optional session to resume (and fork), an
+    browser), the mode, an optional model and effort, an optional session to resume (and fork), an
     optional session id to give the new session (P13), variables added to the child's
     environment (``AGENT_HUB_WEB_URL``; never the access token, L5), the hub's plugin
     folders a session outside the hub loads (resolved by the workdir listing), the tools it may
@@ -95,6 +98,7 @@ class StartSpec(DriverModel):
     cwd: str = Field(min_length=1)
     mode: PermissionMode
     model: ModelName | None = None
+    effort: EffortLevel | None = None
     resume: str | None = None
     fork: bool = False
     session_id: str | None = None
@@ -391,6 +395,10 @@ class SessionDriver(Protocol):
 
     async def set_model(self, handle: DriverHandle, model: str | None) -> None:
         """Change the model (None = the CLI's default)."""
+        ...
+
+    async def set_effort(self, handle: DriverHandle, effort: EffortLevel) -> None:
+        """Change the effort; the next request to the model uses it."""
         ...
 
     async def close(self, handle: DriverHandle) -> None:

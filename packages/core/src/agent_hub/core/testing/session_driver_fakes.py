@@ -24,6 +24,7 @@ from agent_hub.core.agent_sessions.driver import (
     DriverFile,
     DriverHandle,
     DriverImage,
+    EffortLevel,
     Exited,
     InitEvent,
     PastSession,
@@ -189,6 +190,10 @@ class InMemorySessionDriver:
     async def set_model(self, handle: DriverHandle, model: str | None) -> None:
         """Record the new model."""
         self._open(handle, "set_model", model)
+
+    async def set_effort(self, handle: DriverHandle, effort: EffortLevel) -> None:
+        """Record the new effort."""
+        self._open(handle, "set_effort", effort)
 
     async def close(self, handle: DriverHandle) -> None:
         """End the process (exit code 0); a second close does nothing."""

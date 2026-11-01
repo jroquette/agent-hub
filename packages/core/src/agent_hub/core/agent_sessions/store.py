@@ -26,7 +26,7 @@ from agent_hub.core.agent_sessions.agent_session import (
     EndReason,
     ReviewTarget,
 )
-from agent_hub.core.agent_sessions.driver import PermissionMode
+from agent_hub.core.agent_sessions.driver import EffortLevel, PermissionMode
 from agent_hub.core.agent_sessions.records import LogRecord, RecordKind
 from agent_hub.core.readmodels.view_types import Money
 from agent_hub.core.sessions.session import TokenUsage
@@ -41,6 +41,7 @@ class AgentSessionFields(TypedDict, total=False):
     status: AgentSessionStatus
     mode: PermissionMode
     model: str | None
+    effort: EffortLevel | None
     title: str | None
     updated_at: datetime
     ended_at: datetime | None
