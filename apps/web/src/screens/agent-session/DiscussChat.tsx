@@ -170,6 +170,7 @@ export function DiscussChatView({
             status={status}
             mode={state.mode ?? session.mode}
             model={state.model ?? session.model ?? null}
+            effort={state.effort ?? session.effort ?? null}
             models={capabilities.data?.models ?? DEFAULT_MODELS}
             onSend={async (text, screenshots, files) => {
               await transcript.send(

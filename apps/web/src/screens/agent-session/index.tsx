@@ -563,6 +563,7 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             mode={mode}
             model={model}
             models={models}
+            effort={state.effort ?? session.effort ?? null}
             onSend={(text, screenshots, files) =>
               transcript.send(
                 text,
@@ -593,7 +594,13 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
         <StartSessionDialog
           project={session.project}
           capabilities={caps}
-          forkOf={{ ...session, status, mode, model }}
+          forkOf={{
+            ...session,
+            status,
+            mode,
+            model,
+            effort: state.effort ?? session.effort ?? null,
+          }}
           onClose={() => {
             setForking(false);
           }}

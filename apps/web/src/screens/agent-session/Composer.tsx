@@ -21,6 +21,8 @@ import { cx } from "../../lib/cx";
 import type { MessageFile } from "../../lib/messageFile";
 import { servedCheckout } from "../../lib/devCheckout";
 import { useAutoGrow } from "../../lib/useAutoGrow";
+import { rememberEffort, type EffortLevel } from "./effort";
+import { ModelMenu } from "./ModelMenu";
 import { useSlashMenu, type SlashOption } from "./SlashMenu";
 import { useDraft } from "./useDraft";
 import { modeLabel, type AgentSessionStatus, type PermissionMode } from "./model";
@@ -46,6 +48,7 @@ const coarsePointer = () =>
 export interface SettingsChange {
   mode?: PermissionMode;
   model?: string;
+  effort?: EffortLevel;
 }
 
 export interface ComposerProps {
@@ -54,6 +57,8 @@ export interface ComposerProps {
   model: string | null;
   /** The model aliases capabilities offer; the current model is added when it is another id. */
   models: readonly string[];
+  /** How hard Claude works; null leaves it to the CLI. */
+  effort?: EffortLevel | null | undefined;
   /** Sends the text, with the PNG data URLs of the images pasted in it (`acceptsImages`) and the
    * files attached to it (`acceptsFiles`). */
   onSend: (
@@ -101,13 +106,15 @@ function problemText(error: unknown, what: string): string {
 /**
  * The message box of a session (D10, AC-165.45): Enter sends, Shift+Enter starts a new line. Stop,
  * or Esc in the empty box, interrupts while a turn runs or waits on a permission (AC-234.21), once
- * until that interrupt answers, with Stop disabled and reading "Stopping…" meanwhile. The mode and model selectors post settings.
+ * until that interrupt answers, with Stop disabled and reading "Stopping…" meanwhile. The mode
+ * selector and the model and effort menu post settings.
  */
 export function Composer({
   status,
   mode,
   model,
   models,
+  effort = null,
   onSend,
   onInterrupt,
   onSettings,
@@ -138,7 +145,6 @@ export function Composer({
   const inputId = useId();
   const hintId = useId();
   const modeId = useId();
-  const modelId = useId();
 
   const ended = status === "ended" || status === "failed";
   const resumes = ended && resumable && !disabledReason;
@@ -165,7 +171,6 @@ export function Composer({
   const needsText = attachments.count > 0 && text.trim() === "";
   const canStop = status === "running" || status === "waiting_permission";
   const currentModel = model ?? "default";
-  const modelOptions = models.includes(currentModel) ? models : [...models, currentModel];
   // A mode set elsewhere (`auto` outside the playground) is shown, but cannot be picked here.
   const modes = offeredModes();
   const unofferedMode = modes.includes(mode) ? null : mode;
@@ -387,30 +392,19 @@ export function Composer({
               <Icon name="chevron-down" size="sm" className="as-pill-caret" />
             </label>
           )}
-          <label htmlFor={modelId} className="as-pill" title="Model">
-            <Icon name="cpu" size="sm" />
-            <span className="ah-sr">Model</span>
-            <select
-              id={modelId}
-              className="as-pill-select"
-              value={currentModel}
-              disabled={ended}
-              onChange={(event) => {
-                const next = event.target.value;
-                run(() => onSettings({ model: next }), "change the model");
-              }}
-            >
-              {modelOptions.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-            <span className="as-pill-value" aria-hidden="true">
-              {currentModel}
-            </span>
-            <Icon name="chevron-down" size="sm" className="as-pill-caret" />
-          </label>
+          <ModelMenu
+            model={currentModel}
+            models={models}
+            effort={effort}
+            disabled={ended}
+            onModel={(next) => {
+              run(() => onSettings({ model: next }), "change the model");
+            }}
+            onEffort={(next) => {
+              rememberEffort(next);
+              run(() => onSettings({ effort: next }), "change the effort");
+            }}
+          />
         </div>
         <div className="as-composer-actions">
           <AttachButton

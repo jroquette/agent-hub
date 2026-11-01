@@ -833,14 +833,20 @@ describe("AgentSessionScreen (composer)", () => {
     await screen.findByText("Starting.");
 
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "Mode" }), "plan");
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Model" }), "opus");
+    await userEvent.click(screen.getByRole("button", { name: /^Model and effort/ }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "Opus" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Model and effort/ }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /Effort/ }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: /^High/ }));
 
     await waitFor(() => {
-      expect(posts(view.requests, "/settings")).toHaveLength(2);
+      expect(posts(view.requests, "/settings")).toHaveLength(3);
     });
-    const [mode, model] = posts(view.requests, "/settings");
+    const [mode, model, effort] = posts(view.requests, "/settings");
     expect(await bodyOf(mode)).toEqual({ mode: "plan" });
     expect(await bodyOf(model)).toEqual({ model: "opus" });
+    expect(await bodyOf(effort)).toEqual({ effort: "high" });
+    window.localStorage.removeItem("ah.session.effort");
   });
 
   it("shows the reconnect banner while the stream is lost and hides it once it resumes", async () => {
@@ -1811,7 +1817,7 @@ describe("AgentSessionScreen (session-name)", () => {
   it("hides the mode switch of a session held to a tool policy (scenario investigation)", async () => {
     renderChat(routes({ [SESSION]: anAgentSession({ status: "idle", restricted: true }) }));
 
-    expect(await screen.findByRole("combobox", { name: "Model" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^Model and effort/ })).toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Mode" })).toBeNull();
   });
 });

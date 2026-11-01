@@ -9,6 +9,7 @@
  * `[redacted: <kind>]` marker is the stored copy (E9): live frames carry the original text.
  */
 import type { components } from "../../api/schema";
+import { EFFORTS, type EffortLevel } from "./effort";
 import { netDiff, type NetDiff } from "./netDiff";
 import type { RepoFileInfo } from "./repoChanges";
 
@@ -213,6 +214,7 @@ export interface TranscriptState {
   status: AgentSessionStatus | null;
   endReason: EndReason | null;
   model: string | null;
+  effort: EffortLevel | null;
   mode: PermissionMode | null;
   /** The `/` menu: the init record's slash commands and skills, bounded (`commandsOf`). */
   slashCommands: string[];
@@ -246,6 +248,7 @@ export function initialTranscript(): TranscriptState {
     status: null,
     endReason: null,
     model: null,
+    effort: null,
     mode: null,
     slashCommands: [],
     lastSeq: 0,
@@ -958,6 +961,11 @@ function applySettings(state: TranscriptState, record: LogRecord): TranscriptSta
     parts.push(`${parts.length ? "model" : "Model"} set to ${model}`);
     next = { ...next, model };
   }
+  const effort = EFFORTS.find((option) => option.value === str(record.body, "effort"));
+  if (effort) {
+    parts.push(`${parts.length ? "effort" : "Effort"} set to ${effort.label}`);
+    next = { ...next, effort: effort.value };
+  }
   return notice(next, record.seq, parts.join(", ") || "Settings changed");
 }
 
@@ -1214,6 +1222,7 @@ export function applySnapshot(state: TranscriptState, session: AgentSession): Tr
     endReason: session.end_reason ?? null,
     mode: session.mode,
     model: session.model ?? state.model,
+    effort: session.effort ?? state.effort,
   };
   const open = session.open_permission;
   if (!open) return next;

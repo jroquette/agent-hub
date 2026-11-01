@@ -26,7 +26,7 @@ describe("DiscussChat", () => {
   it("shows no Mode select for a session held to a tool policy, even when not locked", async () => {
     renderChat(true);
 
-    expect(await screen.findByRole("combobox", { name: "Model" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^Model and effort/ })).toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Mode" })).toBeNull();
   });
 
