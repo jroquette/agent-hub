@@ -1,5 +1,9 @@
 """Fixtures of the api tests: settings under tmp_path, in-process clients, and the fakes the
-routes are tested against (read models, hook mapper, event reader, clock)."""
+routes are tested against (read models, hook mapper, event reader, clock).
+
+``manual_tickers`` are the tickers of ``build_app``'s background parts, driven by the test: no
+test starts a background thread unless it asks for one.
+"""
 
 import hashlib
 import json
@@ -605,6 +609,33 @@ def fakes() -> SimpleNamespace:
         Clock=FakeClock,
         event_id=stored_event_id,
     )
+
+
+class ManualTicker:
+    """A ``Ticker`` (``agent_hub.api.doctor_refresher``) the test drives: ``start`` keeps the
+    tick, ``tick()`` runs it on the caller's thread, ``stop()`` records the call. It starts no
+    thread of its own."""
+
+    def __init__(self) -> None:
+        self.kept: Callable[[], None] | None = None
+        self.stops = 0
+
+    def start(self, tick: Callable[[], None]) -> None:
+        self.kept = tick
+
+    def tick(self) -> None:
+        """Run the kept tick now, on this thread."""
+        assert self.kept is not None, "the ticker was never started: no app part holds it"
+        self.kept()
+
+    def stop(self) -> None:
+        self.stops += 1
+
+
+@pytest.fixture
+def manual_tickers() -> dict[str, ManualTicker]:
+    """The ``build_app`` keywords of its background parts' tickers: the doctor's refresh."""
+    return {"refresh_ticker": ManualTicker()}
 
 
 type ClientOpener = Callable[..., AbstractContextManager[TestClient]]
