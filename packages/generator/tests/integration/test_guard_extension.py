@@ -10,6 +10,7 @@ tool name of each call it sees to a marker file, so a test can tell whether it r
 
 import json
 import math
+import os
 import shutil
 import subprocess
 import textwrap
@@ -443,7 +444,8 @@ def test_kills_extension_process_group_when_timed_out(
 
 
 # AGH-621 (AC-23): an extension that holds its interpreter (a regex that backtracks for ever, a
-# busy loop that swallows every exception) is still stopped at the timeout, with the same ask.
+# busy loop that swallows every exception) is still stopped at the timeout, with the same ask,
+# and the forked runner is gone once the hook has answered (the case's own kill comes later).
 HOLDS_INTERPRETER = {
     "backtracking": 'import re\nre.match(r"(a+)+$", "a" * 64 + "b")\nreturn None',
     "busy_loop": (
@@ -451,6 +453,17 @@ HOLDS_INTERPRETER = {
         "    except BaseException:\n        pass"
     ),
 }
+# Put first in an extension's check: the runner, the hook's forked child, writes its pid.
+RECORDS_PID = 'with open({pid!r}, "w", encoding="utf-8") as fh:\n    fh.write(str(os.getpid()))\n'
+
+
+def running(pid: int) -> bool:
+    """Whether a process ``pid`` exists, one that ended but was never reaped included."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
 
 
 @pytest.mark.serial
@@ -465,7 +478,8 @@ def test_asks_when_extension_holds_interpreter_past_timeout(
     run_hook_with_constant: Callable[..., Any],
     tmp_path: Path,
 ) -> None:
-    install(hub, marker=marker, body=body)
+    pid = tmp_path / "runner.pid"
+    install(hub, marker=marker, head="import os", body=RECORDS_PID.format(pid=str(pid)) + body)
 
     allow, took = guard_with_timeout(
         hub, run_hook_with_constant, python=hook_python, tmp_path=tmp_path
@@ -474,6 +488,64 @@ def test_asks_when_extension_holds_interpreter_past_timeout(
     assert allow == ("ask", f"{PREFIX}project guard: timed out after {TEST_TIMEOUT} s; confirm")
     assert TEST_TIMEOUT <= took < 2
     assert seen(marker) == ["Read"]
+    assert not running(int(pid.read_text(encoding="utf-8")))
+
+
+# AGH-621 (AC-23): the hook Claude Code runs, pre_tool_use.py, on a Bash call, with a project
+# guard that hangs and leaves a grandchild: the same timeout ask, and the grandchild is killed with
+# the guard's group. argv: none. Imports the guard beside $HOOK_FILE, lowers its EXTENSION_TIMEOUT
+# to $TIMEOUT seconds, then runs the hook as __main__, whose import of guard finds the lowered one.
+LOWERED_TIMEOUT_HOOK = """
+import os, runpy, sys
+hook = os.environ["HOOK_FILE"]
+sys.path.insert(0, os.path.dirname(hook))
+import guard
+guard.EXTENSION_TIMEOUT = int(os.environ["TIMEOUT"])
+sys.argv = [hook]
+runpy.run_path(hook, run_name="__main__")
+"""
+
+
+def verdict_of(stdout: bytes) -> Verdict:
+    """The ``(decision, reason)`` a hook printed; ``None`` when it printed nothing."""
+    if not stdout.strip():
+        return None
+    output = json.loads(stdout)["hookSpecificOutput"]
+    return output["permissionDecision"], output["permissionDecisionReason"]
+
+
+@pytest.mark.serial
+@pytest.mark.usefixtures("no_process_left")
+def test_asks_with_timeout_cause_when_pre_tool_use_runs_hanging_extension(
+    hub: Path,
+    marker: Path,
+    *,
+    hook_python: str,
+    run_hook_file: Callable[..., subprocess.CompletedProcess[bytes]],
+    tmp_path: Path,
+) -> None:
+    late = tmp_path / "late.txt"
+    script = GRANDCHILD_SCRIPT.format(delay=GRANDCHILD_DELAY, late=str(late))
+    install(hub, marker=marker, body=GRANDCHILD.format(script=script))
+    driver, home = tmp_path / "support" / "lowered_timeout_hook.py", tmp_path / "home"
+    driver.parent.mkdir(parents=True, exist_ok=True)
+    driver.write_text(LOWERED_TIMEOUT_HOOK, encoding="utf-8")
+    home.mkdir(exist_ok=True)
+    hook = hub / HOOKS / "pre_tool_use.py"
+    env = {"HOME": str(home), "HOOK_FILE": str(hook), "TIMEOUT": str(TEST_TIMEOUT)}
+    stdin = json.dumps(bash("ls") | {"cwd": str(hub)}).encode()
+
+    began = time.monotonic()
+    completed = run_hook_file(hook_python, driver, stdin=stdin, cwd=hub, env=env)
+    took = time.monotonic() - began
+    time.sleep(max(0.0, GRANDCHILD_DELAY + 1.5 - took))
+
+    assert (completed.returncode, completed.stderr) == (0, b"")
+    reason = f"{PREFIX}project guard: timed out after {TEST_TIMEOUT} s; confirm"
+    assert verdict_of(completed.stdout) == ("ask", reason)
+    assert TEST_TIMEOUT <= took < GRANDCHILD_DELAY + 1
+    assert seen(marker) == ["Bash"]
+    assert not late.exists()
 
 
 @pytest.mark.parametrize("linked", ["project_folder", "extension_file"])
