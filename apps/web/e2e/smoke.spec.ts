@@ -48,7 +48,7 @@ const PAGES: SmokePage[] = [
     shows: /Failed at Verifying · attempt 2 of 2/,
   },
   { name: "Features", path: "/features", heading: "Features", shows: "export-button" },
-  { name: "Health", path: "/health", heading: "Health", shows: /Checked on request/ },
+  { name: "Health", path: "/health", heading: "Health", shows: /Checked|first check is running/ },
 ];
 
 for (const smoke of PAGES) {

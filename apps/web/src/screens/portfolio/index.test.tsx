@@ -209,6 +209,47 @@ describe("PortfolioScreen", () => {
     });
   });
 
+  it("reads the projects again until each hub's first check ends", async () => {
+    vi.useFakeTimers();
+    try {
+      // AGH-608: right after hub web starts, a hub's card says the doctor has not run yet.
+      let answers = 0;
+      const { requests } = renderWithApi(<PortfolioScreen />, {
+        routes: {
+          ...routes,
+          "/api/v1/projects": () => {
+            answers += 1;
+            const unchecked = answers === 1 ? { checked_at: null, hub_health: null } : {};
+            return aPage([
+              aProjectSummary({ name: "agent-hub" }),
+              aProjectSummary({ name: "loki-trader", hub_repo: "loki-trader-hub", ...unchecked }),
+            ]);
+          },
+        },
+      });
+      const projectReads = () =>
+        requests.filter((r) => new URL(r.url).pathname === "/api/v1/projects").length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByRole("article", { name: "Project loki-trader" })).toBeInTheDocument();
+      expect(projectReads()).toBe(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(projectReads()).toBe(2);
+
+      // Every hub has been checked: no more reads.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20_000);
+      });
+      expect(projectReads()).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   describe("states", () => {
     it("shows skeletons after 300 ms while the requests are pending", async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });

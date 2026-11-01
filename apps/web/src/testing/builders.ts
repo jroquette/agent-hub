@@ -24,6 +24,7 @@ export type Learning = Schemas["Learning"];
 export type ProjectSummary = Schemas["ProjectSummary"];
 export type FeatureView = Schemas["FeatureView"];
 export type FindingView = Schemas["FindingView"];
+export type DoctorFindings = Schemas["DoctorFindings"];
 export type HubView = Schemas["HubView"];
 export type CollectorStatus = Schemas["CollectorStatus"];
 export type ProblemDetails = Schemas["ProblemDetails"];
@@ -953,6 +954,15 @@ export function aFinding(overrides: Partial<FindingView> = {}): FindingView {
     severity: "error",
     ...overrides,
   };
+}
+
+/** A `GET /doctor/findings` answer: `items` as one page, from a check that ended at `checked_at`
+ * (T0 unless given; null while a hub's first background check has not ended). */
+export function aDoctorFindings(
+  items: FindingView[],
+  { checked_at = T0 }: { checked_at?: string | null } = {},
+): DoctorFindings {
+  return { ...aPage(items), checked_at };
 }
 
 export function aHub(overrides: Partial<HubView> = {}): HubView {

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
+  aDoctorFindings,
   aFeature,
   aFinding,
   aNeedsYouItem,
@@ -240,7 +241,7 @@ const routes: ApiRoutes = {
       href: "/sessions/s-plan",
     }),
   ]),
-  "/api/v1/doctor/findings": aPage([
+  "/api/v1/doctor/findings": aDoctorFindings([
     aFinding({
       severity: "warning",
       rule: "brain.memory",
@@ -555,7 +556,7 @@ describe("ProjectOverviewScreen", () => {
         "/api/v1/workflow-runs": aPage([]),
         "/api/v1/needs-you": aPage([]),
         "/api/v1/sessions": aPage([]),
-        "/api/v1/doctor/findings": aPage([]),
+        "/api/v1/doctor/findings": aDoctorFindings([]),
         "/api/v1/projects": aPage([]),
       });
 
@@ -655,6 +656,42 @@ describe("ProjectOverviewScreen", () => {
       await screen.findByRole("heading", { level: 1, name: "agent-hub" });
       expect(screen.getByText(/^Stale · as of/)).toBeInTheDocument();
     });
+  });
+
+  it("reads the findings again until the first check ends", async () => {
+    vi.useFakeTimers();
+    try {
+      // AGH-608: the hub's first background check may not have ended when the page opens.
+      let answers = 0;
+      const { requests } = renderProject({
+        "/api/v1/doctor/findings": () => {
+          answers += 1;
+          return aDoctorFindings([aFinding({ severity: "error", rule: "instructions.size" })], {
+            checked_at: answers === 1 ? null : at(0),
+          });
+        },
+      });
+      const findingsReads = () =>
+        requests.filter((r) => new URL(r.url).pathname === "/api/v1/doctor/findings").length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByRole("heading", { level: 1, name: "agent-hub" })).toBeInTheDocument();
+      expect(findingsReads()).toBe(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(findingsReads()).toBe(2);
+
+      // The check has ended: no more reads.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20_000);
+      });
+      expect(findingsReads()).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("AC-427.23 has no serious a11y violations (a11y)", async () => {
