@@ -10,6 +10,7 @@ given: git stays with the composition root, which may pass a reader of ``git con
 """
 
 import os
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Final
@@ -67,6 +68,9 @@ class HubFileSystem:
 
     def __init__(self, *, read_git: GitReaderFactory = _files_only) -> None:
         self._read_git = read_git
+        # A brain walk makes about 700 short syscalls, each hands the GIL over: six at once took
+        # 58x one, so walks run one at a time.
+        self._walking = threading.Lock()
 
     def resolve(self, path: str) -> str:
         """The absolute real path of ``path`` (``~`` expanded)."""
@@ -145,7 +149,8 @@ class HubFileSystem:
 
     def brain_tree(self, hub_path: str) -> BrainListing:
         """The ``.md`` notes under the hub's ``brain/``, bounded, no link followed."""
-        return list_brain(Path(hub_path))
+        with self._walking:
+            return list_brain(Path(hub_path))
 
     def brain_folders(self, hub_path: str) -> tuple[str, ...]:
         """The top-level folders of the hub's ``brain/``, bounded, no link followed."""
