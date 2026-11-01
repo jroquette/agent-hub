@@ -581,3 +581,43 @@ def test_reads_ctx_until_when_run_context_wait_in_scenario_only() -> None:
     assert problems_of(shell("source"), wait) == [
         ("nodes[1].until", "a wait's until is an instant or one whole reference ($CTX: scenarios)")
     ]
+
+
+def fan_out(node_id: str, for_each: str, *depends_on: str, **keys: object) -> dict[str, object]:
+    return {
+        "id": node_id,
+        "type": "agent",
+        "prompt": "Study",
+        "mutates_checkout": False,
+        "for_each": for_each,
+        "depends_on": list(depends_on),
+    } | keys
+
+
+def test_refuses_for_each_when_producer_is_not_upstream() -> None:
+    nodes = (shell("x", output_format=REPORT_SCHEMA), fan_out("study", "$x.output.files"))
+
+    assert problems_of(*nodes) == [("nodes[1].for_each", 'the node "x" is not upstream')]
+
+
+def test_refuses_for_each_when_path_is_not_in_producer_schema() -> None:
+    nodes = (shell("x", output_format=REPORT_SCHEMA), fan_out("study", "$x.output.missing", "x"))
+
+    assert problems_of(*nodes) == [
+        ("nodes[1].for_each", 'the path "missing" is not in the output of "x"')
+    ]
+
+
+def test_reads_with_item_when_node_has_for_each() -> None:
+    nodes = (
+        shell("x", output_format=REPORT_SCHEMA),
+        fan_out("study", "$x.output.files", "x", prompt="Study $WITH.item"),
+    )
+
+    assert plan_of(*nodes).layers == (("x",), ("study",))
+
+
+def test_refuses_with_item_when_for_each_is_absent() -> None:
+    node = {"id": "study", "type": "agent", "prompt": "Study $WITH.item"}
+
+    assert problems_of(node) == [("nodes[0].prompt", "no 'with' value is named \"item\"")]

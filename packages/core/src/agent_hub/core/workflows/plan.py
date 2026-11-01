@@ -12,6 +12,8 @@ ordered, one upstream of the other. The layers are then split where nodes may no
 concurrently: a read-only node (``mutates_checkout: false``) never shares one with a node that
 may change the checkout, and two agents resuming one session never share one.
 
+An agent's ``for_each`` is one more reference to check, and its node also reads ``$WITH.item``.
+
 A ``loop_group``'s body is planned the same way inside the group: its ids unique and new to the
 document, its ``depends_on`` inside the body, no cycle. A body node reads body nodes upstream of
 it, outer nodes upstream of the group, and ``$LOOP_PREV.<body id>``; ``until_when`` and
@@ -301,8 +303,8 @@ class _Graph:
             known = ref.name in self.document.inputs
             return None if known else f"the input {echo(ref.name)} is not declared"
         if isinstance(ref, WithRef):
-            names = node.with_ if isinstance(node, AgentNode | LoopNode) else {}
-            return None if ref.name in names else f"no 'with' value is named {echo(ref.name)}"
+            known = ref.name in _with_names(node)
+            return None if known else f"no 'with' value is named {echo(ref.name)}"
         if isinstance(ref, LoopPrevRef):
             return "$LOOP_PREV reads only inside a loop_group body"
         if isinstance(ref, CtxRef | SelfRef):
@@ -360,6 +362,13 @@ class _BodyGraph(_Graph):
         if target in self.producers:
             return super().resumable(target, node)
         return self.outer.resumable(target, self.group)
+
+
+def _with_names(node: Node) -> frozenset[str]:
+    """The names ``$WITH`` reads in ``node``: its ``with`` values, and ``for_each``'s ``item``."""
+    if isinstance(node, AgentNode) and node.for_each is not None:
+        return frozenset({*node.with_, "item"})
+    return frozenset(node.with_) if isinstance(node, AgentNode | LoopNode) else frozenset()
 
 
 def _path_problem(producer: Node, ref: NodeRef) -> str | None:
@@ -740,6 +749,8 @@ def _agent_texts(node: AgentNode | LoopNode) -> Iterator[tuple[Loc, str]]:
             yield ("with", name, "from"), binding.from_
         else:
             yield from ((("with", name), text) for text in _strings(binding))
+    if isinstance(node, AgentNode) and node.for_each is not None:
+        yield ("for_each",), node.for_each
 
 
 def _argv_lists(node: Node) -> Iterator[tuple[str, Sequence[str], int]]:
