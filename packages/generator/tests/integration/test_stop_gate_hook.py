@@ -1420,7 +1420,8 @@ def test_kills_check_stop_at_check_fast_timeout_when_it_sleeps(
     run_hook: RunHook, workspace: Path
 ) -> None:
     # check_fast_timeout limits whichever command the gate runs: cut at 2 s, well before its
-    # 10 s sleep would end, and named as not run, which never blocks.
+    # 10 s sleep would end, and named as not run, which never blocks. The summary names the
+    # command that did not finish, check_stop.
     (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
     repo = {"dir": "app", "check_stop": "sleep 10", "check_fast_timeout": 2}
 
@@ -1429,6 +1430,9 @@ def test_kills_check_stop_at_check_fast_timeout_when_it_sleeps(
     took = time.monotonic() - start
 
     assert "decision" not in output
+    assert output.get("systemMessage", "").startswith(
+        "[hub stop-gate] check_stop did not finish in every changed repo; finishing anyway."
+    )
     assert "app (app): not run: timeout (2 s)" in output.get("systemMessage", "")
     assert took < 8
 
@@ -1512,6 +1516,27 @@ def test_blocks_naming_check_stop_when_it_cannot_start(
 
     assert output.get("decision") == "block"
     assert "\ncheck_stop could not start: " in output["reason"]
+
+
+def test_warns_naming_check_stop_when_block_counter_unwritable(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # As for check_fast (test_hooks_fail_open.py): without its block counter the gate could never
+    # release, so a failing check_stop gives a warning, no block, that names check_stop.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    session = f"unwritable-{os.getpid()}-{tmp_path.name}"
+    (tmp_path / "tmp" / f"hub-stop-{session}.json").mkdir()  # the counter's path is a folder
+
+    output = run_hook(
+        [{"dir": "app", "check_stop": "echo boom; exit 3"}], workspace / "app", session=session
+    )
+
+    assert "decision" not in output
+    assert output.get("systemMessage", "").startswith(
+        "[hub stop-gate] check_stop still failing and the block counter could not be saved; "
+        "finishing anyway. Do not claim the work is done."
+    )
+    assert "boom" in output["systemMessage"]
 
 
 # HUB_CHANGED_FILES: the paths the session changed in the checkout, given to check_stop alone; left
