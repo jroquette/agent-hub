@@ -52,6 +52,9 @@ ROUTE_PATHS = (
     "/api/v1/live-sessions",
     BRAIN,
     f"{BRAIN}{PARALLEL_SUFFIX}",
+    # The app shell's one read (ADR 0056): the warm-up keeps the feature list, so the samples
+    # read what the shell's polls read in its 30 s.
+    "/api/v1/screens/shell",
 )
 START_TO_PAGE = "hub web start → GET /"
 START_TO_SESSIONS = "hub web start → /api/v1/sessions"

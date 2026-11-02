@@ -339,10 +339,12 @@ commit), then measures, one at a time:
   pinned name but measures the cached path (ADR 0055): building the probe runs `hub brief --write-cache` once in the
   temp hub, so every run reads a cache under the 5 min refresh floor, starts no refresh and runs no `uvx` in the
   foreground;
-- `route`: nine `hub web` route rows (`/api/v1/sessions`, `/api/v1/features`, `/api/v1/search?q=make`, ...). The
-  last two read the Brain list: `/api/v1/projects/perf/brain` one request at a time, and
+- `route`: ten `hub web` route rows (`/api/v1/sessions`, `/api/v1/features`, `/api/v1/search?q=make`, ...). Two
+  read the Brain list: `/api/v1/projects/perf/brain` one request at a time, and
   `/api/v1/projects/perf/brain (6 parallel)` six at once (ADR 0053: no slower than six in sequence), from six threads
-  made once and released together, each sample from the release to the last answer;
+  made once and released together, each sample from the release to the last answer. The last,
+  `/api/v1/screens/shell`, is the app shell's one read (ADR 0056) over the thirty features: its warm-up keeps the
+  feature list, so it measures the shell's polls within that list's 30 s;
 - `page`: seven pages in Playwright's Chromium (`apps/web/e2e/perf.spec.ts`): `/`, `/features`,
   `/features/perf/search-index`, `/sessions/perf-00000`, `/sessions`, the Brain note
   `/projects/perf/brain/tree-3/note-050.md` (a note in a 100-note folder, so an open folder is measured), and the
