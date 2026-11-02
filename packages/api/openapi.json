@@ -14101,6 +14101,62 @@
         "title": "Severity",
         "type": "string"
       },
+      "ShellProject": {
+        "additionalProperties": false,
+        "description": "A project in the shell's switcher: its name and how many of its sessions are live.",
+        "properties": {
+          "live_sessions": {
+            "minimum": 0.0,
+            "title": "Live Sessions",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "live_sessions"
+        ],
+        "title": "ShellProject",
+        "type": "object"
+      },
+      "ShellView": {
+        "additionalProperties": false,
+        "description": "The app shell's facts: how many hubs are registered, every project, the features that\nneed you in the scope, and whether any project has a workflow run.",
+        "properties": {
+          "features_needing_you": {
+            "minimum": 0.0,
+            "title": "Features Needing You",
+            "type": "integer"
+          },
+          "has_workflow_runs": {
+            "title": "Has Workflow Runs",
+            "type": "boolean"
+          },
+          "hub_count": {
+            "minimum": 0.0,
+            "title": "Hub Count",
+            "type": "integer"
+          },
+          "projects": {
+            "items": {
+              "$ref": "#/components/schemas/ShellProject"
+            },
+            "title": "Projects",
+            "type": "array"
+          }
+        },
+        "required": [
+          "hub_count",
+          "projects",
+          "features_needing_you",
+          "has_workflow_runs"
+        ],
+        "title": "ShellView",
+        "type": "object"
+      },
       "SingleEdit": {
         "discriminator": {
           "mapping": {
@@ -24083,6 +24139,68 @@
         "summary": "Start Scenario",
         "tags": [
           "scenarios"
+        ]
+      }
+    },
+    "/api/v1/screens/shell": {
+      "get": {
+        "description": "The app shell's facts in one read: how many hubs are registered, every project with its\nlive sessions, how many features of the scope need you, and whether any project has a\nworkflow run. The feature list behind the count is kept 30 s.",
+        "operationId": "read_shell_api_v1_screens_shell_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShellView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Read Shell",
+        "tags": [
+          "screens"
         ]
       }
     },

@@ -77,7 +77,7 @@ class ApiPorts:
     scenario_commands: ScenarioCommands | None = None
     # The tabs holding the global stream open (AGH-613): the ticket warmer reads Linear only then.
     browsers: ConnectedBrowsers | None = None
-    # RED stub for AGH-623 (plan SHELL-1 commit 30b): the screen reads (ADR 0056), not wired yet.
+    # One read per screen (ADR 0056), composed of the read models above.
     screen_reads: ScreenReads | None = None
 
 
@@ -105,6 +105,19 @@ def hub_read_models(request: Request) -> HubReadModels:
     if port is None:
         raise _unwired(request)
     return port
+
+
+def screen_reads(request: Request) -> ScreenReads:
+    """The screen reads, or 501 when not wired."""
+    port = _ports(request).screen_reads
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+def optional_screen_reads(request: Request) -> ScreenReads | None:
+    """The screen reads, or None when this build does not wire them."""
+    return _ports(request).screen_reads
 
 
 def knowledge_reads(request: Request) -> KnowledgeReads:
@@ -385,6 +398,8 @@ def parse_filter[M: BaseModel](model: type[M], **fields: object) -> M:
 EventReadModelsDep = Annotated[EventReadModels, Depends(event_read_models)]
 HubReadModelsDep = Annotated[HubReadModels, Depends(hub_read_models)]
 KnowledgeReadsDep = Annotated[KnowledgeReads, Depends(knowledge_reads)]
+ScreenReadsDep = Annotated[ScreenReads, Depends(screen_reads)]
+OptionalScreenReadsDep = Annotated[ScreenReads | None, Depends(optional_screen_reads)]
 OwnerSignOffDep = Annotated[SignOffOwnerSteps, Depends(owner_signoff)]
 ChangeRequestDecisionsDep = Annotated[DecideChangeRequest, Depends(change_request_decisions)]
 OptionalChangeRequestDecisionsDep = Annotated[

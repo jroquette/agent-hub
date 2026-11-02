@@ -1,6 +1,6 @@
 """The Phase 2 contract's paths, the paths control-plane clarity, ticket planning, the Skills
-tab, the workflows, the run commands, the item versions and the scenarios add, and the paths an
-app's OpenAPI document lists."""
+tab, the workflows, the run commands, the item versions, the scenarios and the screen reads add,
+and the paths an app's OpenAPI document lists."""
 
 from fastapi import FastAPI
 
@@ -244,8 +244,8 @@ KNOWLEDGE_PATHS: frozenset[tuple[str, str]] = frozenset(
     }
 )
 
-# RED stub for AGH-623 (plan SHELL-1 commit 30b): the screen reads (ADR 0056), none served yet.
-SCREEN_PATHS: frozenset[tuple[str, str]] = frozenset()
+# The screen reads (ADR 0056): one GET per screen whose first view needs more than 5 calls.
+SCREEN_PATHS: frozenset[tuple[str, str]] = frozenset({("get", f"{API_PREFIX}/screens/shell")})
 
 # Every path the document lists.
 SERVED_PATHS: frozenset[tuple[str, str]] = (
@@ -268,6 +268,7 @@ SERVED_PATHS: frozenset[tuple[str, str]] = (
     | KNOWLEDGE_PATHS
     | DISCOVERY_PATHS
     | SCENARIO_PATHS
+    | SCREEN_PATHS
 )
 
 

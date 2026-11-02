@@ -53,7 +53,8 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   /scenario-runs/{run_id}/values` and `POST /scenarios/{project}/{name}/migrate`, the one AGH-596
   added to them: `DELETE /scenarios/{project}/{name}` ([Scenarios](#scenarios)), and the two AGH-393 added
   (`KNOWLEDGE_PATHS`, both GET):
-  `/projects/{project}/knowledge/search` and `/projects/{project}/brain/backlinks` ([Knowledge](#knowledge)). A test
+  `/projects/{project}/knowledge/search` and `/projects/{project}/brain/backlinks` ([Knowledge](#knowledge)), and the
+  screen reads AGH-623 added (`SCREEN_PATHS`, all GET): `/screens/shell` ([Screen reads](#screen-reads)). A test
   fails on any other path.
 - A field kept only for compatibility is marked `deprecated` in the document and stays until `/api/v2`: a session's
   and a live tile's `agent` (read `label` and `actors`) and a learning's `target` (read `note_path`).
@@ -206,6 +207,39 @@ the same operation behaves the same from every entry point ([ARCHITECTURE.md](AR
   of a draft (see Skills). Since AGH-296 the
   Toolkit and Workflows `GET`s also record item versions in agent-hub's database (never in the hub, see Skills), and
   since AGH-393 the knowledge `GET`s sync the knowledge index's derived rows first (see Knowledge).
+
+## Screen reads
+
+A screen read answers a screen's first view in one call, beside the resource routes, so a page stays within
+[ADR 0053](adr/0053-interactive-path-latency-budgets.md)'s 5 calls ([ADR 0056](adr/0056-screen-shaped-reads.md)).
+The rules:
+
+- One family, `GET /api/v1/screens/<screen>`, named after the screen in the sitemap, listed in `SCREEN_PATHS`; query
+  parameters are the resource routes' own, validated the same way. A screen read is added only when the page would
+  make more than 5 calls without it.
+- Each is one core use case (`agent_hub.core.screens.ScreenReads`) composed of the existing read ports: no new data
+  source, no write, no tracker call. A value the browser already derives stays in the browser, unless the server must
+  derive it to bound the payload.
+- Each part keeps its resource's access rule: a part that comes from a guarded route is filled only for a request
+  that route would answer, else it is `null`.
+- A part the web writes under a resource's key is that resource's own model with its own bounds, equal to what the
+  resource route answers for the same parameters. A derived part is never written under a resource's key.
+- The resource routes stay unchanged for the CLI, the MCP server and the other screens. When a screen read fails, the
+  web reads each region from its resource route, so a failure stays in its region.
+
+`GET /api/v1/screens/shell?project=` → `ShellView`, the app shell's facts:
+
+| Field | Value |
+| --- | --- |
+| `hub_count` | how many hubs are registered, valid or not (`GET /hubs`); 0 sends the app to Welcome |
+| `projects` | every project of `GET /projects`, in its order, whatever the scope, each with its `name` and `live_sessions` (the project switcher) |
+| `features_needing_you` | how many features of the scope the Features list flags as needing you (the sidebar badge): a session waiting on you or idle on one of the feature's issues, a broken record, a NO-SHIP, or an owner decision |
+| `has_workflow_runs` | whether any project has a workflow run (scenario runs aside): the sidebar shows Workflow runs only then |
+
+The feature list behind `features_needing_you` is kept 30 s per scope (the Features list's own refresh), so the
+shell's polls read the live sessions again but not every feature folder; a scope with no feature reads no live
+session. A change-request decision or an owner sign-off through the app forgets the kept lists, so the next read
+counts it; a feature folder changed outside the app shows within 30 s.
 
 ## Sessions
 

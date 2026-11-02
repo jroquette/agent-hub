@@ -128,7 +128,9 @@ problems (<T> in total)`, or one line naming an input that could not be read; a 
 
 `hub web` serves the control plane from one local process ([Layer 2](#layer-2-control-plane-and-observability)): the
 `/api/v1` REST and SSE API ([API.md](API.md)) and the committed build of the web app, from the database `hub collect`
-uses. The build is split by route: a first visit loads the shell, the shared libraries and the code of the page it
+uses. The API serves the resource routes and, under `/api/v1/screens/`, one read per screen whose first view would
+otherwise need more than 5 calls, composed of the same reads
+([ADR 0056](adr/0056-screen-shaped-reads.md)). The build is split by route: a first visit loads the shell, the shared libraries and the code of the page it
 opens, and each other page's code loads the first time that page opens. The build fails when the entry chunk, the
 one `index.html` loads, reaches 400,000 B. While a page's code loads, the previous page stays and a page skeleton
 shows after 300 ms; a page whose code cannot load says so inside the app's frame and offers to reload. The build's

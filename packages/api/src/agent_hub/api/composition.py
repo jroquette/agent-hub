@@ -160,6 +160,7 @@ from agent_hub.core.readmodels.read_ports import HubReadModels
 from agent_hub.core.readmodels.settings_view import SettingsView
 from agent_hub.core.redaction.redact import KINDS as REDACTION_KINDS
 from agent_hub.core.schedules.scheduled_starts import EventSource, StartScheduledRuns
+from agent_hub.core.screens.screen_reads import ScreenReads
 from agent_hub.core.sessions.pricing import PRICES, PRICES_AS_OF
 from agent_hub.core.sessions.session_label import LabelRules
 from agent_hub.core.skills.skill_reads import SkillUsageSource
@@ -924,6 +925,7 @@ def build_app(
             post=linear_post,
         ),
         browsers=browsers,
+        screen_reads=ScreenReads(events, hubs, None if sessions is None else sessions.control),
     )
     closers = [store.close, versions.close, knowledge.close]
     if agent_store is not None:

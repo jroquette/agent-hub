@@ -218,7 +218,9 @@ type BaseReason = Omit<Reason, "working" | "plainLine">;
 
 /**
  * Why the row sits where it does. A session working on the feature puts the live dot on the row and,
- * when nothing needs you, says so on the line; a warning that needs you keeps its line.
+ * when nothing needs you, says so on the line; a warning that needs you keeps its line. The shell's
+ * badge counts the rows whose `needs` is set on the server, with the same rule in
+ * `agent_hub/core/features/owner_needs.py` (ADR 0056): a change to one changes the other.
  */
 export function reasonOf(
   f: Feature,

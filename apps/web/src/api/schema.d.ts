@@ -1837,6 +1837,28 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/screens/shell": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read Shell
+     * @description The app shell's facts in one read: how many hubs are registered, every project with its
+     *     live sessions, how many features of the scope need you, and whether any project has a
+     *     workflow run. The feature list behind the count is kept 30 s.
+     */
+    get: operations["read_shell_api_v1_screens_shell_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/search": {
     parameters: {
       query?: never;
@@ -7359,6 +7381,31 @@ export interface components {
      * @enum {string}
      */
     Severity: "error" | "warning" | "info";
+    /**
+     * ShellProject
+     * @description A project in the shell's switcher: its name and how many of its sessions are live.
+     */
+    ShellProject: {
+      /** Live Sessions */
+      live_sessions: number;
+      /** Name */
+      name: string;
+    };
+    /**
+     * ShellView
+     * @description The app shell's facts: how many hubs are registered, every project, the features that
+     *     need you in the scope, and whether any project has a workflow run.
+     */
+    ShellView: {
+      /** Features Needing You */
+      features_needing_you: number;
+      /** Has Workflow Runs */
+      has_workflow_runs: boolean;
+      /** Hub Count */
+      hub_count: number;
+      /** Projects */
+      projects: components["schemas"]["ShellProject"][];
+    };
     SingleEdit:
       | components["schemas"]["AddEnvironment"]
       | components["schemas"]["SetEnvironment"]
@@ -12861,6 +12908,46 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["RunAccepted"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  read_shell_api_v1_screens_shell_get: {
+    parameters: {
+      query?: {
+        project?: string | null;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ShellView"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */
