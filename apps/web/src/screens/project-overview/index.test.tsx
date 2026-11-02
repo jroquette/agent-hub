@@ -579,6 +579,31 @@ describe("ProjectOverviewScreen", () => {
       expect(await screen.findByText("Setup · all good")).toBeInTheDocument();
     });
 
+    it("says the hub is not checked yet, not set up, until its first check ends", async () => {
+      renderProject({
+        "/api/v1/projects/agent-hub": aProjectDetail({ checked_at: null }),
+        "/api/v1/projects": aPage([aProjectSummary({ checked_at: null, hub_health: null })]),
+        "/api/v1/doctor/findings": aDoctorFindings([], { checked_at: null }),
+      });
+
+      const title = await screen.findByRole("heading", { level: 1, name: "agent-hub" });
+      const header = title.closest("header");
+      if (!header) throw new Error("no header");
+      await waitFor(() => {
+        expect(within(header).queryByText(/^Setup ·|^Not checked$/)).not.toBeNull();
+      });
+      expect(within(header).queryByText(/^Setup ·/)).toBeNull();
+      // Portfolio's badge for a hub the doctor has not checked: idle, "Not checked".
+      expect(within(header).getByText("Not checked")).toHaveClass("ah-badge", "ah-badge-idle");
+      const block = screen.getByRole("heading", { name: "Health checks" }).parentElement
+        ?.parentElement;
+      if (!block) throw new Error("no Health checks block");
+      // Spec 12's "Health: never run" note, without its run-it-yourself step.
+      expect(within(block).getByText("Doctor has not run for this hub.")).toBeInTheDocument();
+      expect(block).not.toHaveTextContent(/hub doctor/);
+      expect(block).not.toHaveTextContent("No findings.");
+    });
+
     it("keeps a failing section's problem inside it", async () => {
       renderProject({
         "/api/v1/workflow-runs": aProblem({ status: 503, title: "Busy", detail: "Database busy." }),
