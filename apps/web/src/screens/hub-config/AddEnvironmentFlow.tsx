@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -29,9 +29,6 @@ const DESCRIPTION_MAX = 80;
 export function AddEnvironmentScreen() {
   const { project = "" } = useParams();
   const config = useApi("/api/v1/projects/{project}/config", { path: { project } });
-  useEffect(() => {
-    document.title = `Add environment · ${project}`;
-  }, [project]);
   if (config.isError)
     return (
       <div className="ah-page">
