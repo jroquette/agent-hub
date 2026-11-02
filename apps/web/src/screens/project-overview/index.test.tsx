@@ -595,6 +595,11 @@ describe("ProjectOverviewScreen", () => {
       expect(within(header).queryByText(/^Setup ·/)).toBeNull();
       // Portfolio's badge for a hub the doctor has not checked: idle, "Not checked".
       expect(within(header).getByText("Not checked")).toHaveClass("ah-badge", "ah-badge-idle");
+      // Named as on Portfolio, so it says what was not checked.
+      const health = within(header).getByRole("img", {
+        name: "Health: doctor has not run for this hub",
+      });
+      expect(health).toContainElement(within(header).getByText("Not checked"));
       const block = screen.getByRole("heading", { name: "Health checks" }).parentElement
         ?.parentElement;
       if (!block) throw new Error("no Health checks block");

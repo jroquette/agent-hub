@@ -747,4 +747,113 @@ describe("HealthScreen", () => {
       vi.useRealTimers();
     }
   });
+
+  // A Fix's pending state belongs to the hub it fixed: another hub's scope, or All projects,
+  // shows no pending Fix, no busy list and no read every 2 s.
+  const otherLeak = aFinding({
+    rule: "brain.leak",
+    severity: "error",
+    path: "../other-api/README.md",
+    line: 2,
+    message: "line also in the brain at brain/drafts/0002.md:2",
+    fix: "reword or remove the line here, or reword the brain note if it quotes this file",
+  });
+  const otherSize = aFinding({
+    rule: "instructions.size",
+    severity: "error",
+    path: "AGENTS.md",
+    line: 1,
+    message: "AGENTS.md: 140 lines, limit 100",
+    fix: "Keep it a map: move detail into docs/ until it is 100 lines or fewer.",
+  });
+
+  function findingsReadsOf(requests: Request[], project: string | null): number {
+    return requests.filter((r) => {
+      const url = new URL(r.url);
+      return (
+        r.method === "GET" &&
+        url.pathname === "/api/v1/doctor/findings" &&
+        (url.searchParams.get("project") ?? "") === (project ?? "")
+      );
+    }).length;
+  }
+
+  /** Health scoped to demo, of two hubs whose checks all predate the Fix, fixed from the strip. */
+  async function fixDemoOfTwoHubs(user: ReturnType<typeof userEvent.setup>) {
+    const view = renderWithApi(<HealthScreen />, {
+      routes: {
+        ...routes,
+        "/api/v1/doctor/findings": (request: Request) => {
+          const project = new URL(request.url).searchParams.get("project");
+          const items =
+            project === "demo"
+              ? [leakFinding, ...findings]
+              : project === "other"
+                ? [otherLeak, otherSize]
+                : [leakFinding, otherLeak, otherSize, ...findings];
+          return aDoctorFindings(items, { checked_at: "2026-10-11T14:04:30.000Z" });
+        },
+        "/api/v1/hubs": aPage([
+          aHub({ id: "hub-1", project: "demo" }),
+          aHub({ id: "hub-2", project: "other" }),
+        ]),
+        "POST /api/v1/hubs/hub-1/doctor-fix": fixAnswer,
+      },
+      path: "/health?scope=demo",
+    });
+    await fixFromStrip(user);
+    // demo's check predates the Fix, so its Fix is pending.
+    const strip = screen.getByRole("region", { name: "Automatic fixes" });
+    expect(within(strip).getByRole("button", { name: /^Fix/ })).toHaveTextContent("Fixing…");
+    return view;
+  }
+
+  it("keeps another hub's Fix ready when the scope moves to it after a fix", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, now: Date.parse(NOW) });
+    try {
+      const user = userEvent.setup();
+      const { requests, router } = await fixDemoOfTwoHubs(user);
+
+      await act(async () => {
+        await router.navigate("/health?scope=other");
+      });
+      await screen.findByText("AGENTS.md: 140 lines, limit 100");
+      const readsOnArrival = findingsReadsOf(requests, "other");
+      await advance(10_000);
+
+      const strip = screen.getByRole("region", { name: "Automatic fixes" });
+      const button = within(strip).getByRole("button", { name: /^Fix/ });
+      expect(button).toHaveTextContent("Fix 1 finding");
+      expect(button).toBeEnabled();
+      expect(group("brain.leak").closest('[aria-busy="true"]')).toBeNull();
+      // other's check has ended and other was not fixed: nothing to read again.
+      expect(findingsReadsOf(requests, "other")).toBe(readsOnArrival);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows no pending fix when All projects are in scope after a fix", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, now: Date.parse(NOW) });
+    try {
+      const user = userEvent.setup();
+      const { requests, router } = await fixDemoOfTwoHubs(user);
+
+      await act(async () => {
+        await router.navigate("/health");
+      });
+      await screen.findByText("AGENTS.md: 140 lines, limit 100");
+      const strip = screen.getByRole("region", { name: "Automatic fixes" });
+      await waitFor(() => {
+        expect(strip).toHaveTextContent("Pick a project to fix");
+      });
+      const readsOnArrival = findingsReadsOf(requests, null);
+      await advance(10_000);
+
+      expect(group("brain.leak").closest('[aria-busy="true"]')).toBeNull();
+      expect(findingsReadsOf(requests, null)).toBe(readsOnArrival);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
