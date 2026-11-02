@@ -17,6 +17,7 @@ from agent_hub.api.openapi_paths import (
     PLATFORM_SYNC_PATHS,
     RUN_COMMAND_PATHS,
     SCENARIO_PATHS,
+    SCREEN_PATHS,
     SERVED_PATHS,
     SKILL_PATHS,
     TICKET_FLOW_PATHS,
@@ -388,7 +389,19 @@ def test_lists_scenario_paths_when_document_built(api_settings: ApiSettings) -> 
         | KNOWLEDGE_PATHS
         | DISCOVERY_PATHS
         | SCENARIO_PATHS
+        | SCREEN_PATHS
     )
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
+# The screen reads (ADR 0056), one GET per screen under /api/v1/screens/; each screen read adds
+# its path here.
+SCREEN_SPEC_PATHS = {("get", "/api/v1/screens/shell")}
+
+
+def test_lists_screen_paths_when_document_built(api_settings: ApiSettings) -> None:
+    assert SCREEN_PATHS == SCREEN_SPEC_PATHS
+    assert SCREEN_PATHS <= SERVED_PATHS
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
 

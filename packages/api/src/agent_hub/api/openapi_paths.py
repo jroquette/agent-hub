@@ -244,6 +244,9 @@ KNOWLEDGE_PATHS: frozenset[tuple[str, str]] = frozenset(
     }
 )
 
+# RED stub for AGH-623 (plan SHELL-1 commit 30b): the screen reads (ADR 0056), none served yet.
+SCREEN_PATHS: frozenset[tuple[str, str]] = frozenset()
+
 # Every path the document lists.
 SERVED_PATHS: frozenset[tuple[str, str]] = (
     P2_PATHS

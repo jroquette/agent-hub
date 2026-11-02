@@ -1,5 +1,5 @@
 """Fixtures of the api tests: settings under tmp_path, in-process clients, and the fakes the
-routes are tested against (read models, hook mapper, event reader, clock).
+routes are tested against (read models, hook mapper, event reader, clock, screen reads).
 
 ``manual_tickers`` are the tickers of ``build_app``'s background parts, driven by the test: no
 test starts a background thread unless it asks for one.
@@ -451,6 +451,16 @@ class FakeLearningDecisions:
         )
 
 
+@dataclass
+class FakeScreenReads:
+    """``ScreenReads`` as the routes that write feature records reach it; records each call."""
+
+    calls: list[str] = field(default_factory=list)
+
+    def forget_features(self) -> None:
+        self.calls.append("forget_features")
+
+
 def _view_fields(detail: FeatureDetail) -> dict[str, object]:
     return detail.model_dump(include=set(FeatureView.model_fields))
 
@@ -570,6 +580,7 @@ class Wired:
     counters: IngestionCounters
     learning_reads: FakeLearningReads = field(default_factory=FakeLearningReads)
     decisions: FakeLearningDecisions = field(default_factory=FakeLearningDecisions)
+    screen_reads: FakeScreenReads = field(default_factory=FakeScreenReads)
 
     def wire(self, **ports: object) -> None:
         """Replace some of the app's ports (``learning_reads=...``) for the rest of the test."""
@@ -595,7 +606,9 @@ def wired(api_settings: ApiSettings, web_dist: Path) -> Iterator[Wired]:
     app = create_app(api_settings, ports=ports, web_dist=web_dist)
     with TestClient(app, base_url=BASE_URL, raise_server_exceptions=False) as test_client:
         test_client.cookies.set(cookie_name(PORT), SESSION_TOKEN)
-        yield Wired(test_client, events, hubs, reader, clock, feed, counters)
+        wired = Wired(test_client, events, hubs, reader, clock, feed, counters)
+        wired.wire(screen_reads=wired.screen_reads)
+        yield wired
 
 
 @pytest.fixture

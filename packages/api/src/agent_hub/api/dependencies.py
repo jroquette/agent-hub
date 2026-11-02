@@ -37,6 +37,7 @@ from agent_hub.core.learnings.learning_ports import LearningDecisions, LearningR
 from agent_hub.core.readmodels.filters import LearningFilter
 from agent_hub.core.readmodels.page import Page
 from agent_hub.core.readmodels.read_ports import EventReadModels, HubReadModels
+from agent_hub.core.screens.screen_reads import ScreenReads
 from agent_hub.core.workflows.gate_decisions import DecideWorkflowGate, WorkflowGates
 from agent_hub.core.workflows.launch import ControlWorkflowRun, StartWorkflowRun
 from agent_hub.core.workflows.workflow_reads import WorkflowReads
@@ -76,6 +77,8 @@ class ApiPorts:
     scenario_commands: ScenarioCommands | None = None
     # The tabs holding the global stream open (AGH-613): the ticket warmer reads Linear only then.
     browsers: ConnectedBrowsers | None = None
+    # RED stub for AGH-623 (plan SHELL-1 commit 30b): the screen reads (ADR 0056), not wired yet.
+    screen_reads: ScreenReads | None = None
 
 
 def _ports(request: Request) -> ApiPorts:
