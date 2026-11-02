@@ -2,7 +2,7 @@
 open and a Linear key is set, a background part reads a feature's tickets into the cache when its
 snapshot is missing or 14 min old, within the cache's 60 s holds, at most 224 features a tick,
 and pauses after a rate-limit answer or a refused key; with no key, no tab or the MCP transport
-it reads nothing.
+it reads nothing and lists no feature folder.
 
 Seam: ``build_app(..., warm_ticker=)``, driven through ``manual_tickers["warm_ticker"]`` (a
 ``ManualTicker``; its ``wake()`` counts the calls in ``wakes``, as ``stop()`` counts in
@@ -11,10 +11,11 @@ warm tick on the caller's thread). Linear is ``CountingTrackerReader`` over the 
 (``build_app(tracker_reader=)``) with a synthetic ``LINEAR_API_KEY`` in the injected environment
 or in Settings' key file; the app's clock is moved by the test. ``ListingReader`` is
 ``HubFileSystem`` recording each feature folder listing. ``TabStream`` holds
-``GET /api/v1/events/stream`` open on the composed app as a tab does. The cap and the refused
-key build ``TicketWarmer(requests, snapshots, browsers, *, ticker, key_digest, clock)`` directly
-over a real ``CachedTicketSnapshots``, with a ``ManualTicker`` and one open stream. No sleep, not
-``serial``.
+``GET /api/v1/events/stream`` open on the composed app as a tab does. The cap, the refused key,
+the slow reads and the unreadable registry build ``TicketWarmer(requests, snapshots, browsers, *,
+ticker, key_digest, clock)`` directly over a real ``CachedTicketSnapshots``, with one open stream
+and a ``ManualTicker`` (a ``DaemonTicker`` where the ticker's own log line is the subject). No
+sleep, not ``serial``.
 """
 
 import hashlib
@@ -22,6 +23,7 @@ import itertools
 import logging
 import re
 import threading
+from collections import Counter
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -32,12 +34,15 @@ import anyio
 import pytest
 
 from agent_hub.api.connected_browsers import ConnectedBrowsers
+from agent_hub.api.doctor_refresher import DaemonTicker
+from agent_hub.api.json_logging import JsonFormatter
 from agent_hub.api.linear_connection import KEY_FILE_NAME, LinearKeyFile
 from agent_hub.api.settings import ApiSettings
 from agent_hub.api.ticket_snapshots import CachedTicketSnapshots
 from agent_hub.api.ticket_warmer import TicketWarmer
 from agent_hub.core.errors import TrackerError, TrackerFailure
 from agent_hub.core.features.ticket_snapshots import SnapshotRequest
+from agent_hub.core.hubs.hub_registry import HubRegistryError
 from agent_hub.core.testing.tracker_reader_fakes import (
     CountingTrackerReader,
     InMemoryTrackerReader,
@@ -65,6 +70,9 @@ class MovableClock:
 
     def at(self, seconds: float) -> None:
         self.now = START + timedelta(seconds=seconds)
+
+    def advance(self, seconds: float) -> None:
+        self.now += timedelta(seconds=seconds)
 
 
 class ListingReader(HubFileSystem):
@@ -291,7 +299,7 @@ def test_reads_nothing_when_no_reader_or_no_browser(
     open_world: Callable[..., WarmWorld], *, keyed: bool, transport: str, browser: bool
 ) -> None:
     """AC-34: with no reader (no key, or transport ``mcp``) or no tab holding the global stream,
-    no tick calls the tracker; with no key a tick lists no feature folder either."""
+    no tick calls the tracker or lists a feature folder."""
     world = open_world(keyed=keyed, transport=transport)
     listed = world.composed.client.get("/api/v1/features", params={"project": "demo"})
     assert listed.status_code == 200, listed.text
@@ -308,8 +316,33 @@ def test_reads_nothing_when_no_reader_or_no_browser(
         world.tick_at(seconds)
 
     assert world.reader.count == 0
-    # With no key the warmer lists nothing; with one, listing is its own business.
-    assert world.files.listed == [] or keyed
+    assert world.files.listed == []
+
+
+def test_lists_only_linear_hub_folders_when_other_hub_uses_mcp(
+    open_world: Callable[..., WarmWorld],
+    make_hub: Callable[..., Path],
+    *,
+    tickets_kit: Any,
+) -> None:
+    """Transport ``mcp`` reads nothing through ``hub web``: with a key set and a tab open, a tick
+    lists no feature folder of an ``mcp`` hub, and lists and warms the Linear hub beside it."""
+    world = open_world(transport="mcp")
+    linear_hub = make_hub(
+        "other", change=lambda document: document["tracker"].update(transport="api")
+    )
+    _write_features(linear_hub, tickets_kit)
+    registered = world.composed.client.post(
+        "/api/v1/hubs", json={"path": str(linear_hub)}, headers=OWN
+    )
+    assert registered.status_code == 201, registered.text
+    world.composed.browsers.opened()
+    world.files.listed.clear()
+
+    reads = world.tick_at(0)
+
+    assert reads == 2
+    assert world.files.listed == [str(linear_hub)]
 
 
 def test_asks_failed_feature_again_only_after_hold_when_ticks_run(
@@ -350,6 +383,7 @@ def test_pauses_until_cooldown_when_linear_rate_limits(
 
 FEATURE_A = SnapshotRequest(project="demo", transport="api", ids=("DEM-1",))
 FEATURE_B = SnapshotRequest(project="demo", transport="api", ids=("DEM-3",))
+SYNTHETIC_DIGEST = hashlib.sha256(b"synthetic key").hexdigest()
 
 
 def _warmer(
@@ -398,6 +432,117 @@ async def test_warms_at_most_cap_and_logs_rest_once_when_features_exceed_cap(
     assert {snapshots.cached(request).source for request in requests[:224]} == {"linear"}
     assert len(warned) == 1
     assert re.search(r"\b76\b", warned[0]), warned[0]
+
+
+# Sixty features naming one issue each, for reads slow enough that one tick takes minutes.
+SLOW_FEATURES = tuple(
+    SnapshotRequest(project="demo", transport="api", ids=(f"DEM-{number}",))
+    for number in range(1, 61)
+)
+
+
+@pytest.mark.anyio
+async def test_keeps_every_feature_on_linear_when_reads_are_slow(
+    manual_tickers: dict[str, Any],
+) -> None:
+    """A tick judges each feature's age when it reaches it, not at the tick's start: with reads
+    of 2 s each over 60 features and each tick 30 s after the previous one ends (as
+    ``DaemonTicker`` runs them), every feature is read again before its snapshot passes the
+    cache's 15 min stale limit, so for an hour the list never serves one from the plan."""
+    clock = MovableClock()
+    inner = InMemoryTrackerReader(a_seeded_issue_board())
+    reader = CountingTrackerReader(inner, before=lambda: clock.advance(2))
+    snapshots = CachedTicketSnapshots(lambda _request: reader, clock=clock)
+    ticker = manual_tickers["refresh_ticker"]  # a ManualTicker the test drives
+    await _warmer(
+        SLOW_FEATURES, snapshots, ticker=ticker, key_digest=lambda: SYNTHETIC_DIGEST, clock=clock
+    ).start()
+    from_plan: list[tuple[float, tuple[str, ...]]] = []
+
+    while clock.now < START + timedelta(hours=1):
+        ticker.tick()
+        clock.advance(30)
+        seconds = (clock.now - START).total_seconds()
+        from_plan += [
+            (seconds, request.ids)
+            for request in SLOW_FEATURES
+            if snapshots.cached(request).source != "linear"
+        ]
+
+    reads = Counter(reader.calls)
+    assert len(reads) == len(SLOW_FEATURES)
+    assert min(reads.values()) >= 4, reads
+    assert from_plan == []
+
+
+@dataclass
+class ScriptedRequests:
+    """``requests()`` that raises ``error`` on its first ``raising`` calls, then answers
+    ``features``; ``done`` is set from call ``last`` on."""
+
+    error: Exception
+    raising: int
+    last: int
+    features: tuple[SnapshotRequest, ...] = (FEATURE_A, FEATURE_B)
+    calls: int = 0
+    done: threading.Event = field(default_factory=threading.Event)
+
+    def __call__(self) -> tuple[SnapshotRequest, ...]:
+        self.calls += 1
+        if self.calls >= self.last:
+            self.done.set()
+        if self.calls <= self.raising:
+            raise self.error
+        return self.features
+
+
+@pytest.mark.parametrize(
+    ("error", "warnings"),
+    [
+        # hubs.json cannot be read: nothing to warm, no line (the doctor refresher reports it).
+        pytest.param(
+            HubRegistryError("hubs.json: synthetic unreadable registry"), 0, id="registry"
+        ),
+        # Any other error keeps the ticker's line: one warning per raising tick.
+        pytest.param(RuntimeError("synthetic tick failure"), 3, id="other"),
+    ],
+)
+@pytest.mark.anyio
+async def test_logs_only_other_failures_when_feature_list_raises(
+    caplog: pytest.LogCaptureFixture, *, error: Exception, warnings: int
+) -> None:
+    """While ``hubs.json`` cannot be read and a tab is open, the feature list raises
+    ``HubRegistryError`` on every tick: the warmer takes it as nothing to warm and logs nothing,
+    and warms again once the registry reads; any other error is still logged on each tick."""
+    caplog.set_level(logging.INFO)
+    clock = MovableClock()
+    reader = CountingTrackerReader(InMemoryTrackerReader(a_seeded_issue_board()))
+    snapshots = CachedTicketSnapshots(lambda _request: reader, clock=clock)
+    requests = ScriptedRequests(error, raising=3, last=6)
+    browsers = ConnectedBrowsers()
+    browsers.opened()
+    ticker = DaemonTicker(0.01, name="test-ticket-warmer")
+    warmer = TicketWarmer(
+        requests,
+        snapshots,
+        browsers,
+        ticker=ticker,
+        key_digest=lambda: SYNTHETIC_DIGEST,
+        clock=clock,
+    )
+    await warmer.start()
+
+    finished = requests.done.wait(5)
+    await warmer.stop()
+    ticker.thread.join(5)
+
+    assert finished, "the ticker did not reach the last scripted tick"
+    assert not ticker.thread.is_alive()
+    records = [record for record in caplog.records if record.name.startswith("agent_hub")]
+    assert [logging.getLevelName(record.levelno) for record in records] == ["WARNING"] * warnings
+    for record in records:
+        assert type(error).__name__ in JsonFormatter().format(record)
+    assert sorted(reader.calls) == EACH_FEATURE
 
 
 @dataclass
