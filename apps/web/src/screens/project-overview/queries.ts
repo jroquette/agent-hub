@@ -3,7 +3,7 @@ import { useApi } from "../../lib/api";
 import { useCheckPoll } from "../../lib/checkPoll";
 import { SESSIONS_READ } from "../tickets/model";
 
-type DoctorFindings = components["schemas"]["DoctorFindings"];
+export type DoctorFindings = components["schemas"]["DoctorFindings"];
 export type ProjectDetail = components["schemas"]["ProjectDetail"];
 export type NowItem = components["schemas"]["NowItem"];
 export type RepoView = components["schemas"]["RepoView"];

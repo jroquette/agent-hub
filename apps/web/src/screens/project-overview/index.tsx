@@ -64,6 +64,7 @@ import {
   useProjectConfig,
   useProjectSessions,
   useProjectSummary,
+  type DoctorFindings,
   type NowItem,
   type ProjectDetail,
   type RepoView,
@@ -161,21 +162,33 @@ function plural(n: number, one: string, many = `${one}s`): string {
   return `${String(n)} ${n === 1 ? one : many}`;
 }
 
+/** The header's health: null while the findings load, "unchecked" until the hub's first check
+ * ends (AGH-608), then the findings' counts. */
+function headerHealth(
+  findings: DoctorFindings | undefined,
+): ReturnType<typeof healthSummary> | "unchecked" | null {
+  if (!findings) return null;
+  return findings.checked_at === null ? "unchecked" : healthSummary(findings.items);
+}
+
 function Header({
   project,
   health,
 }: {
   project: ProjectDetail;
-  health: ReturnType<typeof healthSummary> | null;
+  health: ReturnType<typeof healthSummary> | "unchecked" | null;
 }) {
-  const badge = health ? healthBadge(health) : null;
+  const badge = health && health !== "unchecked" ? healthBadge(health) : null;
   const team = project.tracker.teams.join(", ");
   return (
     <header className="ah-stack" style={{ gap: 8 }}>
       <Breadcrumbs items={[{ label: "Portfolio", href: "/" }, { label: project.name }]} />
       <div className="ah-row ah-wrap" style={{ gap: 12 }}>
         <h1 className="ah-h1">{project.name}</h1>
-        {badge && health && (health.error || health.warning) ? (
+        {health === "unchecked" ? (
+          // Portfolio's badge for a hub the doctor has not checked yet (AGH-608).
+          <StatusBadge status="idle" label="Not checked" quiet />
+        ) : badge && health && (health.error || health.warning) ? (
           <Tooltip label="Setup problems an engineer should look at. They do not stop the agents.">
             <a
               href="#po-setup"
@@ -854,6 +867,10 @@ function HealthBlock({
       <Region query={findings} title="health">
         {() => {
           const items = findings.data?.items ?? [];
+          if (findings.data?.checked_at === null) {
+            // Spec 12's "Health: never run", without its run-it-yourself step (AGH-608).
+            return <div className="ah-small">Doctor has not run for this hub.</div>;
+          }
           if (items.length === 0) return <div className="ah-small">No findings.</div>;
           return (
             <>
@@ -1454,10 +1471,7 @@ export function ProjectOverviewScreen() {
   const live = summary.data?.items.find((p) => p.name === name)?.live_sessions ?? 0;
   return (
     <div className="ah-stack po-page" style={{ gap: 28 }}>
-      <Header
-        project={project.data}
-        health={findings.data ? healthSummary(findings.data.items) : null}
-      />
+      <Header project={project.data} health={headerHealth(findings.data)} />
       <NeedsSection project={name} live={live} />
       <KpiSection project={name} />
       <FocusSection project={name} />

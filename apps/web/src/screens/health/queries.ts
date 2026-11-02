@@ -1,5 +1,11 @@
-import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import {
+  skipToken,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
+import { useEffect, useReducer, useRef } from "react";
 
 import type { components } from "../../api/schema";
 import { apiKey, apiPost, useApi, type ApiProblem } from "../../lib/api";
@@ -15,10 +21,32 @@ const FIX_POLL_FOR_MS = 60_000;
 
 /** True while the findings' check is not yet later than a Fix answered in the last minute: the
  * Fix marks its hub due, and the background doctor checks it again at its next tick (AGH-608). */
-function awaitingFixCheck(client: QueryClient, checkedAt: string | null): boolean {
-  const fixedAt = client.getQueryData<number>(FIX_ANSWERED_AT);
+function isAwaitingFixCheck(fixedAt: number | undefined, checkedAt: string | null): boolean {
   if (fixedAt === undefined || Date.now() - fixedAt >= FIX_POLL_FOR_MS) return false;
   return checkedAt === null || Date.parse(checkedAt) <= fixedAt;
+}
+
+function awaitingFixCheck(client: QueryClient, checkedAt: string | null): boolean {
+  return isAwaitingFixCheck(client.getQueryData<number>(FIX_ANSWERED_AT), checkedAt);
+}
+
+/**
+ * Whether the findings shown still wait for the check after a Fix (see `isAwaitingFixCheck`): the
+ * screen keeps the Fix pending meanwhile. Renders again when a Fix is answered and when the
+ * minute after it ends, so the wait never outlives the reads.
+ */
+export function useAwaitingFixCheck(checkedAt: string | null | undefined): boolean {
+  const { data: fixedAt } = useQuery<number>({ queryKey: FIX_ANSWERED_AT, queryFn: skipToken });
+  const [, rerender] = useReducer((n: number) => n + 1, 0);
+  const awaiting = checkedAt !== undefined && isAwaitingFixCheck(fixedAt, checkedAt);
+  useEffect(() => {
+    if (!awaiting || fixedAt === undefined) return;
+    const timer = setTimeout(rerender, fixedAt + FIX_POLL_FOR_MS - Date.now());
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [awaiting, fixedAt]);
+  return awaiting;
 }
 
 /**

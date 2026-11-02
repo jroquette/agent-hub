@@ -13,23 +13,31 @@ const CHECK_FAST_FOR_MS = 60_000;
 
 /** The part of a TanStack query the rule reads (`refetchInterval` gets the whole query). */
 export interface PolledQuery<T> {
+  queryHash: string;
   state: { data: T | undefined };
 }
 
 /**
  * A `refetchInterval` that reads again while `isUnchecked` holds for the last answer: every
- * `CHECK_POLL_MS` for the first minute of unchecked answers this mount saw, then every
- * `CHECK_SLOW_POLL_MS`. A checked answer starts no polling.
+ * `CHECK_POLL_MS` for the first minute of unchecked answers of the same query, then every
+ * `CHECK_SLOW_POLL_MS`. A checked answer starts no polling, and the next unchecked answer (or a
+ * query with another key, such as another scope) starts a new first minute.
  */
 export function useCheckPoll<T>(
   isUnchecked: (data: T) => boolean,
 ): (query: PolledQuery<T>) => number | false {
-  const firstUnchecked = useRef<number | null>(null);
+  const firstUnchecked = useRef<{ hash: string; at: number } | null>(null);
   return (query) => {
     const data = query.state.data;
-    if (data === undefined || !isUnchecked(data)) return false;
+    if (data === undefined) return false;
+    if (!isUnchecked(data)) {
+      firstUnchecked.current = null;
+      return false;
+    }
     const now = Date.now();
-    firstUnchecked.current ??= now;
-    return now - firstUnchecked.current < CHECK_FAST_FOR_MS ? CHECK_POLL_MS : CHECK_SLOW_POLL_MS;
+    if (firstUnchecked.current?.hash !== query.queryHash) {
+      firstUnchecked.current = { hash: query.queryHash, at: now };
+    }
+    return now - firstUnchecked.current.at < CHECK_FAST_FOR_MS ? CHECK_POLL_MS : CHECK_SLOW_POLL_MS;
   };
 }

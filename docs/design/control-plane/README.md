@@ -127,13 +127,23 @@ changes one rule of spec 22:
 - **Route loading.** Route changes keep the previous screen until the new screen's code loads and show the page
   skeleton after 300 ms; the 2 px progress bar of spec 22 is not built.
 
-AGH-608 (`hub web` runs the doctor in the background, [specs/16-health.md](specs/16-health.md)) changes one item of
-spec 16:
+AGH-608 (`hub web` runs the doctor in the background, [specs/16-health.md](specs/16-health.md)) changes these items of
+specs 16 and 12:
 
 - **Check age.** Health's summary strip says "Checked <age> ago", the end of the last background run, where spec 16
   shows `AsOfStamp` "Last run … (2 h ago)" (`16-health.md:21,68`); no stale variant, the age says it. The age is a
   `<time>` with the exact time in its tooltip; before a hub's first background run ends, the strip says "The first
-  check is running".
+  check is running". Spec 16's Stale banners (`16-health.md:174-175`) do not show: Health draws no banner, and the
+  age says how old the check is.
+- **Never ran.** Until a hub's first background run ends (a few seconds after `hub web` starts or the hub is
+  registered), nothing has passed:
+  - Health's findings area shows spec 16's Never ran `EmptyState`: "The doctor has not run on this hub yet." /
+    "Results appear here within a few seconds." It has no run-it-yourself step, since `hub web` runs the doctor. The
+    summary strip keeps the error icon, never the `done` icon, and shows no "exit 0", also when other hubs' findings
+    are listed in All projects.
+  - The Project overview header shows Portfolio's idle "Not checked" badge, not a Setup badge. Its Health checks
+    block shows spec 12's "Doctor has not run for this hub." (`12-portfolio.md:483`), without the step to run
+    `hub doctor`.
 
 ## Design system
 
