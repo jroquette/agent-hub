@@ -638,8 +638,9 @@ class ManualTicker:
 
 @pytest.fixture
 def manual_tickers() -> dict[str, ManualTicker]:
-    """The ``build_app`` keywords of its background parts' tickers: the doctor's refresh."""
-    return {"refresh_ticker": ManualTicker()}
+    """The ``build_app`` keywords of its background parts' tickers: the doctor's refresh and
+    the ticket warmer."""
+    return {"refresh_ticker": ManualTicker(), "warm_ticker": ManualTicker()}
 
 
 type ClientOpener = Callable[..., AbstractContextManager[TestClient]]

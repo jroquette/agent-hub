@@ -48,6 +48,7 @@ from typer.testing import CliRunner
 
 from agent_hub.api.app import create_app
 from agent_hub.api.composition import build_app
+from agent_hub.api.connected_browsers import ConnectedBrowsers
 from agent_hub.api.dependencies import ApiPorts
 from agent_hub.api.session_token import cookie_name
 from agent_hub.api.settings import ApiSettings
@@ -110,6 +111,8 @@ class Composed:
     projects: Path
     store: SqliteEventStore
     tickers: Mapping[str, Any] = field(default_factory=dict)
+    # The app's count of open global streams (``ApiPorts.browsers``).
+    browsers: ConnectedBrowsers | None = None
 
     def rows(self) -> list[Event]:
         """Every stored event, in append order."""
@@ -118,6 +121,10 @@ class Composed:
     def refresh(self) -> None:
         """One tick of the background doctor (its ``refresh_ticker``), on the caller's thread."""
         self.tickers["refresh_ticker"].tick()
+
+    def warm(self) -> None:
+        """One tick of the ticket warmer (its ``warm_ticker``), on the caller's thread."""
+        self.tickers["warm_ticker"].tick()
 
 
 @pytest.fixture
@@ -152,7 +159,8 @@ def open_composed(
 ) -> Iterator[Callable[..., Composed]]:
     """Opens ``build_app`` on the temp paths; ``build_app`` keywords may be overridden.
 
-    The app's background tickers are ``manual_tickers``, which ``Composed.refresh()`` drives.
+    The app's background tickers are ``manual_tickers``, which ``Composed.refresh()`` and
+    ``Composed.warm()`` drive.
     """
     clients: list[TestClient] = []
     stores: list[SqliteEventStore] = []
@@ -173,6 +181,7 @@ def open_composed(
             projects=projects_root,
             store=store,
             tickers=manual_tickers,
+            browsers=app.state.ports.browsers,
         )
 
     yield opened

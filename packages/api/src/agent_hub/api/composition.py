@@ -11,7 +11,8 @@ branch prefix and author match ``hub doctor``.
 The feature tickets read Linear through ``CachedTicketSnapshots`` (ADR 0025): ``TicketReaders``
 gives its reader per request, None (not connected) when ``LINEAR_API_KEY`` is unset in
 ``environ`` or the hub's ``tracker.transport`` is ``mcp``; the key is read at call time and never
-logged or shown.
+logged or shown. ``TicketWarmer`` keeps that cache warm while a tab is open (AGH-613), so the
+Features list, which reads only the cache, shows Linear's tickets.
 
 The agent sessions (AGH-165, ADR 0031) run over the Claude driver and cloud launcher of
 ``agent_hub.claude_sessions``, imported in ``claude_adapters`` alone: without the ``sessions``
@@ -31,6 +32,7 @@ and the write step; a Restore writes through ``FileSystemHubItemWriter`` (or the
 decisions' ``hub_of`` (a hub without one refuses with ``no_author``, O2).
 """
 
+import hashlib
 import ipaddress
 import os
 import shutil
@@ -54,6 +56,7 @@ from agent_hub.api.agent_session_runtime import (
 from agent_hub.api.app import AppLifecycle, CombinedLifecycle, create_app
 from agent_hub.api.change_feed import ChangeFeed, SystemTimer
 from agent_hub.api.change_request_files import HubDecisionWriter
+from agent_hub.api.connected_browsers import ConnectedBrowsers
 from agent_hub.api.dependencies import ApiPorts
 from agent_hub.api.discovery_files import HubDiscoveryFiles
 from agent_hub.api.doctor_refresher import POLL_SECONDS, DaemonTicker, DoctorRefresher, Ticker
@@ -93,6 +96,7 @@ from agent_hub.api.ticket_snapshots import (
     REQUEST_TIMEOUT_SECONDS,
     CachedTicketSnapshots,
 )
+from agent_hub.api.ticket_warmer import WARM_SECONDS, TicketWarmer
 from agent_hub.api.workdir_listing import RegisteredWorkdirs
 from agent_hub.collector.claude_hooks import ClaudeHookMapper
 from agent_hub.collector.transcript_tail import TranscriptTail
@@ -528,6 +532,21 @@ def tracker_client_of(environ: Mapping[str, str], linear_environ: Mapping[str, s
     return of
 
 
+def key_digest(linear_environ: Mapping[str, str]) -> Callable[[], str | None]:
+    """The ticket warmer's ``key_digest``: the SHA-256 of the key the reader would send now
+    (``LINEAR_API_KEY`` in ``linear_environ``, the environment, then Settings' key file), None
+    without one. A key saved in Settings changes it, which ``LinearEnviron.source()`` would not;
+    the digest is only compared, never logged."""
+
+    def digest() -> str | None:
+        key = linear_environ.get(LINEAR_API_KEY_VARIABLE)
+        if not key:
+            return None
+        return hashlib.sha256(key.encode("utf-8", "surrogatepass")).hexdigest()
+
+    return digest
+
+
 def workflow_source_of(hub_path: str) -> ListedWorkflowSource:
     """The workflows of the hub at ``hub_path``: its ``workflows/``, then the built-ins."""
     return DiscoveredWorkflowSource(Path(hub_path))
@@ -706,6 +725,7 @@ def build_app(
     event_source: EventSource | None = None,
     hub_reader: HubFileReader | None = None,
     refresh_ticker: Ticker | None = None,
+    warm_ticker: Ticker | None = None,
 ) -> FastAPI:
     """The app of ``hub web``: every route wired to the real adapters.
 
@@ -722,11 +742,16 @@ def build_app(
     ``settings.sessions_off``.
     The hubs' files are read through ``hub_reader`` (default ``HubFileSystem``). The doctor runs
     only in the background part (``DoctorRefresher``, AGH-608), with the sessions on and off,
-    ticked by ``refresh_ticker`` (default a ``DaemonTicker`` every ``POLL_SECONDS``).
-    The lifespan starts the parts in order and stops them last started first: the background
-    doctor, the scheduled starts, the agent sessions' shutdown, then the stores close. The
-    doctor's stop never waits for a run in progress, so the stores can close under it: it reads
-    hub files only (registry, ``hub.json``, ``hub.lock``, the doctor's reads, git), never a store.
+    ticked by ``refresh_ticker`` (default a ``DaemonTicker`` every ``POLL_SECONDS``). The ticket
+    warmer (``TicketWarmer``, AGH-613), also with the sessions on and off, keeps the tickets'
+    cache warm while a tab holds the global stream open (``ConnectedBrowsers``, whose first
+    open wakes it), ticked by ``warm_ticker`` (default a ``DaemonTicker`` every
+    ``WARM_SECONDS``).
+    The lifespan starts the parts in order and stops them last started first: the ticket
+    warmer, the background doctor, the scheduled starts, the agent sessions' shutdown, then the
+    stores close. Neither background part's stop waits for a read in progress, so the stores can
+    close under it: they read hub files (registry, ``hub.json``, ``hub.lock``, the doctor's
+    reads, feature folders, git) and Linear only, never a store.
     ``DatabaseAccessError`` when the store cannot be opened.
     """
     store = open_event_store(settings.db_path)
@@ -827,6 +852,11 @@ def build_app(
             today=lambda: settings.clock().astimezone().date(),
         )
     knowledge = _LazyKnowledgeIndex(settings.db_path)
+    warm = (
+        DaemonTicker(WARM_SECONDS, name="hub-ticket-warmer") if warm_ticker is None else warm_ticker
+    )
+    # The first tab to open gets the warmer's tick at once, not up to 30 s later.
+    browsers = ConnectedBrowsers(on_first_open=warm.wake)
     ports = ApiPorts(
         event_read_models=events,
         hub_read_models=hubs,
@@ -893,6 +923,7 @@ def build_app(
             clock=settings.clock,
             post=linear_post,
         ),
+        browsers=browsers,
     )
     closers = [store.close, versions.close, knowledge.close]
     if agent_store is not None:
@@ -903,18 +934,27 @@ def build_app(
         if refresh_ticker is None
         else refresh_ticker,
     )
+    warmer = TicketWarmer(
+        hubs.ticket_requests,
+        snapshots,
+        browsers,
+        ticker=warm,
+        key_digest=key_digest(linear_environ),
+        clock=settings.clock,
+    )
     return create_app(
         settings,
         ports=ports,
         problems=COMPOSED_PROBLEMS,
         web_dist=web_dist,
         # First, so it stops last: the stores close after the sessions' shutdown writes and the
-        # scheduler have ended. The background doctor stops first, without waiting for a run.
+        # scheduler have ended. The background parts stop first, without waiting for a read.
         lifecycle=_lifecycle(
             _CloseOnStop(*closers),
             None if sessions is None else sessions.runtime,
             scheduler,
             refresher,
+            warmer,
         ),
     )
 

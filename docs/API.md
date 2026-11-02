@@ -424,6 +424,14 @@ the app refetches the route; the cache still applies (`as_of` shows its age). `G
 `GET /features/{project}/{slug}` never call Linear: they use a warm cache entry, else the plan, and say so in their
 `golden_path` and `tickets_source`.
 
+While a tab of the app is open (each holds `GET /api/v1/events/stream` open) and a key is set, `hub web` keeps that
+cache warm in the background (AGH-613): every 30 s, and at once when the first tab opens, it reads a feature's tickets
+when its snapshot is missing or 14 minutes old (one minute before the 15 minute stale limit, so the list keeps showing
+Linear's data), and a failed one again once its 60 s hold ends; at most 224 features a tick, leaving the rest of the
+cache's 256 entries to the feature pages (how many it leaves out is logged once). It pauses a minute after a
+rate-limit answer, and after a refused key for 15 minutes or until a minute after a new key is set (the cache holds a
+refusal that long). With no key, `"mcp"` or no tab open it reads nothing. The list routes still never call Linear.
+
 ## Plan change requests
 
 - `GET /api/v1/features/{project}/{slug}/tickets/{ticket}` serves what the ticket panel shows that no tickets row
