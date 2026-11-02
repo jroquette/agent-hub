@@ -7,7 +7,7 @@ the doctor are unknown until then, Q9).
 
 When the doctor runs (Q7): only in a tick (``refresh``), which the background part of ``hub
 web`` calls every 2 s. A tick reads the registry and the ``hub.json`` and ``hub.lock`` of a new
-hub or of one whose two modification times changed, and drops the hubs no longer registered;
+hub or of one whose modification times changed, and drops the hubs no longer registered;
 then, one hub at a time, it runs the doctor for each hub that names a project and is due. A hub
 is due when it has no check and no failure yet; when ``reread(written=...)`` marked it since its
 last run started (a write through the app: the spacing and any backoff skipped); when its last
@@ -15,13 +15,14 @@ run raised and its backoff passed (the next tick, then ``min_interval`` doubling
 10, 20, 40 ... 900 s; a success resets it); or, at least ``min_interval`` (10 s, Q31) after its
 last run ended, when its check is ``ttl`` old or a watched path's time changed. A clock set back
 before the end of a hub's last run makes it due at once (its age, negative, is unknown). The
-facts check reads the times of ``hub.json`` and ``hub.lock`` through a link, as ``hub.json`` is
-read; the doctor's watched paths keep the times of the paths themselves. A check keeps the
-times its due test read before the run, so a write made during the run shows at the next due
-test; a path the run saw first keeps the time read after the run, unless that time is later than
-one second before the run started (a file system that keeps whole seconds could round a write
-made during the run down to it), in which case the check keeps no time and the hub runs again.
-A run that raises keeps the previous check and is reported.
+facts check compares two times of ``hub.json`` and of ``hub.lock``: the path's own, so a link
+pointed at another file shows, and the time through a link, as ``hub.json`` is read, so an edit
+to the link's target shows; the doctor's watched paths keep the times of the paths themselves.
+A check keeps the times its due test read before the run, so a write made during the run shows
+at the next due test; a path the run saw first keeps the time read after the run, unless that
+time is later than one second before the run started (a file system that keeps whole seconds
+could round a write made during the run down to it), in which case the check keeps no time and
+the hub runs again. A run that raises keeps the previous check and is reported.
 
 Threads: a read (``hubs``, ``drift_of``) takes no lock and sees one published, immutable state.
 The writers (``reread``, a tick's read of the facts, each run's publish) take one lock, and the
@@ -63,6 +64,8 @@ class _NoTime(Enum):
 
 
 type _KeptTime = int | None | _NoTime
+# A fact file's own time (a link's) and the time of the file it leads to.
+type _FileTimes = tuple[int | None, int | None]
 
 
 class _Verdict(Enum):
@@ -111,8 +114,8 @@ class _Hub:
     entry: RegisteredHub
     document: HubDocument
     lock: LockState | None
-    json_time: int | None
-    lock_time: int | None
+    json_times: _FileTimes
+    lock_times: _FileTimes
     check: HubCheck | None = None
     # The paths the next due test reads, and the times the check kept for them.
     watched: tuple[str, ...] = ALWAYS_WATCHED
@@ -222,22 +225,31 @@ class HubSnapshot:
         return self._publish()
 
     def _facts(self, entry: RegisteredHub, known: _Hub | None, *, every: bool) -> _Hub:
-        # Followed: ``hub.json`` is read through a link, so an edit to its target must show.
-        json_time, lock_time = self._reader.followed_times(entry.path, (HUB_JSON, HUB_LOCK_PATH))
+        json_times, lock_times = self._fact_times(entry.path)
         if known is None:
             return _Hub(
                 entry=entry,
                 document=self._document(entry.path),
                 lock=self._reader.read_lock(entry.path),
-                json_time=json_time,
-                lock_time=lock_time,
+                json_times=json_times,
+                lock_times=lock_times,
             )
-        if every or known.json_time != json_time:
+        if every or known.json_times != json_times:
             known.document = self._document(entry.path)
-        if every or known.lock_time != lock_time:
+        if every or known.lock_times != lock_times:
             known.lock = self._reader.read_lock(entry.path)
-        known.entry, known.json_time, known.lock_time = entry, json_time, lock_time
+        known.entry, known.json_times, known.lock_times = entry, json_times, lock_times
         return known
+
+    def _fact_times(self, hub_path: str) -> tuple[_FileTimes, _FileTimes]:
+        """The times of ``hub.json`` and ``hub.lock``. Followed: ``hub.json`` is read through a
+        link, so an edit to its target must show. Own: a link pointed at another file with the
+        same time (``cp -p``, ``tar -x``, whole seconds) must show too."""
+        own_json, own_lock = self._reader.modified_times(hub_path, (HUB_JSON, HUB_LOCK_PATH))
+        followed_json, followed_lock = self._reader.followed_times(
+            hub_path, (HUB_JSON, HUB_LOCK_PATH)
+        )
+        return (own_json, followed_json), (own_lock, followed_lock)
 
     def _document(self, hub_path: str) -> HubDocument:
         return read_hub_document(
