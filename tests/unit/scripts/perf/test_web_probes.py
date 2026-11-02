@@ -48,6 +48,8 @@ URL_LINE = f"agent-hub at {BASE_URL}/?token={URL_NONCE}\n"
 BRAIN_ROUTE = "/api/v1/projects/perf/brain"
 # The same route as six requests sent at once (ADR 0053: no slower than six in sequence).
 PARALLEL_ROUTE = f"{BRAIN_ROUTE} (6 parallel)"
+# The app shell's one read (ADR 0056), after the brain rows.
+SHELL_ROUTE = "/api/v1/screens/shell"
 # The route and restart rows, written out by hand.
 ROUTES = (
     "/api/v1/sessions",
@@ -59,6 +61,7 @@ ROUTES = (
     "/api/v1/live-sessions",
     BRAIN_ROUTE,
     PARALLEL_ROUTE,
+    SHELL_ROUTE,
 )
 RESTARTS = ("hub web start → GET /", "hub web start → /api/v1/sessions")
 # One page of GET /api/v1/sessions (docs/API.md, "Pagination").
@@ -247,7 +250,7 @@ def test_lists_the_canonical_routes_and_restarts_when_probes_are_built() -> None
     assert sorted(probe.path for probe in probes) == sorted(ROUTES)
     assert {probe.kind for probe in probes} == {"route"}
     assert sorted(ROUTE_PATHS) == sorted(ROUTES)
-    assert tuple(ROUTE_PATHS[-2:]) == (BRAIN_ROUTE, PARALLEL_ROUTE)
+    assert tuple(ROUTE_PATHS[-3:]) == (BRAIN_ROUTE, PARALLEL_ROUTE, SHELL_ROUTE)
     # Each row requests its own path, one request at a time, except the parallel row: its
     # path without the suffix, six at once.
     assert {(probe.path, probe.url_path, probe.width) for probe in probes} == {

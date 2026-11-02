@@ -64,6 +64,7 @@ EXPECTED_ROWS = {
     ("route", "/api/v1/live-sessions"),
     ("route", "/api/v1/projects/perf/brain"),
     ("route", "/api/v1/projects/perf/brain (6 parallel)"),
+    ("route", "/api/v1/screens/shell"),
     ("page", "/"),
     ("page", "/features"),
     ("page", "/features/perf/search-index"),
