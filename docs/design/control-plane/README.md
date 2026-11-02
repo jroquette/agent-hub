@@ -141,7 +141,8 @@ specs 16 and 12:
     "Results appear here within a few seconds." It has no run-it-yourself step, since `hub web` runs the doctor. The
     summary strip keeps the error icon, never the `done` icon, and shows no "exit 0", also when other hubs' findings
     are listed in All projects.
-  - The Project overview header shows Portfolio's idle "Not checked" badge, not a Setup badge. Its Health checks
+  - The Project overview header shows Portfolio's idle "Not checked" badge, not a Setup badge, with Portfolio's
+    tooltip and name, "Health: doctor has not run for this hub". Its Health checks
     block shows spec 12's "Doctor has not run for this hub." (`12-portfolio.md:483`), without the step to run
     `hub doctor`.
 

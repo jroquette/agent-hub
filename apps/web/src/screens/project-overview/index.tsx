@@ -32,7 +32,13 @@ import { issueId, reasonOf, type Reason } from "../features/groups";
 import { useFeatureNames } from "../features/names";
 import { useFeatures } from "../features/queries";
 import { ConfigSource } from "../hub-config";
-import { NEEDS_MAX, costDelta, needsEntry, orderNeeds } from "../portfolio/model";
+import {
+  NEEDS_MAX,
+  UNCHECKED_HEALTH_LABEL,
+  costDelta,
+  needsEntry,
+  orderNeeds,
+} from "../portfolio/model";
 import { useNeedsYou, useRefreshOnCounts } from "../portfolio/queries";
 import { StaleStamp } from "../portfolio/StaleStamp";
 import { budgetOf, durationSeconds, finishedCosts, median } from "../runs-list/model";
@@ -186,8 +192,12 @@ function Header({
       <div className="ah-row ah-wrap" style={{ gap: 12 }}>
         <h1 className="ah-h1">{project.name}</h1>
         {health === "unchecked" ? (
-          // Portfolio's badge for a hub the doctor has not checked yet (AGH-608).
-          <StatusBadge status="idle" label="Not checked" quiet />
+          // Portfolio's badge for a hub the doctor has not checked yet (AGH-608), named as there.
+          <Tooltip label={UNCHECKED_HEALTH_LABEL}>
+            <span role="img" aria-label={UNCHECKED_HEALTH_LABEL}>
+              <StatusBadge status="idle" label="Not checked" quiet />
+            </span>
+          </Tooltip>
         ) : badge && health && (health.error || health.warning) ? (
           <Tooltip label="Setup problems an engineer should look at. They do not stop the agents.">
             <a

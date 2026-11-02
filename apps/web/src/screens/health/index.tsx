@@ -235,7 +235,8 @@ function FixOutcome({ result }: { result: FixResult }) {
 }
 
 /** Under the summary: how many findings are fixed without a person, the button and the command.
- * `checking`: the list still shows the check from before the last Fix, so the Fix stays pending. */
+ * `checking`: the list still shows this hub's check from before its last Fix, so the Fix stays
+ * pending. */
 function FixStrip({ all, hubs, checking }: { all: Finding[]; hubs: HubView[]; checking: boolean }) {
   const fix = useFixHub();
   const [asking, setAsking] = useState(false);
@@ -637,10 +638,15 @@ function Summary({
 /** Health (spec 16, D22): doctor findings grouped by rule, "How to fix" first. */
 export function HealthScreen() {
   const [scope] = useScope();
-  const findings = useFindings(scope);
   const hubs = useHubs();
+  const scopedHubs = (hubs.data?.items ?? []).filter(
+    (hub) => scope === null || hub.project === scope,
+  );
+  // The hub the Fix strip fixes: a Fix keeps the screen waiting only while it is in scope.
+  const fixableHubId = scopedHubs.length === 1 ? scopedHubs[0]?.id : undefined;
+  const findings = useFindings(scope, fixableHubId);
   useLiveFindings();
-  const awaitingFixCheck = useAwaitingFixCheck(findings.data?.checked_at);
+  const awaitingFixCheck = useAwaitingFixCheck(findings.data?.checked_at, fixableHubId);
   const { state, asOf } = useCollectorState();
   const { tz } = usePreferences();
   const [sev, setSev] = useState<Record<Severity, boolean>>({
@@ -653,9 +659,6 @@ export function HealthScreen() {
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
 
   const all = findings.data?.items ?? [];
-  const scopedHubs = (hubs.data?.items ?? []).filter(
-    (hub) => scope === null || hub.project === scope,
-  );
   const counts: Record<Severity, number> = { error: 0, warning: 0, info: 0 };
   for (const f of all) counts[f.severity] += 1;
   const anySev = SEVERITIES.some((s) => sev[s]);
@@ -841,7 +844,8 @@ export function HealthScreen() {
             />
           )}
         </div>
-        {/* Busy after a Fix until a check newer than it arrives: the list still has what it fixed. */}
+        {/* Busy after a Fix of the hub in scope until a check newer than it arrives: the list
+            still has what it fixed. */}
         <div
           className="ah-stack"
           style={{ gap: 16, minWidth: 0 }}

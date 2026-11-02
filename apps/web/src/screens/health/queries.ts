@@ -14,31 +14,51 @@ import { useGlobalStream } from "../../shell/GlobalStream";
 
 type DoctorFindings = components["schemas"]["DoctorFindings"];
 
-/** When the browser got the last Fix's answer (ms), kept in the query cache for `useFindings`. */
+/** The last Fix answered: the hub it fixed, and when the browser got the answer (ms). */
+interface FixAnswer {
+  hubId: string;
+  at: number;
+}
+
+/** The last Fix answered (`FixAnswer`), kept in the query cache for `useFindings`. */
 const FIX_ANSWERED_AT = ["health", "fix-answered-at"] as const;
 /** How long after a Fix the findings are read again while their check is older than the Fix. */
 const FIX_POLL_FOR_MS = 60_000;
 
-/** True while the findings' check is not yet later than a Fix answered in the last minute: the
- * Fix marks its hub due, and the background doctor checks it again at its next tick (AGH-608). */
-function isAwaitingFixCheck(fixedAt: number | undefined, checkedAt: string | null): boolean {
-  if (fixedAt === undefined || Date.now() - fixedAt >= FIX_POLL_FOR_MS) return false;
-  return checkedAt === null || Date.parse(checkedAt) <= fixedAt;
+/** True while the scope is the one hub a Fix answered in the last minute fixed and the findings'
+ * check is not yet later than that Fix: the Fix marks its hub due, and the background doctor
+ * checks it again at its next tick (AGH-608). Another hub's scope, or several hubs, never wait. */
+function isAwaitingFixCheck(
+  fix: FixAnswer | undefined,
+  scopeHubId: string | undefined,
+  checkedAt: string | null,
+): boolean {
+  if (fix === undefined || fix.hubId !== scopeHubId) return false;
+  if (Date.now() - fix.at >= FIX_POLL_FOR_MS) return false;
+  return checkedAt === null || Date.parse(checkedAt) <= fix.at;
 }
 
-function awaitingFixCheck(client: QueryClient, checkedAt: string | null): boolean {
-  return isAwaitingFixCheck(client.getQueryData<number>(FIX_ANSWERED_AT), checkedAt);
+function awaitingFixCheck(
+  client: QueryClient,
+  scopeHubId: string | undefined,
+  checkedAt: string | null,
+): boolean {
+  return isAwaitingFixCheck(client.getQueryData<FixAnswer>(FIX_ANSWERED_AT), scopeHubId, checkedAt);
 }
 
 /**
- * Whether the findings shown still wait for the check after a Fix (see `isAwaitingFixCheck`): the
- * screen keeps the Fix pending meanwhile. Renders again when a Fix is answered and when the
- * minute after it ends, so the wait never outlives the reads.
+ * Whether the findings shown still wait for the check after a Fix of `scopeHubId`, the scope's
+ * one hub (see `isAwaitingFixCheck`): the screen keeps that Fix pending meanwhile. Renders again
+ * when a Fix is answered and when the minute after it ends, so the wait never outlives the reads.
  */
-export function useAwaitingFixCheck(checkedAt: string | null | undefined): boolean {
-  const { data: fixedAt } = useQuery<number>({ queryKey: FIX_ANSWERED_AT, queryFn: skipToken });
+export function useAwaitingFixCheck(
+  checkedAt: string | null | undefined,
+  scopeHubId: string | undefined,
+): boolean {
+  const { data: fix } = useQuery<FixAnswer>({ queryKey: FIX_ANSWERED_AT, queryFn: skipToken });
   const [, rerender] = useReducer((n: number) => n + 1, 0);
-  const awaiting = checkedAt !== undefined && isAwaitingFixCheck(fixedAt, checkedAt);
+  const awaiting = checkedAt !== undefined && isAwaitingFixCheck(fix, scopeHubId, checkedAt);
+  const fixedAt = fix?.at;
   useEffect(() => {
     if (!awaiting || fixedAt === undefined) return;
     const timer = setTimeout(rerender, fixedAt + FIX_POLL_FOR_MS - Date.now());
@@ -51,10 +71,10 @@ export function useAwaitingFixCheck(checkedAt: string | null | undefined): boole
 
 /**
  * Doctor findings of every registered hub, or of the scoped project, from the doctor hub web runs
- * in the background (AGH-608): read again while no check has ended, and after a Fix until a check
- * later than it.
+ * in the background (AGH-608): read again while no check has ended, and after a Fix of
+ * `scopeHubId`, the scope's one hub, until a check later than it.
  */
-export function useFindings(project: string | null) {
+export function useFindings(project: string | null, scopeHubId: string | undefined) {
   const client = useQueryClient();
   const uncheckedPoll = useCheckPoll((data: DoctorFindings) => data.checked_at === null);
   return useApi(
@@ -63,7 +83,7 @@ export function useFindings(project: string | null) {
     {
       refetchInterval: (query) => {
         const data = query.state.data;
-        if (data && awaitingFixCheck(client, data.checked_at)) return CHECK_POLL_MS;
+        if (data && awaitingFixCheck(client, scopeHubId, data.checked_at)) return CHECK_POLL_MS;
         return uncheckedPoll(query);
       },
     },
@@ -98,8 +118,8 @@ export function useFixHub() {
   return useMutation<DoctorFixResult, ApiProblem, string>({
     mutationFn: (hubId) =>
       apiPost("/api/v1/hubs/{hub_id}/doctor-fix", {}, { path: { hub_id: hubId } }),
-    onSuccess: () => {
-      client.setQueryData(FIX_ANSWERED_AT, Date.now());
+    onSuccess: (result) => {
+      client.setQueryData<FixAnswer>(FIX_ANSWERED_AT, { hubId: result.hub_id, at: Date.now() });
       return client.invalidateQueries({ queryKey: ["api"] });
     },
   });
