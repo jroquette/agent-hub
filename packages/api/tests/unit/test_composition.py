@@ -29,10 +29,12 @@ from agent_hub.api.composition import (
     decider_of,
     default_brain_changes,
     hub_read_models,
+    key_digest,
     ticket_snapshots,
     web_url,
     workflow_source_of,
 )
+from agent_hub.api.linear_connection import LinearEnviron, LinearKeyFile
 from agent_hub.api.settings import ApiSettings
 from agent_hub.api.ticket_snapshots import REQUEST_TIMEOUT_SECONDS
 from agent_hub.claude_sessions.cloud_launcher import ClaudeCloudLauncher
@@ -396,6 +398,28 @@ def test_reads_key_at_call_time_when_set_after_app_built() -> None:
     assert (before.failure, after.failure) == ("not_connected", "unauthorized")
     assert post.calls == [(KEY, REQUEST_TIMEOUT_SECONDS)]
     assert KEY not in f"{before.detail} {after.detail}"
+
+
+def test_digests_saved_key_without_holding_it_when_key_saved_from_settings(tmp_path: Path) -> None:
+    """The ticket warmer's ``key_digest``: None without a key; a value for a key saved only in
+    Settings' key file (no ``LINEAR_API_KEY`` in the environment), and another one once a new
+    key is saved there, so a new key ends a refused key's pause; never the key itself."""
+    first_key, second_key = "lin_api_synthetic_first_key", "lin_api_synthetic_second_key"
+    key_file = LinearKeyFile(tmp_path / "linear-api-key")
+    digest = key_digest(LinearEnviron({}, key_file))
+
+    without_key = digest()
+    key_file.write(first_key)
+    first = digest()
+    key_file.write(second_key)
+    second = digest()
+
+    assert without_key is None
+    assert first is not None
+    assert second is not None
+    assert first != second
+    assert first_key not in first
+    assert second_key not in second
 
 
 def test_names_tracker_transport_when_hub_registered() -> None:

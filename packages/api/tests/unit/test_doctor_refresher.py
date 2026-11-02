@@ -2,11 +2,11 @@
 running tick, and the refresher part that rereads the hubs at start, ticks the hub snapshot and
 logs each failed doctor run as one line naming the hub and the error's type only.
 
-Seam: ``DaemonTicker(interval, *, name)`` with ``start(tick)``, ``stop()`` and ``thread``;
-``DoctorRefresher(hubs, *, ticker)``, an ``AppLifecycle`` part (``start``, ``begin_exit``,
-``stop``) over ``hubs.reread_hubs()`` and ``hubs.refresh() -> RefreshReport``. The
-``manual_tickers`` fixture's ``ManualTicker`` runs a kept tick on the test's thread. A log line
-is read as ``hub web`` writes it, through ``JsonFormatter``.
+Seam: ``DaemonTicker(interval, *, name)`` with ``start(tick)``, ``stop()``, ``wake()`` and
+``thread``; ``DoctorRefresher(hubs, *, ticker)``, an ``AppLifecycle`` part (``start``,
+``begin_exit``, ``stop``) over ``hubs.reread_hubs()`` and ``hubs.refresh() -> RefreshReport``. The
+``manual_tickers`` fixture's ``ManualTicker`` runs a kept tick on the test's thread. A log line is
+read as ``hub web`` writes it, through ``JsonFormatter``.
 """
 
 import logging
@@ -96,6 +96,59 @@ def test_logs_and_ticks_again_when_tick_raises(caplog: pytest.LogCaptureFixture)
 
     assert ran_again, "no tick ran after the one that raised"
     assert any("RuntimeError" in line for line in _lines(caplog))
+
+
+def test_runs_next_tick_at_once_when_woken_after_tick() -> None:
+    """AGH-613: ``wake()`` ends the wait for the next tick, so the ticket warmer's first tab gets
+    its tick at once rather than an interval (here an hour) later."""
+    first, second = threading.Event(), threading.Event()
+    ticks: list[int] = []
+
+    def tick() -> None:
+        ticks.append(len(ticks) + 1)
+        (first if len(ticks) == 1 else second).set()
+
+    ticker = DaemonTicker(3600, name="test-ticker")
+    ticker.start(tick)
+    assert first.wait(5), "the first tick did not run at once"
+
+    ticker.wake()
+    woken = second.wait(5)
+    ticker.stop()
+    ticker.thread.join(5)
+
+    assert woken, "the wake did not run the next tick"
+    assert not ticker.thread.is_alive()
+    assert ticks == [1, 2]
+
+
+def test_runs_next_tick_right_after_when_woken_during_tick() -> None:
+    """AGH-613: a ``wake()`` while a tick runs is kept: the next tick runs as soon as that one
+    ends, not an interval (here an hour) later."""
+    entered, release, again = threading.Event(), threading.Event(), threading.Event()
+    ticks: list[int] = []
+
+    def tick() -> None:
+        ticks.append(len(ticks) + 1)
+        if len(ticks) == 1:
+            entered.set()
+            release.wait(5)
+        else:
+            again.set()
+
+    ticker = DaemonTicker(3600, name="test-ticker")
+    ticker.start(tick)
+    assert entered.wait(5), "the first tick did not run at once"
+
+    ticker.wake()
+    release.set()
+    ran_again = again.wait(5)
+    ticker.stop()
+    ticker.thread.join(5)
+
+    assert ran_again, "the wake during the tick was lost"
+    assert not ticker.thread.is_alive()
+    assert ticks == [1, 2]
 
 
 @pytest.mark.anyio

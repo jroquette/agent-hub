@@ -8,26 +8,31 @@ Seam: ``build_app(..., warm_ticker=)``, driven through ``manual_tickers["warm_ti
 ``ManualTicker``; its ``wake()`` counts the calls in ``wakes``, as ``stop()`` counts in
 ``stops``), ``Composed.browsers`` (the app's ``ConnectedBrowsers``) and ``Composed.warm()`` (one
 warm tick on the caller's thread). Linear is ``CountingTrackerReader`` over the seeded board
-(``build_app(tracker_reader=)``) with a synthetic ``LINEAR_API_KEY`` in the injected environment;
-the app's clock is moved by the test. ``ListingReader`` is ``HubFileSystem`` recording each
-feature folder listing. The cap and the refused key build ``TicketWarmer(requests, snapshots,
-browsers, *, ticker, key_digest, clock)`` directly over a real ``CachedTicketSnapshots``, with a
-``ManualTicker`` and one open stream. No sleep, not ``serial``.
+(``build_app(tracker_reader=)``) with a synthetic ``LINEAR_API_KEY`` in the injected environment
+or in Settings' key file; the app's clock is moved by the test. ``ListingReader`` is
+``HubFileSystem`` recording each feature folder listing. ``TabStream`` holds
+``GET /api/v1/events/stream`` open on the composed app as a tab does. The cap and the refused
+key build ``TicketWarmer(requests, snapshots, browsers, *, ticker, key_digest, clock)`` directly
+over a real ``CachedTicketSnapshots``, with a ``ManualTicker`` and one open stream. No sleep, not
+``serial``.
 """
 
 import hashlib
 import itertools
 import logging
 import re
+import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
 
 from agent_hub.api.connected_browsers import ConnectedBrowsers
+from agent_hub.api.linear_connection import KEY_FILE_NAME, LinearKeyFile
 from agent_hub.api.settings import ApiSettings
 from agent_hub.api.ticket_snapshots import CachedTicketSnapshots
 from agent_hub.api.ticket_warmer import TicketWarmer
@@ -45,6 +50,8 @@ OWN = {"Origin": "http://127.0.0.1:7420"}
 # The two features naming tickets, by folder, and the issue each names: one read of its ids.
 FEATURES = {"alpha": "DEM-1", "beta": "DEM-3"}
 EACH_FEATURE = [("DEM-1",), ("DEM-3",)]
+# How long a ``TabStream`` stays open at most if the test never leaves (a failed assertion).
+TAB_LIMIT_SECONDS = 30
 
 
 class MovableClock:
@@ -116,6 +123,13 @@ class WarmWorld:
         return found
 
 
+def _write_features(hub: Path, tickets_kit: Any) -> None:
+    """``FEATURES`` in ``hub``, each naming its one issue."""
+    for slug, issue in FEATURES.items():
+        ticket = {"key": "t1", "id": issue, "title": f"Planned {slug} work", "order": 1}
+        tickets_kit.write_feature(hub, tickets_kit.a_ticket_record([ticket]), slug=slug)
+
+
 @pytest.fixture
 def open_world(
     open_composed: Callable[..., Any],
@@ -124,12 +138,14 @@ def open_world(
     *,
     tickets_kit: Any,
 ) -> Callable[..., WarmWorld]:
-    """Opens ``WarmWorld``: ``keyed`` (default True) sets the synthetic key, ``transport`` the
-    hub's ``tracker.transport`` and ``failures`` what the reads raise (default nothing)."""
+    """Opens ``WarmWorld``: ``keyed`` (default True) sets the synthetic key in the environment,
+    ``saved_key`` saves it in Settings' key file instead, ``transport`` is the hub's
+    ``tracker.transport`` and ``failures`` what the reads raise (default nothing)."""
 
     def opened(
         *,
         keyed: bool = True,
+        saved_key: bool = False,
         transport: str = "api",
         failures: Iterator[TrackerError] | None = None,
     ) -> WarmWorld:
@@ -138,12 +154,11 @@ def open_world(
         inner = InMemoryTrackerReader(a_seeded_issue_board())
         world.reader = CountingTrackerReader(inner, before=world.on_read)
         hub = make_hub(change=lambda document: document["tracker"].update(transport=transport))
-        for slug, issue in FEATURES.items():
-            ticket = {"key": "t1", "id": issue, "title": f"Planned {slug} work", "order": 1}
-            tickets_kit.write_feature(hub, tickets_kit.a_ticket_record([ticket]), slug=slug)
+        _write_features(hub, tickets_kit)
+        settings = replace(composed_settings, clock=world.clock)
         world.composed = open_composed(
-            replace(composed_settings, clock=world.clock),
-            environ={"LINEAR_API_KEY": tickets_kit.key} if keyed else {},
+            settings,
+            environ={"LINEAR_API_KEY": tickets_kit.key} if keyed and not saved_key else {},
             tracker_reader=world.reader,
             hub_reader=world.files,
         )
@@ -151,17 +166,21 @@ def open_world(
             "/api/v1/hubs", json={"path": str(hub)}, headers=OWN
         )
         assert registered.status_code == 201, registered.text
+        if saved_key:
+            LinearKeyFile(settings.registry_path.parent / KEY_FILE_NAME).write(tickets_kit.key)
         return world
 
     return opened
 
 
+@pytest.mark.parametrize("saved_key", [False, True], ids=["environment", "settings"])
 def test_reads_each_feature_once_when_first_browser_opens_on_cold_cache(
-    open_world: Callable[..., WarmWorld],
+    open_world: Callable[..., WarmWorld], *, saved_key: bool
 ) -> None:
     """The first tab to open wakes the warm ticker, so its tick runs at once; on a cold cache
-    that tick reads each feature once."""
-    world = open_world()
+    that tick reads each feature once, whether the key is in the environment or was saved from
+    Settings (the key file ``hub web`` reads at call time)."""
+    world = open_world(saved_key=saved_key)
     ticker = world.composed.tickers["warm_ticker"]
 
     world.composed.browsers.opened()
@@ -169,6 +188,84 @@ def test_reads_each_feature_once_when_first_browser_opens_on_cold_cache(
     assert ticker.wakes == 1
     assert world.tick_at(0) == 2
     assert sorted(world.reader.calls) == EACH_FEATURE
+
+
+class TabStream:
+    """A tab holding ``GET path`` open on the composed app, served on the app's own event loop
+    (the test client's portal) as uvicorn serves it (ASGI spec 2.3), one chunk at a time; the
+    test client itself answers only once a response ends, which the global stream never does.
+
+    ``leave()`` is the tab closing: the client disconnects, and it returns once the app has ended
+    the request. A tab never left disconnects after ``TAB_LIMIT_SECONDS``.
+    """
+
+    def __init__(self, composed: Any, path: str) -> None:
+        portal = composed.client.portal
+        assert portal is not None, "the test client is not open: it has no event loop"
+        self._portal = portal
+        self._asked = False
+        self._left: anyio.Event = portal.call(anyio.Event)
+        self.first_chunk = threading.Event()
+        self.chunks: list[bytes] = []
+        self.statuses: list[int] = []
+        port = composed.settings.port
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode(),
+            "root_path": "",
+            "query_string": b"",
+            "headers": [(b"host", f"127.0.0.1:{port}".encode()), (b"accept", b"text/event-stream")],
+            "client": ("127.0.0.1", 50000),
+            "server": ("127.0.0.1", port),
+            "state": {},
+        }
+        self._served = portal.start_task_soon(composed.client.app, scope, self._receive, self._send)
+
+    async def _receive(self) -> dict[str, Any]:
+        if not self._asked:
+            self._asked = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        with anyio.move_on_after(TAB_LIMIT_SECONDS):
+            await self._left.wait()
+        return {"type": "http.disconnect"}
+
+    async def _send(self, message: dict[str, Any]) -> None:
+        if message["type"] == "http.response.start":
+            self.statuses.append(message["status"])
+        elif message["type"] == "http.response.body" and message.get("body"):
+            self.chunks.append(message["body"])
+            self.first_chunk.set()
+
+    def leave(self) -> None:
+        self._portal.call(self._left.set)
+        self._served.result(timeout=5)
+
+
+def test_counts_tab_until_stream_closes_when_global_stream_served(
+    open_world: Callable[..., WarmWorld],
+) -> None:
+    """AC-34: the composed app counts a tab's ``GET /api/v1/events/stream`` in the count the
+    warmer reads: once its first chunk is sent the count is connected and the warm ticker was
+    woken once; once the tab leaves, the count is back to none."""
+    world = open_world()
+    ticker = world.composed.tickers["warm_ticker"]
+    assert (world.composed.browsers.connected(), ticker.wakes) == (False, 0)
+
+    tab = TabStream(world.composed, "/api/v1/events/stream")
+    got_first = tab.first_chunk.wait(5)
+    while_open = (world.composed.browsers.connected(), ticker.wakes)
+    tab.leave()
+
+    assert got_first, "the stream sent no chunk within 5 s"
+    assert tab.statuses == [200]
+    assert tab.chunks[0].startswith(b"retry:")
+    assert while_open == (True, 1)
+    assert not world.composed.browsers.connected()
 
 
 def test_reads_again_only_near_stale_limit_when_ticks_run(

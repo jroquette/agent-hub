@@ -105,3 +105,22 @@ def test_calls_first_open_hook_only_when_count_leaves_zero() -> None:
     assert after_second_and_close == [1]
     assert calls == [1, 2]
     assert browsers.connected()
+
+
+def test_stays_at_zero_when_closed_more_than_opened() -> None:
+    """A close with no stream open leaves the count at 0, never below: the next open makes it
+    connected and runs ``on_first_open``, so an extra close cannot hide a tab from the warmer."""
+    calls: list[int] = []
+    browsers = ConnectedBrowsers(on_first_open=lambda: calls.append(len(calls) + 1))
+
+    browsers.closed()
+    browsers.closed()
+    after_extra_closes = browsers.connected()
+    browsers.opened()
+    after_open = browsers.connected()
+    browsers.closed()
+
+    assert after_extra_closes is False
+    assert after_open is True
+    assert calls == [1]
+    assert not browsers.connected()
