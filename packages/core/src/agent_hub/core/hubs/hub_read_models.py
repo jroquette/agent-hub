@@ -278,10 +278,13 @@ class HubFilesReadModels:
     def ticket_requests(self) -> tuple[SnapshotRequest, ...]:
         """The snapshot request of each valid project's feature that names tickets, as
         ``feature_tickets`` builds it (the ticket warmer's list, AGH-613); reads the feature
-        folders, never the tracker."""
+        folders, never the tracker. A project whose ``tracker.transport`` is ``mcp`` is left out
+        before its folders are listed: its tickets are never read through the snapshots
+        (``feature_tickets`` serves them as not connected)."""
         return tuple(
             request
             for found in self._projects()
+            if found.config.tracker.transport != "mcp"
             for folder in self._reader.feature_folders(found.path)
             if (request := _ticket_request(found, folder)).ids
         )
