@@ -1,12 +1,12 @@
 import json
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 
-from agent_hub.core.doctor.snapshot import DoctorSnapshot, LockState
+from agent_hub.core.doctor.snapshot import DoctorSnapshot, LockAbsent, LockState
 from agent_hub.core.hub_config.doctor_rules import CONFIG_SCHEMA_RULE
 from agent_hub.core.hub_files.hub_lock import HubLock
 from agent_hub.core.hubs.doctor_cache import DOCTOR_TTL
@@ -114,17 +114,21 @@ class ScriptedReader(FakeHubFileReader):
         return [int((at - START).total_seconds()) for path, at in self.runs if path == hub_path]
 
 
-def a_hold() -> tuple[threading.Event, threading.Event, Callable[[], object]]:
-    """An action that says it started, then waits for the release (5 s at most, else it fails:
-    a run held past that wait would let a test that waits on it pass)."""
+def a_hold() -> tuple[threading.Event, threading.Event, threading.Event, Callable[[], object]]:
+    """An action that sets ``entered``, then waits for ``release``, 5 s at most. It runs inside
+    the doctor run, where a raise would only become a refresh failure, so a wait that ends
+    without the release sets ``timed_out`` instead; each test that holds a run asserts, on its
+    own thread after the join, that it is not set."""
     entered = threading.Event()
     release = threading.Event()
+    timed_out = threading.Event()
 
     def hold() -> None:
         entered.set()
-        assert release.wait(timeout=5), "the test never released the held run"
+        if not release.wait(timeout=5):
+            timed_out.set()
 
-    return entered, release, hold
+    return entered, release, timed_out, hold
 
 
 def test_reuses_check_when_nothing_changed_within_ttl() -> None:
@@ -419,7 +423,7 @@ def test_drops_hub_when_reread_after_removal() -> None:
 def test_publishes_first_hub_check_when_second_run_is_held() -> None:
     clock = Clock()
     reader = ScriptedReader({HUB: a_hub(), OTHER: an_other_hub()}, clock)
-    entered, release, hold = a_hold()
+    entered, release, timed_out, hold = a_hold()
     reader.during_run[OTHER] = hold
     snapshot = HubSnapshot(
         a_registry(clock, HUB, OTHER), reader, running_version=RUNNING, clock=clock
@@ -432,6 +436,7 @@ def test_publishes_first_hub_check_when_second_run_is_held() -> None:
     release.set()
     ticking.join(timeout=5)
 
+    assert not timed_out.is_set(), "the held run waited 5 s without a release"
     assert held[HUB] is not None
     assert held[OTHER] is None
     assert not ticking.is_alive()
@@ -443,7 +448,7 @@ def test_rereads_without_waiting_when_doctor_run_is_held() -> None:
     writer lock), and what it read shows before the run ends."""
     clock = Clock()
     reader = ScriptedReader({HUB: a_hub(), OTHER: an_other_hub()}, clock)
-    entered, release, hold = a_hold()
+    entered, release, timed_out, hold = a_hold()
     reader.during_run[HUB] = hold
     registry = a_registry(clock, HUB)
     snapshot = HubSnapshot(registry, reader, running_version=RUNNING, clock=clock)
@@ -461,6 +466,7 @@ def test_rereads_without_waiting_when_doctor_run_is_held() -> None:
     ticking.join(timeout=5)
     rereading.join(timeout=5)
 
+    assert not timed_out.is_set(), "the held run waited 5 s without a release"
     assert ended_while_held, "reread() waited for the held doctor run"
     assert listed_while_held == [HUB, OTHER]
     assert not ticking.is_alive()
@@ -512,7 +518,7 @@ def test_keeps_hub_added_by_reread_when_tick_publishes_after_it() -> None:
 def test_drops_check_of_removed_hub_when_its_run_ends_after_removal() -> None:
     clock = Clock()
     reader = ScriptedReader({HUB: a_hub()}, clock)
-    entered, release, hold = a_hold()
+    entered, release, timed_out, hold = a_hold()
     reader.during_run[HUB] = hold
     registry = InMemoryHubRegistry(clock=clock)
     entry = registry.add(HUB)
@@ -526,6 +532,7 @@ def test_drops_check_of_removed_hub_when_its_run_ends_after_removal() -> None:
     release.set()
     ticking.join(timeout=5)
 
+    assert not timed_out.is_set(), "the held run waited 5 s without a release"
     assert not ticking.is_alive()
     assert snapshot.hubs() == ()
     registry.add(HUB)
@@ -577,6 +584,54 @@ def test_reads_hub_json_again_only_when_its_time_changes() -> None:
     # Only the first tick ran the doctor (the others are within 10 s of it), so every count
     # after it is a read of the hub's facts.
     assert reader.snapshots == {HUB: 1}
+
+
+class LinkedReader(FakeHubFileReader):
+    """A reader whose ``hub.json`` and ``hub.lock`` play links: ``mtimes`` holds each link's own
+    time, ``followed`` the time of the file it points at."""
+
+    def __init__(self, hubs: dict[str, FakeHub], *, followed: dict[str, int]) -> None:
+        super().__init__(hubs)
+        self.followed = followed
+
+    def followed_times(self, hub_path: str, paths: Sequence[str]) -> tuple[int | None, ...]:
+        own = self.modified_times(hub_path, paths)
+        return tuple(self.followed.get(path, time) for path, time in zip(paths, own, strict=True))
+
+
+@pytest.mark.parametrize(
+    ("link", "changes", "expected"),
+    [
+        pytest.param(
+            "hub.json",
+            {"hub_json": hub_json_bytes(pin="9.9.9")},
+            ("9.9.9", LockAbsent()),
+            id="hub-json",
+        ),
+        pytest.param("hub.lock", {"lock": a_lock()}, (RUNNING, a_lock()), id="hub-lock"),
+    ],
+)
+def test_reads_facts_again_when_link_points_at_other_file_with_same_time(
+    *, link: str, changes: dict[str, object], expected: tuple[str, LockState]
+) -> None:
+    """A ``hub.json`` or ``hub.lock`` link pointed at another file with the same time (``cp -p``,
+    ``tar -x``, a file system of whole seconds) keeps its followed time but gets a time of its
+    own: the next tick reads that file again."""
+    clock = Clock()
+    reader = LinkedReader({HUB: a_hub()}, followed={"hub.json": 50, "hub.lock": 60})
+    snapshot = a_snapshot(reader, clock)
+    tick(snapshot, clock, 0)
+    before = state_of(snapshot, HUB)
+    assert (before.read.view.platform_pin, before.lock) == (RUNNING, LockAbsent())
+    for name, value in changes.items():
+        setattr(reader.hubs[HUB], name, value)
+    reader.hubs[HUB].mtimes[link] += 10
+
+    tick(snapshot, clock, 2)
+
+    after = state_of(snapshot, HUB)
+    assert reader.followed_times(HUB, ("hub.json", "hub.lock")) == (50, 60)
+    assert (after.read.view.platform_pin, after.lock) == expected
 
 
 def test_checks_hub_with_invalid_config_when_it_names_project() -> None:

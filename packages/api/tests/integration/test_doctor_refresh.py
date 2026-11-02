@@ -514,8 +514,8 @@ def test_answers_registry_unreadable_when_app_starts_with_corrupt_registry(
     settings: ApiSettings,
     make_hub: Callable[..., Path],
 ) -> None:
-    """Review finding 5: the app starts on a registry it cannot read and answers 503, not an
-    empty list; once the file is fixed, a tick serves the hubs."""
+    """The app starts on a registry it cannot read and answers 503, not an empty list; once the
+    file is fixed, a tick serves the hubs."""
     hub = make_hub()
     registry = settings.registry_path
     registry.parent.mkdir(parents=True, mode=0o700)

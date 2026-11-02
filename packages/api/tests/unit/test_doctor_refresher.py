@@ -117,8 +117,8 @@ async def test_rereads_hubs_before_first_tick_when_started(manual_tickers: dict[
 async def test_starts_without_raising_when_first_reread_fails(
     manual_tickers: dict[str, Any], caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Review finding 5: a registry that cannot be read at start is logged with its type, the
-    ticks still start, and the first one reads again."""
+    """A registry that cannot be read at start is logged with its type, the ticks still start,
+    and the first one reads again."""
     caplog.set_level(logging.WARNING)
     hubs = FakeHubs(reread_error=HubRegistryError("the registry of hubs could not be read"))
     ticker = manual_tickers["refresh_ticker"]
@@ -135,8 +135,8 @@ async def test_starts_without_raising_when_first_reread_fails(
 async def test_logs_only_error_type_and_hub_path_when_run_fails(
     manual_tickers: dict[str, Any], caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Review finding 18: a failed run is one warning with the hub path and the error's type,
-    never its message (which can quote file text) or a traceback."""
+    """A failed run is one warning with the hub path and the error's type, never its message
+    (which can quote file text) or a traceback."""
     caplog.set_level(logging.DEBUG)
     failure = RefreshFailure(hub_path=HUB_PATH, error=OSError(f"brain/now.md: {NOTE_LINE}"))
     hubs = FakeHubs(report=RefreshReport(checked=(), failures=(failure,)))
@@ -223,3 +223,31 @@ async def test_logs_registry_failure_once_per_outage_when_ticks_keep_raising(
         if record.levelno >= logging.WARNING:
             assert type(error).__name__ in JsonFormatter().format(record)
     assert NOTE_LINE not in caplog.text
+
+
+@pytest.mark.anyio
+async def test_logs_registry_failure_once_when_unreadable_from_start_into_ticks(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A registry that cannot be read at start and still cannot at the first ticks is one
+    outage: one warning naming ``HubRegistryError``, then one info line when a tick reads it
+    again."""
+    caplog.set_level(logging.INFO)
+    error = HubRegistryError(f"hubs.json: {NOTE_LINE}")
+    hubs = ScriptedHubs(error, raising={1, 2}, last=4)
+    hubs.reread_error = error
+    ticker = DaemonTicker(0.01, name="test-doctor-refresh")
+    refresher = DoctorRefresher(hubs, ticker=ticker)
+    await refresher.start()
+    assert (hubs.calls, hubs.reread_error) == ([("reread_hubs", None)], None)
+
+    hubs.go.set()
+    finished = hubs.done.wait(5)
+    await refresher.stop()
+    ticker.thread.join(5)
+
+    assert finished, "the ticker did not reach the last scripted tick"
+    assert not ticker.thread.is_alive()
+    records = [record for record in caplog.records if record.name.startswith("agent_hub")]
+    assert [logging.getLevelName(record.levelno) for record in records] == ["WARNING", "INFO"]
+    assert "HubRegistryError" in JsonFormatter().format(records[0])
