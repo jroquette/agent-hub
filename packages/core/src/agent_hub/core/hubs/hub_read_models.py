@@ -276,8 +276,15 @@ class HubFilesReadModels:
         )
 
     def ticket_requests(self) -> tuple[SnapshotRequest, ...]:
-        """RED stub for AGH-613 (plan FEAT-1 commit 23b): no logic yet."""
-        raise NotImplementedError
+        """The snapshot request of each valid project's feature that names tickets, as
+        ``feature_tickets`` builds it (the ticket warmer's list, AGH-613); reads the feature
+        folders, never the tracker."""
+        return tuple(
+            request
+            for found in self._projects()
+            for folder in self._reader.feature_folders(found.path)
+            if (request := _ticket_request(found, folder)).ids
+        )
 
     def ticket_records(self, project: str, slug: str, ticket: str) -> TicketRecords:
         """One ticket's records (two-level-flows A7); never reads the tracker."""

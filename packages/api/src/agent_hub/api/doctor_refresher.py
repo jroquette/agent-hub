@@ -11,7 +11,9 @@ ever runs the doctor.
 thread of its own: never ``asyncio.to_thread``, whose executor uvicorn waits for when it closes,
 so a doctor run in progress would hold the exit. ``stop()`` sets a flag and ends the wait at
 once; it never joins the thread, and a run in progress finishes on its own (it reads hub files
-only, never a store). A tick that raises is logged with the error's type and the next one runs.
+only, never a store). ``wake()`` ends the wait too, so the next tick runs at once (after the one
+in progress, if any; the ticket warmer's first tab, AGH-613). A tick that raises is logged with
+the error's type and the next one runs.
 
 Logs never quote a failure's message or traceback, which can hold file text: a failed run is
 one warning with the hub path and the error's type; ``hub doctor`` in that hub shows the whole
@@ -49,6 +51,10 @@ class Ticker(Protocol):
         """Run no further tick; returns at once, without waiting for one in progress."""
         ...
 
+    def wake(self) -> None:
+        """Run the next tick at once instead of at its time; returns at once."""
+        ...
+
 
 class DaemonTicker:
     """A ``Ticker`` on a daemon thread named ``name`` (see the module docstring)."""
@@ -57,6 +63,8 @@ class DaemonTicker:
         self._interval = interval
         self._name = name
         self._stopped = threading.Event()
+        # Set by ``wake`` and ``stop``: ends the wait for the next tick.
+        self._woken = threading.Event()
         self._tick: Callable[[], None] = _no_tick
         self._thread = threading.Thread(target=self._run, name=name, daemon=True)
 
@@ -73,9 +81,20 @@ class DaemonTicker:
     def stop(self) -> None:
         """Run no further tick and end the wait for the next one; never waits for a tick."""
         self._stopped.set()
+        self._woken.set()
+
+    def wake(self) -> None:
+        """End the wait for the next tick, so it runs at once; a wake during a tick runs the
+        next one right after it."""
+        self._woken.set()
 
     def _run(self) -> None:
-        while not self._stopped.is_set():
+        while True:
+            # Cleared before the stop check and the tick, so a wake or a stop during the tick
+            # still ends the wait that follows it.
+            self._woken.clear()
+            if self._stopped.is_set():
+                return
             try:
                 self._tick()
             except Exception as error:  # noqa: BLE001 -- one failed tick never stops the next
@@ -84,8 +103,7 @@ class DaemonTicker:
                     self._name,
                     extra={"error_type": type(error).__name__},
                 )
-            if self._stopped.wait(self._interval):
-                return
+            self._woken.wait(self._interval)
 
 
 class RefreshedHubs(Protocol):

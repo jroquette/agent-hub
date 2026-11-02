@@ -613,12 +613,13 @@ def fakes() -> SimpleNamespace:
 
 class ManualTicker:
     """A ``Ticker`` (``agent_hub.api.doctor_refresher``) the test drives: ``start`` keeps the
-    tick, ``tick()`` runs it on the caller's thread, ``stop()`` records the call. It starts no
-    thread of its own."""
+    tick, ``tick()`` runs it on the caller's thread, ``stop()`` and ``wake()`` count their calls.
+    It starts no thread of its own."""
 
     def __init__(self) -> None:
         self.kept: Callable[[], None] | None = None
         self.stops = 0
+        self.wakes = 0
 
     def start(self, tick: Callable[[], None]) -> None:
         self.kept = tick
@@ -630,6 +631,9 @@ class ManualTicker:
 
     def stop(self) -> None:
         self.stops += 1
+
+    def wake(self) -> None:
+        self.wakes += 1
 
 
 @pytest.fixture

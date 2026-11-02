@@ -13,6 +13,7 @@ from pydantic import BaseModel, ValidationError
 
 from agent_hub.api.ac_check import AcCheckRunner
 from agent_hub.api.change_feed import ChangeFeed
+from agent_hub.api.connected_browsers import ConnectedBrowsers
 from agent_hub.api.feature_names import FeatureNames
 from agent_hub.api.linear_connection import LinearConnection
 from agent_hub.api.rfc9457 import InvalidParameterError, NotImplementedInBuildError
@@ -73,6 +74,8 @@ class ApiPorts:
     knowledge_reads: KnowledgeReads | None = None
     scenario_reads: ScenarioCatalog | None = None
     scenario_commands: ScenarioCommands | None = None
+    # The tabs holding the global stream open (AGH-613): the ticket warmer reads Linear only then.
+    browsers: ConnectedBrowsers | None = None
 
 
 def _ports(request: Request) -> ApiPorts:
@@ -281,12 +284,14 @@ def ingest_hook(request: Request) -> IngestHook:
 
 @dataclass(frozen=True)
 class StreamPorts:
-    """What a stream needs: the reader it replays from, the feed it waits on, the read models."""
+    """What a stream needs: the reader it replays from, the feed it waits on, the read models;
+    ``browsers`` counts the global streams open (None: not counted)."""
 
     reader: EventReader
     feed: ChangeFeed
     models: EventReadModels
     counters: IngestionCounters | None
+    browsers: ConnectedBrowsers | None = None
 
 
 def stream_ports(request: Request) -> StreamPorts:
@@ -299,6 +304,7 @@ def stream_ports(request: Request) -> StreamPorts:
         feed=ports.change_feed,
         models=ports.event_read_models,
         counters=ports.counters,
+        browsers=ports.browsers,
     )
 
 

@@ -9,7 +9,7 @@ exactly (design spec 02, "SSE contract"). What a batch changes is the view's bus
 
 import json
 import re
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
@@ -138,7 +138,7 @@ class _Position:
 
 async def event_stream(
     view: StreamView, *, reader: EventReader, feed: ChangeFeed, last_event_id: str | None
-) -> AsyncIterator[bytes]:
+) -> AsyncGenerator[bytes]:
     """The bytes of one stream, until the client leaves or the feed closes."""
     yield RETRY
     timer = feed.timer

@@ -5,6 +5,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Path
 from fastapi.responses import StreamingResponse
 
+from agent_hub.api.connected_browsers import ConnectedBrowsers, counted
 from agent_hub.api.dependencies import StreamPorts, StreamPortsDep
 from agent_hub.api.schemas import MAX_QUERY_TEXT, LastEventIdHeader, ProjectParam
 from agent_hub.api.sse import StreamView, event_stream
@@ -32,9 +33,16 @@ STREAM_HEADERS = {"Cache-Control": "no-store", "X-Accel-Buffering": "no"}
 
 
 def _respond(
-    view: StreamView, ports: StreamPorts, last_event_id: str | None
+    view: StreamView,
+    ports: StreamPorts,
+    last_event_id: str | None,
+    *,
+    browsers: ConnectedBrowsers | None = None,
 ) -> EventStreamResponse:
+    """The stream's response, counted in ``browsers`` while it is open, when given."""
     stream = event_stream(view, reader=ports.reader, feed=ports.feed, last_event_id=last_event_id)
+    if browsers is not None:
+        stream = counted(stream, browsers)
     return EventStreamResponse(stream, headers=STREAM_HEADERS)
 
 
@@ -61,7 +69,8 @@ def stream_events(
 ) -> EventStreamResponse:
     """The global stream."""
     view = GlobalStreamView(ports.models, ports.counters, Scope(project=project))
-    return _respond(view, ports, last_event_id)
+    # The app shell holds one open in every tab, so this stream alone counts the open tabs.
+    return _respond(view, ports, last_event_id, browsers=ports.browsers)
 
 
 @router.get(
