@@ -235,12 +235,12 @@ reads answer from each hub's last check.
   (`GET /hubs`, `POST /hubs`) is when the doctor run whose findings the hub's health shows ended (UTC, ISO 8601). It is
   `null` before the hub's first check, and so are `hub_health` and a `lock_state` that needs the doctor (a lock
   matching the pin, whose drift only the doctor sees).
-- Every 2 s a tick reads the registry, reads a hub's `hub.json` and `hub.lock` again when their modification times
-  changed (a link's target's), and runs the doctor of each due hub, one at a time. A hub is due when it has no check
-  yet; when a file the doctor watched changed, at least 10 s after its last run ended; when its check is 15 min old;
-  and when the clock was set back before its last run ended. A run that raises keeps the previous findings and
-  `checked_at`, runs again at the next tick, then 10 s doubling up to 15 min; the server logs the hub path and the
-  error's type only.
+- Every 2 s a tick reads the registry, reads a hub's `hub.json` and `hub.lock` again when the path's own modification
+  time changed (a link pointed at another file) or the time through a link did (an edit to its target), and runs the
+  doctor of each due hub, one at a time. A hub is due when it has no check yet; when a file the doctor watched changed,
+  at least 10 s after its last run ended; when its check is 15 min old; and when the clock was set back before its last
+  run ended. A run that raises keeps the previous findings and `checked_at`, runs again at the next tick, then 10 s
+  doubling up to 15 min; the server logs the hub path and the error's type only.
 - A write through the app reads the registry and the hub's files again before it answers, so the next read shows it:
   registering or removing a hub, the three config writes (`PUT /projects/{project}/config/local`,
   `POST /projects/{project}/config/environments|repos`) and the hub actions
