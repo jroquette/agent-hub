@@ -11,7 +11,9 @@ Otherwise, for each of the first ``WARM_LIMIT`` requests, in ``requests()`` orde
 the cache holds (never the tracker) and fetches only an entry that is not a good Linear snapshot
 (missing, the plan, or a failure, which the cache holds 60 s) or is at least ``REFRESH_AGE``
 old: one minute before the cache's 15 min stale limit, so the list never falls back to the plan
-while a tab is open, and each feature is read about once per 14 min, not once per 60 s TTL.
+while a tab is open, and each feature is read about once per 14 min, not once per 60 s TTL. An
+entry's age is judged by the clock read when the tick reaches it, not at the tick's start, so
+slow reads earlier in the tick do not make a later entry look younger than it is.
 ``WARM_LIMIT`` leaves 32 of the cache's ``MAX_ENTRIES`` to the feature pages' own reads, so no
 warmed entry is dropped before the next tick (a dropped one would be read again every tick);
 how many requests a tick leaves out is logged once, as a warning, with the count only.
@@ -104,7 +106,8 @@ class TicketWarmer:
         requests = tuple(self._requests())
         self._warn_once(len(requests) - WARM_LIMIT)
         for request in requests[:WARM_LIMIT]:
-            if _is_warm(self._snapshots.cached(request), now):
+            reached_at = self._clock()
+            if _is_warm(self._snapshots.cached(request), reached_at):
                 continue
             failure = self._snapshots.fetch(request).failure
             if failure in {"rate_limited", "unauthorized"}:
