@@ -1,11 +1,18 @@
 """``/features`` on the composed app over a registered hub's ``brain/features/`` (AC-200.36,
 D23): counts, verdict and phase come from the files; a malformed record degrades its feature
-only. AGH-136 (AC-136.18): the list, the detail and the tickets route carry one golden path."""
+only. AGH-136 (AC-136.18): the list, the detail and the tickets route carry one golden path.
+AGH-613 (AC-33): the list never calls the tracker, on a cold or a warm ticket cache."""
 
 import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+from agent_hub.core.testing.tracker_reader_fakes import (
+    CountingTrackerReader,
+    InMemoryTrackerReader,
+    a_seeded_issue_board,
+)
 
 SPEC = """---
 type: spec
@@ -203,3 +210,34 @@ def test_carries_golden_path_when_list_and_detail_read(open_tickets: Any) -> Non
         "acceptance",
         "shipped",
     ]
+
+
+def test_reads_no_tracker_when_features_listed(
+    open_composed: Callable[..., Any], make_hub: Callable[..., Path], tickets_kit: Any
+) -> None:
+    """AC-33: ``GET /features`` makes no tracker call, cold or warm (``docs/API.md``: list routes
+    never call Linear); only the tickets route reads it, once per cache entry."""
+    reader = CountingTrackerReader(InMemoryTrackerReader(a_seeded_issue_board()))
+    hub = make_hub()
+    tickets_kit.write_feature(hub, tickets_kit.a_ticket_record(tickets_kit.planned))
+    composed = open_composed(environ={"LINEAR_API_KEY": tickets_kit.key}, tracker_reader=reader)
+    registered = composed.client.post(
+        "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+    )
+    assert registered.status_code == 201, registered.text
+
+    def listed() -> list[dict[str, Any]]:
+        response = composed.client.get("/api/v1/features", params={"project": "demo"})
+        assert response.status_code == 200, response.text
+        items: list[dict[str, Any]] = response.json()["items"]
+        return items
+
+    cold = listed()
+    calls_cold = reader.count
+    tickets = composed.client.get(tickets_kit.path)
+    calls_tickets = reader.count
+    warm = listed() + listed()
+
+    assert (tickets.status_code, tickets.json()["source"]) == (200, "linear")
+    assert [item["tickets_source"] for item in cold + warm] == ["plan", "linear", "linear"]
+    assert (calls_cold, calls_tickets, reader.count) == (0, 1, 1)

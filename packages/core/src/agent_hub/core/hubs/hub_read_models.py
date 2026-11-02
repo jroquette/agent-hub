@@ -275,6 +275,10 @@ class HubFilesReadModels:
             folder, read, project=found.name, tracker=tracker, now=self._clock(), repos=repos
         )
 
+    def ticket_requests(self) -> tuple[SnapshotRequest, ...]:
+        """RED stub for AGH-613 (plan FEAT-1 commit 23b): no logic yet."""
+        raise NotImplementedError
+
     def ticket_records(self, project: str, slug: str, ticket: str) -> TicketRecords:
         """One ticket's records (two-level-flows A7); never reads the tracker."""
         found, folder = self._feature(project, slug, tickets=True)

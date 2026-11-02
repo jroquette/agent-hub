@@ -803,6 +803,27 @@ def test_reads_warm_snapshot_when_features_listed() -> None:
     assert counting.count == 1
 
 
+def test_lists_ticket_requests_when_features_name_tickets() -> None:
+    """AGH-613: what the ticket warmer reads, one request per feature that names tickets in each
+    valid project, with its hub's transport, as the tickets route asks; from the feature folders
+    only, never through the ticket cache."""
+    snapshots = InMemoryTicketSnapshots(InMemoryTrackerReader(a_seeded_issue_board()))
+    demo = a_ticket_hub(transport="mcp")
+    # "demo-feature" names no ticket and "broken" cannot be parsed.
+    demo.features = (*demo.features, *a_demo_hub().features)
+    other = replace(a_ticket_hub(), hub_json=hub_json_bytes(pin=RUNNING, name="other"))
+    models, _, _ = read_models({DEMO: demo, OTHER: other}, DEMO, OTHER, ticket_snapshots=snapshots)
+
+    requests = models.ticket_requests()
+
+    assert len(requests) == 2
+    assert set(requests) == {
+        SnapshotRequest(project="demo", transport="mcp", ids=("DEM-1", "DEM-2")),
+        SnapshotRequest(project="other", transport="api", ids=("DEM-1", "DEM-2")),
+    }
+    assert snapshots.calls == []
+
+
 def test_reads_only_named_folder_when_one_feature_read() -> None:
     snapshots = InMemoryTicketSnapshots(InMemoryTrackerReader(a_seeded_issue_board()))
     models, reader, _ = read_models({DEMO: a_ticket_hub()}, DEMO, ticket_snapshots=snapshots)
