@@ -123,6 +123,11 @@ class HubFileSystem:
         """Each path's modification time in ns, looked at without following a link."""
         return tuple(_modified(Path(hub_path, path)) for path in paths)
 
+    def followed_times(self, hub_path: str, paths: Sequence[str]) -> tuple[int | None, ...]:
+        """Each path's modification time in ns, a link's target's for a link (``hub.json`` is
+        read through a link)."""
+        return tuple(_modified(Path(hub_path, path), follow=True) for path in paths)
+
     def read_now(self, hub_path: str) -> bytes | UnreadHubFile:
         """The bytes of ``brain/now.md``, or why not."""
         return _unread_or_bytes(
@@ -185,8 +190,8 @@ def _unread_or_bytes(read: bytes | UnreadFile) -> bytes | UnreadHubFile:
     return read
 
 
-def _modified(path: Path) -> int | None:
+def _modified(path: Path, *, follow: bool = False) -> int | None:
     try:
-        return os.stat(path, follow_symlinks=False).st_mtime_ns
+        return os.stat(path, follow_symlinks=follow).st_mtime_ns
     except OSError:
         return None

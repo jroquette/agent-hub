@@ -207,6 +207,10 @@ class FakeHubFileReader:
         mtimes = self._hub(hub_path).mtimes
         return tuple(mtimes.get(path) for path in paths)
 
+    def followed_times(self, hub_path: str, paths: Sequence[str]) -> tuple[int | None, ...]:
+        """The hub's recorded times of ``paths`` (a fake hub holds no link)."""
+        return self.modified_times(hub_path, paths)
+
     def read_now(self, hub_path: str) -> bytes | UnreadHubFile:
         """The hub's ``brain/now.md`` bytes, or ``MISSING``."""
         return self._hub(hub_path).now

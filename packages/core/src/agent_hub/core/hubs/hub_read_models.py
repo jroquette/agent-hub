@@ -286,7 +286,8 @@ class HubFilesReadModels:
     def doctor_findings(self, scope: Scope) -> DoctorFindings:
         """Doctor findings of every scoped hub that names its project, in ``hub doctor`` order,
         from each hub's last check, with when the oldest of those checks ended (None while a
-        scoped hub has none).
+        scoped hub has none). With no hub that names a project, the unscoped answer is dated by
+        the end of the snapshot's last tick (None before the first one ends): no check is coming.
 
         A scope whose project no readable hub names (its ``hub.json`` became unreadable, or no
         hub has it) is ``EntityNotFoundError``: an empty list would read as a clean doctor run.
@@ -304,7 +305,11 @@ class HubFilesReadModels:
             items=items,
             next_cursor=None,
             total_estimate=len(items),
-            checked_at=_oldest(tuple(check for _, check in hubs)),
+            checked_at=(
+                _oldest(tuple(check for _, check in hubs))
+                if hubs
+                else self._snapshot.refreshed_at()
+            ),
         )
 
     def settings(self) -> SettingsView:

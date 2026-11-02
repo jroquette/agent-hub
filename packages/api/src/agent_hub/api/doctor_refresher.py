@@ -16,7 +16,9 @@ only, never a store). A tick that raises is logged with the error's type and the
 Logs never quote a failure's message or traceback, which can hold file text: a failed run is
 one warning with the hub path and the error's type; ``hub doctor`` in that hub shows the whole
 error. ``start`` never raises: a registry it cannot read is logged with its type, the routes
-answer 503 until a tick reads it.
+answer 503 until a tick reads it. While the registry cannot be read every tick fails to read
+it: that is one warning when it starts (at start or at a tick) and one info line when a tick
+reads it again, not a line per tick.
 """
 
 import logging
@@ -24,6 +26,7 @@ import threading
 from collections.abc import Callable
 from typing import Final, Protocol
 
+from agent_hub.core.hubs.hub_registry import HubRegistryError
 from agent_hub.core.hubs.hub_snapshot import RefreshReport
 
 POLL_SECONDS: Final = 2.0
@@ -103,14 +106,17 @@ class DoctorRefresher:
     def __init__(self, hubs: RefreshedHubs, *, ticker: Ticker) -> None:
         self._hubs = hubs
         self._ticker = ticker
+        # True from a registry read that failed until a tick reads the registry again; changed
+        # by ``start`` before the ticker starts, then by the ticks only.
+        self._registry_unread = False
 
     async def start(self) -> None:
-        """Read every hub once, then start the ticks; never raises (review finding 5: the app's
-        lifespan starts its parts with no rollback, so a raising part would leave the others
-        running)."""
+        """Read every hub once, then start the ticks; never raises: the app's lifespan starts
+        its parts with no rollback, so a raising part would leave the others running."""
         try:
             self._hubs.reread_hubs()
         except Exception as error:  # noqa: BLE001 -- logged; the first tick reads again
+            self._registry_unread = isinstance(error, HubRegistryError)
             _log.warning(
                 "hub registry read failed at start", extra={"error_type": type(error).__name__}
             )
@@ -125,7 +131,17 @@ class DoctorRefresher:
         self._ticker.stop()
 
     def _tick(self) -> None:
-        report = self._hubs.refresh()
+        try:
+            report = self._hubs.refresh()
+        except HubRegistryError as error:
+            # Every tick raises it while hubs.json cannot be read: one line per outage.
+            if not self._registry_unread:
+                self._registry_unread = True
+                _log.warning("hub registry read failed", extra={"error_type": type(error).__name__})
+            return
+        if self._registry_unread:
+            self._registry_unread = False
+            _log.info("hub registry read again")
         for failure in report.failures:
             _log.warning(
                 "background doctor run failed: %s",

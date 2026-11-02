@@ -109,6 +109,22 @@ def test_gives_times_of_present_paths_when_asked(hub: Path) -> None:
     assert times == (os.stat(hub / "hub.json").st_mtime_ns, None)
 
 
+def test_gives_link_target_time_when_followed(hub: Path, tmp_path: Path) -> None:
+    target = tmp_path / "shared" / "hub.json"
+    target.parent.mkdir()
+    target.write_bytes((hub / "hub.json").read_bytes())
+    os.utime(target, ns=(10_000_000_000, 10_000_000_000))
+    (hub / "hub.json").unlink()
+    (hub / "hub.json").symlink_to(target)
+    reader = HubFileSystem()
+
+    followed = reader.followed_times(str(hub), ["hub.json", "nope.md"])
+    unfollowed = reader.modified_times(str(hub), ["hub.json"])
+
+    assert followed == (10_000_000_000, None)
+    assert unfollowed == ((hub / "hub.json").lstat().st_mtime_ns,)
+
+
 def test_builds_snapshot_with_file_prefix_when_git_not_injected(hub: Path) -> None:
     config = HubConfig.model_validate(json.loads((hub / "hub.json").read_bytes()))
     selection = select_rules(REGISTRY, config=config, only=())

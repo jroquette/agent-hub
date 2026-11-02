@@ -20,6 +20,7 @@ class FindingView(ViewModel):
 
 class DoctorFindings(Page[FindingView]):
     """The findings of the scoped hubs' last checks; ``checked_at`` is when the oldest of those
-    checks ended, None while one of the hubs has not been checked yet."""
+    checks ended, None while one of the hubs has not been checked yet. With no hub that names a
+    project, it is when the server's last background tick ended (None before the first one)."""
 
     checked_at: ApiTimestamp | None

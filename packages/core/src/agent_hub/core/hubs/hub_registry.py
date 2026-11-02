@@ -145,6 +145,10 @@ class HubFileReader(Protocol):
         """The modification time (ns) of each hub-relative path, None when absent."""
         ...
 
+    def followed_times(self, hub_path: str, paths: Sequence[str]) -> tuple[int | None, ...]:
+        """As ``modified_times``, but a path that is a link gives its target's time."""
+        ...
+
     def read_now(self, hub_path: str) -> bytes | UnreadHubFile:
         """The bytes of ``brain/now.md``, or why not."""
         ...

@@ -2986,7 +2986,7 @@
       },
       "DoctorFindings": {
         "additionalProperties": false,
-        "description": "The findings of the scoped hubs' last checks; ``checked_at`` is when the oldest of those\nchecks ended, None while one of the hubs has not been checked yet.",
+        "description": "The findings of the scoped hubs' last checks; ``checked_at`` is when the oldest of those\nchecks ended, None while one of the hubs has not been checked yet. With no hub that names a\nproject, it is when the server's last background tick ended (None before the first one).",
         "properties": {
           "checked_at": {
             "anyOf": [

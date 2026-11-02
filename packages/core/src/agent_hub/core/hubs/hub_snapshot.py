@@ -13,7 +13,10 @@ is due when it has no check and no failure yet; when ``reread(written=...)`` mar
 last run started (a write through the app: the spacing and any backoff skipped); when its last
 run raised and its backoff passed (the next tick, then ``min_interval`` doubling up to ``ttl``:
 10, 20, 40 ... 900 s; a success resets it); or, at least ``min_interval`` (10 s, Q31) after its
-last run ended, when its check is ``ttl`` old or a watched path's time changed. A check keeps the
+last run ended, when its check is ``ttl`` old or a watched path's time changed. A clock set back
+before the end of a hub's last run makes it due at once (its age, negative, is unknown). The
+facts check reads the times of ``hub.json`` and ``hub.lock`` through a link, as ``hub.json`` is
+read; the doctor's watched paths keep the times of the paths themselves. A check keeps the
 times its due test read before the run, so a write made during the run shows at the next due
 test; a path the run saw first keeps the time read after the run, unless that time is later than
 one second before the run started (a file system that keeps whole seconds could round a write
@@ -115,6 +118,8 @@ class _Hub:
     watched: tuple[str, ...] = ALWAYS_WATCHED
     times: tuple[_KeptTime, ...] = ()
     failures: int = 0
+    # When the last failed run ended, and when the backoff after it ends.
+    failed_at: datetime | None = None
     retry_at: datetime | None = None
     marked: bool = False
 
@@ -147,6 +152,7 @@ class HubSnapshot:
         self._writer = threading.Lock()
         self._hubs: dict[str, _Hub] = {}
         self._published: _Published | None = None
+        self._refreshed_at: datetime | None = None
 
     def hubs(self) -> tuple[HubState, ...]:
         """Every registered hub, in registration order; the facts are read here only when
@@ -177,7 +183,12 @@ class HubSnapshot:
                 failures.append(outcome)
             elif outcome is not None:
                 checked.append(outcome)
+        self._refreshed_at = self._clock()
         return RefreshReport(checked=tuple(checked), failures=tuple(failures))
+
+    def refreshed_at(self) -> datetime | None:
+        """When the last tick that read the registry ended; None before the first one ends."""
+        return self._refreshed_at
 
     def drift_of(self, hub_path: str, document: HubDocument) -> bool | None:
         """Whether the hub's last check found a managed file changed (``lock.drift``); None
@@ -211,7 +222,8 @@ class HubSnapshot:
         return self._publish()
 
     def _facts(self, entry: RegisteredHub, known: _Hub | None, *, every: bool) -> _Hub:
-        json_time, lock_time = self._reader.modified_times(entry.path, (HUB_JSON, HUB_LOCK_PATH))
+        # Followed: ``hub.json`` is read through a link, so an edit to its target must show.
+        json_time, lock_time = self._reader.followed_times(entry.path, (HUB_JSON, HUB_LOCK_PATH))
         if known is None:
             return _Hub(
                 entry=entry,
@@ -269,13 +281,17 @@ class HubSnapshot:
         return self._run(hub, dict(zip(watched, before, strict=True)))
 
     def _verdict(self, hub: _Hub, now: datetime) -> _Verdict:
+        """A negative age (``now`` before the last run ended: the clock was set back) is due."""
         if hub.marked:
             return _Verdict.DUE
-        if hub.retry_at is not None:
-            return _Verdict.DUE if now >= hub.retry_at else _Verdict.NOT_DUE
+        if hub.retry_at is not None and hub.failed_at is not None:
+            due = now >= hub.retry_at or now < hub.failed_at
+            return _Verdict.DUE if due else _Verdict.NOT_DUE
         if hub.check is None:
             return _Verdict.DUE
         age = now - hub.check.checked_at
+        if age < timedelta(0):
+            return _Verdict.DUE
         if age < self._min_interval:
             return _Verdict.NOT_DUE
         return _Verdict.DUE if age >= self._ttl else _Verdict.IF_CHANGED
@@ -295,7 +311,7 @@ class HubSnapshot:
             if self._hubs.get(path) is hub:
                 hub.check = HubCheck(findings=run.findings, checked_at=ended)
                 hub.watched, hub.times = run.watched, times
-                hub.failures, hub.retry_at = 0, None
+                hub.failures, hub.failed_at, hub.retry_at = 0, None, None
                 self._publish()
         return path
 
@@ -303,6 +319,7 @@ class HubSnapshot:
         with self._writer:
             if self._hubs.get(hub.entry.path) is hub:
                 hub.failures += 1
+                hub.failed_at = ended
                 hub.retry_at = ended + self._backoff(hub.failures)
 
     def _backoff(self, failures: int) -> timedelta:
