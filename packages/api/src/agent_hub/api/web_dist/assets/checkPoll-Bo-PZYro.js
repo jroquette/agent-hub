@@ -1,1 +1,0 @@
-import{n as e}from"./rolldown-runtime-CbXtAM7H.js";import{F as t}from"./vendor-DIYYAqvJ.js";var n=e(t(),1),r=2e3,i=15e3,a=6e4;function o(e){let t=(0,n.useRef)(null);return n=>{let o=n.state.data;if(o===void 0||!e(o))return!1;let s=Date.now();return t.current??=s,s-t.current<a?r:i}}export{o as n,r as t};
