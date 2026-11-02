@@ -18,6 +18,12 @@ slow reads earlier in the tick do not make a later entry look younger than it is
 warmed entry is dropped before the next tick (a dropped one would be read again every tick);
 how many requests a tick leaves out is logged once, as a warning, with the count only.
 
+While ``hubs.json`` cannot be read, ``requests()`` raises ``HubRegistryError`` on every tick: the
+tick takes it as nothing to warm and logs nothing, since the doctor refresher already reports
+that outage once (a warning when it starts, an info line when the registry reads again), and the
+first tick that reads the registry warms again. Any other error a tick raises is the ticker's to
+log: one warning per tick, with the error's type only.
+
 A rate-limit answer ends the tick and pauses the warmer for the cache's ``RATE_LIMIT_COOLDOWN``.
 A refused key (``unauthorized``) ends the tick and pauses it for ``UNAUTHORIZED_PAUSE``, or until
 a key other than the refused one has been seen for ``FAILURE_HOLD``: the cache holds a refusal
@@ -46,6 +52,7 @@ from agent_hub.api.ticket_snapshots import (
 )
 from agent_hub.core.errors import TrackerFailure
 from agent_hub.core.features.ticket_snapshots import SnapshotRead, SnapshotRequest, TicketSnapshots
+from agent_hub.core.hubs.hub_registry import HubRegistryError
 
 WARM_SECONDS: Final = 30.0
 REFRESH_AGE: Final = timedelta(minutes=14)
@@ -103,7 +110,7 @@ class TicketWarmer:
         self._note_key(digest, now)
         if digest is None or not self._browsers.connected() or self._is_paused(digest, now):
             return
-        requests = tuple(self._requests())
+        requests = self._readable_requests()
         self._warn_once(len(requests) - WARM_LIMIT)
         for request in requests[:WARM_LIMIT]:
             reached_at = self._clock()
@@ -113,6 +120,14 @@ class TicketWarmer:
             if failure in {"rate_limited", "unauthorized"}:
                 self._pause(failure, digest, self._clock())
                 return
+
+    def _readable_requests(self) -> tuple[SnapshotRequest, ...]:
+        """What ``requests()`` lists; nothing while the hub registry cannot be read."""
+        try:
+            return tuple(self._requests())
+        except HubRegistryError:
+            # No line: the doctor refresher logs the outage once, not once per tick.
+            return ()
 
     def _note_key(self, digest: str | None, now: datetime) -> None:
         """Note when a tick first sees a key other than the last one."""

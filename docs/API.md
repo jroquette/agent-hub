@@ -430,7 +430,9 @@ when its snapshot is missing or 14 minutes old (one minute before the 15 minute 
 Linear's data), and a failed one again once its 60 s hold ends; at most 224 features a tick, leaving the rest of the
 cache's 256 entries to the feature pages (how many it leaves out is logged once). It pauses a minute after a
 rate-limit answer, and after a refused key for 15 minutes or until a minute after a new key is set (the cache holds a
-refusal that long). With no key, `"mcp"` or no tab open it reads nothing. The list routes still never call Linear.
+refusal that long). With no key, `"mcp"` or no tab open it reads nothing. While the hub registry cannot be read it
+warms nothing and logs nothing (the server already logs that outage once, above), and it warms again at the first
+tick that reads the registry. The list routes still never call Linear.
 
 ## Plan change requests
 
