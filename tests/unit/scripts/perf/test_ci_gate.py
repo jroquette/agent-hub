@@ -304,6 +304,34 @@ def test_prints_one_markdown_line_per_row_when_the_gate_runs(
     assert "180" in sessions_line
 
 
+# A perf.json written before page rows carried api_kb still reads.
+def test_reads_rows_without_api_kb_when_perf_json_is_older(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    perf = _perf(
+        tmp_path,
+        [
+            _row("route", SESSIONS, p95_ms=120.0, status="pass"),
+            _row("page", FEATURES_PAGE, p95_ms=400.0, api_calls=5, status="pass"),
+        ],
+    )
+    items = [
+        {key: value for key, value in item.items() if key != "api_kb"}
+        for item in json.loads(perf.read_text("utf-8"))
+    ]
+    perf.write_text(json.dumps(items), "utf-8")
+    assert len(items) == 2
+    assert [item for item in json.loads(perf.read_text("utf-8")) if "api_kb" in item] == []
+    budgets = _budgets(tmp_path, [_entry("route", SESSIONS, enforced=True, p95_ms=150)])
+
+    code = main(_argv(perf, budgets), {})
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert _lines(out, "::error") == []
+    assert len(_lines(out, "|")) == 2 + len(items)
+
+
 # AGH-602 (AC-1): the table goes to the job summary.
 def test_appends_the_table_to_the_step_summary_when_the_variable_is_set(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]

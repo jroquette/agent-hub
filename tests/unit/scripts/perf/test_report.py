@@ -2,6 +2,7 @@
 against its budget, the printed table, ``perf.json`` and the exit code."""
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -254,3 +255,26 @@ def test_writes_the_same_rows_when_perf_json_is_written(tmp_path: Path) -> None:
     assert restart["rss_mb"] == 412.0
     assert restart["budget"]["rss_mb"] == 300
     assert skipped["reason"] == "no Chromium found"
+
+
+def test_writes_api_kb_when_perf_json_is_written(tmp_path: Path) -> None:
+    out = tmp_path / "perf.json"
+    cli = _row("cli", "hub --version", median_ms=101.0, p95_ms=133.0, budget=_budget(p95_ms=150))
+    overview = _row(
+        "page",
+        "/projects/perf",
+        median_ms=300.0,
+        p95_ms=320.0,
+        api_calls=17,
+        budget=_budget(p95_ms=800, api_calls=5),
+        status="over",
+    )
+
+    write_rows(out, [cli, replace(overview, api_kb=812.4)])
+
+    written = json.loads(out.read_text("utf-8"))
+    # By hand: the page row's kilobytes, and null on a row that has none.
+    assert [(item["path"], item["api_kb"]) for item in written] == [
+        ("hub --version", None),
+        ("/projects/perf", 812.4),
+    ]

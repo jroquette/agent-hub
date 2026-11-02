@@ -70,6 +70,7 @@ EXPECTED_ROWS = {
     ("page", f"/sessions/{PAGE_SESSION}"),
     ("page", "/sessions"),
     ("page", f"/projects/{PROJECT}/brain/{BRAIN_PAGE_NOTE}"),
+    ("page", "/projects/perf"),
     ("restart", "hub web start → GET /"),
     ("restart", "hub web start → /api/v1/sessions"),
 }
@@ -224,6 +225,14 @@ def test_writes_one_row_per_table_line_when_run_on_a_small_fixture(
     assert len(over) == 1
     assert over[0]["status"] == "over"
     assert over[0]["budget"]["p95_ms"] == 0
+    # Each measured page read some /api/v1/ bytes; a skipped page (no browser here) has none.
+    pages = [row for row in rows if row["kind"] == "page"]
+    assert len(pages) == 7
+    assert [
+        row["path"]
+        for row in pages
+        if not (row["api_kb"] is None if row["status"] == "skipped" else row["api_kb"] > 0)
+    ] == []
 
 
 # The pre_tool_use rows time calls the guard lets through: an ask or a deny would time the

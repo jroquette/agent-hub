@@ -31,7 +31,7 @@ RESTART_API = "hub web start → /api/v1/sessions"
 # The shim row on the one-call commit path: ADR 0053's `hub` row plus 300 ms.
 SHIM_PATH = "./hub --version (local uvx stand-in)"
 # The page rows added after the seed, at ADR 0053's `every` page ceiling.
-ADR_PAGES = ("/sessions", "/projects/perf/brain/tree-3/note-050.md")
+ADR_PAGES = ("/sessions", "/projects/perf/brain/tree-3/note-050.md", "/projects/perf")
 # The route rows added after the seed, at ADR 0053's `every` route ceiling.
 ADR_ROUTES = ("/api/v1/projects/perf/brain", "/api/v1/projects/perf/brain (6 parallel)")
 # AGH-621 (Q15): the one PreToolUse hook on three tools, each at ADR 0053's ceiling for a hook.
@@ -234,7 +234,7 @@ def test_raises_budget_file_error_when_enforced_is_not_a_boolean(
 
 def test_enforces_nothing_with_the_default_margin_when_shipped() -> None:
     budgets = load_budgets(SHIPPED)
-    assert len(budgets) == 36
+    assert len(budgets) == 37
 
     assert [key for key, budget in budgets.items() if budget.enforced] == []
     assert budgets_module.load_margin(SHIPPED) == pytest.approx(0.2)
@@ -328,7 +328,7 @@ OWNER_TABLE: list[tuple[str, str, Budget | None]] = [
 
 @pytest.mark.parametrize(("kind", "path", "expected"), OWNER_TABLE)
 def test_seeds_the_owner_budget_when_shipped(kind: str, path: str, expected: Budget | None) -> None:
-    assert len(OWNER_TABLE) == 36
+    assert len(OWNER_TABLE) == 37
 
     assert load_budgets(SHIPPED).get((kind, path)) == expected
 
@@ -347,7 +347,7 @@ def test_names_only_probed_paths_when_the_shipped_budgets_are_read() -> None:
     }
     keys = [(row["kind"], row["path"]) for row in json.loads(SHIPPED.read_text("utf-8"))["rows"]]
     assert len(keys) > 0
-    assert len(probed) == 36
+    assert len(probed) == 37
 
     assert sorted(set(keys) - probed) == []
 
@@ -446,7 +446,7 @@ def test_keeps_every_budget_under_the_adr_ceiling_when_shipped() -> None:
 def test_names_only_probed_paths_when_the_adr_table_is_read() -> None:
     ceilings = _ceilings(ADR.read_text("utf-8"))
     probed = _probed()
-    assert len(probed) == 36
+    assert len(probed) == 37
 
     assert [c for c in ceilings if c.paths != EVERY and (c.kind, c.paths) not in probed] == []
     assert sorted({c.kind for c in ceilings}) == sorted({kind for kind, _path in probed})
