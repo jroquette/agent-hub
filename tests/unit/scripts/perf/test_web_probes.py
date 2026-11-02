@@ -208,7 +208,7 @@ def _hubs_page(hub: Path, checked_at: str | None) -> object:
 
 
 def test_waits_for_first_check_when_hub_registered(tmp_path: Path) -> None:
-    """AGH-608 (review finding 7): no background doctor run overlaps the measured rows."""
+    """AGH-608: no background doctor run overlaps the measured rows."""
     hub = tmp_path / "perf-root" / "hub"
     hub.mkdir(parents=True)
     clock = FakeClock()

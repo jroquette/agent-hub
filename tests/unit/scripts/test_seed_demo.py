@@ -531,9 +531,8 @@ class FakeClock:
 
 
 def test_waits_for_check_after_last_hub_write_when_seeding() -> None:
-    """AGH-608 (review round 2, N2): every demo hub file is written before the hub is
-    registered, so its first background check reads them all; the seed ends once that check is
-    seen."""
+    """AGH-608: every demo hub file is written before the hub is registered, so its first
+    background check reads them all; the seed ends once that check is seen."""
     log: CallLog = []
     target = FakeTarget(log=log)
     server = FakeServer(checks=(None, CHECKED_AT), log=log)

@@ -166,7 +166,7 @@ def test_answers_config_view_when_project_config_requested(wired: Any) -> None:
     assert wired.hubs.calls == [("hub_config", "demo")]
 
 
-# AGH-608 AC-26 (review round 2, N5): a config write marks its hub due at the next tick once
+# AGH-608 AC-26: a config write marks its hub due at the next tick once
 # the write is done, before the answer reads the hub's config again; an unknown project marks
 # nothing.
 @pytest.mark.parametrize(

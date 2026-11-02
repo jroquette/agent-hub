@@ -139,7 +139,7 @@ def _fixed(hub_id: str) -> DoctorFixResult:
     )
 
 
-# AGH-608 AC-26 (A7, review round 2, N5): a hub action marks its hub due at the next tick once it
+# AGH-608 AC-26 (A7): a hub action marks its hub due at the next tick once it
 # is done, whatever its outcome; an unknown hub marks nothing.
 @pytest.mark.parametrize(
     ("action", "route", "result"),
