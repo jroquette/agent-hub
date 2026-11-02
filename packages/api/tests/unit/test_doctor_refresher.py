@@ -155,3 +155,71 @@ async def test_logs_only_error_type_and_hub_path_when_run_fails(
     assert "OSError" in line
     assert NOTE_LINE not in caplog.text
     assert (record.exc_info, record.stack_info) == (None, None)
+
+
+class ScriptedHubs(FakeHubs):
+    """``FakeHubs`` whose ``refresh`` waits for ``go``, then raises ``error`` on the ticks
+    (counted from 1) in ``raising``, and sets ``done`` from tick ``last`` on."""
+
+    def __init__(self, error: Exception, *, raising: set[int], last: int) -> None:
+        super().__init__()
+        self.error = error
+        self.raising = raising
+        self.last = last
+        self.ticks = 0
+        self.go = threading.Event()
+        self.done = threading.Event()
+
+    def refresh(self) -> RefreshReport:
+        self.go.wait(5)
+        self.ticks += 1
+        if self.ticks >= self.last:
+            self.done.set()
+        if self.ticks in self.raising:
+            raise self.error
+        return super().refresh()
+
+
+@pytest.mark.parametrize(
+    ("error", "levels"),
+    [
+        # Two outages: one warning as each starts, one info as reads succeed again.
+        pytest.param(
+            HubRegistryError(f"hubs.json: {NOTE_LINE}"),
+            ["warning", "info", "warning", "info"],
+            id="registry",
+        ),
+        # Any other error keeps today's line: one warning per raising tick.
+        pytest.param(RuntimeError(f"tick: {NOTE_LINE}"), ["warning"] * 5, id="other"),
+    ],
+)
+@pytest.mark.anyio
+async def test_logs_registry_failure_once_per_outage_when_ticks_keep_raising(
+    caplog: pytest.LogCaptureFixture, *, error: Exception, levels: list[str]
+) -> None:
+    """While ``hubs.json`` cannot be read, every tick raises ``HubRegistryError``: logged once
+    when the failure starts and once (info) when reads succeed again, with the error's type and
+    never its message or a traceback. A tick that raises anything else is logged each time."""
+    caplog.set_level(logging.INFO)
+    hubs = ScriptedHubs(error, raising={1, 2, 3, 6, 7}, last=9)
+    ticker = DaemonTicker(0.01, name="test-doctor-refresh")
+    refresher = DoctorRefresher(hubs, ticker=ticker)
+    await refresher.start()
+    caplog.clear()
+    hubs.go.set()
+
+    finished = hubs.done.wait(5)
+    await refresher.stop()
+    ticker.thread.join(5)
+
+    assert finished, "the ticker did not reach the last scripted tick"
+    assert not ticker.thread.is_alive()
+    records = [record for record in caplog.records if record.name.startswith("agent_hub")]
+    assert [
+        "warning" if record.levelno >= logging.WARNING else "info" for record in records
+    ] == levels
+    for record in records:
+        assert (record.exc_info, record.stack_info) == (None, None)
+        if record.levelno >= logging.WARNING:
+            assert type(error).__name__ in JsonFormatter().format(record)
+    assert NOTE_LINE not in caplog.text

@@ -2,7 +2,7 @@ import hashlib
 import json
 from collections.abc import Sequence
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -457,6 +457,101 @@ def test_raises_not_found_when_scoped_project_has_no_readable_hub() -> None:
         models.doctor_findings(Scope(project="other"))
 
     assert raised.value.entity_id == "other"
+
+
+class Clock:
+    """The read models' clock: ``NOW`` until the test moves it."""
+
+    def __init__(self) -> None:
+        self.now = NOW
+
+    def __call__(self) -> datetime:
+        return self.now
+
+
+class FailingDoctor(FakeHubFileReader):
+    """A reader whose doctor run raises for the hubs in ``failing``."""
+
+    def __init__(self, hubs: dict[str, FakeHub]) -> None:
+        super().__init__(hubs)
+        self.failing: set[str] = set()
+
+    def doctor_snapshot(self, hub_path: str, **kwargs: Any) -> DoctorSnapshot:
+        if hub_path in self.failing:
+            msg = "disk gone"
+            raise OSError(msg)
+        return super().doctor_snapshot(hub_path, **kwargs)
+
+
+def clocked_read_models(reader: FakeHubFileReader, clock: Clock, *paths: str) -> HubFilesReadModels:
+    registry = InMemoryHubRegistry(clock=lambda: NOW)
+    for path in paths:
+        registry.add(path)
+    return HubFilesReadModels(
+        registry=registry,
+        reader=reader,
+        activity=FakeActivity(),
+        running_version=RUNNING,
+        settings=SETTINGS,
+        clock=clock,
+    )
+
+
+def test_dates_findings_by_oldest_check_when_scope_spans_two_hubs() -> None:
+    """The unscoped findings' ``checked_at`` is None while one hub that names a project has no
+    check, then the older of the two hubs' checks."""
+    clock = Clock()
+    other = a_demo_hub()
+    other.hub_json = hub_json_bytes(pin=RUNNING, name="other")
+    reader = FailingDoctor({DEMO: a_demo_hub(), OTHER: other})
+    reader.failing.add(OTHER)
+    models = clocked_read_models(reader, clock, DEMO, OTHER)
+    models.refresh()
+    one_checked = {card.name: card.checked_at for card in models.list_projects().items}
+    while_unchecked = models.doctor_findings(Scope()).checked_at
+    reader.failing.clear()
+    # OTHER's failed run is retried at the next tick; DEMO's check is 2 s old, within 10 s.
+    clock.now = NOW + timedelta(seconds=2)
+    models.refresh()
+    both_checked = {card.name: card.checked_at for card in models.list_projects().items}
+
+    findings = models.doctor_findings(Scope())
+
+    assert one_checked == {"demo": NOW, "other": None}
+    assert while_unchecked is None
+    assert both_checked == {"demo": NOW, "other": NOW + timedelta(seconds=2)}
+    assert findings.checked_at == NOW
+
+
+@pytest.mark.parametrize(
+    "paths",
+    [
+        # The only hub's folder moved: it is listed, but its hub.json cannot be read.
+        pytest.param((OTHER,), id="moved-hub"),
+        pytest.param((), id="no-hub"),
+    ],
+)
+def test_dates_findings_by_last_refresh_when_no_scoped_hub_names_project(
+    paths: tuple[str, ...],
+) -> None:
+    """With no hub in scope that names a project, the unscoped findings' ``checked_at`` is when
+    the snapshot's last refresh ended (None only before the first one), so a screen waiting for
+    a check stops waiting."""
+    clock = Clock()
+    models = clocked_read_models(FakeHubFileReader({}), clock, *paths)
+    assert len(models.list_hubs().items) == len(paths)
+    assert models.list_projects().items == ()
+    never_refreshed = models.doctor_findings(Scope())
+    models.refresh()
+    first = models.doctor_findings(Scope())
+    clock.now = NOW + timedelta(seconds=2)
+    models.refresh()
+
+    latest = models.doctor_findings(Scope())
+
+    assert (never_refreshed.items, never_refreshed.checked_at) == ((), None)
+    assert (first.items, first.checked_at) == ((), NOW)
+    assert (latest.items, latest.checked_at) == ((), NOW + timedelta(seconds=2))
 
 
 class ListingReader(FakeHubFileReader):

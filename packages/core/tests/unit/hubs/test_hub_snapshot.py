@@ -115,13 +115,14 @@ class ScriptedReader(FakeHubFileReader):
 
 
 def a_hold() -> tuple[threading.Event, threading.Event, Callable[[], object]]:
-    """An action that says it started, then waits for the release (5 s at most)."""
+    """An action that says it started, then waits for the release (5 s at most, else it fails:
+    a run held past that wait would let a test that waits on it pass)."""
     entered = threading.Event()
     release = threading.Event()
 
-    def hold() -> object:
+    def hold() -> None:
         entered.set()
-        return release.wait(timeout=5)
+        assert release.wait(timeout=5), "the test never released the held run"
 
     return entered, release, hold
 
@@ -437,6 +438,34 @@ def test_publishes_first_hub_check_when_second_run_is_held() -> None:
     assert state_of(snapshot, OTHER).check is not None
 
 
+def test_rereads_without_waiting_when_doctor_run_is_held() -> None:
+    """A write's ``reread()`` never waits for a doctor run in progress (the run is outside the
+    writer lock), and what it read shows before the run ends."""
+    clock = Clock()
+    reader = ScriptedReader({HUB: a_hub(), OTHER: an_other_hub()}, clock)
+    entered, release, hold = a_hold()
+    reader.during_run[HUB] = hold
+    registry = a_registry(clock, HUB)
+    snapshot = HubSnapshot(registry, reader, running_version=RUNNING, clock=clock)
+    ticking = threading.Thread(target=snapshot.refresh)
+    ticking.start()
+    assert entered.wait(timeout=5)
+
+    registry.add(OTHER)
+    rereading = threading.Thread(target=snapshot.reread)
+    rereading.start()
+    rereading.join(timeout=2)
+    ended_while_held = not rereading.is_alive()
+    listed_while_held = [state.read.entry.path for state in snapshot.hubs()]
+    release.set()
+    ticking.join(timeout=5)
+    rereading.join(timeout=5)
+
+    assert ended_while_held, "reread() waited for the held doctor run"
+    assert listed_while_held == [HUB, OTHER]
+    assert not ticking.is_alive()
+
+
 class HeldLockReader(FakeHubFileReader):
     """A reader whose next ``read_lock`` call, once ``armed``, waits for the release."""
 
@@ -589,3 +618,34 @@ def test_runs_hub_at_next_tick_when_written_through_app_within_min_interval() ->
     assert marked == ([0, 4], [0, 2, 4])
     # The mark clears when the run starts: 2 s later, with no write, HUB runs nothing.
     assert reader.seconds(HUB) == [0, 4]
+
+
+@pytest.mark.parametrize(
+    ("failing", "changed", "before"),
+    [
+        # Checked at 0 s, nothing changed: a negative age counts as past the TTL.
+        pytest.param(False, False, [0], id="ttl"),
+        # Checked at 0 s, a watched file changed: a negative age counts as past the spacing.
+        pytest.param(False, True, [0], id="spacing"),
+        # Failed at 0 and 2 s, so the backoff holds it until 12 s: a negative age ends it.
+        pytest.param(True, False, [0, 2], id="backoff"),
+    ],
+)
+def test_runs_hub_at_next_tick_when_clock_is_set_back(
+    *, failing: bool, changed: bool, before: list[int]
+) -> None:
+    """The wall clock set back an hour makes a hub's age (now minus its last run) negative: the
+    next tick runs it, and the tick 2 s after that run does not run it again."""
+    clock = Clock()
+    reader = ScriptedReader({HUB: a_hub()}, clock)
+    if failing:
+        reader.failing.add(HUB)
+    snapshot = a_snapshot(reader, clock)
+    tick(snapshot, clock, *before)
+    assert reader.seconds(HUB) == before
+    if changed:
+        reader.hubs[HUB].mtimes["AGENTS.md"] = 4
+
+    tick(snapshot, clock, -3600, -3598)
+
+    assert reader.seconds(HUB) == [*before, -3600]

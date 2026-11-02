@@ -418,6 +418,41 @@ def test_shows_change_on_next_read_when_hub_written_through_app(
     assert _findings(composed, project)["checked_at"] == ONE_SECOND_LATER
 
 
+def test_shows_new_hub_json_after_next_tick_when_its_link_target_changes(
+    open_composed: Callable[..., Any],
+    settings: ApiSettings,
+    clock: MovableClock,
+    *,
+    make_hub: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    """A ``hub.json`` that is a link: an edit to the file it points to changes the target's
+    time, not the link's, and the next tick still reads the new document."""
+    hub = make_hub()
+    config = hub / "hub.json"
+    target = tmp_path / "shared-config" / "hub.json"
+    target.parent.mkdir()
+    target.write_bytes(config.read_bytes())
+    config.unlink()
+    config.symlink_to(target)
+    composed = open_composed(settings)
+    _register(composed, hub)
+    composed.refresh()
+    assert composed.client.get("/api/v1/projects/demo").json()["default_branch"] == "main"
+    link_time = config.lstat().st_mtime_ns
+    document = json.loads(target.read_text(encoding="utf-8"))
+    document["project"]["default_branch"] = "release"
+    target.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    later = target.stat().st_mtime_ns + 5_000_000_000
+    os.utime(target, ns=(later, later))
+    assert config.lstat().st_mtime_ns == link_time
+    clock.advance(2)
+
+    composed.refresh()
+
+    assert composed.client.get("/api/v1/projects/demo").json()["default_branch"] == "release"
+
+
 def test_stops_without_waiting_when_doctor_run_is_in_progress(
     open_composed: Callable[..., Any],
     reader: HoldingReader,
