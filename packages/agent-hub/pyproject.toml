@@ -1,6 +1,6 @@
 [project]
 name = "agent-hub"
-version = "0.29.0"
+version = "0.30.0"
 description = "Installs every agent-hub package and the hub command."
 license = "Apache-2.0"
 requires-python = ">=3.14"
@@ -24,7 +24,7 @@ agent-hub-api = { workspace = true }
 agent-hub-mcp-server = { workspace = true }
 
 [project.scripts]
-hub = "agent_hub.cli.main:app"
+hub = "agent_hub.cli.console:main"
 
 [build-system]
 requires = ["hatchling"]

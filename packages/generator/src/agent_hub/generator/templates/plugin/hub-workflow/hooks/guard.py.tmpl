@@ -57,8 +57,9 @@ hint is the developer's: hub.local.json, else hub.json, else the local part of g
 (git runs only on that deny); with none, the hint has no prefix. A list entry `@hub/<path>` is <path> in the hub that holds this file; with no such hub (plugin cache) it is skipped.
 Then, for Bash and the file tools (EXTENSION_TOOLS) and unless the verdict is deny (final), the project's extension plugin/<project>/hooks/project_guard.py
 of the hub that holds this file (never one found from $CLAUDE_PROJECT_DIR, the cwd or the tool input;
-none in the plugin cache) runs in a child, project_guard_runner.py, with a 3 s timeout that kills its
-whole process group. When that hub.json names no project (unreadable, or no project.name), the one
+none in the plugin cache) runs in a child, project_guard_runner.py's main in a fork of this hook (no
+new interpreter), with a 3 s timeout that kills the child's whole process group (no fork: an ask
+naming the cause). When that hub.json names no project (unreadable, or no project.name), the one
 plugin/*/hooks/project_guard.py there is, if exactly one, runs. It only tightens: its ask or deny
 replaces a weaker verdict, and anything else it does (another answer, extra output, a crash, the
 timeout, a file that resolves outside the hub) is an ask naming the cause, added to a base ask's reason.
@@ -70,29 +71,28 @@ sensor's send_decision (event_sensor.py beside it): the hook input, its content 
 (reduce_hook: no file content or edit strings leave the machine), with
 decision {by: guard, kind, rule}, rule a stable id read from the reason (RULE_IDS). The send is
 bounded by the sensor's 0.5 s, prints nothing and never changes the decision or the exit code.
+Claude Code runs pre_tool_use.py on PreToolUse, which imports this module, prints answer's verdict
+and sends the same decision itself; run alone, this file still prints and sends it (main).
 """
 
 from __future__ import annotations
 
 import bisect
-import glob
 import itertools
 import json
 import os
 import re
+import select
 import signal
 import stat
-import subprocess
 import sys
-import tempfile
 import time
 from fnmatch import fnmatch, fnmatchcase
-from typing import IO, Callable, Optional
-from urllib.parse import unquote, urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     from hubhooks import Config, emit, load_config, read_event, run_hook
+    from stdlib_reader import LazyPattern
 except Exception as error:  # a partial install: ask, never let the call through unchecked
     import json
 
@@ -100,35 +100,36 @@ except Exception as error:  # a partial install: ask, never let the call through
                                              "permissionDecisionReason": f"[hub guard] could not check this call ({type(error).__name__}); confirm"}}))
     sys.exit(0)
 
-try:  # the control plane's sender: without it, decisions are simply not recorded
-    from event_sensor import send_decision
-except Exception:
-    send_decision = None
+# For a type checker only: annotations are never evaluated here, so the hook does not load typing,
+# which would add to its start-up on every call.
+TYPE_CHECKING = False
+if TYPE_CHECKING:
+    from typing import IO, Callable, Optional
 
-Verdict = Optional[tuple[str, str]]
+    Verdict = Optional[tuple[str, str]]
 
 NON_SECRET_ENV = {".env.example", ".env.development", ".env.staging", ".env.test", ".env.sample", ".env.template"}
-KEY_FILE = re.compile(r"\.(pem|key|p12|pfx)$")  # never released, whatever a list says
-SECRET_FILE = re.compile(r"(^|/)(\.env(\.[\w.-]+)?|[^/]*\.(pem|key|p12|pfx)|id_(rsa|ed25519)[^/]*)$")
-AI_ATTRIBUTION = re.compile(r"co-authored-by:\s*[^\n]*(claude|anthropic|openai|copilot|\bai\b)|generated with \[?claude|🤖", re.I)
-SECRET_TOKEN = re.compile(
+KEY_FILE = LazyPattern(r"\.(pem|key|p12|pfx)$")  # never released, whatever a list says
+SECRET_FILE = LazyPattern(r"(^|/)(\.env(\.[\w.-]+)?|[^/]*\.(pem|key|p12|pfx)|id_(rsa|ed25519)[^/]*)$")
+AI_ATTRIBUTION = LazyPattern(r"co-authored-by:\s*[^\n]*(claude|anthropic|openai|copilot|\bai\b)|generated with \[?claude|🤖", re.I)
+SECRET_TOKEN = LazyPattern(
     r"(?<![\w-])[<'\"]?(\S*/)?(\.env(\.[\w.-]+)?|[\w.-]+\.(pem|key|p12|pfx)|id_(rsa|ed25519|ecdsa)[\w.-]*)(?=[\s'\";|&)<>]|$)"
 )
 # SECRET_TOKEN's matches, found by _secret_tokens in time linear in the command's length:
 # the regex rescans the rest of a word from each start (`(\S*/)?`, `[\w.-]+`), quadratic on quote- or
 # dot-dense text. A name ends where its run of `[\w.-]` (a chunk) ends, so only a chunk holding one of
 # the names' fixed parts (SECRET_CHUNK) can end a match.
-SECRET_CHUNK = re.compile(r"(?<![\w.-])[\w.-]*(?:\.env|\.(?:pem|key|p12|pfx)|id_(?:rsa|ed25519|ecdsa))[\w.-]*")
-SECRET_AFTER = re.compile(r"[\s'\";|&)<>]")
-SECRET_WORDISH = re.compile(r"[\w-]")
-SECRET_BLANK = re.compile(r"\s")
+SECRET_CHUNK = LazyPattern(r"(?<![\w.-])[\w.-]*(?:\.env|\.(?:pem|key|p12|pfx)|id_(?:rsa|ed25519|ecdsa))[\w.-]*")
+SECRET_AFTER = LazyPattern(r"[\s'\";|&)<>]")
+SECRET_WORDISH = LazyPattern(r"[\w-]")
+SECRET_BLANK = LazyPattern(r"\s")
 SECRET_KEY_ENDS = (".pem", ".key", ".p12", ".pfx")
 SECRET_ID_NAMES = ("id_rsa", "id_ed25519", "id_ecdsa")
 SAFE_ON_SECRETS = {"ls", "test", "[", "stat"}  # these never print file contents
 SECRET_READ_REASON = "reading secret file {} is not allowed (any command, not just cat); reference the variable name instead"
 SECRET_FILE_REASON = "{} may hold secrets; reference variable names instead of reading it"
 GIT = r"\bgit(\s+-[Cc]\s+\S+)*\s+"
-SKIP_MARKERS = re.compile(
+SKIP_MARKERS = LazyPattern(
     r"@pytest\.mark\.(skip|skipif|xfail|quarantine)\b|\bpytest\.(skip|xfail)\(|\b(test|it|describe)\.(skip|fixme|todo)\(|\bx(it|describe)\("
 )
 TEST_PATH = r"(?:(\S*/)?(tests?|__tests__)/\S+|\S+\.(test|spec)\.[jt]sx?\b|['\"]?(\S*/)?test_\w+\.py\b)"
@@ -139,41 +140,41 @@ TEST_PATH = r"(?:(\S*/)?(tests?|__tests__)/\S+|\S+\.(test|spec)\.[jt]sx?\b|['\"]
 # `aws$x`, `{aws,s3}`; these two have no group 2, never a local form), anywhere in a part, so
 # wrappers, quotes, expansions and redirections do not hide it.
 INFRA_TOOLS = ("aws", "cdk", "terraform", "pulumi", "kubectl", "helm", "sam", "serverless")
-INFRA_TOOL = re.compile(
+INFRA_TOOL = LazyPattern(
     r"\b(" + "|".join(INFRA_TOOLS) + r")\b(?:['\"]?\s+(?=(\S))|(?=\d*[<>]|&>)|(?=['\"]?\s*(?:[&()`{}$,]|\Z)))"
 )
 # The parts of a command: split at `&&`, `||`, `;`, `|` and newlines; each part is checked whole,
 # then each tool mention in it against the call that holds it (the part split at a single `&`, `(`,
 # `)`, a backtick, `{` and `}`, so `$(…)`, `<(…)`, subshells and groups), so an allowed call never
 # covers another one beside it.
-INFRA_PART = re.compile(r"&&|\|\||[;|\n]")
-INFRA_CALL = re.compile(r"[&()`{}]")
+INFRA_PART = LazyPattern(r"&&|\|\||[;|\n]")
+INFRA_CALL = LazyPattern(r"[&()`{}]")
 # The characters the shell reader looks at: quotes ('…', "…", and `$'…'`, where a backslash escapes
 # the next character; `$$` is a token of its own), backslashes, a comment's `#` (at the start or
 # after a blank or an operator) and newlines.
-INFRA_LEX = re.compile(r"[\\'\"#\n$]")
-INFRA_WORD_BREAK = re.compile(r"[\s;&|()<>]")
+INFRA_LEX = LazyPattern(r"[\\'\"#\n$]")
+INFRA_WORD_BREAK = LazyPattern(r"[\s;&|()<>]")
 # E23 safe characters: an infra allow (or a local form) holds only for a command made of ASCII
 # letters and digits, space, tab and `_ - . / : = @ , + %`, joined by `;`, `&&`, `||`, `|` or a
 # newline; the first other character (a match that is not `&&`) makes it ask.
-INFRA_UNSAFE = re.compile(r"&&|[^A-Za-z0-9 \t_\-./:=@,+%;|\n]")
+INFRA_UNSAFE = LazyPattern(r"&&|[^A-Za-z0-9 \t_\-./:=@,+%;|\n]")
 # E23 words that always ask in such a command (by the word's last path component): shells,
 # interpreters, xargs, eval, exec, source, sudo, su, doas; also a lone `--`, `.` in command
 # position, and env's -i or -u in any spelling before its command.
-INFRA_RISKY = re.compile(r"(?:sh|bash|zsh|dash|ksh|fish|perl|node|ruby|php|xargs|eval|exec|source|sudo|su|doas|python.*)\Z")
-INFRA_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
+INFRA_RISKY = LazyPattern(r"(?:sh|bash|zsh|dash|ksh|fish|perl|node|ruby|php|xargs|eval|exec|source|sudo|su|doas|python.*)\Z")
+INFRA_ASSIGNMENT = LazyPattern(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
 INFRA_PREFIX_WORDS = {"if", "then", "else", "elif", "do", "while", "until", "time", "command", "builtin", "coproc"}
-INFRA_ENV_CLEAR = re.compile(r"-\Z|-[^-]*[iu]|--[iu]")  # `-`, `-i`, `-u`, `-0i`, `-uNAME`, `--unset`, `--ignore-…`
+INFRA_ENV_CLEAR = LazyPattern(r"-\Z|-[^-]*[iu]|--[iu]")  # `-`, `-i`, `-u`, `-0i`, `-uNAME`, `--unset`, `--ignore-…`
 INFRA_ENV_VALUE = {"-C", "-S", "--chdir", "--split-string"}  # env options whose value is the next word
 # E24: parallel runs its input or arguments as commands, and so does sed's e (its e command, or
 # the s command's e flag) or a sed script read from a file (-f/--file): such a word asks.
-INFRA_RUNS = re.compile(r"parallel\Z")
-INFRA_SED = re.compile(r"g?sed\Z")
+INFRA_RUNS = LazyPattern(r"parallel\Z")
+INFRA_SED = LazyPattern(r"g?sed\Z")
 # E24: the environment settings counted per part (a `NAME=` or `NAME+=` word anywhere in it; a
 # flag as `--x v` or `--x=v`, terraform's chdir and var-file with one dash or two); a second one of
 # a name asks. E25: so does a second spelling of one setting: the AWS profile (either variable or
 # --profile), pulumi's stack (--stack, -s) and serverless's stage (--stage, -s).
-INFRA_ENV_SETTING = re.compile(
+INFRA_ENV_SETTING = LazyPattern(
     r"(AWS_PROFILE|AWS_DEFAULT_PROFILE|KUBECONFIG|KUBE_CONTEXT)\+?=|(--profile|--context|--kube-context|-?-chdir"
     r"|--stack|--workspace|--stage|-s|-?-var-file)(?:=|\Z)"
 )
@@ -193,36 +194,36 @@ INFRA_SELECTOR_NAMES = (
     r"|TF_CLI_ARGS(?:_[A-Za-z0-9_]+)?|PULUMI_BACKEND_URL|AWS_CONFIG_FILE|AWS_SHARED_CREDENTIALS_FILE"
     r"|AWS_ROLE_ARN|CDK_DEFAULT_ACCOUNT)(?![A-Za-z0-9_])"
 )
-INFRA_SELECTOR_ENV = re.compile(r"(?<![A-Za-z0-9_])" + INFRA_SELECTOR_NAMES)
-INFRA_SELECTOR_GLUED = re.compile(r"-[A-Za-z0-9]+?" + INFRA_SELECTOR_NAMES)
-INFRA_SELECTOR_FLAG = re.compile(
+INFRA_SELECTOR_ENV = LazyPattern(r"(?<![A-Za-z0-9_])" + INFRA_SELECTOR_NAMES)
+INFRA_SELECTOR_GLUED = LazyPattern(r"-[A-Za-z0-9]+?" + INFRA_SELECTOR_NAMES)
+INFRA_SELECTOR_FLAG = LazyPattern(
     r"(?:--profile|--aws-profile|--context|--kube-context|--cluster|--server|--user|--kubeconfig"
     r"|--kube-apiserver|-?-chdir|--cwd|--stack|-s|--stage|--workspace|-?-var-file|-?-backend-config)(=|\Z)"
 )
-INFRA_PULUMI_FLAG = re.compile(r"-C(=|\Z)")
-INFRA_BLANK_WORD = re.compile(r"[^ \t]+")
+INFRA_PULUMI_FLAG = LazyPattern(r"-C(=|\Z)")
+INFRA_BLANK_WORD = LazyPattern(r"[^ \t]+")
 INFRA_END = r"(?![\w-])"
 INFRA_WORD = r"(?<![\w-])({})" + INFRA_END
 # Local-only forms, matched at the tool's first argument; kubectl's version needs --client in the
 # call, terraform's init needs -backend=false, each with no later `--client=` (other than `true`) or
 # `-backend=` (the last flag wins).
-INFRA_LOCAL_ANY = re.compile(r"(--version|version|help|--help)" + INFRA_END)
+INFRA_LOCAL_ANY = LazyPattern(r"(--version|version|help|--help)" + INFRA_END)
 INFRA_LOCAL = {
-    "cdk": re.compile(r"(synth|ls|list|init|doctor|context)" + INFRA_END),
-    "terraform": re.compile(r"(fmt|validate)" + INFRA_END),
-    "helm": re.compile(r"(template|lint)" + INFRA_END),
-    "sam": re.compile(r"(build|validate)" + INFRA_END),
+    "cdk": LazyPattern(r"(synth|ls|list|init|doctor|context)" + INFRA_END),
+    "terraform": LazyPattern(r"(fmt|validate)" + INFRA_END),
+    "helm": LazyPattern(r"(template|lint)" + INFRA_END),
+    "sam": LazyPattern(r"(build|validate)" + INFRA_END),
 }
-INFRA_KUBECTL_VERSION = re.compile(r"(version|--version)" + INFRA_END)
+INFRA_KUBECTL_VERSION = LazyPattern(r"(version|--version)" + INFRA_END)
 INFRA_FLAG_END = r"(?=\s|$)"
-INFRA_KUBECTL_CLIENT = re.compile(r"(?<![\w-])--client" + INFRA_FLAG_END)
-INFRA_TERRAFORM_INIT = re.compile(r"init" + INFRA_END)
-INFRA_NO_BACKEND = re.compile(r"(?<![\w-])-backend=false" + INFRA_FLAG_END)
+INFRA_KUBECTL_CLIENT = LazyPattern(r"(?<![\w-])--client" + INFRA_FLAG_END)
+INFRA_TERRAFORM_INIT = LazyPattern(r"init" + INFRA_END)
+INFRA_NO_BACKEND = LazyPattern(r"(?<![\w-])-backend=false" + INFRA_FLAG_END)
 # (needed flag, flags that keep it, flag word): the needed flag counts when the last flag word (in
 # any spelling, quoted too) lies in a flag that keeps it.
-INFRA_CLIENT = (INFRA_KUBECTL_CLIENT, re.compile(r"(?<![\w-])--client(?:=true)?" + INFRA_FLAG_END),
-                re.compile(r"client(?![\w-])"))
-INFRA_BACKEND = (INFRA_NO_BACKEND, INFRA_NO_BACKEND, re.compile(r"backend(?![\w-])"))
+INFRA_CLIENT = (INFRA_KUBECTL_CLIENT, LazyPattern(r"(?<![\w-])--client(?:=true)?" + INFRA_FLAG_END),
+                LazyPattern(r"client(?![\w-])"))
+INFRA_BACKEND = (INFRA_NO_BACKEND, INFRA_NO_BACKEND, LazyPattern(r"backend(?![\w-])"))
 
 
 class _Verbs:
@@ -232,8 +233,8 @@ class _Verbs:
     linear pass per pattern."""
 
     def __init__(self, words: str, *pairs: tuple[str, str]) -> None:
-        self.words = re.compile(INFRA_WORD.format(words))
-        self.pairs = [(re.compile(INFRA_WORD.format(lead)), re.compile(INFRA_WORD.format(verbs)))
+        self.words = LazyPattern(INFRA_WORD.format(words))
+        self.pairs = [(LazyPattern(INFRA_WORD.format(lead)), LazyPattern(INFRA_WORD.format(verbs)))
                       for lead, verbs in pairs]
 
     def search(self, part: str, pos: int) -> str | None:
@@ -267,7 +268,7 @@ INFRA_ASK_VERBS = {
 # then one of its verbs anywhere after it (E28: also kubectl's `config use|set|rename-context|
 # delete-context` and pulumi's `stack select`).
 INFRA_CONFIG_VERBS = {
-    tool: (re.compile(INFRA_WORD.format(lead)), re.compile(INFRA_WORD.format(verbs)))
+    tool: (LazyPattern(INFRA_WORD.format(lead)), LazyPattern(INFRA_WORD.format(verbs)))
     for tool, lead, verbs in (
         ("aws", "configure", "set|import"),
         ("kubectl", "config", "set-context|use-context|set-cluster|set-credentials|use|set|rename-context"
@@ -276,13 +277,13 @@ INFRA_CONFIG_VERBS = {
         ("pulumi", "stack", "select"),
     )
 }
-BASH_WRITE = re.compile(r">>?|\btee\b|\bsed\s+(-\w*i\w*|--in-place)\b|\b(rm|mv|cp|truncate|ln)\b")
-WORKTREE_SEG = re.compile(r"/\.claude/worktrees/[^/]+(?=/)")
-SETTINGS_FILE = re.compile(r"\.claude/settings[^/]*\.json")
+BASH_WRITE = LazyPattern(r">>?|\btee\b|\bsed\s+(-\w*i\w*|--in-place)\b|\b(rm|mv|cp|truncate|ln)\b")
+WORKTREE_SEG = LazyPattern(r"/\.claude/worktrees/[^/]+(?=/)")
+SETTINGS_FILE = LazyPattern(r"\.claude/settings[^/]*\.json")
 # The hub-root launchers: the managed settings allow `./hub doctor` with no prompt.
 LAUNCHERS = ("hub", "agent")
-WRITE_TARGET = re.compile(r">>?\s*([^\s;&|<>()`]+)")
-WRITE_ARGS = re.compile(r"\b(?:tee|sed\s+(?:-\w*i\w*|--in-place)|rm|mv|cp|truncate|ln)\b(.*)")
+WRITE_TARGET = LazyPattern(r">>?\s*([^\s;&|<>()`]+)")
+WRITE_ARGS = LazyPattern(r"\b(?:tee|sed\s+(?:-\w*i\w*|--in-place)|rm|mv|cp|truncate|ln)\b(.*)")
 HUB_PREFIX = "@hub"
 # A `hub env` verb that writes hub.json or hub.local.json, behind a launcher path (`./hub`, a tool
 # runner's `--from x hub`), searched in each of the blocked-words rule's command views, so quotes and
@@ -290,16 +291,16 @@ HUB_PREFIX = "@hub"
 # (`grep 'hub env add'`) asks too. Each part of the pattern is a fixed word or one run of blanks,
 # so a search stays linear in the command's length. An optional `--` (the end of options, which Click
 # accepts before each subcommand: `hub -- env add`, `hub env -- set`) may sit between the words.
-ENV_COMMAND = re.compile(
+ENV_COMMAND = LazyPattern(
     r"(?<![\w.-])hub['\"]?[ \t]+(?:--[ \t]+)?env[ \t]+(?:--[ \t]+)?"
     r"(service[ \t]+(?:--[ \t]+)?(?:add|remove)|add|set|remove)(?![\w-])"
 )
 # The blanks and `--` inside the matched verb (`service -- add`) that the reason shows as one space.
-ENV_VERB_GAP = re.compile(r"[ \t]+(?:--[ \t]+)?")
+ENV_VERB_GAP = LazyPattern(r"[ \t]+(?:--[ \t]+)?")
 ENV_COMMAND_REASON = "hub env {} changes the agents' environments (hub.json or hub.local.json); confirm"
 # A `hub repo` verb that writes hub.json's repos (and so the checks the Stop hook runs), found as
 # ENV_COMMAND is (an optional `--` included); `hub repo list` passes.
-REPO_COMMAND = re.compile(
+REPO_COMMAND = LazyPattern(
     r"(?<![\w.-])hub['\"]?[ \t]+(?:--[ \t]+)?repo[ \t]+(?:--[ \t]+)?(add|set|remove)(?![\w-])"
 )
 REPO_COMMAND_REASON = "hub repo {} changes hub.json's repos (the checks the Stop hook runs); confirm"
@@ -579,7 +580,7 @@ INFRA_SELECTOR_REASON = ("`{}` selects an environment outside every guard.infra.
 INFRA_CONFIG_VERB_REASON = ("`{} {}` changes the tool's own configuration (profiles, contexts, workspaces), which "
                             "later commands use out of guard.infra's sight; confirm first")
 INFRA_VALUE_CAP = 100  # characters of a value from hub.json or the command in an infra reason
-LEGACY_INFRA = re.compile(
+LEGACY_INFRA = LazyPattern(
     r"\bterraform\s+(apply|destroy|import)\b|\baws\s+\S+|\bpulumi\s+(up|destroy)\b|\bkubectl\s+(apply|delete)\b"
     r"|\bcdk\s+(deploy|destroy)\b|\b(terraform|aws|pulumi|kubectl|cdk)(\d*[<>]|&>)"
 )
@@ -881,7 +882,7 @@ class _Evidence:
         self.text = _uncommented(text)
         self.flags: dict[str, bool] = {}
 
-    def has(self, flag: tuple[re.Pattern[str], re.Pattern[str], re.Pattern[str]]) -> bool:
+    def has(self, flag: tuple[LazyPattern, LazyPattern, LazyPattern]) -> bool:
         needed, keeps, word = flag
         if word.pattern not in self.flags:
             words, kept = list(word.finditer(self.text)), list(keeps.finditer(self.text))
@@ -1318,8 +1319,8 @@ BLOCKED_BRACES_CAP = 64  # words a Bash token's braces expand to; more asks (too
 BLOCKED_BRACE_TOKEN_CAP = 4096  # characters of a Bash token with a `{`; a longer one asks (too many files)
 BLOCKED_HIDDEN_NAME = "<a listed file>"  # a name read from disk that is not plain
 # A plain segment of a path read from disk: no run of 20 letters and digits (a key's shape).
-BLOCKED_PLAIN_SEGMENT = re.compile(r"[A-Za-z0-9._-]{1,64}")
-BLOCKED_KEY_RUN = re.compile(r"[A-Za-z0-9]{20}")
+BLOCKED_PLAIN_SEGMENT = LazyPattern(r"[A-Za-z0-9._-]{1,64}")
+BLOCKED_KEY_RUN = LazyPattern(r"[A-Za-z0-9]{20}")
 BLOCKED_FILE_TOO_LARGE = "{} is over 1 MiB (too large)"
 BLOCKED_NOT_REGULAR = "{} is not a regular file"
 BLOCKED_TOO_MANY = "over 64 files to read (too many files)"
@@ -1761,14 +1762,14 @@ ENV_FILE_PATH_TOOLS = {"Read": "file_path", "Edit": "file_path", "Write": "file_
 ENV_FILE_WORD = r"(?<![A-Za-z0-9_.-])(?:{})(?![A-Za-z0-9_.-])"
 # A Bash call's parts in order (a single `&` splits too), and the words that move to another
 # folder: a glob after one may name an env file there, so it is matched by name.
-ENV_FILE_PART = re.compile(r"&&|\|\||[;|&\n]")
+ENV_FILE_PART = LazyPattern(r"&&|\|\||[;|&\n]")
 ENV_FILE_MOVES = frozenset(("cd", "pushd", "popd"))
 # What may wrap such a word: quotes, `$(`, `(`, `{`, backticks (`echo $(cd x`, `bash -c 'cd x`).
 ENV_FILE_WORD_EDGES = "'\"$(){}`"
 # What a glob segment holds besides its wildcards and bracket expressions: it names a file only
 # with a letter, digit, `_` or `-` there (so `*`, `.*` and `*.*` never do).
-GLOB_WILDCARDS = re.compile(r"\[[^\]]*\]|[*?]")
-NAME_CHARACTER = re.compile(r"[A-Za-z0-9_-]")
+GLOB_WILDCARDS = LazyPattern(r"\[[^\]]*\]|[*?]")
+NAME_CHARACTER = LazyPattern(r"[A-Za-z0-9_-]")
 GLOB_CHARS = "*?[{"
 
 
@@ -1925,6 +1926,8 @@ def _env_file_bash(env_files: _EnvFiles, cmd: str, scan: _BlockedScan) -> str | 
 
 def _env_file_webfetch(env_files: _EnvFiles, url: str) -> str | None:
     """A WebFetch URL naming an env file (raw or percent-decoded), or a file:// URL to one."""
+    from urllib.parse import unquote, urlsplit  # here, not at the top: only a WebFetch needs them
+
     decoded = unquote(url)
     environment = env_files.named(url) or env_files.named(decoded)
     if environment or not url.lower().startswith("file:"):
@@ -1989,6 +1992,8 @@ def check_environment_endpoint(tool: str, ti: dict, cfg: Config, environ: dict |
     shown = environment.access + (", production" if environment.production else "")
     reached = ("ask", ENDPOINT_REASON.format(tool, environment.name, shown))
     if tool == "WebFetch":
+        from urllib.parse import urlsplit  # here, not at the top: only a WebFetch needs it
+
         try:
             host = (urlsplit(_str(ti.get("url"))).hostname or "").lower()
         except ValueError:  # a malformed URL (a bad port, an unclosed bracket)
@@ -2015,6 +2020,9 @@ def _input_tool(tool: str) -> bool:
 
 
 EXTENSION_TIMEOUT = 3  # seconds, inside the guard's own 10 s hook timeout (spec Q-5)
+# Seconds the hook waits for a killed runner to end: one in an uninterruptible wait (a read on a
+# hung mount) outlives its SIGKILL, and the hook still answers.
+KILL_WAIT = 1.0
 RUNNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "project_guard_runner.py")
 STRICTNESS = {None: 0, "ask": 1, "deny": 2}
 EXTENSION_REASON = "project guard: {}"
@@ -2072,6 +2080,8 @@ def extension_file(cfg: Config) -> str | None:
             return path
     if _named(cfg):
         return None
+    import glob  # here, not at the top: only a hub.json that names no project needs it
+
     pattern = os.path.join(glob.escape(str(cfg.root)), "plugin", "*", "hooks", EXTENSION_NAME)
     found = [p for p in sorted(glob.glob(pattern)) if p.split(os.sep)[-3] != "hub-workflow"]
     return found[0] if len(found) == 1 else None
@@ -2119,37 +2129,148 @@ def _tail(fh: IO[bytes]) -> str:
     return fh.read().decode("utf-8", "replace")
 
 
+def _fd_end() -> int:
+    """One past the highest fd this process holds, from its /dev/fd listing (Linux, macOS); the
+    fd limit when there is none."""
+    try:
+        return max(int(name) for name in os.listdir("/dev/fd")) + 1
+    except (OSError, ValueError):
+        return os.sysconf("SC_OPEN_MAX")
+
+
+def _runner_child(fds: tuple[int, int, int], argv: list[str]) -> None:
+    """The forked runner; it never returns into the hook. fds: the event file (at its start), the
+    pipe's write end and the stderr file, which become its fds 0, 1 and 2; every other fd it got
+    from the hook (3 and up) is closed, as close_fds did for a new python3. It leads a session of
+    its own and calls project_guard_runner's unchanged main with argv as sys.argv and the standard
+    streams over fds 0 to 2. It always ends with os._exit (main's exit code; 1, with one cause line
+    on stderr, when it fails before or after main), so a batch of events run in one process gets
+    each verdict once."""
+    given, write_end, err = fds
+    code = 1
+    try:
+        os.dup2(err, 2)
+        os.setsid()
+        os.dup2(write_end, 1)
+        os.dup2(given, 0)
+        os.closerange(3, _fd_end())
+        sys.stdin = open(0, encoding="utf-8", closefd=False)
+        sys.stdout = stdout = open(1, "w", encoding="utf-8", closefd=False)
+        # line-buffered, as a new interpreter's stderr: a line is written before an os._exit
+        sys.stderr = stderr = open(
+            2, "w", encoding="utf-8", errors="backslashreplace", buffering=1, closefd=False
+        )
+        sys.argv = argv
+        import project_guard_runner
+
+        try:
+            project_guard_runner.main()
+            code = 0
+        except SystemExit as stop:  # the runner's own exit, read as Python reads it
+            code = 0 if stop.code is None else stop.code if isinstance(stop.code, int) else 1
+        stdout.flush()
+        stderr.flush()
+    except BaseException as error:  # whatever happens, the child ends in os._exit
+        code = 1
+        cause = " ".join(f"{type(error).__name__}: {error}".split())
+        os.write(2, (cause + "\n").encode("utf-8", "replace"))
+    finally:
+        os._exit(code)
+
+
+def _fork_runner(argv: list[str], given: int, err: int) -> tuple[int, int]:
+    """(the forked runner's pid, the read end of its stdout); an OSError when the pipe or the fork
+    fails. given: the event file; err: the stderr file. The child runs _runner_child and never
+    returns here. The hook starts no thread, so the child, which copies only the calling thread,
+    holds no lock another thread took. An ignored SIGCHLD (it survives exec) would have the kernel
+    reap the child before waitpid reads its status, so the default comes back first."""
+    if signal.getsignal(signal.SIGCHLD) == signal.SIG_IGN:
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+    read_end, write_end = os.pipe()
+    try:
+        pid = os.fork()
+    except OSError:
+        os.close(read_end)
+        os.close(write_end)
+        raise
+    if pid == 0:
+        _runner_child((given, write_end, err), argv)
+    os.close(write_end)
+    return pid, read_end
+
+
+def _output_by(fd: int, deadline: float) -> bytes | None:
+    """All the runner writes to fd, up to EOF; None when the deadline comes first."""
+    chunks = []
+    while True:
+        left = deadline - time.monotonic()
+        if left <= 0 or not select.select([fd], [], [], left)[0]:
+            return None
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
+def _status_by(pid: int, deadline: float) -> int | None:
+    """The runner's wait status once it has ended; None when the deadline comes first. Polled as
+    subprocess waits: 1 ms, doubled up to 50 ms."""
+    delay = 0.0005
+    while True:
+        done, status = os.waitpid(pid, os.WNOHANG)
+        if done:
+            return status
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return None
+        delay = min(delay * 2, left, 0.05)
+        time.sleep(delay)
+
+
+def _kill_runner(pid: int) -> None:
+    """SIGKILL the runner's whole process group, then reap the runner, waiting at most KILL_WAIT
+    seconds for it to end."""
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:  # no such group yet: the child has not left the hook's, so it alone
+        os.kill(pid, signal.SIGKILL)
+    _status_by(pid, time.monotonic() + KILL_WAIT)
+
+
 def run_extension(path: str, data: dict, cfg: Config) -> tuple[Verdict, bool]:
     """(the extension's verdict on the event, whether it failed). A failure is an ask naming the
-    cause. The runner gets its own session, so a timeout kills every process it started."""
+    cause. The runner runs in a forked child of this hook that leads its own session, so a
+    timeout, or any exception once it runs, kills every process it started."""
     unusable = _unusable(path, cfg)
     if unusable:
         return _failed(unusable)
-    hub_json = os.path.join(str(cfg.root), "hub.json")
-    with tempfile.TemporaryFile() as err:
+    argv = [RUNNER, path, os.path.join(str(cfg.root), "hub.json")]
+    event = json.dumps(data).encode("utf-8")
+    import tempfile  # here, not at the top: only a call that runs the extension needs it
+
+    with tempfile.TemporaryFile() as err, tempfile.TemporaryFile() as given:
+        for stream in (sys.stdout, sys.stderr):  # nothing unwritten is copied into the child
+            if stream is not None:  # None: the hook started with that fd closed
+                stream.flush()
         try:
-            proc = subprocess.Popen(
-                [sys.executable, RUNNER, path, hub_json],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=err,
-                start_new_session=True,
-            )
-        except (OSError, ValueError) as error:
+            given.write(event)  # the runner's stdin, read from its start
+            given.seek(0)
+            pid, read_end = _fork_runner(argv, given.fileno(), err.fileno())
+        except OSError as error:
             return _failed(f"could not start ({type(error).__name__})")
+        stdout = status = None
         try:
-            stdout, _ = proc.communicate(json.dumps(data).encode("utf-8"), timeout=EXTENSION_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            try:
-                proc.communicate(timeout=1)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+            deadline = time.monotonic() + EXTENSION_TIMEOUT
+            stdout = _output_by(read_end, deadline)
+            if stdout is not None:
+                status = _status_by(pid, deadline)
+        finally:
+            os.close(read_end)
+            if status is None:  # the deadline came first, or an exception: it may still run
+                _kill_runner(pid)
+        if status is None:
             return _failed(f"timed out after {EXTENSION_TIMEOUT} s")
-        cause = _extension_cause(proc.returncode, stdout, _tail(err))
+        cause = _extension_cause(os.waitstatus_to_exitcode(status), stdout, _tail(err))
     if cause:
         return _failed(cause)
     answer = json.loads(stdout.decode("utf-8").strip())
@@ -2171,32 +2292,32 @@ def tighten(base: Verdict, extra: Verdict, failed: bool = False) -> Verdict:
 # The rule id the control plane records for a verdict, read from its reason: the first pattern that
 # matches (re.search). A combined reason (a base ask with an extension failure) is the base rule's.
 RULE_IDS = (
-    ("force_push", re.compile(r"^force-push is not allowed")),
-    ("push_protected_branch", re.compile(r"^pushing to \S+ is not allowed")),
-    ("curl_pipe_shell", re.compile(r"^curl\|sh is not allowed")),
-    ("docker_volumes", re.compile(r"^removing docker volumes")),
-    ("infra_commands", re.compile(r"^infrastructure commands")),
-    ("secret_read", re.compile(r"^reading secret file ")),
-    ("ai_attribution", re.compile(r"^(commits|PR text) carr(y|ies) no AI attribution")),
-    ("agent_branch", re.compile(r"^branches are \S*, never claude/")),
-    ("git_internals", re.compile(r"^\.git is git's own state")),
-    ("test_bash_edit", re.compile(r"^deleting or sed-editing tests")),
-    ("brain_curated", re.compile(r"^brain/ is curated")),
-    ("assertions_removed", re.compile(r"^this edit removes \d+ assertion")),
-    ("skip_marker", re.compile(r"^this edit adds a skip")),
-    ("secret_file", re.compile(r"^(\S.* may hold secrets|Grep over \.env files)")),
-    ("project_guard", re.compile(r"^project guard: ")),
+    ("force_push", LazyPattern(r"^force-push is not allowed")),
+    ("push_protected_branch", LazyPattern(r"^pushing to \S+ is not allowed")),
+    ("curl_pipe_shell", LazyPattern(r"^curl\|sh is not allowed")),
+    ("docker_volumes", LazyPattern(r"^removing docker volumes")),
+    ("infra_commands", LazyPattern(r"^infrastructure commands")),
+    ("secret_read", LazyPattern(r"^reading secret file ")),
+    ("ai_attribution", LazyPattern(r"^(commits|PR text) carr(y|ies) no AI attribution")),
+    ("agent_branch", LazyPattern(r"^branches are \S*, never claude/")),
+    ("git_internals", LazyPattern(r"^\.git is git's own state")),
+    ("test_bash_edit", LazyPattern(r"^deleting or sed-editing tests")),
+    ("brain_curated", LazyPattern(r"^brain/ is curated")),
+    ("assertions_removed", LazyPattern(r"^this edit removes \d+ assertion")),
+    ("skip_marker", LazyPattern(r"^this edit adds a skip")),
+    ("secret_file", LazyPattern(r"^(\S.* may hold secrets|Grep over \.env files)")),
+    ("project_guard", LazyPattern(r"^project guard: ")),
     # before the unanchored patterns below, which a path in a blocked-word reason could hold
-    ("blocked_word", re.compile(r"^blocked words? ")),
-    ("env_file", re.compile(r"^env file: ")),
-    ("environment_endpoint", re.compile(r"^environment endpoint: ")),
-    ("deny_hosts", re.compile(r" is in guard\.deny_hosts \(hub\.json\)")),
-    ("deny_paths", re.compile(r" is under guard\.deny_paths `")),
-    ("guard_files", re.compile(r" is the hub's own guard or config \(")),
-    ("guard_parent", re.compile(r" holds the hub's guard files \(")),
-    ("ask_before_edit", re.compile(r" matches guard\.ask_before_edit `")),
-    ("env_command", re.compile(r"^hub env (service )?\w+ changes the agents' environments")),
-    ("repo_command", re.compile(r"^hub repo \w+ changes hub\.json's repos")),
+    ("blocked_word", LazyPattern(r"^blocked words? ")),
+    ("env_file", LazyPattern(r"^env file: ")),
+    ("environment_endpoint", LazyPattern(r"^environment endpoint: ")),
+    ("deny_hosts", LazyPattern(r" is in guard\.deny_hosts \(hub\.json\)")),
+    ("deny_paths", LazyPattern(r" is under guard\.deny_paths `")),
+    ("guard_files", LazyPattern(r" is the hub's own guard or config \(")),
+    ("guard_parent", LazyPattern(r" holds the hub's guard files \(")),
+    ("ask_before_edit", LazyPattern(r" matches guard\.ask_before_edit `")),
+    ("env_command", LazyPattern(r"^hub env (service )?\w+ changes the agents' environments")),
+    ("repo_command", LazyPattern(r"^hub repo \w+ changes hub\.json's repos")),
 )
 
 
@@ -2208,13 +2329,15 @@ def rule_of(reason: str) -> str | None:
     return None
 
 
-def record(data: dict, decision: str, reason: str) -> None:
-    """Send the printed verdict to the control plane; never raises, never prints."""
-    if send_decision is None:
-        return
+def record(hook: dict, decision: dict) -> None:
+    """Send a printed verdict's decision (answer's) to the control plane; never raises, never
+    prints. The sensor is loaded here, so a call the guard lets through never loads it; without it
+    (a partial install), decisions are simply not recorded."""
     try:
         sys.stdout.flush()
-        send_decision(data, {"by": "guard", "kind": decision, "rule": rule_of(reason)})
+        from event_sensor import send_decision
+
+        send_decision(hook, decision)
     except Exception:
         pass
 
@@ -2229,26 +2352,33 @@ def in_auto_mode(verdict: tuple[str, str], data: dict) -> tuple[str, str]:
     return verdict
 
 
-def _print_verdict(data: dict, verdict: tuple[str, str]) -> None:
-    """Print the verdict as the hook's output, then record it."""
+def _print_verdict(data: dict, verdict: tuple[str, str]) -> tuple[dict, dict]:
+    """Print the verdict as the hook's output; return the hook input and the decision to record.
+    The decision is built first, so nothing after the print can fail and print a second value."""
     decision, reason = in_auto_mode(verdict, data)
+    try:
+        rule = rule_of(reason)
+    except Exception:  # the rule id only labels the record: it never changes or follows the verdict
+        rule = None
     emit({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
                                  "permissionDecisionReason": f"[hub guard] {reason}"}})
-    record(data, decision, reason)
+    return data, {"by": "guard", "kind": decision, "rule": rule}
 
 
-def main() -> None:
-    data, unreadable = read_event()
+def answer(data: dict, unreadable: bool) -> tuple[dict, dict] | None:
+    """Print the verdict on one event, as read_event gives it, and return what record sends: the
+    hook input and the decision; None, with nothing printed, when the call goes through.
+    pre_tool_use.py calls it on the event it read and sends the decision itself."""
     if unreadable:  # not a JSON object: the words cannot be checked, so ask while they are in effect
         cfg = load_config(None)
         if cfg.blocked_words or cfg.blocked_problem:
-            _print_verdict({}, ("ask", BLOCKED_UNCHECKED_REASON.format(BLOCKED_UNREADABLE)))
-        elif cfg.env_files:
-            _print_verdict({}, ("ask", ENV_FILE_UNCHECKED_REASON.format("this call", BLOCKED_UNREADABLE)))
-        return
+            return _print_verdict({}, ("ask", BLOCKED_UNCHECKED_REASON.format(BLOCKED_UNREADABLE)))
+        if cfg.env_files:
+            return _print_verdict({}, ("ask", ENV_FILE_UNCHECKED_REASON.format("this call", BLOCKED_UNREADABLE)))
+        return None
     tool = _str(data.get("tool_name"))
     if tool not in EXTENSION_TOOLS and not _input_tool(tool):
-        return
+        return None
     cfg = load_config(data.get("cwd"))
     verdict = decide(data, cfg, dict(os.environ))
     # a deny is final, and an input tool gets the blocked-word rule only: no extension for either
@@ -2257,8 +2387,13 @@ def main() -> None:
         if path:
             extra, failed = run_extension(path, data, cfg)
             verdict = tighten(verdict, extra, failed)
-    if verdict:
-        _print_verdict(data, verdict)
+    return _print_verdict(data, verdict) if verdict else None
+
+
+def main() -> None:
+    answered = answer(*read_event())
+    if answered:
+        record(*answered)
 
 
 def ask_on_error(kind: str) -> None:

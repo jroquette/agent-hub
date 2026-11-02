@@ -4,6 +4,9 @@ Brain side: the listed UTF-8 files under the hub's ``brain/``, trimmed, outside 
 fenced blocks and table rows, of ``min_line_length`` (default 60) or more characters. Repo side:
 every listed UTF-8 text file of each checkout. Every text here is synthetic (AGENTS.md rule 4).
 Scale: the brain lines are indexed once and each file is split once, checked by counting.
+
+One exception: in a checkout's ``docs/adr/``, a line that only ADR drafts hold is no leak, since
+that is how an accepted ADR leaves its draft behind.
 """
 
 from collections.abc import Callable
@@ -12,7 +15,7 @@ from typing import Any
 import pytest
 
 from agent_hub.core.doctor import brain_leak_rule
-from agent_hub.core.doctor.brain_leak_rule import BRAIN_LEAK
+from agent_hub.core.doctor.brain_leak_rule import BRAIN_LEAK, is_adr_draft
 from agent_hub.core.doctor.finding import Read
 from agent_hub.core.doctor.snapshot import DoctorSnapshot
 from agent_hub.core.hub_config.doctor_rules import Severity
@@ -24,6 +27,9 @@ type Shown = tuple[str | None, int | None, str]
 
 FIX = "reword or remove the line here, or reword the brain note if it quotes this file"
 NOTE = "brain/notes/widgets.md"
+DRAFT = "brain/f/adr-draft.md"
+PLAN = "brain/f/plan.md"
+ADR = "docs/adr/0001-x.md"
 _FILLER = "Synthetic note: the widget queue drains before the gear spins up again and again"
 
 
@@ -376,3 +382,99 @@ def test_reads_huge_line_when_repo_file_has_one(snapshot_of: SnapshotFactory) ->
         ("../demo-api/big.txt", 1, in_brain(NOTE, 2)),
         ("../demo-api/big.txt", 2, in_brain(NOTE, 1)),
     ]
+
+
+@pytest.mark.parametrize(
+    ("path", "draft"),
+    [
+        pytest.param("brain/f/adr-drafts/0001-x.md", True, id="drafts-folder"),
+        pytest.param("brain/f/adr-draft.md", True, id="adr-draft"),
+        pytest.param("brain/f/adr-draft-x.md", True, id="adr-draft-topic"),
+        pytest.param("brain/f/adr-0001-draft.md", True, id="adr-number-draft"),
+        pytest.param("brain/f/adr-603-options.md", False, id="adr-options"),
+        pytest.param("brain/f/plan.md", False, id="plan"),
+        pytest.param("brain/f/my-adr-draft.md", False, id="draft-word-inside-name"),
+    ],
+)
+def test_classifies_draft_when_path_named_as_draft(path: str, *, draft: bool) -> None:
+    assert is_adr_draft(path) is draft
+
+
+@pytest.mark.parametrize(
+    ("draft", "adr"),
+    [
+        pytest.param("brain/f/adr-drafts/0001-x.md", ADR, id="drafts-folder"),
+        pytest.param("brain/f/adr-draft.md", ADR, id="adr-draft"),
+        pytest.param("brain/f/adr-draft-x.md", ADR, id="adr-draft-topic"),
+        pytest.param("brain/f/adr-0001-draft.md", ADR, id="adr-number-draft"),
+        pytest.param("brain/f/adr-drafts/0027-x.md", "docs/adr/0031-y.md", id="other-number"),
+    ],
+)
+def test_ignores_draft_line_when_copied_into_adr_folder(
+    snapshot_of: SnapshotFactory, draft: str, adr: str
+) -> None:
+    landed, other = sentence(70), sentence(70, tag="b")
+    snapshot = snapshot_of(
+        files={draft: f"# Draft\n\n{landed}\n".encode(), NOTE: f"{other}\n".encode()},
+        repos={"demo-api": {adr: f"{landed}\n{other}\n".encode()}},
+    )
+
+    # The note's line in the same ADR file is still found, so that file was read.
+    assert leaks(snapshot) == [(f"../demo-api/{adr}", 2, in_brain(NOTE, 1))]
+
+
+def test_reports_line_when_plan_copied_into_adr_folder(snapshot_of: SnapshotFactory) -> None:
+    line = sentence(70)
+    snapshot = snapshot_of(
+        files={PLAN: f"# Plan\n\n{line}\n".encode()},
+        repos={"demo-api": {ADR: f"{line}\n".encode()}},
+    )
+
+    assert leaks(snapshot) == [(f"../demo-api/{ADR}", 1, in_brain(PLAN, 3))]
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        pytest.param("README.md", id="README.md"),
+        pytest.param("CHANGELOG.md", id="CHANGELOG.md"),
+        pytest.param("docs/adr-notes/0001-x.md", id="adr-like-folder"),
+    ],
+)
+def test_reports_draft_line_when_copied_outside_adr_folder(
+    snapshot_of: SnapshotFactory, target: str
+) -> None:
+    line = sentence(70)
+    snapshot = snapshot_of(
+        files={DRAFT: f"# Draft\n\n{line}\n".encode()},
+        repos={"demo-api": {target: f"{line}\n".encode()}},
+    )
+
+    assert leaks(snapshot) == [(f"../demo-api/{target}", 1, in_brain(DRAFT, 3))]
+
+
+def test_names_plan_when_draft_and_plan_hold_line_copied_into_adr_folder(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    line = sentence(70)
+    snapshot = snapshot_of(
+        files={DRAFT: f"{line}\n".encode(), PLAN: f"# Plan\n\n{line}\n".encode()},
+        listed=(DRAFT, PLAN),
+        repos={"demo-api": {ADR: f"{line}\n".encode()}},
+    )
+
+    # The draft comes first in the listing, yet only the plan's copy is a leak.
+    assert leaks(snapshot) == [(f"../demo-api/{ADR}", 1, in_brain(PLAN, 3))]
+
+
+def test_reports_line_when_options_note_copied_into_adr_folder(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    line = sentence(70)
+    options = "brain/f/adr-603-options.md"
+    snapshot = snapshot_of(
+        files={options: f"# Options\n\n{line}\n".encode()},
+        repos={"demo-api": {ADR: f"{line}\n".encode()}},
+    )
+
+    assert leaks(snapshot) == [(f"../demo-api/{ADR}", 1, in_brain(options, 3))]

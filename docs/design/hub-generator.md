@@ -68,12 +68,13 @@ order ([hub-sync.md](hub-sync.md)). `AGENTS.md` names the selected modules' file
 ### Hooks and plugin wiring
 
 Managed stdlib scripts in `plugin/hub-workflow/hooks/`, run by the system `python3` (3.9 or newer), read `hub.json`
-through `stdlib_reader.py` beside them and fail open: on a crash the guard asks, other hooks print one `skipped` line,
-the stop gate does not block if it cannot save its counter. `hub.json` is the one `$HUB_CONFIG` names (hub: its folder),
+through `stdlib_reader.py` beside them and fail open: on a crash the guard asks (as `pre_tool_use.py` does when
+`guard.py` is missing or does not import, naming the error), other hooks print one `skipped` line, the stop gate does
+not block if it cannot save its counter. `hub.json` is the one `$HUB_CONFIG` names (hub: its folder),
 else the hook root's (the hub or hub worktree holding the hook files; a worktree reads its own `hub.json`, but the hub
 is its main checkout and the workspace that checkout's parent), else (plugin cache) the first found walking up from the
 start, a sibling hub only if the start is in it or a repo it lists. That file gives every value (repos, the stop gate's
-`check_fast`, SessionStart's `platform.version`, default branch, branch prefix, hub, workspace), except that
+`check_stop` and `check_fast`, SessionStart's `platform.version`, default branch, branch prefix, hub, workspace), except that
 `$HUB_CONFIG`'s `ask_before_edit`, `deny_paths`, `deny_hosts` and `secret_env_files` are added to the hook root's, never
 replace them, and `readable_env_files` is the hook root's only; for
 `guard.infra`, the mode and `allow` are the hook root's only and `$HUB_CONFIG`'s `prod_markers` and unusable-value
@@ -100,11 +101,13 @@ within one 60 s limit, then the call's process group is killed. A failed refresh
 (`resolve failed`, `failed (exit N)`, `failed (no output)`, `failed (cannot start)`, `timed out`); one that succeeds
 removes it. Plain `hub brief` writes nothing; only `--write-cache` writes the cache (folder made with its own
 `.gitignore` first, refused when it is a link, file replaced atomically). Guard extension: the seeded `plugin/<project>/hooks/project_guard.py` of the hook root (never from
-`CLAUDE_PROJECT_DIR`, the cwd or tool input). Unless the base verdict is `deny` (final), it runs in a child `python3` in
-its own session (3 s, then killed with its process group) and only tightens: `check(event, cfg)` returns `None`,
-`("deny", reason)` or `("ask", reason)`, and the child, given the event JSON on stdin, prints it as one JSON value,
-`null` or `{"verdict": "deny"|"ask", "reason": "..."}`; anything else (other verdict or type, non-zero exit, unparseable
-or extra output, timeout, a file resolving outside the hub) gives `ask` with the cause; no file: skipped. The base guard
+`CLAUDE_PROJECT_DIR`, the cwd or tool input). Unless the base verdict is `deny` (final), it runs in a child forked from
+the hook (no new interpreter) that leads its own session and calls `project_guard_runner.py`'s `main`, unchanged, with
+the argv and streams a run of that file would get (3 s, then its process group is killed). It only tightens:
+`check(event, cfg)` returns `None`, `("deny", reason)` or `("ask", reason)`, and the child, given the event JSON on
+stdin, prints it as one JSON value, `null` or `{"verdict": "deny"|"ask", "reason": "..."}`; anything else (other verdict
+or type, non-zero exit, unparseable or extra output, timeout, a fork that fails, a file resolving outside the hub) gives
+`ask` with the cause; no file: skipped. The base guard
 asks before edits to `plugin/hub-workflow/hooks/`, `plugin/<project>/hooks/`, `.claude/settings*.json`, `hub.lock`,
 `hub.json` and the `hub`/`agent` launchers (Bash asks only when it writes one). It is a guardrail against mistakes, not
 a sandbox: it matches tool input and Bash text by pattern, so a determined agent can get round it. A hook's `ask` prompts in every Claude Code mode, so in a session whose
@@ -123,13 +126,24 @@ uv's cache and tool folders to `<hub>/.hub-uv/` (which ignores itself) only when
 path, and it would change every repo's uv), and `sandbox.filesystem.allowWrite` on `~/.cache/uv` or
 `~/.local/share/uv` would let a sandboxed agent plant code that later runs unsandboxed (uv tools on `PATH`).
 `hub doctor`'s `sandbox.workflow` checks the exclusions. The stop gate checks the checkouts holding cwd or a file the session or its subagents edited,
-changed since the transcript's first timestamp (else its birth time, else 12 h ago); in one 160 s budget each run gets
-`repos[].check_fast_timeout` (default 150 s), then its group is killed; a cut run says `not run`.
-The event sensor `event_sensor.py` (AGH-200) is registered beside them on eleven events (SessionStart,
-UserPromptSubmit, PreToolUse, PostToolUse and PostToolUseFailure with matcher `*`, Notification, Stop, SubagentStart,
-SubagentStop, PreCompact, SessionEnd; timeout 5 s): it reads the input (at most 16 MiB), reduces each body to its size
-(the prompt to `prompt_chars` and `prompt_slash_command`; a Write's `content` and an Edit's or MultiEdit edit's
-`old_string`/`new_string` to `<key>_lines`, a Write under `brain/_inbox/` keeping its first heading as
+changed since the transcript's first timestamp (else its birth time, else 12 h ago), running the repo's `check_stop`, else
+its `check_fast`; in one 160 s budget each run gets
+`repos[].check_fast_timeout` (default 150 s), then its group is killed; a cut run says `not run`. A `check_stop` run
+gets the checkout's changed paths in `HUB_CHANGED_FILES`, one per line, unless git quotes one of them, git's output
+holds U+0085, U+2028 or U+2029 (raw in a name under `core.quotePath=false`), the list is over 64 KiB or the start fails
+with `E2BIG` (then it starts again without it); no check inherits the variable from the gate
+([project-config.md](project-config.md)). The summary names the kind of command the changed repos were given.
+PreToolUse has one hook, `pre_tool_use.py` (matcher `*`, 10 s; AGH-621), where it had the guard's and the sensor's. It
+reads the event once and hands the call to the guard module when the tool is one the guard's former anchored matcher
+named (its `GUARDED_TOOLS`: Bash, Read, Grep, Glob, Edit, Write, MultiEdit, NotebookEdit, WebFetch, WebSearch, Task,
+Agent, SendMessage and every `mcp__` tool) or when the event is not a JSON object, whatever the tool; it prints what
+`guard.py` prints, byte for byte (nothing for any other call), flushes it, then runs the sensor and exits 0. `guard.py`
+and `event_sensor.py` stay and still work alone, for settings written before the hook.
+The event sensor `event_sensor.py` (AGH-200) is registered beside them on ten events (SessionStart, UserPromptSubmit,
+PostToolUse and PostToolUseFailure with matcher `*`, Notification, Stop, SubagentStart, SubagentStop, PreCompact,
+SessionEnd; timeout 5 s) and runs inside `pre_tool_use.py` on PreToolUse: it reads the input (at most 16 MiB), reduces
+each body to its size (the prompt to `prompt_chars` and `prompt_slash_command`; a Write's `content` and an Edit's or
+MultiEdit edit's `old_string`/`new_string` to `<key>_lines`, a Write under `brain/_inbox/` keeping its first heading as
 `content_heading`; `tool_response` to `tool_response_bytes`), replaces each string still over 64 KiB with
 `{"_omitted_bytes": n}`, wraps it in the v1 envelope `{v, project, repo, run, step, attempt, sent_at, hook}`
 (project from `hub.json`, repo from the cwd's checkout or worktree, run/step/attempt from `AGENT_HUB_RUN_ID`,
@@ -140,7 +154,12 @@ no hub found sends nothing; it never prints and always exits 0. After deciding, 
 guard sends a deny or an ask (`decision: {by: guard, kind, rule}`, `rule` a stable id read from the reason, e.g.
 `push_protected_branch`, `ask_before_edit`) and the Stop gate a block (`{by: stop_gate, kind: block, command,
 exit_code}`) through the sensor's `send_decision`, bounded the same way; their output and exit codes do not change
-(characterization goldens `golden/guard`, `golden/stop_gate`). Proof: integration tests.
+(characterization goldens `golden/guard`, `golden/stop_gate`). In `pre_tool_use.py` the guard's decision goes first and
+the event's own envelope second, within one 0.5 s deadline for both that starts once the verdict is flushed; fd 1 then
+points at `/dev/null`, so nothing written after the verdict can follow it, and nothing that fails there touches the
+verdict or the exit code. The deadline leaves out name resolution: for a `localhost` URL the lookup runs before any limit
+applies, and each address it returns gets the time still left, so a slow resolver or two addresses that never answer
+can take longer (the hook's own 10 s limit still holds). Proof: integration tests.
 The read-only gate `readonly_gate.py` (AGH-141) is a second group on SubagentStart (timeout 10 s) and SubagentStop
 (30 s), after the sensor's. It acts only for a declared agent: the first definition whose frontmatter `name` is the bare
 `agent_type` (split at its last `:`), looked up in the hook root's `.claude/agents/`, then `plugin/<project>/agents/`,
@@ -201,7 +220,7 @@ report instead of block for up to 12 h. Proof: integration tests, characterizati
 | `bench.py`, `make bench`, `make bench-validate` | `hub bench [--validate] [options]`, module `bench` | cases stay in the brain: `brain/workflow/bench/tasks.json` (absent or `[]`: nothing to do; bounds: the `bench.tasks` row of [hub-doctor.md](hub-doctor.md)); without `bench` selected, exit 2 `module bench is not selected`. `--validate` (no run option) grades each case not excluded at its merge's parent (must fail) and at its merge (must pass), never runs `claude`. A run (`--runs` 3, `--arms with,without`, `--cases` all, `--budget` 15, `--per-run` 2, `--parallel` 3, `--label` `bench-%Y%m%d-%H%M`, `--trace`; `BENCH_EFFORT` low/medium/high) lays `origin/main`'s agent config over each case's merge parent in a detached worktree under `<ws>/_bench/wt` (`<ws>`: the folder of the hub's main checkout), runs one `claude -p` per job (the `with` arm enables `hub-workflow@<project>`), then grades it; a wave starts only while it fits the budget (else `STOP:`), and a failed session without a cost counts at `--per-run`. Records go to `<ws>/_bench/results/<label>.jsonl` (traces in `results/traces/`, files 0600), then the summary. Children run without `LINEAR_API_KEY`, `GH_TOKEN`, `GITHUB_TOKEN`; sessions use `--setting-sources user`, so the user's own hooks and plugins load in both arms (AGH-77 checks whether project instruction files are read). `<ws>/_bench/bench.lock` allows one bench per workspace; a left-behind lock exits 1 for the user to delete. Each job's `git worktree add` and its removal (`remove`, `prune`) run under one in-process lock, one at a time (AGH-120). Exits: 0 done, 1 bad cases, wrong grade, failed step or lock, 2 usage |
 | `agent_config_lint.py`, `features_check.py`; `hubconfig.py` | doctor rules ([hub-doctor.md](hub-doctor.md)); `hubconfig.py` dropped (the CLI reads `HubConfig`) | skills run `hub doctor --only features.tracker` |
 | `cloud-setup.sh` | stays a hub file, module `cloud` | sets the git identity from `hub.json`'s author (global and repo-local), else from `HUB_AUTHOR_NAME`/`HUB_AUTHOR_EMAIL` repo-local only, else a WARN ([developer-identity.md](developer-identity.md)); checks access to the pinned tag (`git ls-remote`), warms the uv cache (from the commit `hub.lock` records for the pin, else the tag; ADR 0054), then fetches the repos; no access: exit 1 naming it; it cannot need the CLI |
-| `mine_transcripts.py`, `recall_transcripts.py`, `retro_metrics.py`, `make mine`, `make retro`; `guard.py`, `hubhooks.py`, `hooks.json`, `post_edit.py`, `stop_gate.py`, `session_start.py`, `session_end.py`, `pre_compact.py`, `event_sensor.py`, `readonly_gate.py` | stay hub files, managed | scripts: AGH-5 R12, Phase 2 redesigns them; hooks: the hooks exception, AGH-5 D9 ([ADR 0012](../adr/0012-cli-subsumes-hub-scripts.md)) |
+| `mine_transcripts.py`, `recall_transcripts.py`, `retro_metrics.py`, `make mine`, `make retro`; `guard.py`, `hubhooks.py`, `hooks.json`, `post_edit.py`, `stop_gate.py`, `session_start.py`, `session_end.py`, `pre_compact.py`, `event_sensor.py`, `readonly_gate.py`, `pre_tool_use.py` | stay hub files, managed | scripts: AGH-5 R12, Phase 2 redesigns them; hooks: the hooks exception, AGH-5 D9 ([ADR 0012](../adr/0012-cli-subsumes-hub-scripts.md)) |
 | `make usage`, `make check`, `make help` | stay targets; `check` runs `hub doctor`, `hub workflow test` (the packs' fixtures) and the hub's own tests | `usage` wraps an external cost tool until the Phase 2 cost view; hook tests move to agent-hub |
 
 Every caller (Makefile `HUB`: `$(CURDIR)/hub` single-quoted; pre-commit `./hub doctor`; skills; `./agent`) goes through

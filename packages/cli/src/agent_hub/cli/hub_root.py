@@ -15,9 +15,10 @@ import typer
 
 from agent_hub.cli.child_process import git_env, run_child
 from agent_hub.cli.command_exits import fail, root_or_exit
-from agent_hub.cli.hub_config_reader import FILE_LABEL
 from agent_hub.cli.init_report import shown_path
 
+# Here, not in hub_config_reader (which re-exports it), so finding the root loads no config model.
+FILE_LABEL = "hub.json"
 HUB_ROOT_VARIABLE: Final = "AGENT_HUB_ROOT"
 # A root without hub.json is a usage error, as in hub doctor.
 NOT_A_HUB_EXIT: Final = 2

@@ -34,7 +34,13 @@ SHIM_PATH = "./hub --version (local uvx stand-in)"
 ADR_PAGES = ("/sessions", "/projects/perf/brain/tree-3/note-050.md")
 # The route rows added after the seed, at ADR 0053's `every` route ceiling.
 ADR_ROUTES = ("/api/v1/projects/perf/brain", "/api/v1/projects/perf/brain (6 parallel)")
-ADR_PATHS = (*LIST_COMMAND_PATHS, SHIM_PATH, *ADR_PAGES, *ADR_ROUTES)
+# AGH-621 (Q15): the one PreToolUse hook on three tools, each at ADR 0053's ceiling for a hook.
+PRE_TOOL_USE_PATHS = (
+    "pre_tool_use (PreToolUse Bash)",
+    "pre_tool_use (PreToolUse Read)",
+    "pre_tool_use (PreToolUse Edit)",
+)
+ADR_PATHS = (*LIST_COMMAND_PATHS, SHIM_PATH, *ADR_PAGES, *ADR_ROUTES, *PRE_TOOL_USE_PATHS)
 
 
 def _write(path: Path, rows: list[dict[str, object]], **top: object) -> Path:
@@ -228,7 +234,7 @@ def test_raises_budget_file_error_when_enforced_is_not_a_boolean(
 
 def test_enforces_nothing_with_the_default_margin_when_shipped() -> None:
     budgets = load_budgets(SHIPPED)
-    assert len(budgets) == 33
+    assert len(budgets) == 36
 
     assert [key for key, budget in budgets.items() if budget.enforced] == []
     assert budgets_module.load_margin(SHIPPED) == pytest.approx(0.2)
@@ -288,6 +294,10 @@ OWNER_TABLE: list[tuple[str, str, Budget | None]] = [
         ("hook", hook, Budget(p95_ms=80, api_calls=None, rss_mb=None, source=PROPOSED))
         for hook in HOOKS
     ],
+    *[
+        ("hook", hook, Budget(p95_ms=80, api_calls=None, rss_mb=None, source=ADR_SOURCE))
+        for hook in PRE_TOOL_USE_PATHS
+    ],
     (
         "hook",
         "session_start (local uvx stand-in)",
@@ -318,7 +328,7 @@ OWNER_TABLE: list[tuple[str, str, Budget | None]] = [
 
 @pytest.mark.parametrize(("kind", "path", "expected"), OWNER_TABLE)
 def test_seeds_the_owner_budget_when_shipped(kind: str, path: str, expected: Budget | None) -> None:
-    assert len(OWNER_TABLE) == 33
+    assert len(OWNER_TABLE) == 36
 
     assert load_budgets(SHIPPED).get((kind, path)) == expected
 
@@ -337,7 +347,7 @@ def test_names_only_probed_paths_when_the_shipped_budgets_are_read() -> None:
     }
     keys = [(row["kind"], row["path"]) for row in json.loads(SHIPPED.read_text("utf-8"))["rows"]]
     assert len(keys) > 0
-    assert len(probed) == 33
+    assert len(probed) == 36
 
     assert sorted(set(keys) - probed) == []
 
@@ -436,7 +446,7 @@ def test_keeps_every_budget_under_the_adr_ceiling_when_shipped() -> None:
 def test_names_only_probed_paths_when_the_adr_table_is_read() -> None:
     ceilings = _ceilings(ADR.read_text("utf-8"))
     probed = _probed()
-    assert len(probed) == 33
+    assert len(probed) == 36
 
     assert [c for c in ceilings if c.paths != EVERY and (c.kind, c.paths) not in probed] == []
     assert sorted({c.kind for c in ceilings}) == sorted({kind for kind, _path in probed})

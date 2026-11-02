@@ -42,6 +42,7 @@ from agent_hub.core.workflows.catalog import (
     WorkflowSource,
     check_workflows,
 )
+from agent_hub.core.workflows.catalog import SourceStat as SourceStat
 from agent_hub.core.workflows.plan import WorkflowPlan
 
 
@@ -116,10 +117,6 @@ class WorkflowCatalogView(ViewModel):
 
     items: tuple[WorkflowSummary, ...]
     problems: tuple[WorkflowProblemView, ...]
-
-
-# One listing entry: its path as ``WorkflowFile.file`` shows it, its size and mtime_ns.
-type SourceStat = tuple[str, int, int]
 
 
 class ListedWorkflowSource(WorkflowSource, Protocol):

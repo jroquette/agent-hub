@@ -15,6 +15,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import sys
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
@@ -1261,3 +1262,768 @@ def test_keeps_block_when_event_server_slow(
     assert (completed.returncode, completed.stderr) == (0, b"")
     assert json.loads(completed.stdout)["decision"] == "block"
     assert time.monotonic() - started < 2.5
+
+
+# repos[].check_stop: a repo's narrower command, which the gate runs in place of its check_fast.
+# The fake checks append the name they are given, one line each, to a run log under tmp_path.
+CHECK_FAST_GREEN = (
+    "[hub] code changed and check_fast is green. If the work spans sessions, run /handoff."
+)
+# Added to a fake check's name: "=<value>" when HUB_CHANGED_FILES is set, even to "".
+WITH_CHANGED_FILES = "${HUB_CHANGED_FILES+=$HUB_CHANGED_FILES}"
+# The hook's MAX_BLOCKS (test_keeps_budget_inside_hook_timeout_when_constants_rendered).
+MAX_BLOCKS = 3
+
+
+def appending(log: Path, name: str) -> str:
+    """A check that appends ``name`` to ``log`` as one line; bash expands it (double quotes)."""
+    return f'echo "{name}" >> {shlex.quote(str(log))}'
+
+
+def recorded(log: Path) -> list[str]:
+    """The lines the fake checks appended to ``log``, in run order; none when no check ran."""
+    return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+
+
+def test_runs_check_stop_instead_of_check_fast_when_repo_sets_it(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    log = tmp_path / "runs.log"
+    repo = {
+        "dir": "app",
+        "check_fast": appending(log, "check_fast"),
+        "check_stop": appending(log, "check_stop"),
+    }
+
+    run_hook([repo], workspace / "app")
+
+    assert recorded(log) == ["check_stop"]
+
+
+def test_blocks_with_check_stop_command_when_it_fails(
+    workspace: Path, hook_python: str, *, tmp_path: Path, event_server: Any
+) -> None:
+    # As a failing check_fast does: one block per stop, each sent with the command that ran,
+    # until MAX_BLOCKS; the next stop lets the session finish and names the command kind.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    command = "echo boom; exit 3"
+    repos = [{"dir": "app", "check_fast": "true", "check_stop": command}]
+    env = scratch_env(tmp_path) | {"AGENT_HUB_WEB_URL": event_server.url}
+
+    runs = [
+        run_gate(workspace, hook_python, repos=repos, env=env)[0] for _ in range(MAX_BLOCKS + 1)
+    ]
+
+    assert [(run.returncode, run.stderr) for run in runs] == [(0, b"")] * (MAX_BLOCKS + 1)
+    *blocks, release = [json.loads(run.stdout) for run in runs]
+    assert [output.get("decision") for output in blocks] == ["block"] * MAX_BLOCKS
+    for output in blocks:
+        assert output["reason"].startswith("[hub stop-gate] ")
+        assert f"## app (app): `{command}` FAILED\n" in output["reason"]
+    assert "decision" not in release
+    assert release.get("systemMessage", "").startswith(
+        "[hub stop-gate] check_stop still failing after 3 attempts"
+    )
+    decisions = [HookEnvelope.model_validate(body).decision for body in event_server.bodies()]
+    sent = {"by": "stop_gate", "kind": "block", "rule": None, "command": command, "exit_code": 3}
+    assert [None if decision is None else decision.model_dump() for decision in decisions] == [
+        sent
+    ] * MAX_BLOCKS
+
+
+def test_runs_each_repo_choice_when_two_repos_changed(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # The session's cwd is in web, so web runs first; then app, which an edit touched. Each
+    # repo runs the command it chose, one after the other in the one gate run.
+    transcript = touch_both(workspace, tmp_path)
+    log = tmp_path / "runs.log"
+    repos = [
+        {
+            "dir": "app",
+            "check_fast": appending(log, "app check_fast"),
+            "check_stop": appending(log, "app check_stop"),
+        },
+        {"dir": "web", "check_fast": appending(log, "web check_fast")},
+    ]
+
+    run_hook(repos, workspace / "web", transcript=transcript)
+
+    assert recorded(log) == ["web check_fast", "app check_stop"]
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        pytest.param("check_stop", "check_fast", id="check_stop_first"),
+        pytest.param("check_fast", "check_stop", id="check_fast_first"),
+    ],
+)
+def test_names_second_repo_not_run_when_check_stop_and_check_fast_share_budget(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, first: str, second: str
+) -> None:
+    # Both kinds of command run on the one budget, here 3 s: app's run, first from the hub, is
+    # cut by it, and web's never starts, whichever of the two repos chose check_stop.
+    transcript = touch_both(workspace, tmp_path)
+    started = tmp_path / "web-started"
+    web_check = f"touch {shlex.quote(str(started))}; sleep 30"
+    repos = [{"dir": "app", first: "sleep 30"}, {"dir": "web", second: web_check}]
+
+    start = time.monotonic()
+    output = run_hook(repos, workspace / "demo-hub", transcript=transcript, constant=("BUDGET", 3))
+    took = time.monotonic() - start
+
+    assert took < 20
+    assert not started.exists()
+    assert "decision" not in output
+    message = output.get("systemMessage", "")
+    assert message.startswith(
+        "[hub stop-gate] check_stop/check_fast did not finish in every changed repo;"
+    )
+    assert "app (app): not run: budget" in message
+    assert "web (web): not run: budget" in message
+
+
+@pytest.mark.parametrize(
+    "check_stop",
+    [
+        pytest.param(None, id="absent"),
+        pytest.param("  ", id="blank"),
+        pytest.param(5, id="number"),
+        pytest.param([], id="list"),
+    ],
+)
+def test_runs_check_fast_without_changed_files_when_check_stop_unusable(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, check_stop: object
+) -> None:
+    # A check_stop the hooks read as none leaves the gate as it is without one: check_fast runs,
+    # with no HUB_CHANGED_FILES, and the reminder is the same bytes.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    log = tmp_path / "runs.log"
+    repo: dict[str, object] = {
+        "dir": "app",
+        "check_fast": appending(log, "check_fast" + WITH_CHANGED_FILES),
+    }
+    if check_stop is not None:
+        repo["check_stop"] = check_stop
+    transcript = write_transcript(tmp_path / "session.jsonl")
+
+    output = run_hook([repo], workspace / "app", transcript=transcript)
+
+    assert recorded(log) == ["check_fast"]
+    assert output == {"systemMessage": CHECK_FAST_GREEN}
+
+
+@pytest.mark.serial
+def test_kills_check_stop_at_check_fast_timeout_when_it_sleeps(
+    run_hook: RunHook, workspace: Path
+) -> None:
+    # check_fast_timeout limits whichever command the gate runs: cut at 2 s, well before its
+    # 10 s sleep would end, and named as not run, which never blocks. The summary names the
+    # command that did not finish, check_stop.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    repo = {"dir": "app", "check_stop": "sleep 10", "check_fast_timeout": 2}
+
+    start = time.monotonic()
+    output = run_hook([repo], workspace / "app")
+    took = time.monotonic() - start
+
+    assert "decision" not in output
+    assert output.get("systemMessage", "").startswith(
+        "[hub stop-gate] check_stop did not finish in every changed repo; finishing anyway."
+    )
+    assert "app (app): not run: timeout (2 s)" in output.get("systemMessage", "")
+    assert took < 8
+
+
+@pytest.mark.parametrize(
+    ("repos", "constant", "summary"),
+    [
+        pytest.param(
+            [{"dir": "app", "check_stop": "true"}],
+            None,
+            "[hub] code changed and check_stop is green.",
+            id="green",
+        ),
+        pytest.param(
+            [{"dir": "app", "check_stop": "echo boom; exit 3"}],
+            None,
+            "[hub stop-gate] Fix these before finishing (check_stop must pass):\n",
+            id="failed",
+        ),
+        pytest.param(
+            [{"dir": "app", "check_stop": "true"}],
+            ("MIN_RUN", 200),
+            "[hub stop-gate] check_stop did not finish in every changed repo; finishing anyway.",
+            id="budget_cut",
+        ),
+        pytest.param(
+            [{"dir": "app", "check_stop": "true"}],
+            ("GIT_TIMEOUT", 0),
+            "[hub stop-gate] check_stop did not finish in every changed repo; finishing anyway.",
+            id="status_cut",
+        ),
+        pytest.param(
+            [{"dir": "app", "check_fast": "true"}, {"dir": "web", "check_stop": "true"}],
+            None,
+            "[hub] code changed and check_stop/check_fast is green.",
+            id="both_kinds",
+        ),
+    ],
+)
+def test_names_check_stop_in_summary_when_repo_selects_it(
+    run_hook: RunHook,
+    workspace: Path,
+    tmp_path: Path,
+    *,
+    repos: list[dict[str, object]],
+    constant: tuple[str, object] | None,
+    summary: str,
+) -> None:
+    # The summary names the kind of command each changed repo was given, even one the budget
+    # never let start (MIN_RUN above the budget), or whose git status it left no time for
+    # (GIT_TIMEOUT 0 caps that status as a spent budget does). With both kinds, app's check_fast
+    # runs first from the hub, yet the name keeps its one order. A repo with a check_stop never
+    # reads as having no command.
+    touches = [
+        ("Edit", "file_path", changed(workspace / str(repo["dir"]) / "x.py")) for repo in repos
+    ]
+    transcript = write_transcript(tmp_path / "session.jsonl", touches=touches)
+
+    output = run_hook(repos, workspace / "demo-hub", transcript=transcript, constant=constant)
+
+    text = output.get("reason") or output.get("systemMessage", "")
+    assert text.startswith(summary)
+    assert "no check_fast configured" not in text
+
+
+def test_blocks_naming_check_stop_when_it_cannot_start(
+    run_hook: RunHook, workspace: Path, *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The gate's PATH holds git alone, so bash, which runs every check, cannot start: a failure,
+    # so a block, named after the kind of command the gate chose.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    git = shutil.which("git")
+    assert git is not None
+    only_git = tmp_path / "only-git"
+    only_git.mkdir()
+    (only_git / "git").symlink_to(git)
+    assert shutil.which("bash", path=str(only_git)) is None
+    monkeypatch.setenv("PATH", str(only_git))
+
+    output = run_hook([{"dir": "app", "check_stop": "true"}], workspace / "app")
+
+    assert output.get("decision") == "block"
+    assert "\ncheck_stop could not start: " in output["reason"]
+
+
+def test_warns_naming_check_stop_when_block_counter_unwritable(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # As for check_fast (test_hooks_fail_open.py): without its block counter the gate could never
+    # release, so a failing check_stop gives a warning, no block, that names check_stop.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    session = f"unwritable-{os.getpid()}-{tmp_path.name}"
+    (tmp_path / "tmp" / f"hub-stop-{session}.json").mkdir()  # the counter's path is a folder
+
+    output = run_hook(
+        [{"dir": "app", "check_stop": "echo boom; exit 3"}], workspace / "app", session=session
+    )
+
+    assert "decision" not in output
+    assert output.get("systemMessage", "").startswith(
+        "[hub stop-gate] check_stop still failing and the block counter could not be saved; "
+        "finishing anyway. Do not claim the work is done."
+    )
+    assert "boom" in output["systemMessage"]
+
+
+# HUB_CHANGED_FILES: the paths the session changed in the checkout, given to check_stop alone; left
+# unset when git prints one of them quoted, or raw with a character Python's splitlines() breaks a
+# line at, or when the list passes CHANGED_FILES_CAP bytes.
+CHANGED_FILES_CAP = 65_536
+# The pause on each side of a session start taken between writes: well over the tick of the clock
+# the kernel dates files by (at most 10 ms), which can trail the time Python reads.
+DATE_PAUSE = 0.05
+
+
+def saving(saved: Path) -> str:
+    """A check that saves the ``HUB_CHANGED_FILES`` it got, as is, or ``unset``, to ``saved``."""
+    return f'printf %s "${{HUB_CHANGED_FILES-unset}}" > {shlex.quote(str(saved))}'
+
+
+def saved_bytes(saved: Path) -> bytes | None:
+    """What a fake check saved at ``saved``; ``None`` when no check ran to save it."""
+    return saved.read_bytes() if saved.exists() else None
+
+
+def git_in(top: Path, tmp_path: Path, *args: str) -> str:
+    """Run git in ``top`` with the scratch environment and a fixed identity; its stdout."""
+    git = shutil.which("git")
+    assert git is not None
+    identity = ["-c", "user.name=t", "-c", "user.email=t@example.com"]
+    completed = subprocess.run(  # noqa: S603 - git found on PATH, fixed arguments
+        [git, *identity, *args],
+        cwd=top,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=scratch_env(tmp_path),
+    )
+    return completed.stdout
+
+
+def bash_in(top: Path, tmp_path: Path, command: str) -> None:
+    """Run ``command`` with bash in ``top``, in the scratch environment."""
+    bash = shutil.which("bash")
+    assert bash is not None
+    subprocess.run(  # noqa: S603 - bash found on PATH, a command of this test
+        [bash, "-c", command], cwd=top, check=True, capture_output=True, env=scratch_env(tmp_path)
+    )
+
+
+def write_new_files(top: Path, size: int) -> bytes:
+    """New code files in ``top`` whose sorted names, joined by newlines, take ``size`` bytes.
+
+    Returns that list: names of 100 bytes, the last one shorter, numbered so they sort as made.
+    """
+    count = -(-(size + 1) // 101)
+    last = size - (count - 1) * 101
+    assert 8 <= last <= 100, size
+    names = [f"{index:04d}{'x' * 93}.py" for index in range(count - 1)]
+    names.append(f"{count - 1:04d}{'x' * (last - 7)}.py")
+    for name in names:
+        (top / name).write_text("x = 1\n", encoding="utf-8")
+    listed = "\n".join(names).encode("utf-8")
+    assert len(listed) == size
+    return listed
+
+
+def start_between_writes() -> datetime:
+    """A session start after the dates of the files written so far, before those written next.
+
+    The gate counts a file by its ctime too, and os.utime moves the ctime to now: a file older than
+    the session by both dates is one written before this start.
+    """
+    time.sleep(DATE_PAUSE)
+    start = datetime.now(UTC)
+    time.sleep(DATE_PAUSE)
+    return start
+
+
+def test_lists_changed_paths_when_check_stop_runs(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # One session in app: a.py edited, b.py moved to c.py with git mv (b.py is older than the
+    # session, and the move keeps that date), old.py deleted, docs/x.md new, stale.md older than
+    # the session. Both sides of the move and the deletion count; stale.md is no change of this
+    # session. The changed line of the block keeps to code files changed in the session.
+    app = workspace / "app"
+    for name in ("a.py", "old.py"):
+        (app / name).write_text("x = 1\n", encoding="utf-8")
+    set_mtime(app / "b.py", datetime.now(UTC) - timedelta(hours=2))
+    git_in(app, tmp_path, "add", "-A")
+    git_in(app, tmp_path, "commit", "-qm", "before the session")
+    (app / "stale.md").write_text("x = 1\n", encoding="utf-8")
+    start = start_between_writes()
+    (app / "a.py").write_text("x = 2\n", encoding="utf-8")
+    git_in(app, tmp_path, "mv", "b.py", "c.py")
+    (app / "old.py").unlink()
+    (app / "docs").mkdir()
+    (app / "docs" / "x.md").write_text("# x\n", encoding="utf-8")
+    status = git_in(app, tmp_path, "status", "--porcelain", "--untracked-files=all")
+    assert sorted(status.splitlines()) == sorted(
+        [" M a.py", "R  b.py -> c.py", " D old.py", "?? docs/x.md", "?? stale.md"]
+    )
+    assert (app / "c.py").stat().st_mtime < start.timestamp()
+    saved = tmp_path / "changed-files"
+    transcript = write_transcript(tmp_path / "session.jsonl", start=start)
+
+    output = run_hook(
+        [{"dir": "app", "check_stop": saving(saved) + "; exit 3"}], app, transcript=transcript
+    )
+
+    assert saved_bytes(saved) == b"a.py\nb.py\nc.py\ndocs/x.md\nold.py"
+    assert output.get("decision") == "block"
+    assert "\nchanged: a.py\n" in output["reason"]
+
+
+def test_runs_nothing_when_check_stop_repo_changed_only_non_code(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # The trigger keeps the code-only rule: docs/x.md would be on check_stop's list, but with no
+    # code file changed the gate runs neither command and stays silent.
+    app = workspace / "app"
+    (app / "docs").mkdir()
+    (app / "docs" / "x.md").write_text("# x\n", encoding="utf-8")
+    log = tmp_path / "runs.log"
+    repo = {
+        "dir": "app",
+        "check_fast": appending(log, "check_fast"),
+        "check_stop": appending(log, "check_stop"),
+    }
+
+    output = run_hook([repo], app)
+
+    assert recorded(log) == []
+    assert output == {}
+
+
+@pytest.mark.parametrize(
+    ("before", "command", "status", "listed"),
+    [
+        pytest.param(
+            "",
+            "mkdir pkg2 && mv pkg1/b.py pkg2/b.py",
+            [" M a.py", " D pkg1/b.py", "?? pkg2/b.py"],
+            b"a.py\npkg1/b.py\npkg2/b.py",
+            id="mv_across_folders",
+        ),
+        pytest.param(
+            "",
+            "mv pkg1 pkg2",
+            [" M a.py", " D pkg1/b.py", " D pkg1/sub/c.py", "?? pkg2/b.py", "?? pkg2/sub/c.py"],
+            b"a.py\npkg1/b.py\npkg1/sub/c.py\npkg2/b.py\npkg2/sub/c.py",
+            id="mv_folder",
+        ),
+        pytest.param(
+            "mkdir -p pkg1/sub/deep/inner && echo 'x = 3' > pkg1/sub/deep/inner/d.py"
+            " && git add -A && git -c user.name=t -c user.email=t@example.com commit -qm deep",
+            "mv pkg1/sub/deep pkg1/sub/moved",
+            [" M a.py", " D pkg1/sub/deep/inner/d.py", "?? pkg1/sub/moved/inner/d.py"],
+            b"a.py\npkg1/sub/deep/inner/d.py\npkg1/sub/moved/inner/d.py",
+            id="mv_folder_below_older_folder",
+        ),
+        pytest.param(
+            "echo 'x = 3' > pkg1/b.py",
+            "echo 'x = 1' > pkg1/new.py",
+            [" M a.py", " M pkg1/b.py", "?? pkg1/new.py"],
+            b"a.py\npkg1/new.py",
+            id="tracked_edit_before_session_in_changed_folder",
+        ),
+        pytest.param(
+            "",
+            "ln -s b.py link.py",
+            [" M a.py", "?? link.py"],
+            b"a.py\nlink.py",
+            id="link_to_old_file",
+        ),
+        pytest.param(
+            "",
+            "git mv b.py c.py && echo 'x = 2' > b.py",
+            [" M a.py", "R  b.py -> c.py", "?? b.py"],
+            b"a.py\nb.py\nc.py",
+            id="git_mv_then_same_name",
+        ),
+        pytest.param(
+            "git mv b.py c.py",
+            "",
+            [" M a.py", "R  b.py -> c.py"],
+            b"a.py\nb.py\nc.py",
+            id="git_mv_before_session",
+        ),
+        pytest.param(
+            "git config diff.renames copies",
+            "cp pkg1/b.py c.py && echo 'x = 3' >> pkg1/b.py && git add pkg1/b.py c.py",
+            [" M a.py", "M  pkg1/b.py", "C  pkg1/b.py -> c.py"],
+            b"a.py\nc.py\npkg1/b.py",
+            id="copy_record",
+        ),
+    ],
+)
+def test_lists_moved_and_linked_paths_when_check_stop_runs(
+    run_hook: RunHook,
+    workspace: Path,
+    tmp_path: Path,
+    *,
+    before: str,
+    command: str,
+    status: list[str],
+    listed: bytes,
+) -> None:
+    # b.py, pkg1/b.py and pkg1/sub/c.py were committed before the session, older than it by both
+    # dates. Each row runs one shell command before the session starts, and one after the session
+    # edits a.py, so the gate runs. A plain mv, not staged, is a deletion and an untracked file to
+    # git, and keeps the file's mtime: the new name counts by the ctime the move set. A folder
+    # moved with mv keeps both dates of the files in it: they count by the ctime of a folder
+    # between the checkout's top and them, here pkg2 above the older pkg2/sub. The gate reads
+    # every such folder: pkg1/sub/moved/inner/d.py counts though its first folder, pkg1, and its
+    # nearest, pkg1/sub/moved/inner, are both older than the session. Only an untracked path
+    # counts by its folder: pkg1/b.py, edited before the session, stays out though pkg1 gains a
+    # file. A new link counts by its own dates, not its older target's. Both names of a rename
+    # count whenever git lists them, even when the rename was staged before the session and c.py
+    # is older than it by both dates. A copy record, which git prints under diff.renames=copies,
+    # is split the same way. A name git lists twice, a staged rename's old name and a file made
+    # again under it, is listed once.
+    app = workspace / "app"
+    (app / "pkg1" / "sub").mkdir(parents=True)
+    for name in ("a.py", "b.py", "pkg1/b.py", "pkg1/sub/c.py"):
+        (app / name).write_text("x = 1\n", encoding="utf-8")
+    git_in(app, tmp_path, "add", "-A")
+    git_in(app, tmp_path, "commit", "-qm", "before the session")
+    bash_in(app, tmp_path, before)
+    start = start_between_writes()
+    (app / "a.py").write_text("x = 2\n", encoding="utf-8")
+    bash_in(app, tmp_path, command)
+    found = git_in(app, tmp_path, "status", "--porcelain", "--untracked-files=all")
+    assert sorted(found.splitlines()) == sorted(status)
+    saved = tmp_path / "changed-files"
+    transcript = write_transcript(tmp_path / "session.jsonl", start=start)
+
+    run_hook([{"dir": "app", "check_stop": saving(saved)}], app, transcript=transcript)
+
+    assert saved_bytes(saved) == listed
+
+
+# argv: a checkout's top. Builds its check_stop list for a session that starts in a minute, so
+# that no file or folder counts, then prints the list and each path os.lstat read, sorted.
+FOLDER_READS = """\
+import json, os, time, stop_gate
+from pathlib import Path
+top, reads, lstat = sys.argv[1], [], os.lstat
+def reading(path, *args, **kwargs):
+    reads.append(path)
+    return lstat(path, *args, **kwargs)
+os.lstat = reading
+every = stop_gate.changed_code(Path(top), time.time() + 60, all_paths=True)[1]
+os.lstat = lstat
+print(json.dumps([every, sorted(os.path.relpath(path, top) for path in reads)]))
+"""
+
+
+def test_reads_each_folder_once_when_untracked_files_share_it(
+    workspace: Path, *, hook_python: str, tmp_path: Path, run_python: Callable[..., Any]
+) -> None:
+    # The gate keeps each folder's answer. Without it, each untracked file reads every folder
+    # above it again, and a deep tree with many files can pass the hook's timeout.
+    app = workspace / "app"
+    (app / "d1" / "d2").mkdir(parents=True)
+    for name in ("x.md", "y.md", "z.md"):
+        (app / "d1" / "d2" / name).write_text("x\n", encoding="utf-8")
+
+    result = run_python(
+        hook_python,
+        FOLDER_READS,
+        path=workspace / "demo-hub" / HOOK.rsplit("/", 1)[0],
+        args=[str(app)],
+        cwd=tmp_path,
+    )
+
+    assert result == [[], ["d1", "d1/d2", "d1/d2/x.md", "d1/d2/y.md", "d1/d2/z.md"]]
+
+
+def test_lists_whole_name_when_old_git_prints_arrow_unquoted(
+    run_hook: RunHook, workspace: Path, *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # git before 2.29 printed a space in an untracked name unquoted, so a new name holding " -> "
+    # reads like a rename record. A git first on the gate's PATH prints this tree's status as
+    # such a git did, and hands any other call to git. Each name is listed whole: no piece of it,
+    # absolute or holding "..", reaches check_stop.
+    app = workspace / "app"
+    names = ["a.py", "x -> /etc/passwd", "y -> ../z.py"]
+    for name in names:
+        (app / name).parent.mkdir(parents=True, exist_ok=True)
+        (app / name).write_text("x = 1\n", encoding="utf-8")
+    old_status = tmp_path / "old-status"
+    old_status.write_text("".join(f"?? {name}\n" for name in names), encoding="utf-8")
+    git = shutil.which("git")
+    assert git is not None
+    old_git = tmp_path / "old-git"
+    old_git.mkdir()
+    (old_git / "git").write_text(
+        f'#!/bin/sh\ncase "$1" in status) exec cat {shlex.quote(str(old_status))};; esac\n'
+        f'exec {shlex.quote(git)} "$@"\n',
+        encoding="utf-8",
+    )
+    (old_git / "git").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{old_git}{os.pathsep}{os.environ.get('PATH', os.defpath)}")
+    saved = tmp_path / "changed-files"
+
+    run_hook([{"dir": "app", "check_stop": saving(saved)}], app)
+
+    assert saved_bytes(saved) == b"a.py\nx -> /etc/passwd\ny -> ../z.py"
+
+
+def test_blocks_when_only_change_is_new_file_named_with_arrow(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # Only a rename or copy record is split at " -> ", so in a hub without check_stop this new
+    # code file starts check_fast under its whole name. The part after the arrow, y.py, names no
+    # file, so a gate that reads only that part runs nothing.
+    app = workspace / "app"
+    name = "x -> y.py"
+    (app / name).write_text("x = 1\n", encoding="utf-8")
+    status = git_in(app, tmp_path, "status", "--porcelain", "--untracked-files=all")
+    assert status == f'?? "{name}"\n'
+
+    output = run_hook([{"dir": "app", "check_fast": "echo boom; exit 3"}], app)
+
+    assert output.get("decision") == "block"
+    assert f"\nchanged: {name}\n" in output["reason"]
+
+
+@pytest.mark.parametrize(
+    ("quote_path", "name", "shown", "exit_code", "decision", "before_session"),
+    [
+        pytest.param("true", "café.py", '"caf\\303\\251.py"', 0, None, False, id="non_ascii"),
+        pytest.param("true", "my notes.md", '"my notes.md"', 3, "block", False, id="space"),
+        pytest.param(
+            "true", "my notes.md", '"my notes.md"', 0, None, True, id="space_before_session"
+        ),
+        pytest.param("false", "x\u0085y.py", "x\u0085y.py", 0, None, False, id="raw_next_line"),
+        pytest.param(
+            "false", "x\u2028y.py", "x\u2028y.py", 0, None, False, id="raw_line_separator"
+        ),
+        pytest.param(
+            "false", "x\u2029y.py", "x\u2029y.py", 0, None, False, id="raw_paragraph_separator"
+        ),
+    ],
+)
+def test_leaves_changed_files_unset_when_git_quotes_a_path(
+    run_hook: RunHook,
+    workspace: Path,
+    tmp_path: Path,
+    *,
+    quote_path: str,
+    name: str,
+    shown: str,
+    exit_code: int,
+    decision: str | None,
+    before_session: bool,
+) -> None:
+    # git prints this new name quoted, so a list could only leave it out and come up one path
+    # short: check_stop gets no list and finds the changes itself. It still runs, and its exit
+    # code decides as usual (a pass or a failure, by row). Under core.quotePath=false git prints
+    # a non-ASCII name raw, and Python's splitlines() breaks a line at U+0085, U+2028 and U+2029:
+    # the record would come apart into pieces of names, so no list either. A quoted name counts
+    # even when its file is older than the session by both dates (before_session): the gate
+    # cannot read the dates of a name it cannot unquote.
+    app = workspace / "app"
+    git_in(app, tmp_path, "config", "core.quotePath", quote_path)
+    if before_session:
+        (app / name).write_text("x = 1\n", encoding="utf-8")
+    start = start_between_writes()
+    (app / "a.py").write_text("x = 1\n", encoding="utf-8")
+    if not before_session:
+        (app / name).write_text("x = 1\n", encoding="utf-8")
+    dates = (app / name).lstat()
+    assert (max(dates.st_mtime, dates.st_ctime) < start.timestamp()) == before_session
+    status = git_in(app, tmp_path, "status", "--porcelain", "--untracked-files=all")
+    assert sorted(status.rstrip("\n").split("\n")) == sorted(["?? " + shown, "?? a.py"])
+    saved = tmp_path / "changed-files"
+    transcript = write_transcript(tmp_path / "session.jsonl", start=start)
+
+    output = run_hook(
+        [{"dir": "app", "check_stop": f"{saving(saved)}; exit {exit_code}"}],
+        app,
+        transcript=transcript,
+    )
+
+    assert saved_bytes(saved) == b"unset"
+    assert output.get("decision") == decision
+
+
+@pytest.mark.parametrize(
+    "size",
+    [
+        pytest.param(CHANGED_FILES_CAP, id="at_cap"),
+        pytest.param(CHANGED_FILES_CAP + 1, id="over_cap"),
+    ],
+)
+def test_leaves_changed_files_unset_when_list_over_cap(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, size: int
+) -> None:
+    # A list of exactly the cap still reaches check_stop; one byte more and check_stop runs
+    # without the variable, judged as usual: it passes, so no block.
+    listed = write_new_files(workspace / "app", size)
+    saved = tmp_path / "changed-files"
+
+    output = run_hook([{"dir": "app", "check_stop": saving(saved)}], workspace / "app")
+
+    assert saved_bytes(saved) == (listed if size <= CHANGED_FILES_CAP else b"unset")
+    assert "decision" not in output
+
+
+# argv: the hook. Lowers the soft stack limit to 512 KiB, which on Linux leaves a child 128 KiB
+# for its argv and environment, then runs the hook in this process.
+SMALL_STACK = """\
+import os, resource, sys
+hard = resource.getrlimit(resource.RLIMIT_STACK)[1]
+resource.setrlimit(resource.RLIMIT_STACK, (512 * 1024, hard))
+os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+"""
+FILLER_BYTES = 100_000
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="only Linux sizes a child's environment by the stack limit"
+)
+def test_retries_without_changed_files_when_environment_too_big(
+    workspace: Path, hook_python: str, *, tmp_path: Path
+) -> None:
+    # The gate's environment holds a 100,000-byte variable, which fits in 128 KiB; with a list
+    # under the cap added it does not, so bash cannot start with the list: the gate starts it
+    # again without the list, and the run is judged as usual.
+    listed = write_new_files(workspace / "app", 59_993)
+    assert len(listed) <= CHANGED_FILES_CAP
+    assert FILLER_BYTES < 128 * 1024 < FILLER_BYTES + len(listed)
+    log = tmp_path / "runs.log"
+    hub = workspace / "demo-hub"
+    check = appending(log, "check_stop" + WITH_CHANGED_FILES)
+    document = {"project": {"name": "demo"}, "repos": [{"dir": "app", "check_stop": check}]}
+    (hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+    event = {"cwd": str(workspace / "app"), "session_id": f"e2big-{os.getpid()}-{tmp_path.name}"}
+    env = scratch_env(tmp_path) | {"HUB_TEST_FILLER": "x" * FILLER_BYTES}
+
+    completed = subprocess.run(  # noqa: S603 - an interpreter from hook_python, the rendered hook
+        [hook_python, "-c", SMALL_STACK, str(hub / HOOK)],
+        input=json.dumps(event).encode("utf-8"),
+        capture_output=True,
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        timeout=TIMEOUT,
+    )
+
+    assert (completed.returncode, completed.stderr) == (0, b"")
+    assert recorded(log) == ["check_stop"]
+    assert b"could not start" not in completed.stdout
+
+
+@pytest.mark.parametrize("kind", ["check_fast", "check_stop"])
+def test_drops_inherited_changed_files_when_gate_starts_a_check(
+    workspace: Path, hook_python: str, *, tmp_path: Path, kind: str
+) -> None:
+    # The gate's parent already holds HUB_CHANGED_FILES: no check gets that value. check_fast
+    # never gets the variable; check_stop gets the gate's own list only, here over the cap.
+    listed = write_new_files(workspace / "app", 70_699)
+    assert len(listed) > CHANGED_FILES_CAP
+    saved = tmp_path / "changed-files"
+    env = scratch_env(tmp_path) | {"HUB_CHANGED_FILES": "inherited"}
+
+    completed, _ = run_gate(
+        workspace, hook_python, repos=[{"dir": "app", kind: saving(saved)}], env=env
+    )
+
+    assert (completed.returncode, completed.stderr) == (0, b"")
+    assert saved_bytes(saved) == b"unset"
+
+
+def test_creates_no_file_when_changed_path_holds_shell_text(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # The path reaches check_stop as data alone: no shell reads it as command text, so the
+    # command substitution in its name runs nothing. git prints a name holding a space quoted,
+    # which leaves the list unset, so this name splits its words with ${IFS}.
+    app = workspace / "app"
+    name = "$(touch${IFS}pwned).py"
+    (app / name).write_text("x = 1\n", encoding="utf-8")
+    status = git_in(app, tmp_path, "status", "--porcelain", "--untracked-files=all")
+    assert status == f"?? {name}\n"
+    saved = tmp_path / "changed-files"
+
+    run_hook([{"dir": "app", "check_stop": saving(saved)}], app)
+
+    assert saved_bytes(saved) == name.encode("utf-8")
+    assert sorted(tmp_path.rglob("pwned")) == []

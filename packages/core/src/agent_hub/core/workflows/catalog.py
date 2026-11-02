@@ -66,6 +66,10 @@ class WorkflowSource(Protocol):
         ...
 
 
+# One listing entry: its path as ``WorkflowFile.file`` shows it, its size and mtime_ns.
+type SourceStat = tuple[str, int, int]
+
+
 @dataclass(frozen=True)
 class WorkflowCatalog:
     """The workflows that load, in the source's order, and every problem found."""

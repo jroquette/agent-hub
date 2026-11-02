@@ -284,7 +284,8 @@ today), and the CLI's model and the hooks' stdlib reader accept it in the same c
 | Key | Meaning | When absent | Issue |
 | --- | --- | --- | --- |
 | `repos[].default_branch` | The repo's default branch: worktree and PR base, push guard | `project.default_branch` | AGH-46 |
-| `repos[].check_fast_timeout` | Seconds the Stop gate gives the repo's `check_fast`, within the gate's total budget; `check_fast` itself becomes optional | The gate's default | AGH-52 |
+| `repos[].check_fast_timeout` | Seconds the Stop gate gives the command it runs for the repo (`check_stop`, else `check_fast`), within the gate's total budget; `check_fast` itself becomes optional | The gate's default | AGH-52 |
+| `repos[].check_stop` | A command the Stop gate runs for the repo in place of `check_fast` (not blank, no control character; the hooks read a bad value as absent). That run alone gets `HUB_CHANGED_FILES`: the paths the session changed in the checkout, relative to its top, sorted, one per line with no final newline (a file that exists counts when its mtime or its ctime falls in the session, a symlink by its own dates; an untracked file also counts when a folder between the checkout's top and it has its ctime in the session, as a folder moved with `mv` keeps both dates of the files in it; a deleted file and both names of a rename count whenever git lists them, even a rename staged before the session; only a rename or copy line is split at its `->`, as git before 2.29 prints a space in an untracked name without quotes). The gate leaves the variable unset when git prints a path of the checkout in quotes, when git's output holds U+0085, U+2028 or U+2029 (raw in a name under `core.quotePath=false`, each would split that name's line), when the list is over 65,536 bytes, and when the command can only start without it (`E2BIG`); no check gets the variable from the gate's own environment. In agent-hub, `make check-changed` reads it | `check_fast` | AGH-619 |
 | `tracker.teams` | Several tracker team keys, the first being the default; never set together with `tracker.team` | `[tracker.team]` | AGH-56 |
 | `tracker.blocked_label` | The label `hub run` adds when its session stops for a human (ADR 0030); not settable in `hub.local.json`; the hooks do not read it | `tracker.failed_label` | AGH-178 |
 | `models` | Model tiers (`small`, `medium`, `large`) mapped to model names, and per-agent tier overrides for the plugin's agents; `hub run` uses `medium` | Each agent's template tier, with `haiku`, `sonnet`, `opus` | AGH-180 |
@@ -1008,7 +1009,7 @@ flowchart LR
 The sessions and GitHub/Linear feed the collector, and the web app reads everything through the API. The app's actions go back to the workflow executor. The API also reads the hub repos to show brain, rules and workflows.
 
 - **Stack (decided, ADRs 0001–0004, 0008, 0011, 0014, 0015, 0017, 0020, 0024 and 0044):** Python 3.14 in a uv workspace with one package per component (`core`, `storage`, `collector`, `generator`, `tracker_linear`, `hub_git`, `cli`, `api` and `mcp_server`, ADR 0044's third composition root behind `hub mcp`) under a lean hexagonal architecture: entities, use cases and ports in `core`, adapters in the other packages. Persistence is SQLAlchemy Core + Alembic on SQLite, moving to Postgres via config when there are multiple users. The API is FastAPI + Pydantic in `packages/api`, a second composition root that `hub web` serves; the front end is React 18 + TypeScript in `apps/web`, whose production build is committed to `packages/api` so a `uvx` install needs no Node.
-- **Hooks as sensors** ([ADR 0021](adr/0021-hook-event-sensor.md)): the generated hub registers a stdlib Python 3.9 sensor, `plugin/hub-workflow/hooks/event_sensor.py`, for eleven Claude Code hooks (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PostToolUseFailure, Notification, Stop, SubagentStart, SubagentStop, PreCompact, SessionEnd). It wraps the hook input in a versioned envelope (`v: 1`, project, repo, the `hub run` run, step and attempt) and posts it to `POST /api/v1/events/hooks` with a 0.5 s timeout; it prints nothing and exits 0 on any failure, so without `hub web` the session carries on normally. `AGENT_HUB_WEB_URL` may only name a loopback URL. The guard and the Stop gate send their own decisions (a denial, an ask, a blocked Stop) the same way, after deciding, without changing their output or exit codes. On Stop, SubagentStop and SessionEnd the server reads the session's transcript from its last offset, only under `~/.claude/projects/` and never through a link.
+- **Hooks as sensors** ([ADR 0021](adr/0021-hook-event-sensor.md)): the generated hub registers a stdlib Python 3.9 sensor, `plugin/hub-workflow/hooks/event_sensor.py`, for eleven Claude Code hooks (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PostToolUseFailure, Notification, Stop, SubagentStart, SubagentStop, PreCompact, SessionEnd). Ten run it as a hook of its own; PreToolUse runs it inside `plugin/hub-workflow/hooks/pre_tool_use.py`, the one PreToolUse hook, once the guard's verdict is printed (AGH-621). It wraps the hook input in a versioned envelope (`v: 1`, project, repo, the `hub run` run, step and attempt) and posts it to `POST /api/v1/events/hooks` with a 0.5 s timeout; it prints nothing and exits 0 on any failure, so without `hub web` the session carries on normally. `AGENT_HUB_WEB_URL` may only name a loopback URL. The guard and the Stop gate send their own decisions (a denial, an ask, a blocked Stop) the same way, after deciding, without changing their output or exit codes; on PreToolUse the guard's decision and the event's envelope share one 0.5 s deadline. On Stop, SubagentStop and SessionEnd the server reads the session's transcript from its last offset, only under `~/.claude/projects/` and never through a link.
 - **Read-only agents** (AGH-141): an agent whose definition's frontmatter says `mutates_checkout: false` is held if it
   changes a checkout. The base plugin's researcher, spec-reviewer and quality-reviewer declare it; any hub or project
   agent may opt in, and an agent without the key is untouched. A second stdlib Python 3.9 hook,
@@ -1041,7 +1042,8 @@ ceiling. The live values are in [`scripts/perf/budgets.json`](../scripts/perf/bu
 than the ADR, never looser, and a `check-fast` test enforces it. `make perf` measures them on the reference machine
 (Linux, 4 vCPU, Python 3.14, warm uv cache); CI enforces them through AGH-602. Not allowed on an interactive path: a
 network call with no cache, a new database connection per query, a full scan of the event log, the doctor rules, or a
-full test suite.
+full test suite. The Stop gate's 30 s is the time of the command it runs for a changed repo, `check_stop` when the repo
+sets one, else `check_fast`: a repo whose `check_fast` runs a whole suite sets a narrower `check_stop`.
 
 ## MVP and phases
 
@@ -1055,7 +1057,7 @@ The MVP goes up to Phase 2: generate hubs from Loki and see the agents' sessions
 | 3 · Knowledge and decisions | Provenance in the brain, inbox triage in the UI (accept and reject moved to Phase 2 by AGH-201; snooze stays here), extracted decisions, learning metrics | One learning traced from the session to the rule |
 | 4 · Workflows as data and actions | Generic executor reading the workflow ([ADR 0032](adr/0032-workflow-engine.md)), gates approved from the UI, adapters for other agents | — |
 
-Status (2026-11-01, latest release v0.29.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
+Status (2026-11-01, latest release v0.30.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
 Phase 1 in progress: `init`, `sync` (`--adopt`), `doctor`, `worktree`, `brief`, `agent`, `next`, `run` and `bench`
 shipped in v0.8.0, and `setup`, `start` and `ship` in v0.9.0. Phase 2's first slice is shipped too: the control plane
 `hub web` (AGH-200) in v0.9.0 and its clarity pass (AGH-201: session labels, problems, learning accept and reject
@@ -1119,7 +1121,9 @@ The recommendations are a starting point.
 - The hub remains versioned files in git plus the pinned CLI, as in Layer 1. The hub repo is private and only the owners have access.
 - The generic templates (base workflow plugin, base rules, base hooks, brain skeleton) are the product: they live in agent-hub, which is public, and ship with the CLI. Only project-owned material (brain content, project rules, project workflows, project plugin) lives only in the hub. The code repos get the minimum: an `AGENTS.md` with basic commands and conventions.
 - Our agent receives the brain because it is launched from the hub (launcher with the repos attached, as today). Another agent that opens only the code repos does not receive that knowledge.
-- `hub doctor` checks that nothing from the brain was copied into the code repos.
+- `hub doctor` checks that nothing from the brain was copied into the code repos. The one exception is an ADR draft:
+  it is written to become an ADR, so its lines may reach a repo's `docs/adr/` folder; in any other repo file they are
+  still a leak.
 - Cloud sessions need access to the hub repo through the GitHub App, granted only on our account.
 - A hosted brain service waits until the platform becomes a product with customers.
 

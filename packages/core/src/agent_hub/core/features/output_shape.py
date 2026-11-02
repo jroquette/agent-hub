@@ -6,29 +6,25 @@ an escape sequence, so a document of long or unprintable keys cannot make a long
 cross-checks ask ``well_formed`` whether a raw field passes its model's own rule (S2).
 """
 
-import json
-from collections.abc import Iterator, Sequence
-from typing import Annotated, Any, Final
+from collections.abc import Iterator
+from typing import Annotated, Any
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from agent_hub.core.features.output_models import (
-    ACS_ALL_TAG,
-    ACS_LIST_TAG,
     MAX_OUTPUT_BYTES,
     OutputProblem,
 )
+from agent_hub.core.features.output_paths import output_path as output_path
 from agent_hub.core.hub_config.problems import (
     NOT_AN_OBJECT_MESSAGE,
-    PLAIN_KEY,
     ROOT_PATH,
     one_line,
 )
-from agent_hub.core.hub_config.versions import ECHO_LIMIT, cut_echo
+from agent_hub.core.hub_config.versions import cut_echo
 from agent_hub.core.json_form import InvalidJsonError, load_json_bytes
 
 _OVER_BOUND = f"the file is over {MAX_OUTPUT_BYTES} bytes"
-_TAGGED_UNIONS: Final = {"acs": frozenset({ACS_ALL_TAG, ACS_LIST_TAG})}
 
 
 def parse_document(content: bytes) -> dict[str, object] | OutputProblem:
@@ -78,17 +74,6 @@ def echo(text: str) -> str:
     return cut_echo(one_line(text))
 
 
-def output_path(loc: Sequence[int | str]) -> str:
-    """The JSON path of a location, each key escaped once: ``findings[0].acs``, ``["a\\n"]``.
-
-    A plain key of at most ``ECHO_LIMIT`` characters follows a dot; any other key is written as
-    an escaped JSON string cut to ``ECHO_LIMIT``. ``hub_config.problems.json_path`` is not used:
-    it escapes the whole key, unbounded. The tag pydantic adds after a top-level tagged union
-    (``acs``'s ``all`` or ``ids``) is not a key of the document and is dropped.
-    """
-    return "".join(_path_parts(_untagged(loc))) or ROOT_PATH
-
-
 def overlong_problem(path: str, items: object, limit: int) -> Iterator[OutputProblem]:
     """The too-long problem of the list ``items`` at ``path``, worded as pydantic's.
 
@@ -98,23 +83,3 @@ def overlong_problem(path: str, items: object, limit: int) -> Iterator[OutputPro
     if isinstance(items, list) and len(items) > limit:
         message = f"Tuple should have at most {limit} items after validation, not {len(items)}"
         yield OutputProblem(path, message)
-
-
-def _untagged(loc: Sequence[int | str]) -> Sequence[int | str]:
-    if (
-        len(loc) > 1
-        and isinstance(loc[0], str)
-        and loc[1] in _TAGGED_UNIONS.get(loc[0], frozenset())
-    ):
-        return (loc[0], *loc[2:])
-    return loc
-
-
-def _path_parts(loc: Sequence[int | str]) -> Iterator[str]:
-    for index, segment in enumerate(loc):
-        if isinstance(segment, int):
-            yield f"[{segment}]"
-        elif PLAIN_KEY.fullmatch(segment) and len(segment) <= ECHO_LIMIT:
-            yield f".{segment}" if index else segment
-        else:
-            yield '["' + cut_echo(json.dumps(segment)[1:-1]) + '"]'

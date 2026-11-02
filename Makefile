@@ -45,7 +45,7 @@ URL := http://127.0.0.1:$(AGENT_HUB_PORT)
 # drives the Claude sessions stays on AGENT_HUB_PORT, started apart).
 LIVE_API_PORT ?= 7421
 
-.PHONY: help format lint typecheck layout lockstep test-fast check-fast test-integration test-e2e \
+.PHONY: help format lint typecheck layout lockstep test-fast check-fast check-changed test-integration test-e2e \
         test-e2e-parallel test-e2e-serial test-suite test-suite-serial pr-title \
         lane-checks-fast lane-checks lane-tests-fast lane-tests web-static web-test \
         imports migrations coverage check llms-txt hub-schema parsed-builtins output-schemas web-install web-fast web-build web-dist-check \
@@ -117,6 +117,25 @@ lane-checks-fast:
 
 lane-tests-fast:
 	@$(MAKE) $(IN_ORDER) test-fast $(call IF_WEB,web-test)
+
+# Only a command-line PATHS counts, as plain text: make would run any $(shell ...) in it when it
+# hands it to a recipe, and a PATHS the shell exports would beat the Stop gate's HUB_CHANGED_FILES.
+ifeq ($(origin PATHS),command line)
+override PATHS := $(value PATHS)
+export PATHS
+else
+unexport PATHS
+endif
+
+# The checks, and only the fast tests the change reaches (scripts/check_changed.py; its --plan
+# prints the plan alone). The script reads PATHS from its environment; the recipe never names
+# it, since make would paste the value into the line the shell runs.
+check-changed: ## the checks and the fast tests of what changed: PATHS="<paths>", else git vs origin/main
+	$(RUN) python -m scripts.check_changed
+
+# check-changed's child processes get no command-line variables in MAKEFLAGS, so a make that
+# reads another Makefile (an npm package's build, say) never sees PATHS.
+check-changed: MAKEOVERRIDES :=
 
 test-integration: ## integration tests (real SQLite files under tmp_path), never live ones; appends coverage
 	$(RUN) pytest -m "integration and not live and not serial" $(XDIST) $(COV) --cov-append

@@ -11,6 +11,53 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-11-01
+
+### Added
+
+- `make check-changed` runs the checks (format, lint, mypy, test layout, version lockstep) on the whole tree, and only
+  the unit and contract tests a change can break: those of each changed package and of the packages that import it.
+  It takes the paths from `PATHS="<paths>"`, `HUB_CHANGED_FILES` or git against `origin/main`, and
+  `python -m scripts.check_changed --plan <paths>` prints the plan without running it. A build file, or a path it
+  cannot place, runs every fast test. `make check` stays the gate before a PR and in CI (AGH-620).
+- `repos[].check_stop` in `hub.json`: a narrower command the Stop hook runs instead of `check_fast`, with the paths the
+  session changed in that checkout in `HUB_CHANGED_FILES`, one per line (in agent-hub, `make check-changed` reads
+  them). When the list is too long or git quotes one of the paths, the variable stays unset and the command finds the
+  changes itself. `check_fast_timeout` limits whichever command runs, and no check gets a `HUB_CHANGED_FILES` the hook
+  inherited. `hub doctor`'s `config.stop_gate` warning no longer fires for a repo that sets `check_stop` without
+  `check_fast`. Set the key only after bumping `platform.version` to a release that has it (AGH-619).
+
+### Changed
+
+- A tool call now starts one hook process instead of two: `pre_tool_use.py` runs the guard, then the event sensor. The
+  guard answers each call as before, and its decision and the event still reach `hub web`, sent after the answer is
+  printed and within one 0.5 s limit for both. The guard also loads less: its patterns are compiled when first used,
+  and the sensor writes its request to a plain socket. Run `hub sync` after bumping `platform.version` to get the new
+  hook (AGH-621).
+  - The project guard (`plugin/<project>/hooks/project_guard.py`) runs in a fork of the hook instead of a new
+    `python3`, with the same 3 s limit and the same asks when it fails. A missing `project_guard_runner.py` now gives
+    `exit 1 (ModuleNotFoundError: …)` as the cause, where it gave `exit 2`.
+  - A missing or broken `guard.py` now gets the guard's ask, where it used to block the call or let it through.
+  - While blocked words or env files are set, an event the hook cannot read now gets the guard's ask for any tool,
+    where only the tools the guard handled were asked.
+  - In a synced hub, `hub run` checks for `pre_tool_use.py`, the hook the settings now name, so a hub missing only
+    `guard.py` is no longer refused: the merged hook asks on every guarded call instead.
+- `hub workflow list` starts faster. With exactly these arguments, the installed `hub` lists the workflows on a path of
+  its own: it loads none of Typer, the `HubConfig` model and the `hub.json` reader, and it turns the garbage collector
+  off. The other `hub workflow` commands load less code too (AGH-638).
+  - Any other arguments, or a shell completion request, run the Typer app as before.
+  - The listing hands over to the Typer app before it prints anything when the folder is not a hub, a workflow has a
+    problem, a description holds an escape sequence, the output's encoding cannot hold the text, or an error comes up
+    while it reads. The output and the exit code stay the same.
+  - The `hub` script now runs `agent_hub.cli.console:main`. `python -m agent_hub.cli` still runs the Typer app.
+
+### Fixed
+
+- `hub doctor` no longer reports `brain.leak` errors for the lines of an ADR draft that reached a repo's `docs/adr/`
+  folder, the place a draft is meant to end up. The same lines anywhere else in a repo are still errors, and
+  `hub doctor --fix` now judges a draft only by the repo files outside `docs/adr/` (AGH-622).
+- The Stop hook now runs `check_fast` when a new code file has ` -> ` in its name, such as `x -> y.py` (AGH-619).
+
 ## [0.29.0] - 2026-11-01
 
 ### Changed
@@ -1466,7 +1513,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.29.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.30.0...HEAD
+[0.30.0]: https://github.com/jroquette/agent-hub/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/jroquette/agent-hub/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/jroquette/agent-hub/compare/v0.27.1...v0.28.0
 [0.27.1]: https://github.com/jroquette/agent-hub/compare/v0.27.0...v0.27.1

@@ -18,7 +18,8 @@ in [TESTING.md](TESTING.md).
    Playwright Chromium (`npm --prefix apps/web exec playwright install chromium` once on a new machine); without one it
    skips locally and fails under `CI`. A change under `apps/web/src` ends with `make web-build`, and the rebuilt
    `packages/api/src/agent_hub/api/web_dist/` is committed with it (`make web-dist-check` fails otherwise).
-5. **Test first** ([TESTING.md](TESTING.md)), then implement. Run `make check-fast` while working.
+5. **Test first** ([TESTING.md](TESTING.md)), then implement. Run `make check-fast` while working, or
+   `make check-changed` to run only the tests your change can reach.
 6. **Before the PR**, run `make check`. Redirect the output and check the exit code:
    `make check > check.log 2>&1; echo $?`.
 7. **PR** against `main`, with a Conventional Commit title (check it first with `make pr-title TITLE="<title>"`) and the body from `.github/pull_request_template.md` (tracker
@@ -175,6 +176,12 @@ The drift tests (in `make check-fast`) fail while the file differs from the expo
 `tests/unit/scripts/test_export_hub_schema.py` the exact bytes (LF, key order). On an unchanged model
 `make hub-schema` leaves `git status --porcelain` empty. A Pydantic upgrade that changes the export needs the same
 regeneration in its PR.
+
+A new optional key changes three things in one PR: the model, the hooks' stdlib reader
+(`plugin/hub-workflow/hooks/stdlib_reader.py.tmpl` in the generator's templates) when a hook reads the key, and the
+path lists of `packages/generator/tests/integration/test_hub_json_reader.py`, which say how the reader treats each
+optional key (read as the model reads it, ignored, or read with the hook's own default).
+`test_lists_every_optional_field_when_model_inspected` fails until the key is in one of them.
 
 The agent output schemas `review.v1.json`, `eval.v1.json` and `eval.v2.json` (ADR 0028) are exported the same way
 from `ReviewOutput`, `EvalOutput` and `EvalOutputV2` and ship beside them (`packages/core/src/agent_hub/core/features/`).

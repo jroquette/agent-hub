@@ -18,7 +18,13 @@ Makefile uses.
   home from the password database. `packages/cli/tests/conftest.py` has an autouse fixture that points `HOME`
   and `XDG_DATA_HOME` under `tmp_path` and unsets `AGENT_HUB_DB` for every cli test; a test that needs other values
   passes them to `CliRunner.invoke(env=...)`. JSON Lines inputs are written to `tmp_path` at test time from the
-  builders (`an_event`, `events_to_jsonl`); no `*.jsonl` file is committed.
+  builders (`an_event`, `events_to_jsonl`); no `*.jsonl` file is committed. A test that runs a child process and
+  must show it stays off the network uses the outbound probe, `agent_hub.core.testing.outbound_probe`: the child gets
+  an environment built from scratch, a `sitecustomize` that records and refuses each Python socket connect, `sendto`
+  and name lookup that is not loopback, stand-ins for `gh`, `uv`, `uvx`, `claude`, `curl`, `wget` and `ssh`, and proxy
+  variables that point at a local recorder. The test reads the probe's logs only once `processes_left` finds nothing
+  the child started still running, since a detached child can call out after its parent has exited. The module's
+  docstring lists what the probe cannot see, such as a Python child started with `-I`, `-E` or `-S`.
 
 ## Levels
 
@@ -109,8 +115,12 @@ The API's integration tests for the learning decisions and the web smoke drive t
 A test that runs a rendered hook or script takes the `hook_python` fixture, a real Python 3.9 (the system `python3` on
 macOS, the hooks' floor); without a 3.9 on `PATH` it runs on the current Python, and under `CI` it fails. The
 `each_python` fixture runs a smoke on both interpreters: every rendered module imports, and every hook entry point
-runs once (`test_imports_every_rendered_module_when_run_on_each_python`, `test_exits_zero_when_git_fails`). A
-characterization case compares a hook's or script's exit code, stdout, stderr, files and calls to fake tools with
+runs once (`test_imports_every_rendered_module_when_run_on_each_python`, `test_exits_zero_when_git_fails`).
+`test_hooks_make_no_network_call.py` runs every rendered hook under the outbound probe and expects no call; the only
+call allowed is SessionStart's detached refresh running `uvx … hub brief --write-cache` (ADR 0055).
+`packages/cli/tests/integration/test_simple_commands_make_no_network_call.py` does the same for the simple `hub`
+commands. The hooks file gives each case its own `TMPDIR`, since some hooks keep state there. A characterization
+case compares a hook's or script's exit code, stdout, stderr, files and calls to fake tools with
 `packages/generator/tests/integration/golden/<file>/<case>.golden`, stored byte-exact (`-text` in `.gitattributes`).
 `GOLDEN_UPDATE=1` rewrites the goldens (refused under `CI`; review and commit the diff) and `GOLDEN_KEEP=1` keeps each
 case's temporary root and prints its path. The `hub init` golden,
@@ -324,9 +334,11 @@ commit), then measures, one at a time:
 - `cli`: `hub --version`, `./hub --version (local uvx stand-in)`, `hub brief --no-network`, and the list commands
   `hub repo list`, `hub env list`, `hub action list`, `hub scenario list`, `hub workflow list`, run in the temp hub;
 - `hook`: the eight rendered hooks, each fed a synthetic hook input (`guard (PreToolUse Bash)`,
-  `session_start (local uvx stand-in)`, ...). The `session_start` row keeps its pinned name but measures the cached
-  path (ADR 0055): building the probe runs `hub brief --write-cache` once in the temp hub, so every run reads a cache
-  under the 5 min refresh floor, starts no refresh and runs no `uvx` in the foreground;
+  `session_start (local uvx stand-in)`, ...), and `pre_tool_use` three times, on a Bash, a Read and an Edit call the
+  guard lets through (`pre_tool_use (PreToolUse Bash)`, `... Read)`, `... Edit)`). The `session_start` row keeps its
+  pinned name but measures the cached path (ADR 0055): building the probe runs `hub brief --write-cache` once in the
+  temp hub, so every run reads a cache under the 5 min refresh floor, starts no refresh and runs no `uvx` in the
+  foreground;
 - `route`: nine `hub web` route rows (`/api/v1/sessions`, `/api/v1/features`, `/api/v1/search?q=make`, ...). The
   last two read the Brain list: `/api/v1/projects/perf/brain` one request at a time, and
   `/api/v1/projects/perf/brain (6 parallel)` six at once (ADR 0053: no slower than six in sequence), from six threads
@@ -417,10 +429,11 @@ coverage.py and pytest-cov only offer a global `--fail-under`, which is why the 
 
 ## Gates
 
-Both gates install the web app's dependencies first (`web-install`: `npm ci` only when `package-lock.json` is newer
-than the install), then run two lanes at once (`make -j2`): the checks, and the test runners. pytest-xdist and Vitest
-each use every CPU, so they share the tests lane and never overlap; the checks (mostly one CPU each) run beside them.
-Inside a lane the steps run in order and stop at the first failure; each lane's output is printed when it ends.
+`make check-fast` and `make check` install the web app's dependencies first (`web-install`: `npm ci` only when
+`package-lock.json` is newer than the install), then run two lanes at once (`make -j2`): the checks, and the test
+runners. pytest-xdist and Vitest each use every CPU, so they share the tests lane and never overlap; the checks (mostly
+one CPU each) run beside them. Inside a lane the steps run in order and stop at the first failure; each lane's output is
+printed when it ends. `make check-changed`, a narrower run for one change, comes after them.
 
 `make check-fast` (while working):
 
@@ -434,7 +447,7 @@ Inside a lane the steps run in order and stop at the first failure; each lane's 
 
 `make check` (before a PR; CI runs the same steps as parallel jobs):
 
-- Checks: the ones above (web included), `imports` (`lint-imports`), `migrations` (upgrade a scratch SQLite database
+- Checks: `check-fast`'s (web included), `imports` (`lint-imports`), `migrations` (upgrade a scratch SQLite database
   to head, then `alembic check`) and `web-dist-check` (bundle the web app in a scratch folder and diff it with the
   committed `web_dist/`).
 - Tests: `test-suite` (unit, contract and integration tests in one pytest-xdist session, with coverage), then
@@ -445,6 +458,38 @@ Inside a lane the steps run in order and stop at the first failure; each lane's 
 The API's integration tests (including `test_performance.py`, the NFR budgets on 10,000 synthetic events, `serial`)
 run in `test-suite` and `test-suite-serial`, and the web smoke in `test-e2e-serial`. `test-fast`,
 `test-integration` and `test-e2e` stay for running one level by hand.
+
+`make check-changed` (while working, for one change; `scripts/check_changed.py`):
+
+- Paths: the script's arguments, else `PATHS` from make's command line (`make check-changed PATHS="a.py docs/x.md"`,
+  split on whitespace), else `HUB_CHANGED_FILES` (one path a line, as the Stop gate sets it), else what
+  `git diff --name-only` lists against the merge base with `origin/main`, plus untracked files. It never fetches.
+  make hands `PATHS` on as plain text, never expanded (a `$(...)` in it does not run, in make or in the makes the
+  script starts), and drops a `PATHS` that the shell exports. The recipe never names it, and no path becomes a
+  command argument. `$R python -m scripts.check_changed --plan <paths>` prints the plan and runs nothing.
+- Checks, always on the whole tree: `format`, `lint`, `typecheck` (pack loop included), `layout`, `lockstep`; then
+  `export_openapi --check` when the plan reaches `api` or `packages/api/openapi.json` changed. That is the Python half
+  of `openapi-check` only: its TypeScript half (`gen:api:check`) runs in `make check-fast` and `make check`.
+- Tests: `pytest -m "unit or contract"` on the planned folders and files alone, without coverage, so the data that
+  `make coverage` reads stays the gates'. The web steps (`web-install` first, then `web-static` and `web-test` in
+  their lanes) run only for a path under `apps/web/`, or when the changed paths are unknown.
+- What a path runs: a package's `src/` or `tests/data/` runs the fast tests of that package and of every package that
+  imports it, directly or not (read from the import statements of each `src/` and of `scripts/`, which root
+  `tests/unit` tests). A change under `src/` also runs core's `hub_config/test_model.py` and `test_conventions.py`,
+  which scan every package's source; one under `tests/data/` does not. A core change leaves out the pack-script tests
+  under `packages/core/tests/unit/workflows/builtin/`; a pack's `scripts/` runs that pack's tests, the generator's and
+  those two files; another pack file is a core `src/` change plus that pack's tests. A changed unit or contract test
+  runs its package's fast tests; `scripts/` and root `tests/unit/` run `tests/unit`; the docs, root Markdown and the
+  llms files run the root tests that read them; `apps/web/src/routes.tsx` and `screens/` add
+  `test_playground_export.py`. Integration and e2e tests, `.github/`, the Docker files, `.gitattributes`,
+  `.gitignore`, `.importlinter` and a `*.log` at the top run the checks alone, with a reason line.
+- Full plan, every unit and contract test: a build file (`pyproject.toml`, `uv.lock`, `conftest.py`, `pytest.ini`,
+  `mypy.ini`, `Makefile` or `.python-version` in any folder, and `scripts/pytest_levels.py`), a path it cannot place
+  (absolute, with a `..` part, in a pack that does not exist, or matching no rule), or no merge base with
+  `origin/main`.
+- Output: the plan (at most 20 reason lines, then one that counts the rest), then each lane when it ends, a failed
+  lane last, and a final line naming the failed step; exit 0, or 1 when a step failed. CI and the PR gate keep
+  `make check`.
 
 Never run the gate targets with `-j`: they set it themselves, and the tests are already parallel inside each target
 (pytest-xdist).

@@ -41,21 +41,30 @@ SESSION_START = "session_start (local uvx stand-in)"
 BRIEF_CACHE_SEED = ("uvx", "hub", "brief", "--write-cache", "--no-network")
 # The file that seed must leave in the temp hub.
 BRIEF_CACHE = (".hub-cache", "brief.json")
-# (path, hook script, hook event); post_edit's input is an Edit of a hub file.
+# (path, hook script, hook event, tool: None for the builder's input of the event); post_edit's
+# input is an Edit of a hub file.
 _HOOKS = (
-    ("guard (PreToolUse Bash)", "guard", "PreToolUse"),
-    ("event_sensor (PreToolUse, sensor closed)", "event_sensor", "PreToolUse"),
-    ("post_edit (PostToolUse Edit)", "post_edit", "PostToolUse"),
-    ("readonly_gate (PreToolUse Bash)", "readonly_gate", "PreToolUse"),
-    ("session_end", "session_end", "SessionEnd"),
-    ("stop_gate (no changes)", "stop_gate", "Stop"),
-    (SESSION_START, "session_start", "SessionStart"),
-    ("pre_compact", "pre_compact", "PreCompact"),
+    ("guard (PreToolUse Bash)", "guard", "PreToolUse", None),
+    ("event_sensor (PreToolUse, sensor closed)", "event_sensor", "PreToolUse", None),
+    ("post_edit (PostToolUse Edit)", "post_edit", "PostToolUse", None),
+    ("readonly_gate (PreToolUse Bash)", "readonly_gate", "PreToolUse", None),
+    ("session_end", "session_end", "SessionEnd", None),
+    ("stop_gate (no changes)", "stop_gate", "Stop", None),
+    (SESSION_START, "session_start", "SessionStart", None),
+    ("pre_compact", "pre_compact", "PreCompact", None),
+    # AGH-621: the one PreToolUse hook, on a call of each tool that the guard lets through.
+    ("pre_tool_use (PreToolUse Bash)", "pre_tool_use", "PreToolUse", "Bash"),
+    ("pre_tool_use (PreToolUse Read)", "pre_tool_use", "PreToolUse", "Read"),
+    ("pre_tool_use (PreToolUse Edit)", "pre_tool_use", "PreToolUse", "Edit"),
 )
-HOOK_PATHS = tuple(path for path, _script, _event in _HOOKS)
+HOOK_PATHS = tuple(path for path, _script, _event, _tool in _HOOKS)
 HOOKS_DIR = ("plugin", "hub-workflow", "hooks")
 # The hub file post_edit is told was edited; ``hub init`` writes it.
 EDITED_FILE = ("brain", "index.md")
+# The hub files the pre_tool_use rows read and edit; ``hub init`` writes both, and the guard lets
+# both calls through (an Edit under ``brain/`` would ask).
+READ_FILE = ("hub.json",)
+ALLOWED_EDIT_FILE = ("README.md",)
 
 
 class SuiteError(Exception):
@@ -104,15 +113,19 @@ def hook_probes(hub_dir: Path, transcript: Path) -> list[Probe]:
             HOOK,
             path,
             ("python3", str(hooks / f"{script}.py")),
-            json.dumps(_hook_input(script, event, hub_dir=hub_dir, transcript=transcript)),
+            json.dumps(
+                _hook_input(script, event, tool=tool, hub_dir=hub_dir, transcript=transcript)
+            ),
             BRIEF_CACHE_SEED if path == SESSION_START else None,
             hub_dir.joinpath(*BRIEF_CACHE) if path == SESSION_START else None,
         )
-        for path, script, event in _HOOKS
+        for path, script, event, tool in _HOOKS
     ]
 
 
-def _hook_input(script: str, event: str, *, hub_dir: Path, transcript: Path) -> dict[str, Any]:
+def _hook_input(
+    script: str, event: str, *, tool: str | None, hub_dir: Path, transcript: Path
+) -> dict[str, Any]:
     overrides: dict[str, Any] = {
         "session_id": transcript.stem,
         "cwd": str(hub_dir),
@@ -125,7 +138,23 @@ def _hook_input(script: str, event: str, *, hub_dir: Path, transcript: Path) -> 
             "tool_input": {"file_path": edited, "old_string": "# ", "new_string": "# "},
             "tool_response": {"filePath": edited, "success": True},
         }
+    if tool is not None:
+        overrides |= _tool_call(tool, hub_dir)
     return a_hook_input(event, **overrides)
+
+
+def _tool_call(tool: str, hub_dir: Path) -> dict[str, Any]:
+    """A call of ``tool`` that the guard lets through: the builder's Bash command, a Read of the
+    hub's ``hub.json``, or an Edit of its ``README.md`` that changes nothing."""
+    if tool == "Read":
+        return {"tool_name": tool, "tool_input": {"file_path": str(hub_dir.joinpath(*READ_FILE))}}
+    if tool == "Edit":
+        edited = str(hub_dir.joinpath(*ALLOWED_EDIT_FILE))
+        return {
+            "tool_name": tool,
+            "tool_input": {"file_path": edited, "old_string": "# ", "new_string": "# "},
+        }
+    return {"tool_name": tool}
 
 
 def measure(probe: Probe, *, runs: int, runner: Runner, clock: Callable[[], float]) -> list[float]:

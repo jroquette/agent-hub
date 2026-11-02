@@ -94,10 +94,12 @@ IGNORED_PATHS: tuple[tuple[str | int, ...], ...] = (
 PLATFORM_SOURCE_PATHS: tuple[tuple[str | int, ...], ...] = (("platform", "repository"),)
 
 # The model gives ``None`` when absent; the reader gives the gate's own default (``""`` = no fast
-# gate, ``None`` = ``TIMEOUT``): inherited-style, not compared with the model dump.
+# gate, or no stop command so the fast gate runs; ``None`` = ``TIMEOUT``): inherited-style, not
+# compared with the model dump.
 GATE_DEFAULT_PATHS: tuple[tuple[str | int, ...], ...] = (
     ("repos", 0, "check_fast"),
     ("repos", 0, "check_fast_timeout"),
+    ("repos", 0, "check_stop"),
 )
 
 # ``guard.infra`` and its lists: absent: ``None`` in both; present: compared by
@@ -789,6 +791,9 @@ def test_reads_gate_defaults_when_check_keys_absent(
     assert repo["check_fast"] == ""
     assert repo["check_fast_timeout"] is None
     assert repo["check"] == "make check"
+    # No check_stop: "" in the reader (the gate runs check_fast), None in the model.
+    assert repo.get("check_stop") == ""
+    assert model.check_stop is None
 
 
 def with_check_fast_timeout(value: object) -> dict[str, Any]:
@@ -821,6 +826,47 @@ def test_treats_check_fast_timeout_absent_when_value_bad(
     assert repo["dir"] == "demo-api"
     assert repo["check_fast"] == "make check-fast"
     assert repo["check"] == "make check"
+
+
+def with_check_stop(value: object) -> dict[str, Any]:
+    document = a_hub_document()
+    document["repos"][0]["check_stop"] = value
+    return document
+
+
+def test_reads_check_stop_when_string_set(tmp_path: Path, hook_python: str, read: Reader) -> None:
+    path = write_hub_file(tmp_path, with_check_stop("make check-changed"))
+
+    [repo] = read(hook_python, path)["hub_file"]["repos"]
+
+    # ``get``: a reader without the field fails this assert rather than the lookup.
+    assert repo.get("check_stop") == "make check-changed"
+    assert repo["check_fast"] == "make check-fast"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(5, id="number"),
+        pytest.param(True, id="boolean"),
+        pytest.param(["make check-changed"], id="list"),
+        pytest.param({"command": "make check-changed"}, id="object"),
+        pytest.param("", id="empty"),
+        pytest.param("make\x07check-changed", id="control"),
+    ],
+)
+def test_reads_check_stop_as_absent_when_value_unusable(
+    tmp_path: Path, *, hook_python: str, read: Reader, value: object
+) -> None:
+    path = write_hub_file(tmp_path, with_check_stop(value))
+
+    [repo] = read(hook_python, path)["hub_file"]["repos"]
+
+    # Read as no command, without raising (the child would exit non-zero); the rest of the
+    # repo entry is still read.
+    assert repo.get("check_stop") == ""
+    assert repo["dir"] == "demo-api"
+    assert repo["check_fast"] == "make check-fast"
 
 
 def test_reads_same_values_when_hub_sets_conventions(
