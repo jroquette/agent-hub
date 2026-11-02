@@ -146,6 +146,14 @@ specs 16 and 12:
     block shows spec 12's "Doctor has not run for this hub." (`12-portfolio.md:483`), without the step to run
     `hub doctor`.
 
+AGH-613 (the Features list in one call, [specs/17-features.md](specs/17-features.md)) changes one item of spec 17:
+
+- **Shipped features leave In progress.** The Features list reads no feature's tickets: it reads only the list, where
+  AC-521.8.5 (`17-features.md:606-608`) has it read a waiting feature's tickets once to warm the Linear snapshot,
+  then read the list again. While a tab is open, `hub web`'s ticket warmer keeps each feature's Linear snapshot warm
+  (it reads a feature's tickets again when its snapshot is 14 min old), and the list's 30 s reread shows a feature
+  moving to Shipped once its tickets are all done.
+
 ## Design system
 
 The control plane of agent-hub is an observability and governance console for teams of AI coding agents. It answers five questions: how are my projects doing (Portfolio), what are the agents doing right now (Live sessions), why did the agent do that (Session timeline), what does it know and what did it learn (Knowledge), and how should work flow and where does it get stuck (Workflows). A busy engineering lead should understand any screen in five seconds and be able to trust it.
