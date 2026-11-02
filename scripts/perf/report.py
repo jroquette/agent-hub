@@ -30,8 +30,10 @@ class Summary(NamedTuple):
 class Row:
     """One ``perf.json`` item; ``reason`` is set for skipped rows only.
 
-    ``dom_nodes`` is a page row's most elements in one run: written to ``perf.json`` only, with
-    no budget and no table column; ``None`` on every other row."""
+    ``dom_nodes`` is a page row's most elements in one run and ``api_kb`` its most ``/api/v1/``
+    response kilobytes in one run: both written to ``perf.json`` only, with no budget and no table
+    column; ``None`` on every other row. Both default to ``None``, so a ``perf.json`` written
+    before them still reads."""
 
     kind: str
     path: str
@@ -48,6 +50,7 @@ class Row:
     commit: str
     machine: Mapping[str, object]
     dom_nodes: int | None = None
+    api_kb: float | None = None
 
 
 def summarize(samples: Sequence[float]) -> Summary:

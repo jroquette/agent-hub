@@ -343,11 +343,13 @@ commit), then measures, one at a time:
   last two read the Brain list: `/api/v1/projects/perf/brain` one request at a time, and
   `/api/v1/projects/perf/brain (6 parallel)` six at once (ADR 0053: no slower than six in sequence), from six threads
   made once and released together, each sample from the release to the last answer;
-- `page`: six pages in Playwright's Chromium (`apps/web/e2e/perf.spec.ts`): `/`, `/features`,
-  `/features/perf/search-index`, `/sessions/perf-00000`, `/sessions`, and the Brain note
-  `/projects/perf/brain/tree-3/note-050.md` (a note in a 100-note folder, so an open folder is measured). A page is
-  ready when no `/api/v1/` request is in flight for 500 ms after `load`; each row has the number of API calls and
-  `dom_nodes`, the most elements on the page in one run once it is ready;
+- `page`: seven pages in Playwright's Chromium (`apps/web/e2e/perf.spec.ts`): `/`, `/features`,
+  `/features/perf/search-index`, `/sessions/perf-00000`, `/sessions`, the Brain note
+  `/projects/perf/brain/tree-3/note-050.md` (a note in a 100-note folder, so an open folder is measured), and the
+  Project overview `/projects/perf`. A page is ready when no `/api/v1/` request is in flight for 500 ms after `load`;
+  each row has the number of API calls, `dom_nodes`, the most elements on the page in one run once it is ready, and
+  `api_kb`, the most kilobytes (1,000 bytes) of `/api/v1/` response bodies one run read before it was ready (streams
+  left out);
 - `restart`: `hub web start → GET /` and `hub web start → /api/v1/sessions`, with peak RSS (Linux only, else `null`).
 
 These names are the canonical paths: the table, `perf.json` and the budgets all use the same strings. The child
@@ -363,9 +365,9 @@ one about 6.5.
 
 It prints one table and writes `perf.json`: a list of rows, each with `kind`, `path`, `runs`, `median_ms`, `p95_ms`,
 `budget`, `status` (`pass`, `over`, `no budget` or `skipped`, with a `reason`), `api_calls` (pages), `dom_nodes`
-(pages; a reported field only, with no budget and no table column, `null` elsewhere), `rss_mb` (restarts) and the
-run's `events`, `seed`, `commit` and `machine`. The budgets are data in `scripts/perf/budgets.json`, one entry per
-`(kind, path)` with `p95_ms`, `api_calls` or `rss_mb`; an entry's `source` is "AGH-601 proposed" (the proposed
+and `api_kb` (pages; reported fields only, with no budget and no table column, `null` elsewhere), `rss_mb` (restarts)
+and the run's `events`, `seed`, `commit` and `machine`. The budgets are data in `scripts/perf/budgets.json`, one
+entry per `(kind, path)` with `p95_ms`, `api_calls` or `rss_mb`; an entry's `source` is "AGH-601 proposed" (the proposed
 numbers) or "ADR 0053" (a row at that ADR's ceilings). A path with no entry shows `no budget`. Without npm, Chromium or
 `apps/web/node_modules`, the page rows are `skipped`; `make perf` itself runs `npm ci` first, so on a machine without
 npm run `uv run --locked --all-packages python -m scripts.perf.run_suite` instead. The runner's exit code: 0, also

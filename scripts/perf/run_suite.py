@@ -130,6 +130,7 @@ class Suite:
         rss_mb: float | None = None,
         reason: str | None = None,
         dom_nodes: int | None = None,
+        api_kb: float | None = None,
     ) -> Row:
         """A row not yet judged against its budget; no samples means skipped with ``reason``."""
         summary = summarize(samples) if samples else None
@@ -149,6 +150,7 @@ class Suite:
             commit=self.commit,
             machine={"platform": sys.platform, "cpus": os.cpu_count() or 0},
             dom_nodes=dom_nodes,
+            api_kb=api_kb,
         )
 
 
@@ -348,6 +350,7 @@ def _page_rows(suite: Suite, *, url: str, token: str) -> list[Row]:
             api_calls=page.api_calls,
             reason=page.reason,
             dom_nodes=page.dom_nodes,
+            api_kb=page.api_kb,
         )
         for page in found
     ]
