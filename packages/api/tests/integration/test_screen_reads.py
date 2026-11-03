@@ -18,14 +18,17 @@ import json
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from agent_hub.api import composition
 from agent_hub.api.session_token import cookie_name
 from agent_hub.api.settings import ApiSettings
 from agent_hub.core.events.event import Event
+from agent_hub.core.screens.screen_reads import ScreenReads
 from agent_hub.core.testing.builders import an_event
 from agent_hub.core.testing.session_driver_fakes import InMemorySessionDriver
 from agent_hub.core.testing.session_scenarios import (
@@ -358,6 +361,10 @@ def test_answers_sections_like_session_lists_when_sessions_screen_read(
 
 
 SESSION_TOKEN = "s" * 43
+# How long the composed screen reads wait here for the driver's capabilities. The in-memory
+# driver answers at once, but production's 50 ms is wall-clock time, which a loaded runner can
+# spend before the event loop takes that answer.
+CAPABILITIES_WAIT = 10.0
 
 
 @pytest.fixture
@@ -365,9 +372,15 @@ def sessions_on(
     open_composed: Callable[..., Any],
     composed_settings: ApiSettings,
     make_hub: Callable[..., Path],
+    *,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> Any:
     """The composed app with this launch's token and the in-memory driver, ``demo`` and
-    ``other`` registered; no cookie yet."""
+    ``other`` registered; no cookie yet. ``build_app`` builds its screen reads as in production,
+    but waiting ``CAPABILITIES_WAIT`` for the driver's capabilities."""
+    monkeypatch.setattr(
+        composition, "ScreenReads", partial(ScreenReads, capabilities_wait=CAPABILITIES_WAIT)
+    )
     app = open_composed(
         replace(composed_settings, session_token=SESSION_TOKEN),
         session_driver=InMemorySessionDriver(),
