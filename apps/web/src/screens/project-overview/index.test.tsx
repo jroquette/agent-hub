@@ -2,8 +2,9 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { createQueryClient } from "../../lib/api";
+import { apiKey, createQueryClient } from "../../lib/api";
 import { AppShell } from "../../shell/AppShell";
+import { GlobalStreamProvider } from "../../shell/GlobalStream";
 import { seriousViolations } from "../../testing/axe";
 import {
   aDoctorFindings,
@@ -21,6 +22,7 @@ import {
   aSession,
   aSessionLabel,
   aShellView,
+  aStreamCounts,
   at,
   renderWithApi,
   type ApiRoutes,
@@ -330,14 +332,23 @@ function anOverviewRead(overrides: Record<string, unknown> = {}): Record<string,
 
 /** Renders the screen from its overview read, every resource route answered too, on the app's own
  * query client: under its 10 s staleTime a seeded query does not fetch. */
-function renderFromRead(read: Record<string, unknown>, overrides: ApiRoutes = {}) {
+function renderFromRead(
+  read: Record<string, unknown>,
+  overrides: ApiRoutes = {},
+  queryClient = createQueryClient(),
+) {
   return renderWithApi(<ProjectOverviewScreen />, {
     routes: { ...routes, [OVERVIEW_READ]: read, ...overrides },
     path: "/projects/agent-hub",
     route: "/projects/:project",
-    queryClient: createQueryClient(),
+    queryClient,
   });
 }
+
+/** The project's newest 200 sessions, the one cache entry the Tickets screen reads whole. */
+const sharedSessionsKey = apiKey("/api/v1/sessions", {
+  query: { project: "agent-hub", limit: 200, sort: "-last_activity_at" },
+});
 
 describe("ProjectOverviewScreen", () => {
   it("shows the header with setup status, a plain summary and warnings", async () => {
@@ -906,6 +917,81 @@ describe("ProjectOverviewScreen", () => {
     expect(tickets.getByText("Fix the order export")).toBeInTheDocument();
     expect(tickets.queryByText("ACME-99")).not.toBeInTheDocument();
     expect(calls()).not.toContain("/api/v1/sessions");
+  });
+
+  it("leaves the newest 200 sessions the Tickets screen reads to their route", async () => {
+    // The Tickets screen read the project's sessions a second before this visit.
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(sharedSessionsKey, routes["/api/v1/sessions"], {
+      updatedAt: Date.now() - 1_000,
+    });
+    renderFromRead(anOverviewRead(), {}, queryClient);
+
+    // Recent work shows the read's sessions of this week, so the read has answered.
+    const recentWork = await screen.findByRole("region", { name: "Recent work" });
+    expect(await within(recentWork).findByText("ACME-7")).toBeInTheDocument();
+    expect(await within(recentWork).findByText("control-plane")).toBeInTheDocument();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    // The entry still holds the route's whole answer, not the read's narrowed list.
+    expect(queryClient.getQueryData(sharedSessionsKey)).toEqual(routes["/api/v1/sessions"]);
+  });
+
+  it("reads Recent work from the sessions route once the stream's counts change", async () => {
+    // Since the page opened, an agent worked on ACME-99, which the overview read did not have.
+    const later = aPage([
+      aSession({
+        id: anId(21),
+        status: "ended",
+        outcome: "done",
+        last_activity_at: recent,
+        label: aSessionLabel({ issue: "ACME-99", workflow: "/fix", workflows: ["/fix"] }),
+      }),
+    ]);
+    const { calls, requests, stream } = renderWithApi(
+      <GlobalStreamProvider project={null}>
+        <ProjectOverviewScreen />
+      </GlobalStreamProvider>,
+      {
+        routes: { ...routes, [OVERVIEW_READ]: anOverviewRead(), "/api/v1/sessions": later },
+        path: "/projects/agent-hub",
+        route: "/projects/:project",
+        queryClient: createQueryClient(),
+      },
+    );
+    const recentWork = await screen.findByRole("region", { name: "Recent work" });
+    expect(await within(recentWork).findByText("ACME-7")).toBeInTheDocument();
+    // The first load reads no sessions of its own.
+    expect(calls()).not.toContain("/api/v1/sessions");
+
+    // The first counts only arm the refresh; the next ones say something changed.
+    const global = stream("/api/v1/events/stream");
+    act(() => {
+      global.open();
+      global.emit("counts", aStreamCounts());
+    });
+    act(() => {
+      global.emit("counts", aStreamCounts({ live_sessions: 4 }));
+    });
+    // The change reached the screen: what needs you, read with the overview, is read again.
+    await waitFor(() => {
+      expect(calls()).toContain("/api/v1/needs-you");
+    });
+
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole("region", { name: "Recent work" })).queryByText("ACME-99"),
+      ).toBeInTheDocument();
+    });
+    // Read as the Tickets screen reads them: one shared cache entry.
+    const asked = requests
+      .map((request) => new URL(request.url))
+      .filter((url) => url.pathname === "/api/v1/sessions")
+      .map((url) => JSON.stringify(Object.fromEntries([...url.searchParams].sort())));
+    expect([...new Set(asked)]).toEqual([
+      JSON.stringify({ limit: "200", project: "agent-hub", sort: "-last_activity_at" }),
+    ]);
   });
 
   // The sessions route answers the opposite each time, so a screen that read it would show the

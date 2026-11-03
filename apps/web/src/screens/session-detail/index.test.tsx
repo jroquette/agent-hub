@@ -451,7 +451,7 @@ function aDetailRead(overrides: Partial<SessionDetailView> = {}): SessionDetailV
 
 /** Renders the screen inside the shell on the app's own query client (under its 10 s staleTime a
  * seeded query does not fetch), with the shell read and the feature's tickets answered. */
-function renderFromRead(apiRoutes: ApiRoutes) {
+function renderFromRead(apiRoutes: ApiRoutes, queryClient = createQueryClient()) {
   return renderWithApi(
     <AppShell>
       <SessionDetailScreen />
@@ -464,7 +464,7 @@ function renderFromRead(apiRoutes: ApiRoutes) {
       },
       path: `/sessions/${ID}`,
       route: "/sessions/:sessionId",
-      queryClient: createQueryClient(),
+      queryClient,
     },
   );
 }
@@ -564,5 +564,36 @@ describe("SessionDetailScreen screen read", () => {
       limit: "1000",
     });
     expect(calls().filter((p) => p === READ)).toHaveLength(1);
+  });
+
+  it("keeps the loaded event pages when the session is opened again", async () => {
+    const next = aTimelineEvent({
+      seq: 6,
+      type: "tool.call",
+      payload: { tool: "Bash", command: "npm test", tool_use_id: "t6" },
+    });
+    const apiRoutes: ApiRoutes = {
+      [READ]: aDetailRead({ events: aPage(defaultEvents(), { next_cursor: "page-2" }) }),
+      [`${BASE}/events`]: (request: Request) =>
+        aPage(new URL(request.url).searchParams.get("cursor") === "page-2" ? [next] : []),
+    };
+    const queryClient = createQueryClient();
+    const first = renderFromRead(apiRoutes, queryClient);
+    // Both pages loaded: the read's first, then the second from the events route.
+    expect(await screen.findByText("npm test")).toBeInTheDocument();
+    first.unmount();
+
+    // Opened again: its read answers the first page only, as on the first visit.
+    const { calls } = renderFromRead(apiRoutes, queryClient);
+    await waitFor(() => {
+      expect(calls()).toContain(READ);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+
+    // The second page is kept, not dropped and read again.
+    expect(calls().filter((p) => p === `${BASE}/events`)).toEqual([]);
+    expect(screen.queryByText("npm test")).toBeInTheDocument();
   });
 });

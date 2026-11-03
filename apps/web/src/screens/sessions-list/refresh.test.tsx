@@ -1,12 +1,16 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createQueryClient } from "../../lib/api";
 import {
+  aCapabilities,
   aPage,
   aProblem,
   aProjectSummary,
   aSession,
   aSessionLabel,
+  aSessionsView,
+  anAgentSession,
   anId,
   renderWithApi,
   type ApiRoutes,
@@ -230,6 +234,48 @@ describe("SessionsListScreen no-jump", () => {
     expect(statusesAsked(requests, before)).toEqual([]);
     await act(() => vi.advanceTimersByTimeAsync(1));
     expect(statusesAsked(requests, before)).toEqual(["ended", "idle", "live", "waiting"]);
+  });
+
+  it("does not refetch the sections when a revisit's screen read writes the kept agent list", async () => {
+    const READ = "/api/v1/screens/sessions";
+    let reads = 0;
+    const apiRoutes: ApiRoutes = {
+      ...routes({ current: [one(2, "live"), one(4, "live")] }),
+      // The same chat each time; /s4 started working between the two visits.
+      [READ]: () => {
+        reads += 1;
+        return aSessionsView({
+          live: aPage(reads === 1 ? [one(2, "live")] : [one(2, "live"), one(4, "live")]),
+          agent_sessions: { items: [anAgentSession({ title: "Check the export" })] },
+          capabilities: aCapabilities({ available: false, reason: "claude was not found on PATH" }),
+        });
+      },
+    };
+    const queryClient = createQueryClient();
+    const first = renderWithApi(<SessionsListScreen />, {
+      routes: apiRoutes,
+      path: "/sessions",
+      queryClient,
+    });
+    expect(await screen.findByText("Check the export")).toBeInTheDocument();
+    expect(screen.getByText("/s2")).toBeInTheDocument();
+    first.unmount();
+
+    vi.useFakeTimers();
+    const { calls } = renderWithApi(<SessionsListScreen />, {
+      routes: apiRoutes,
+      path: "/sessions",
+      queryClient,
+    });
+    // The kept agent list draws at once; the revisit's read then answers with /s4.
+    expect(screen.getByText("Check the export")).toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(100));
+    expect(calls().filter((path) => path === READ)).toHaveLength(1);
+    expect(screen.queryByText("/s4")).toBeInTheDocument();
+
+    // Past the 2 s throttle: the read's agent list is no poll answer, so no section reads again.
+    await act(() => vi.advanceTimersByTimeAsync(2_600));
+    expect(calls().filter((path) => path === SESSIONS)).toEqual([]);
   });
 
   it("does not refetch the sections when the project changes the agent list", async () => {

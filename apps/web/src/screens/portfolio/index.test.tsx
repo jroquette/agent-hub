@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createQueryClient } from "../../lib/api";
@@ -59,6 +60,41 @@ const routes: ApiRoutes = {
     anActivityItem({ kind: "learning", text: "Learning accepted", href: null }),
   ]),
 };
+
+const PORTFOLIO_READ = "/api/v1/screens/portfolio";
+
+/** Mounts Home once "Open Home" is pressed, so a hold set up before then holds its first read. */
+function OpenHome({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  if (open) return <>{children}</>;
+  return (
+    <button
+      onClick={() => {
+        setOpen(true);
+      }}
+    >
+      Open Home
+    </button>
+  );
+}
+
+/** Holds the portfolio read until the returned release is called; other requests answer at once. */
+function holdPortfolioRead(): () => void {
+  const answer = vi.mocked(globalThis.fetch).getMockImplementation();
+  if (!answer) throw new Error("holdPortfolioRead: render first");
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    if (new URL(request.url).pathname === PORTFOLIO_READ) await held;
+    return answer(request);
+  });
+  return () => {
+    release();
+  };
+}
 
 describe("PortfolioScreen", () => {
   beforeEach(() => {
@@ -285,6 +321,46 @@ describe("PortfolioScreen", () => {
     expect(asked.filter((path) => homeResources.includes(path))).toEqual([]);
     expect(asked.filter((path) => path === "/api/v1/screens/portfolio")).toHaveLength(1);
     expect(asked.length).toBeLessThanOrEqual(5);
+  });
+
+  it("draws Skills and agents once the projects are in, with no Project column for one project", async () => {
+    const queryClient = createQueryClient();
+    renderWithApi(
+      <OpenHome>
+        <PortfolioScreen />
+      </OpenHome>,
+      {
+        routes: {
+          [PORTFOLIO_READ]: {
+            projects: aPage([aProjectSummary()]),
+            needs_you: aPage([]),
+            activity: aPage([]),
+          },
+          "/api/v1/skill-usage": aUsageReport(),
+        },
+        queryClient,
+      },
+    );
+    const release = holdPortfolioRead();
+    fireEvent.click(screen.getByRole("button", { name: "Open Home" }));
+
+    // Skill usage, its own call, has answered; the portfolio read, with the projects, is held.
+    await waitFor(() => {
+      const usage = queryClient
+        .getQueryCache()
+        .findAll({ queryKey: ["api", "/api/v1/skill-usage"] });
+      expect(usage.map((query) => query.state.status)).toEqual(["success"]);
+    });
+    expect(screen.queryByRole("article", { name: "Project agent-hub" })).toBeNull();
+    const region = screen.getByRole("region", { name: "Skills and agents" });
+    expect(within(region).queryByRole("columnheader", { name: "Project" })).toBeNull();
+    expect(within(region).queryByRole("table")).toBeNull();
+
+    release();
+    expect(await screen.findByRole("article", { name: "Project agent-hub" })).toBeInTheDocument();
+    const table = await within(region).findByRole("table");
+    expect(within(table).getByRole("columnheader", { name: "Name" })).toBeInTheDocument();
+    expect(within(table).queryByRole("columnheader", { name: "Project" })).toBeNull();
   });
 
   describe("states", () => {
