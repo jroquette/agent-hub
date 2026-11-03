@@ -17,7 +17,12 @@ from agent_hub.core.features.feature_view import FeatureView
 from agent_hub.core.features.owner_needs import features_needing_you
 from agent_hub.core.readmodels.filters import PageRequest, RunFilter, Scope
 from agent_hub.core.readmodels.read_ports import EventReadModels, HubReadModels
-from agent_hub.core.screens.screen_views import PortfolioView, ShellProject, ShellView
+from agent_hub.core.screens.screen_views import (
+    PortfolioView,
+    ProjectOverviewView,
+    ShellProject,
+    ShellView,
+)
 
 FEATURES_FRESH_SECONDS: Final = 30.0
 # The scopes whose feature list is kept: All projects and a few projects at once.
@@ -72,6 +77,14 @@ class ScreenReads:
             needs_you=self._events.needs_you(Scope(project=scope)),
             activity=self._events.activity(PageRequest(project=scope, limit=ACTIVITY_PAGE)),
         )
+
+    def project_overview(self, project: str) -> ProjectOverviewView:
+        """The Project overview's first view of ``project``: its resources' first pages and the
+        sessions of the issues worked on in the last 7 days.
+
+        RED stub for AGH-623 (plan SCREEN-2 commit 38): the name the tests call, no logic yet.
+        """
+        raise NotImplementedError
 
     def forget_features(self) -> None:
         """Drop every kept feature list, after a write of a feature record."""

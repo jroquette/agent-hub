@@ -9,33 +9,53 @@ project. The clock is the read's ``monotonic`` keyword, moved by the test.
 The portfolio read (Home): every project of ``list_projects`` whatever the scope, what
 ``needs_you`` answers for the scope, and the scope's first ``activity`` page of 20 items
 (Home's activity page), each as the read port answers it.
+
+The project overview read: each resource part as its read port answers it for the project (the
+runs' first 200, of any kind; every card), and the project's 200 newest sessions narrowed to
+those of issues (``label.issue``, else ``issue``, upper case) with a session active in the last 7
+days, newest first; ``has_sessions`` says whether those 200 held any. "Now" is the real clock,
+so each session's age is set hours or days away from the 7-day edge.
 """
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from operator import attrgetter
 from typing import Any
 
 import pytest
 
 from agent_hub.core.features.feature_view import FeatureView
+from agent_hub.core.hub_config.config_view import HubConfigView
+from agent_hub.core.hubs.finding_view import DoctorFindings, FindingView
 from agent_hub.core.hubs.registered_hub import HubView
 from agent_hub.core.projects.project_views import (
     ActivityItem,
     LiveTile,
     NeedsYouItem,
+    NowItem,
+    ProjectDetail,
+    ProjectNow,
     ProjectSummary,
+    RepoView,
+    TrackerView,
 )
-from agent_hub.core.readmodels.filters import PageRequest, RunFilter, Scope
+from agent_hub.core.readmodels.filters import PageRequest, RunFilter, Scope, SessionFilter
 from agent_hub.core.readmodels.page import Page
+from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.runs.workflow_run import WorkflowRun
 from agent_hub.core.screens.screen_reads import ScreenReads
 from agent_hub.core.screens.screen_views import PortfolioView, ShellProject, ShellView
+from agent_hub.core.sessions.session import Session
+from agent_hub.core.testing.discovery_fakes import a_demo_config_view
 from agent_hub.core.testing.read_model_builders import (
+    HUB_ID,
     a_feature_view,
+    a_finding_view,
     a_hub_view,
     a_project_summary,
     a_run,
+    a_session,
     a_session_label,
 )
 
@@ -56,6 +76,7 @@ class CountingEvents:
     runs: list[WorkflowRun] = field(default_factory=list)
     needs: list[NeedsYouItem] = field(default_factory=list)
     feed: list[ActivityItem] = field(default_factory=list)
+    sessions: list[Session] = field(default_factory=list)
     calls: list[tuple[str, object]] = field(default_factory=list)
 
     def list_live_sessions(self, scope: Scope) -> Page[LiveTile]:
@@ -80,14 +101,27 @@ class CountingEvents:
         kept = [item for item in self.feed if page.project in {None, item.project}]
         return _page(kept[: page.limit])
 
+    def list_sessions(self, session_filter: SessionFilter) -> Page[Session]:
+        self.calls.append(("list_sessions", session_filter))
+        kept = [item for item in self.sessions if session_filter.project in {None, item.project}]
+        sort = session_filter.sort
+        kept.sort(key=attrgetter(sort.removeprefix("-")), reverse=sort.startswith("-"))
+        return _page(kept[: session_filter.limit])
+
 
 @dataclass
 class CountingHubs:
-    """The hub reads the shell makes, over lists; records each call."""
+    """The hub reads the screen reads make, over lists and per-project entries; records each
+    call."""
 
     hubs: list[HubView] = field(default_factory=list)
     projects: list[ProjectSummary] = field(default_factory=list)
     features: list[FeatureView] = field(default_factory=list)
+    details: dict[str, ProjectDetail] = field(default_factory=dict)
+    nows: dict[str, ProjectNow] = field(default_factory=dict)
+    repos: dict[str, list[RepoView]] = field(default_factory=dict)
+    configs: dict[str, HubConfigView] = field(default_factory=dict)
+    findings: list[FindingView] = field(default_factory=list)
     calls: list[tuple[str, object]] = field(default_factory=list)
 
     def list_hubs(self) -> Page[HubView]:
@@ -101,6 +135,39 @@ class CountingHubs:
     def list_features(self, scope: Scope) -> Page[FeatureView]:
         self.calls.append(("list_features", scope))
         return _page([item for item in self.features if scope.project in {None, item.project}])
+
+    def get_project(self, project: str) -> ProjectDetail:
+        self.calls.append(("get_project", project))
+        return _of(self.details, project)
+
+    def project_now(self, project: str) -> ProjectNow:
+        self.calls.append(("project_now", project))
+        return _of(self.nows, project)
+
+    def project_repos(self, project: str) -> Page[RepoView]:
+        self.calls.append(("project_repos", project))
+        return _page(_of(self.repos, project))
+
+    def hub_config(self, project: str) -> HubConfigView:
+        self.calls.append(("hub_config", project))
+        return _of(self.configs, project)
+
+    def doctor_findings(self, scope: Scope) -> DoctorFindings:
+        self.calls.append(("doctor_findings", scope))
+        return _findings([item for item in self.findings if scope.project in {None, item.project}])
+
+
+def _of[T](entries: dict[str, T], project: str) -> T:
+    """The project's entry; a project with none is unknown, as the read models answer it."""
+    if project not in entries:
+        raise EntityNotFoundError(entity="project", entity_id=project)
+    return entries[project]
+
+
+def _findings(items: Sequence[FindingView]) -> DoctorFindings:
+    return DoctorFindings(
+        items=tuple(items), next_cursor=None, total_estimate=len(items), checked_at=AT
+    )
 
 
 class SteppedClock:
@@ -326,4 +393,145 @@ def test_composes_portfolio_from_projects_needs_and_activity_when_read(
         projects=_page(hubs.projects),
         needs_you=_page(events.needs[needs]),
         activity=_page(events.feed[feed]),
+    )
+
+
+def a_project_detail() -> ProjectDetail:
+    """The overview header of project ``demo``."""
+    return ProjectDetail(
+        name="demo",
+        hub_id=HUB_ID,
+        hub_path="/home/demo/demo-hub",
+        hub_repo="acme/demo-hub",
+        tracker=TrackerView(kind="linear", teams=("DEM",), ready_label=None, failed_label=None),
+        default_branch="main",
+        branch_prefix="jdoe/",
+        platform_version="0.8.0",
+        lock_version="0.8.0",
+        lock_state="in_sync",
+        checked_at=AT,
+        modules=("cloud",),
+    )
+
+
+def a_repo(name: str) -> RepoView:
+    """A repo of project ``demo``."""
+    return RepoView(
+        name=name,
+        dir=name,
+        github=f"acme/{name}",
+        role="app",
+        default_branch="main",
+        check_fast="make check-fast",
+        check="make check",
+        agents_md_present=True,
+        agents_md_lines=40,
+    )
+
+
+def _overview_world(sessions: Sequence[Session]) -> tuple[CountingEvents, CountingHubs]:
+    """The shell's world, plus what ``demo``'s overview reads: its header, now.md, two repos and
+    its config; a finding and a Needs you line of ``other``, then of ``demo``; 201 runs of
+    ``demo``, newest first and the newest a scenario run, then one of ``other``; and
+    ``sessions``."""
+    events, hubs = _world(
+        [a_run(id="00000000", workflow="scenario:checkout")]
+        + [a_run(id=f"{number:08x}") for number in range(1, 201)]
+        + [a_run(id="0000ffff", project="other")]
+    )
+    hubs.details = {"demo": a_project_detail()}
+    focus = (NowItem(text="Ship the overview read"),)
+    hubs.nows = {
+        "demo": ProjectNow(
+            project="demo", focus=focus, next=(), watch=(), source_path="brain/now.md"
+        )
+    }
+    hubs.repos = {"demo": [a_repo("demo-api"), a_repo("demo-web")]}
+    hubs.configs = {"demo": a_demo_config_view()}
+    hubs.findings = [a_finding_view(project="other"), a_finding_view()]
+    events.needs = [a_need("other", "Fix the doctor error"), a_need("demo", "Approve the plan")]
+    events.sessions = list(sessions)
+    return events, hubs
+
+
+def a_session_ago(session: str, now: datetime, days: float, **overrides: object) -> Session:
+    """A session of ``demo`` last active ``days`` before ``now``, started an hour before that."""
+    last = now - timedelta(days=days)
+    fields: dict[str, object] = {
+        "id": session,
+        "started_at": last - timedelta(hours=1),
+        "last_activity_at": last,
+    }
+    return a_session(**(fields | overrides))
+
+
+def _demo_sessions(now: datetime) -> list[Session]:
+    """``demo``'s sessions and one of ``other``: DEM-1 this week (in a session started 30 days
+    ago) and 20 days ago; DEM-3 this week, in a session with no label whose own issue is in
+    lower case, and 15 days ago; DEM-2 10 days ago only, though ``other`` works on it this week;
+    and one of this week on no issue."""
+    return [
+        a_session_ago(
+            "dem-1-week",
+            now,
+            0.05,
+            label=a_session_label(issue="DEM-1"),
+            started_at=now - timedelta(days=30),
+        ),
+        a_session_ago("no-issue-week", now, 0.1, label=a_session_label(issue=None)),
+        a_session_ago("dem-3-week", now, 2, issue="dem-3"),
+        a_session_ago("dem-2-older", now, 10, label=a_session_label(issue="DEM-2")),
+        a_session_ago("dem-3-older", now, 15, label=a_session_label(issue="DEM-3")),
+        a_session_ago("dem-1-older", now, 20, label=a_session_label(issue="DEM-1")),
+        a_session_ago(
+            "other-week", now, 0.05, project="other", label=a_session_label(issue="DEM-2")
+        ),
+    ]
+
+
+# Each resource part as its read port answers it for demo: the header, demo's findings and Needs
+# you line, every card, demo's first 200 runs of any kind, now.md, its features, repos and config.
+# The recent sessions are demo's of the issues worked on in the week (DEM-1; DEM-3, read from a
+# session with no label), newest first, each kept whether or not it was itself active this week.
+@pytest.mark.parametrize(
+    ("kept", "recent", "has_sessions"),
+    [
+        (None, ["dem-1-week", "dem-3-week", "dem-3-older", "dem-1-older"], True),
+        ({"dem-2-older", "dem-3-older"}, [], True),
+        (set(), [], False),
+    ],
+    ids=["worked-on-this-week", "only-older-sessions", "no-session"],
+)
+def test_composes_project_overview_from_its_resources_when_read(
+    kept: set[str] | None, recent: list[str], *, has_sessions: bool
+) -> None:
+    sessions = [
+        item
+        for item in _demo_sessions(datetime.now(UTC))
+        if kept is None or item.id in kept or item.project == "other"
+    ]
+    events, hubs = _overview_world(sessions)
+    assert (len(events.runs), events.runs[200].project, events.runs[201].project) == (
+        202,
+        "demo",
+        "other",
+    )
+
+    view = ScreenReads(events, hubs, monotonic=SteppedClock()).project_overview("demo")
+
+    by_id = {item.id: item for item in sessions}
+    assert view.recent_sessions.items == tuple(by_id[session] for session in recent)
+    assert view.has_sessions is has_sessions
+    assert (view.project, view.findings, view.projects, view.needs_you, view.runs) == (
+        hubs.details["demo"],
+        _findings(hubs.findings[1:]),
+        _page(hubs.projects),
+        _page(events.needs[1:]),
+        _page(events.runs[:200]),
+    )
+    assert (view.now, view.features, view.repos, view.config) == (
+        hubs.nows["demo"],
+        _page(hubs.features[:3]),
+        _page(hubs.repos["demo"]),
+        hubs.configs["demo"],
     )
