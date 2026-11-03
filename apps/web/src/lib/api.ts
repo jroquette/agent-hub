@@ -1,5 +1,6 @@
 import { QueryClient, queryOptions, useQuery } from "@tanstack/react-query";
-import type { UseQueryOptions } from "@tanstack/react-query";
+import type { QueryKey, UseQueryOptions } from "@tanstack/react-query";
+import { createContext, useContext } from "react";
 
 import { client } from "../api/client";
 import type { components, paths } from "../api/schema";
@@ -255,16 +256,36 @@ type ExtraOptions<P extends GetPath> = Omit<
   "queryKey" | "queryFn"
 >;
 
-/** A GET as a TanStack query; `error` is always an ApiProblem. */
+/**
+ * A screen read above a query (ADR 0056), given by `ScreenReadProvider` (`lib/screenRead.tsx`).
+ * `hold(key)` is null for a key the read does not bring, or once it has answered; else it
+ * resolves when the read answers, with that key's data, or with undefined when the query must
+ * read its route (the read failed or did not answer in time).
+ */
+export interface ScreenReadHold {
+  hold(key: QueryKey): Promise<unknown> | null;
+}
+
+export const ScreenReadContext = createContext<ScreenReadHold | null>(null);
+
+/** A GET as a TanStack query; `error` is always an ApiProblem. While a screen read above brings
+ * its data, the query waits for it instead of sending its own request. */
 export function useApi<P extends GetPath>(
   path: P,
   params?: ApiParams<P>,
   options?: ExtraOptions<P>,
 ) {
+  const screenRead = useContext(ScreenReadContext);
   return useQuery<ApiData<P>, ApiProblem, ApiData<P>, ReturnType<typeof apiKey<P>>>({
     ...options,
     queryKey: apiKey(path, params),
-    queryFn: ({ signal }) => apiGet(path, params, signal),
+    queryFn: ({ queryKey, signal }) => {
+      const held = screenRead?.hold(queryKey);
+      if (!held) return apiGet(path, params, signal);
+      return held.then((data) =>
+        data === undefined ? apiGet(path, params, signal) : (data as ApiData<P>),
+      );
+    },
   });
 }
 

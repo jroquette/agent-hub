@@ -2,17 +2,31 @@ import { keepPreviousData, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 
 import type { components } from "../../api/schema";
-import { useApi, type GetPath } from "../../lib/api";
+import { apiKey, useApi, type GetPath } from "../../lib/api";
 import { useCheckPoll } from "../../lib/checkPoll";
+import type { ScreenReadSeed } from "../../lib/screenRead";
 import { useGlobalStream } from "../../shell/GlobalStream";
 
 type ProjectPage = components["schemas"]["Page_ProjectSummary_"];
+type PortfolioView = components["schemas"]["PortfolioView"];
 export type ProjectSummary = components["schemas"]["ProjectSummary"];
 export type NeedsYouItem = components["schemas"]["NeedsYouItem"];
 export type ActivityItem = components["schemas"]["ActivityItem"];
 export type UsageReport = components["schemas"]["UsageReport"];
 export type UsageRow = components["schemas"]["UsageRow"];
 export type UsageDays = components["schemas"]["UsageDays"];
+
+/** The activity feed's first page; "Load more" asks for this many more. */
+export const ACTIVITY_PAGE = 20;
+
+/** The portfolio read's parts (ADR 0056), each under the key its region's query reads. */
+export function portfolioSeeds(project: string | null, read: PortfolioView): ScreenReadSeed[] {
+  return [
+    [apiKey("/api/v1/projects", { query: { project } }), read.projects],
+    [apiKey("/api/v1/needs-you", { query: { project } }), read.needs_you],
+    [apiKey("/api/v1/activity", { query: { project, limit: ACTIVITY_PAGE } }), read.activity],
+  ];
+}
 
 /**
  * Live: when the global stream's `counts` change, the given API families refetch (the stream
