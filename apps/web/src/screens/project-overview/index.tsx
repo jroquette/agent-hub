@@ -24,6 +24,7 @@ import type { DataTableColumn, IconName, Provenance } from "../../components";
 import { STAGES } from "../../components";
 import { useNow } from "../../lib/clock";
 import { fmtAgo, fmtDuration, fmtMoney, toNumber } from "../../lib/format";
+import { ScreenReadProvider } from "../../lib/screenRead";
 import { useRowKeys } from "../../lib/useRowKeys";
 import { useShell } from "../../shell/AppShell";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
@@ -62,14 +63,16 @@ import {
   type RecentFeature,
 } from "./model";
 import {
+  OVERVIEW_READ,
+  overviewSeeds,
   useFindings,
   useProject,
   useProjectNow,
   useProjectRepos,
   useProjectRuns,
   useProjectConfig,
-  useProjectSessions,
   useProjectSummary,
+  useRecentSessions,
   type DoctorFindings,
   type NowItem,
   type ProjectDetail,
@@ -722,7 +725,7 @@ function RecentSkeleton() {
 /** The features and tickets the team worked on this week; sessions stay on Sessions. */
 function RecentWorkSection({ project, hubPath }: { project: string; hubPath: string }) {
   const features = useFeatures(project);
-  const sessions = useProjectSessions(project);
+  const sessions = useRecentSessions(project);
   const runs = useProjectRuns(project);
   const nameOf = useFeatureNames();
   const navigate = useNavigate();
@@ -732,7 +735,7 @@ function RecentWorkSection({ project, hubPath }: { project: string; hubPath: str
   const open = (href: string) => void navigate(href);
   const scope = encodeURIComponent(project);
 
-  const sessionItems = sessions.data?.items ?? [];
+  const sessionItems = sessions.items;
   const featureItems = features.data?.items ?? [];
   const featureIssues = new Map(
     featureItems.flatMap((f) =>
@@ -754,7 +757,7 @@ function RecentWorkSection({ project, hubPath }: { project: string; hubPath: str
     RECENT_VISIBLE,
   );
 
-  if (sessions.isSuccess && sessionItems.length === 0) {
+  if (sessions.none) {
     return (
       <Section id="recent" title="Recent work" sub={RECENT_SUB}>
         <div className="ah-card">
@@ -788,13 +791,13 @@ function RecentWorkSection({ project, hubPath }: { project: string; hubPath: str
               status={features.error.status}
               onRetry={() => void features.refetch()}
             />
-          ) : sessions.isError ? (
+          ) : sessions.error ? (
             // Which feature was worked on is read from the sessions; without them it is unknown.
             <ProblemError
               title="Could not tell which features were worked on"
               detail={sessions.error.detail}
               status={sessions.error.status}
-              onRetry={() => void sessions.refetch()}
+              onRetry={sessions.refetch}
             />
           ) : featureRows.length === 0 ? (
             <div className="ah-card po-empty">No feature was worked on in the last 7 days.</div>
@@ -822,12 +825,12 @@ function RecentWorkSection({ project, hubPath }: { project: string; hubPath: str
         >
           {sessions.isPending ? (
             <RecentSkeleton />
-          ) : sessions.isError ? (
+          ) : sessions.error ? (
             <ProblemError
               title="Could not load tickets"
               detail={sessions.error.detail}
               status={sessions.error.status}
-              onRetry={() => void sessions.refetch()}
+              onRetry={sessions.refetch}
             />
           ) : ticketRows.length === 0 ? (
             <div className="ah-card po-empty">No ticket was worked on in the last 7 days.</div>
@@ -1435,9 +1438,23 @@ function ProjectNotFound({ name }: { name: string }) {
 /**
  * Project overview (spec 12), written for anyone on the team: what needs you, this week in numbers,
  * the team's focus, the agents' tickets and recent work; engineering detail folds away at the end.
+ * Its regions' first answers and the sessions of this week's issues come from one screen read
+ * (ADR 0056).
  */
 export function ProjectOverviewScreen() {
   const { project: name = "" } = useParams();
+  return (
+    <ScreenReadProvider
+      path={OVERVIEW_READ}
+      params={{ path: { project: name } }}
+      seeds={(read) => overviewSeeds(name, read)}
+    >
+      <ProjectOverview name={name} />
+    </ScreenReadProvider>
+  );
+}
+
+function ProjectOverview({ name }: { name: string }) {
   const project = useProject(name);
   const findings = useFindings(name);
   const summary = useProjectSummary(name);

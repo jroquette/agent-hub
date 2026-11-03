@@ -7,13 +7,23 @@
  * the read (`ScreenReadContext`) and takes the part written under its key. When the read fails,
  * does not answer within `SCREEN_READ_TIMEOUT_MS` or is switched off, each such query reads its
  * resource route as before, so a failure stays in its region. A part is written only from this
- * visit's read, and never over an entry updated after that read started.
+ * visit's read, and never over an entry updated after that read started. A derived part, never
+ * written under a resource's key, is read from the answer itself with `useScreenRead`.
  */
 import { hashKey, useQueryClient, type QueryClient, type QueryKey } from "@tanstack/react-query";
-import { useContext, useEffect, useState, type ReactElement, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 
 import {
   apiGet,
+  apiKey,
   ScreenReadContext,
   type ApiData,
   type ApiParams,
@@ -43,6 +53,15 @@ export interface ScreenReadProviderProps<P extends GetPath> {
   children?: ReactNode;
 }
 
+/** This visit's answer, for its derived parts: the read's key, and the read once it has
+ * answered (undefined while on its way, null when it failed, timed out or was switched off). */
+interface ScreenAnswer {
+  key: string;
+  read: unknown;
+}
+
+const ScreenAnswerContext = createContext<ScreenAnswer | null>(null);
+
 export function ScreenReadProvider<P extends GetPath>({
   path,
   params,
@@ -52,24 +71,54 @@ export function ScreenReadProvider<P extends GetPath>({
 }: ScreenReadProviderProps<P>): ReactElement {
   const client = useQueryClient();
   const outer = useContext(ScreenReadContext);
+  const outerAnswer = useContext(ScreenAnswerContext);
+  const [read, setRead] = useState<unknown>(undefined);
   const [visit] = useState(() =>
-    enabled ? new ScreenVisit(client, { path, params, seeds }, outer) : null,
+    enabled ? new ScreenVisit(client, { path, params, seeds, onAnswer: setRead }, outer) : null,
   );
   useEffect(() => visit?.read(), [visit]);
   useEffect(() => {
     if (!enabled) visit?.release();
   }, [visit, enabled]);
-  return <ScreenReadContext.Provider value={visit ?? outer}>{children}</ScreenReadContext.Provider>;
+  const answer = useMemo(
+    () => (visit ? { key: visit.key, read } : outerAnswer),
+    [visit, read, outerAnswer],
+  );
+  return (
+    <ScreenReadContext.Provider value={visit ?? outer}>
+      <ScreenAnswerContext.Provider value={answer}>{children}</ScreenAnswerContext.Provider>
+    </ScreenReadContext.Provider>
+  );
+}
+
+/**
+ * The screen read above, for a derived part (one never written under a resource's key, such as the
+ * overview's recent sessions): undefined while it is on its way, the read once it has answered,
+ * and null when there is none to use, so the caller reads its resource route instead: no visit of
+ * this read with these `params` above, or the read failed, did not answer in time or was switched
+ * off.
+ */
+export function useScreenRead<P extends GetPath>(
+  path: P,
+  params?: ApiParams<P>,
+): ApiData<P> | null | undefined {
+  const answer = useContext(ScreenAnswerContext);
+  if (answer?.key !== hashKey(apiKey(path, params))) return null;
+  return answer.read as ApiData<P> | null | undefined;
 }
 
 interface ScreenRequest<P extends GetPath> {
   path: P;
   params: ApiParams<P> | undefined;
   seeds: Seeds<P>;
+  /** Told once, when the visit settles: the read, or null when its parts are not to be used. */
+  onAnswer: (read: ApiData<P> | null) => void;
 }
 
 /** One visit's screen read: the keys it covers and the queries waiting for its answer. */
 class ScreenVisit<P extends GetPath> implements ScreenReadHold {
+  /** The screen read's own query key, hashed: what `useScreenRead` asks for. */
+  readonly key: string;
   readonly #client: QueryClient;
   readonly #request: ScreenRequest<P>;
   readonly #outer: ScreenReadHold | null;
@@ -79,6 +128,7 @@ class ScreenVisit<P extends GetPath> implements ScreenReadHold {
   #settled = false;
 
   constructor(client: QueryClient, request: ScreenRequest<P>, outer: ScreenReadHold | null) {
+    this.key = hashKey(apiKey(request.path, request.params));
     this.#client = client;
     this.#request = request;
     this.#outer = outer;
@@ -108,7 +158,7 @@ class ScreenVisit<P extends GetPath> implements ScreenReadHold {
         clearTimeout(timer);
         if (!current || this.#settled) return;
         writeSeeds(this.#client, this.#request.seeds(read), startedAt);
-        this.#finish(true);
+        this.#finish(read);
       },
       () => {
         clearTimeout(timer);
@@ -124,13 +174,14 @@ class ScreenVisit<P extends GetPath> implements ScreenReadHold {
 
   /** Lets every waiting query read its resource route, and covers nothing from then on. */
   release(): void {
-    this.#finish(false);
+    this.#finish(null);
   }
 
-  #finish(seeded: boolean): void {
+  #finish(read: ApiData<P> | null): void {
     if (this.#settled) return;
     this.#settled = true;
-    this.#settle(seeded);
+    this.#settle(read !== null);
+    this.#request.onAnswer(read);
   }
 }
 
