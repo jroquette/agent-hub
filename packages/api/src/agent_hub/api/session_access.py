@@ -56,6 +56,9 @@ OFF_PROBLEM_TYPE = "urn:agent-hub:problem:agent-sessions-off"
 RUNS_OFF_PROBLEM_TYPE = "urn:agent-hub:problem:run-control-off"
 UNAUTHORIZED_PROBLEM_TYPE = "urn:agent-hub:problem:agent-session-unauthorized"
 EXCHANGE_METHODS = frozenset({"GET", "HEAD"})
+# RED stub for AGH-623 (plan SCREEN-3 commit 42b): the scope key of the agent-session read
+# mark, not written yet.
+AGENT_SESSION_READS: Final = "agent_hub.agent_session_reads"
 BODILESS_WRITES = frozenset({"DELETE"})
 # What a browser sends for a request this server's own page (or the address bar) made.
 OWN_FETCH_SITES = frozenset({"same-origin", "none"})

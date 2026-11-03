@@ -4,17 +4,26 @@ the answer the first-run gate redirects on. ``GET /api/v1/screens/portfolio`` an
 three parts exactly as their resource routes answer them for the same scope, since the web
 writes each under that route's query key. ``GET /api/v1/screens/project-overview/{project}``
 answers the overview's resource parts as their routes do, the sessions of the issues worked on
-in the last 7 days by the server's clock, and the same 404 problem as ``/projects/{project}``."""
+in the last 7 days by the server's clock, and the same 404 problem as ``/projects/{project}``.
+``GET /api/v1/screens/sessions`` answers the inbox's four sections, the cards and the features as
+their routes answer them, and the agent sessions and the driver's capabilities only for a request
+that the agent-session routes would answer (the launch cookie, this server's own pages, the
+sessions on); for any other request those two parts are null."""
 
 import json
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from agent_hub.api.session_token import cookie_name
+from agent_hub.api.settings import ApiSettings
 from agent_hub.core.events.event import Event
+from agent_hub.core.testing.builders import an_event
+from agent_hub.core.testing.session_driver_fakes import InMemorySessionDriver
 from agent_hub.core.testing.session_scenarios import (
     a_run_events,
     a_session_events,
@@ -25,6 +34,8 @@ OWN = {"Origin": "http://127.0.0.1:7420"}
 SHELL = "/api/v1/screens/shell"
 PORTFOLIO = "/api/v1/screens/portfolio"
 OVERVIEW = "/api/v1/screens/project-overview"
+SESSIONS = "/api/v1/screens/sessions"
+AGENT_SESSIONS = "/api/v1/agent-sessions"
 SPEC = "---\ntype: spec\nprocess_size: bounded\nrepos: [demo-api]\nlinear: [DEM-7]\n---\n# Spec\n"
 RECORD = json.dumps(
     {
@@ -249,3 +260,217 @@ def test_answers_project_not_found_when_overview_project_unknown(composed: Any) 
 
     assert response.status_code == 404, response.text
     assert _without_instance(response.json()) == _without_instance(project.json())
+
+
+INBOX = ("waiting", "live", "idle", "ended")
+# The inbox's period starts here, before the composed app's clock: the idle session started
+# before it, the other unended ones and one finished one after it.
+PERIOD = timedelta(minutes=15)
+
+
+def _stamp(at: datetime) -> str:
+    return at.isoformat().replace("+00:00", "Z")
+
+
+def _inbox_events(now: datetime) -> list[Event]:
+    """Sessions of each section before ``now``: in demo one waiting on a gate, one live, one
+    idle started before the period, one finished in it and one finished a day before; in
+    other one live and one finished."""
+    waiting = a_session_events("demo-waiting", ended=False, start=now - timedelta(minutes=13))
+    gate = an_event(
+        session="demo-waiting",
+        type="gate.request",
+        timestamp=waiting[-1].timestamp + timedelta(seconds=5),
+        source_id="demo-waiting:gate.request",
+        payload={"gate_id": "toolu_ask", "kind": "plan", "feature": "demo"},
+    )
+    events = [*waiting, gate]
+    for session, project, minutes_ago, ended in (
+        ("demo-live", "demo", 8, False),
+        ("demo-idle", "demo", 18, False),
+        ("demo-ended", "demo", 14, True),
+        ("demo-ended-before", "demo", 24 * 60, True),
+        ("other-live", "other", 9, False),
+        ("other-ended", "other", 20 * 60, True),
+    ):
+        start = now - timedelta(minutes=minutes_ago)
+        events += a_session_events(session, project=project, start=start, ended=ended)
+    return events
+
+
+def _register_inbox_hubs(composed: Any, make_hub: Callable[..., Path]) -> None:
+    """``demo`` and ``other`` registered, each with a feature folder."""
+    for project, slug in (("demo", "shipping"), ("other", "refused")):
+        hub = make_hub(project)
+        _feature(hub, slug, BASE | {"eval.md": _eval("SHIP" if project == "demo" else "NO-SHIP")})
+        registered = composed.client.post("/api/v1/hubs", json={"path": str(hub)}, headers=OWN)
+        assert registered.status_code == 201, registered.text
+
+
+# Each section as GET /sessions?status=<s>&limit=50 with the read's scope and sort, the period's
+# from on Finished only, every card and every project's features: the parts the web writes under
+# those routes' keys.
+@pytest.mark.parametrize("in_period", [False, True], ids=["all-projects", "one-project-in-period"])
+def test_answers_sections_like_session_lists_when_sessions_screen_read(
+    composed: Any, make_hub: Callable[..., Path], *, in_period: bool
+) -> None:
+    _register_inbox_hubs(composed, make_hub)
+    now = composed.settings.clock()
+    composed.store.append(_inbox_events(now))
+    since = _stamp(now - PERIOD)
+    params: dict[str, Any] = (
+        {"project": "demo", "sort": "-last_activity_at", "from": since} if in_period else {}
+    )
+    shared = {key: value for key, value in params.items() if key != "from"}
+    sections = {
+        status: composed.client.get(
+            "/api/v1/sessions",
+            params=shared
+            | {"status": status, "limit": 50}
+            | ({"from": since} if in_period and status == "ended" else {}),
+        ).json()
+        for status in INBOX
+    }
+    projects = composed.client.get("/api/v1/projects").json()
+    features = composed.client.get("/api/v1/features").json()
+    shown = {status: {item["id"] for item in page["items"]} for status, page in sections.items()}
+    assert shown == {
+        "waiting": {"demo-waiting"},
+        "live": {"demo-live"} | (set() if in_period else {"other-live"}),
+        "idle": {"demo-idle"},
+        "ended": {"demo-ended"} | (set() if in_period else {"demo-ended-before", "other-ended"}),
+    }
+    assert sorted(card["name"] for card in projects["items"]) == ["demo", "other"]
+    assert sorted(item["project"] for item in features["items"]) == ["demo", "other"]
+
+    response = composed.client.get(SESSIONS, params=params)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert {status: body[status] for status in INBOX} == sections
+    assert (body["projects"], body["features"]) == (projects, features)
+
+
+SESSION_TOKEN = "s" * 43
+
+
+@pytest.fixture
+def sessions_on(
+    open_composed: Callable[..., Any],
+    composed_settings: ApiSettings,
+    make_hub: Callable[..., Path],
+) -> Any:
+    """The composed app with this launch's token and the in-memory driver, ``demo`` and
+    ``other`` registered; no cookie yet."""
+    app = open_composed(
+        replace(composed_settings, session_token=SESSION_TOKEN),
+        session_driver=InMemorySessionDriver(),
+    )
+    _register_inbox_hubs(app, make_hub)
+    return app
+
+
+def _sign_in(app: Any) -> None:
+    """The launch URL's token exchange: the cookie it sets goes with every later request."""
+    exchanged = app.client.get("/", params={"token": SESSION_TOKEN}, follow_redirects=False)
+    assert exchanged.status_code == 303, exchanged.text
+    assert app.client.cookies.get(cookie_name(app.settings.port)) == SESSION_TOKEN
+
+
+def _start_agent_session(app: Any, project: str) -> str:
+    """An idle agent session of ``project`` in its first workdir."""
+    workdirs = app.client.get(f"{AGENT_SESSIONS}/workdirs", params={"project": project})
+    assert workdirs.status_code == 200, workdirs.text
+    workdir = workdirs.json()["items"][0]["workdir_id"]
+    created = app.client.post(
+        AGENT_SESSIONS, json={"project": project, "workdir_id": workdir}, headers=OWN
+    )
+    assert created.status_code == 201, created.text
+    session_id: str = created.json()["id"]
+    return session_id
+
+
+def test_answers_agent_parts_when_request_has_session_cookie(sessions_on: Any) -> None:
+    _sign_in(sessions_on)
+    started = {project: _start_agent_session(sessions_on, project) for project in ("demo", "other")}
+    every = sessions_on.client.get(AGENT_SESSIONS).json()["items"]
+    assert sorted(item["id"] for item in every) == sorted(started.values())
+    agent_sessions = sessions_on.client.get(AGENT_SESSIONS, params={"project": "demo"})
+    capabilities = sessions_on.client.get(f"{AGENT_SESSIONS}/capabilities")
+    assert (agent_sessions.status_code, capabilities.status_code) == (200, 200)
+    assert [item["id"] for item in agent_sessions.json()["items"]] == [started["demo"]]
+
+    response = sessions_on.client.get(SESSIONS, params={"project": "demo"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert (body["agent_sessions"], body["capabilities"]) == (
+        agent_sessions.json(),
+        capabilities.json(),
+    )
+
+
+def test_answers_no_agent_parts_when_request_has_no_session_cookie(sessions_on: Any) -> None:
+    refused = sessions_on.client.get(f"{AGENT_SESSIONS}/capabilities")
+    assert refused.status_code == 401, refused.text
+
+    response = sessions_on.client.get(SESSIONS)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert (body["agent_sessions"], body["capabilities"]) == (None, None)
+
+
+# The cookie goes with each of these, as a browser sends it; the agent-session routes refuse
+# them all (another loopback port is same-site and carries the Strict cookie).
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Sec-Fetch-Site": "cross-site"},
+        {"Origin": "http://attacker.example"},
+        {"Origin": "http://127.0.0.1:7421", "Sec-Fetch-Site": "same-site"},
+    ],
+    ids=["cross-site", "foreign-origin", "other-loopback-port"],
+)
+def test_answers_no_agent_parts_when_request_comes_from_another_site(
+    sessions_on: Any, headers: dict[str, str]
+) -> None:
+    _sign_in(sessions_on)
+    refused = sessions_on.client.get(f"{AGENT_SESSIONS}/capabilities", headers=headers)
+    assert refused.status_code == 403, refused.text
+
+    response = sessions_on.client.get(SESSIONS, headers=headers)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert (body["agent_sessions"], body["capabilities"]) == (None, None)
+
+
+def test_answers_no_agent_sessions_when_sessions_off(
+    open_composed: Callable[..., Any], composed_settings: ApiSettings
+) -> None:
+    app = open_composed(replace(composed_settings, session_token=SESSION_TOKEN, sessions_off=True))
+    app.client.cookies.set(cookie_name(composed_settings.port), SESSION_TOKEN)
+    off = app.client.get(AGENT_SESSIONS)
+    assert (off.status_code, off.json()["type"]) == (
+        404,
+        "urn:agent-hub:problem:agent-sessions-off",
+    )
+
+    response = app.client.get(SESSIONS)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert (body["agent_sessions"], body["capabilities"]) == (None, None)
+
+
+# Validated as on /sessions: a bad parameter is a 400 naming it (docs/API.md "Errors").
+def test_refuses_unknown_sort_when_sessions_screen_read(composed: Any) -> None:
+    resource = composed.client.get("/api/v1/sessions", params={"sort": "fastest"})
+    assert resource.status_code == 400, resource.text
+    assert [error["parameter"] for error in resource.json()["errors"]] == ["sort"]
+
+    response = composed.client.get(SESSIONS, params={"sort": "fastest"})
+
+    assert response.status_code == 400, response.text
+    assert _without_instance(response.json()) == _without_instance(resource.json())

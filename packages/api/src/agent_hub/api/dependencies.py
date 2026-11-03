@@ -120,6 +120,14 @@ def optional_screen_reads(request: Request) -> ScreenReads | None:
     return _ports(request).screen_reads
 
 
+def agent_session_reads(request: Request) -> bool:
+    """Whether the request may read agent-session data.
+
+    RED stub for AGH-623 (plan SCREEN-3 commit 42b): answers False until the mark is read.
+    """
+    return False
+
+
 def knowledge_reads(request: Request) -> KnowledgeReads:
     """The knowledge search and backlinks reads, or 501 when not wired."""
     port = _ports(request).knowledge_reads
