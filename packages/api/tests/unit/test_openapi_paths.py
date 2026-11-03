@@ -396,7 +396,10 @@ def test_lists_scenario_paths_when_document_built(api_settings: ApiSettings) -> 
 
 # The screen reads (ADR 0056), one GET per screen under /api/v1/screens/; each screen read adds
 # its path here.
-SCREEN_SPEC_PATHS = {("get", "/api/v1/screens/shell")}
+SCREEN_SPEC_PATHS = {
+    ("get", "/api/v1/screens/shell"),
+    ("get", "/api/v1/screens/portfolio"),
+}
 
 
 def test_lists_screen_paths_when_document_built(api_settings: ApiSettings) -> None:

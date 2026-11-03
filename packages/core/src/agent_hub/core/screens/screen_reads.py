@@ -17,7 +17,7 @@ from agent_hub.core.features.feature_view import FeatureView
 from agent_hub.core.features.owner_needs import features_needing_you
 from agent_hub.core.readmodels.filters import RunFilter, Scope
 from agent_hub.core.readmodels.read_ports import EventReadModels, HubReadModels
-from agent_hub.core.screens.screen_views import ShellProject, ShellView
+from agent_hub.core.screens.screen_views import PortfolioView, ShellProject, ShellView
 
 FEATURES_FRESH_SECONDS: Final = 30.0
 # The scopes whose feature list is kept: All projects and a few projects at once.
@@ -61,6 +61,14 @@ class ScreenReads:
             features_needing_you=features_needing_you(features, tiles),
             has_workflow_runs=bool(runs.items),
         )
+
+    def portfolio(self, scope: str | None) -> PortfolioView:
+        """Home's first view: every project's card, what needs you in ``scope`` and its newest
+        activity page.
+
+        RED stub for AGH-623 (plan SCREEN-1 commit 34): the name the tests call, no logic yet.
+        """
+        raise NotImplementedError
 
     def forget_features(self) -> None:
         """Drop every kept feature list, after a write of a feature record."""

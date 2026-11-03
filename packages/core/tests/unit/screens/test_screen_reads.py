@@ -5,23 +5,32 @@ whatever the scope; the features of the scope that need you, counted over a fres
 ``list_live_sessions(scope)`` and a feature list kept per scope for 30 s (the Features list's own
 refresh), which ``forget_features()`` drops; ``has_workflow_runs`` from one workflow run of any
 project. The clock is the read's ``monotonic`` keyword, moved by the test.
+
+The portfolio read (Home): every project of ``list_projects`` whatever the scope, what
+``needs_you`` answers for the scope, and the scope's first ``activity`` page of 20 items
+(Home's activity page), each as the read port answers it.
 """
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 
 from agent_hub.core.features.feature_view import FeatureView
 from agent_hub.core.hubs.registered_hub import HubView
-from agent_hub.core.projects.project_views import LiveTile, ProjectSummary
-from agent_hub.core.readmodels.filters import RunFilter, Scope
+from agent_hub.core.projects.project_views import (
+    ActivityItem,
+    LiveTile,
+    NeedsYouItem,
+    ProjectSummary,
+)
+from agent_hub.core.readmodels.filters import PageRequest, RunFilter, Scope
 from agent_hub.core.readmodels.page import Page
 from agent_hub.core.runs.workflow_run import WorkflowRun
 from agent_hub.core.screens.screen_reads import ScreenReads
-from agent_hub.core.screens.screen_views import ShellProject, ShellView
+from agent_hub.core.screens.screen_views import PortfolioView, ShellProject, ShellView
 from agent_hub.core.testing.read_model_builders import (
     a_feature_view,
     a_hub_view,
@@ -40,11 +49,13 @@ def _page[T](items: Sequence[T]) -> Page[T]:
 
 @dataclass
 class CountingEvents:
-    """The event reads the shell makes, over lists, filtered as the read models filter them;
-    records each call."""
+    """The event reads the screen reads make, over lists, filtered and cut to a page as the
+    read models do; records each call."""
 
     tiles: list[LiveTile] = field(default_factory=list)
     runs: list[WorkflowRun] = field(default_factory=list)
+    needs: list[NeedsYouItem] = field(default_factory=list)
+    feed: list[ActivityItem] = field(default_factory=list)
     calls: list[tuple[str, object]] = field(default_factory=list)
 
     def list_live_sessions(self, scope: Scope) -> Page[LiveTile]:
@@ -59,6 +70,15 @@ class CountingEvents:
             if run_filter.project in {None, run.project} and run_filter.kind in {None, run.kind}
         ]
         return _page(kept[: run_filter.limit])
+
+    def needs_you(self, scope: Scope) -> Page[NeedsYouItem]:
+        self.calls.append(("needs_you", scope))
+        return _page([item for item in self.needs if scope.project in {None, item.project}])
+
+    def activity(self, page: PageRequest) -> Page[ActivityItem]:
+        self.calls.append(("activity", page))
+        kept = [item for item in self.feed if page.project in {None, item.project}]
+        return _page(kept[: page.limit])
 
 
 @dataclass
@@ -252,3 +272,58 @@ def test_reads_no_live_sessions_when_no_feature_listed(world: Any, scope: str | 
 
     assert view.features_needing_you == 0
     assert _count(events.calls, "list_live_sessions") == 0
+
+
+def a_need(project: str, verb: str) -> NeedsYouItem:
+    """A Needs you line of ``project``."""
+    return NeedsYouItem(
+        kind="learning", verb=verb, context="brain/_inbox", project=project, since=AT, href="/"
+    )
+
+
+def an_activity(project: str, minutes_ago: int) -> ActivityItem:
+    """An activity item of ``project``, ``minutes_ago`` before ``AT``."""
+    return ActivityItem(
+        kind="learning",
+        text=f"Learning proposed {minutes_ago} min ago",
+        project=project,
+        at=AT - timedelta(minutes=minutes_ago),
+        href=None,
+    )
+
+
+def _portfolio_world() -> tuple[CountingEvents, CountingHubs]:
+    """The shell's world, plus three Needs you lines (``other``'s first) and an activity feed
+    newest first: two items of ``other``, then 25 of ``demo``."""
+    events, hubs = _world()
+    events.needs = [
+        a_need("other", "Fix the doctor error"),
+        a_need("demo", "Triage 2 learnings"),
+        a_need("demo", "Approve the plan"),
+    ]
+    events.feed = [an_activity("other", minutes) for minutes in range(2)] + [
+        an_activity("demo", minutes) for minutes in range(2, 27)
+    ]
+    return events, hubs
+
+
+# Every project whatever the scope (the cards); the scope's Needs you lines and its 20 newest
+# activity items (Home's first activity page): All projects 2 of other's and 18 of demo's.
+@pytest.mark.parametrize(
+    ("scope", "needs", "feed"),
+    [(None, slice(0, 3), slice(0, 20)), ("demo", slice(1, 3), slice(2, 22))],
+    ids=["all-projects", "one-project"],
+)
+def test_composes_portfolio_from_projects_needs_and_activity_when_read(
+    scope: str | None, needs: slice, feed: slice
+) -> None:
+    events, hubs = _portfolio_world()
+    assert (len(hubs.projects), len(events.needs), len(events.feed)) == (2, 3, 27)
+
+    view = ScreenReads(events, hubs, monotonic=SteppedClock()).portfolio(scope)
+
+    assert view == PortfolioView(
+        projects=_page(hubs.projects),
+        needs_you=_page(events.needs[needs]),
+        activity=_page(events.feed[feed]),
+    )

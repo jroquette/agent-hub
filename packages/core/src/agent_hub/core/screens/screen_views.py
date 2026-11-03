@@ -2,6 +2,8 @@
 
 from pydantic import Field
 
+from agent_hub.core.projects.project_views import ActivityItem, NeedsYouItem, ProjectSummary
+from agent_hub.core.readmodels.page import Page
 from agent_hub.core.readmodels.view_types import ViewModel
 
 
@@ -20,3 +22,12 @@ class ShellView(ViewModel):
     projects: tuple[ShellProject, ...]
     features_needing_you: int = Field(ge=0)
     has_workflow_runs: bool
+
+
+class PortfolioView(ViewModel):
+    """Home's first view: every project's card, what needs you in the scope and the scope's
+    newest activity page, each as its resource route answers it."""
+
+    projects: Page[ProjectSummary]
+    needs_you: Page[NeedsYouItem]
+    activity: Page[ActivityItem]
