@@ -73,22 +73,17 @@ export function ScreenReadProvider<P extends GetPath>({
   children,
 }: ScreenReadProviderProps<P>): ReactElement {
   const client = useQueryClient();
-  const outer = useContext(ScreenReadContext);
-  const outerAnswer = useContext(ScreenAnswerContext);
   const [read, setRead] = useState<unknown>(undefined);
   const [visit] = useState(() =>
-    enabled ? new ScreenVisit(client, { path, params, seeds, onAnswer: setRead }, outer) : null,
+    enabled ? new ScreenVisit(client, { path, params, seeds, onAnswer: setRead }) : null,
   );
   useEffect(() => visit?.read(), [visit]);
   useEffect(() => {
     if (!enabled) visit?.release();
   }, [visit, enabled]);
-  const answer = useMemo(
-    () => (visit ? { key: visit.key, read } : outerAnswer),
-    [visit, read, outerAnswer],
-  );
+  const answer = useMemo(() => (visit ? { key: visit.key, read } : null), [visit, read]);
   return (
-    <ScreenReadContext.Provider value={visit ?? outer}>
+    <ScreenReadContext.Provider value={visit}>
       <ScreenAnswerContext.Provider value={answer}>{children}</ScreenAnswerContext.Provider>
     </ScreenReadContext.Provider>
   );
@@ -124,7 +119,6 @@ class ScreenVisit<P extends GetPath> implements ScreenReadHold {
   readonly key: string;
   readonly #client: QueryClient;
   readonly #request: ScreenRequest<P>;
-  readonly #outer: ScreenReadHold | null;
   readonly #covered: ReadonlySet<string>;
   /** What the answer brought for each key, as the query waiting for that key takes it; nothing
    * when the visit settled without an answer. */
@@ -134,11 +128,10 @@ class ScreenVisit<P extends GetPath> implements ScreenReadHold {
   /** The reads started and not yet dropped by their cleanup. */
   #reading = 0;
 
-  constructor(client: QueryClient, request: ScreenRequest<P>, outer: ScreenReadHold | null) {
+  constructor(client: QueryClient, request: ScreenRequest<P>) {
     this.key = hashKey(apiKey(request.path, request.params));
     this.#client = client;
     this.#request = request;
-    this.#outer = outer;
     this.#covered = coveredKeys(request.seeds);
     this.#answer = new Promise((resolve) => {
       this.#settle = resolve;
@@ -147,7 +140,7 @@ class ScreenVisit<P extends GetPath> implements ScreenReadHold {
 
   hold(key: QueryKey): Promise<unknown> | null {
     const hashed = hashKey(key);
-    if (this.#settled || !this.#covered.has(hashed)) return this.#outer?.hold(key) ?? null;
+    if (this.#settled || !this.#covered.has(hashed)) return null;
     return this.#answer.then((parts) => parts.get(hashed));
   }
 
