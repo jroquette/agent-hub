@@ -43,12 +43,13 @@ from agent_hub.core.projects.project_views import (
 from agent_hub.core.readmodels.filters import PageRequest, RunFilter, Scope, SessionFilter
 from agent_hub.core.readmodels.page import Page
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
-from agent_hub.core.runs.workflow_run import WorkflowRun
+from agent_hub.core.runs.workflow_run import IssueRef, RunStep, WorkflowRun
 from agent_hub.core.screens.screen_reads import ScreenReads
 from agent_hub.core.screens.screen_views import PortfolioView, ShellProject, ShellView
-from agent_hub.core.sessions.session import Session
+from agent_hub.core.sessions.session import Actor, Session, SessionSegment
 from agent_hub.core.testing.discovery_fakes import a_demo_config_view
 from agent_hub.core.testing.read_model_builders import (
+    EVENT_ID,
     HUB_ID,
     a_feature_view,
     a_finding_view,
@@ -535,3 +536,128 @@ def test_composes_project_overview_from_its_resources_when_read(
         _page(hubs.repos["demo"]),
         hubs.configs["demo"],
     )
+
+
+WEEK_TOOLS = (
+    "Read",
+    "Edit",
+    "Write",
+    "Bash",
+    "Grep",
+    "Glob",
+    "Agent",
+    "Skill",
+    "TodoWrite",
+    "WebFetch",
+    "WebSearch",
+)
+RUN_STEPS = ("pick", "implement", "verify", "review", "pr")
+
+
+def a_real_shaped_session(number: int, now: datetime) -> Session:
+    """Session ``number`` of 200 in the week, on one of 50 issues, shaped as a real one: a label
+    with a title, a branch and three workflows; three actors; eleven tool counts; two segments."""
+    issue = f"DEM-{number % 50 + 1}"
+    last = now - timedelta(minutes=25 * number + 5)
+    started = last - timedelta(hours=2)
+    return a_session(
+        id=f"week-{number:03d}",
+        started_at=started,
+        last_activity_at=last,
+        label=a_session_label(
+            issue=issue,
+            title=f"Export the {issue} report as CSV",
+            branch=f"jdoe/{issue.lower()}-export-report",
+            workflows=("/feature", "/create-plan", "/fix"),
+        ),
+        actors=(
+            Actor(kind="main"),
+            Actor(
+                kind="subagent",
+                type="Explore",
+                agent_id=f"agent-{number}-1",
+                description="Map the collector",
+                started_by_event_id=EVENT_ID,
+            ),
+            Actor(
+                kind="subagent",
+                type="general-purpose",
+                agent_id=f"agent-{number}-2",
+                description="Check the migrations",
+                started_by_event_id=EVENT_ID,
+            ),
+        ),
+        tool_counts={tool: number % 9 + 1 for tool in WEEK_TOOLS},
+        segments=(
+            SessionSegment(
+                index=1,
+                started_at=started,
+                ended_at=started + timedelta(minutes=50),
+                end_reason="clear",
+            ),
+            SessionSegment(
+                index=2, started_at=started + timedelta(hours=1), ended_at=None, end_reason=None
+            ),
+        ),
+    )
+
+
+def a_real_shaped_run(number: int, now: datetime) -> WorkflowRun:
+    """Run ``number`` of 200: five steps, each with its session."""
+    started = now - timedelta(hours=number + 2)
+    return a_run(
+        id=f"{number:08x}",
+        issue=IssueRef(key=f"DEM-{number + 1}", title=f"Export the DEM-{number + 1} report"),
+        steps=tuple(
+            RunStep(
+                key=key,
+                attempt=1,
+                max_attempts=1,
+                status="ok",
+                started_at=started + timedelta(minutes=10 * index),
+                ended_at=started + timedelta(minutes=10 * index + 9),
+                session_ids=(f"week-{number:03d}",),
+            )
+            for index, key in enumerate(RUN_STEPS)
+        ),
+    )
+
+
+# A11: on real-shaped data (200 sessions of the week on 50 issues, 60 features, 500 findings, 200
+# runs) the overview read stays under 1.5 MB (1,000,000 bytes a MB, as api_kb counts). A 201st,
+# older session of a week's issue is past the 200 newest, so it stays out.
+def test_bounds_overview_bytes_when_project_is_real_shaped() -> None:
+    now = datetime.now(UTC)
+    week = [a_real_shaped_session(number, now) for number in range(200)]
+    older = a_session_ago("older", now, 9, label=a_session_label(issue="DEM-1"))
+    events, hubs = _overview_world([*week, older])
+    events.runs = [a_real_shaped_run(number, now) for number in range(200)]
+    hubs.features = [
+        a_feature_view(slug=f"feature-{number:02d}", issues=(f"DEM-{number + 1}",))
+        for number in range(60)
+    ]
+    hubs.findings = [
+        a_finding_view(
+            path=f"brain/notes/note-{number:03d}.md",
+            line=number + 1,
+            message=f"note-{number:03d}.md links to a missing note",
+        )
+        for number in range(500)
+    ]
+    assert {(len(item.actors), len(item.tool_counts), len(item.segments)) for item in week} == {
+        (3, 11, 2)
+    }
+    assert ({len(run.steps) for run in events.runs}, len({item.label.issue for item in week})) == (
+        {5},
+        50,
+    )
+
+    view = ScreenReads(events, hubs, monotonic=SteppedClock()).project_overview("demo")
+
+    assert {item.id for item in view.recent_sessions.items} == {item.id for item in week}
+    assert (len(view.runs.items), len(view.features.items), len(view.findings.items)) == (
+        200,
+        60,
+        500,
+    )
+    assert len(view.model_dump_json().encode()) < 1_500_000

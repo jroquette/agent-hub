@@ -399,6 +399,7 @@ def test_lists_scenario_paths_when_document_built(api_settings: ApiSettings) -> 
 SCREEN_SPEC_PATHS = {
     ("get", "/api/v1/screens/shell"),
     ("get", "/api/v1/screens/portfolio"),
+    ("get", "/api/v1/screens/project-overview/{project}"),
 }
 
 
