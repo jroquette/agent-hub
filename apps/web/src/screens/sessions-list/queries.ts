@@ -5,7 +5,7 @@ import {
   useQueries,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 
 import type { components } from "../../api/schema";
 import {
@@ -13,24 +13,36 @@ import {
   apiKey,
   apiPost,
   apiQuery,
+  ScreenReadContext,
   useApi,
   type ApiParams,
   type ApiProblem,
 } from "../../lib/api";
 import { derivedWorkdirId, servedCheckout } from "../../lib/devCheckout";
+import type { ScreenReadSeed } from "../../lib/screenRead";
 import { openStream } from "../../lib/sse";
 import { sessionControlUnavailable, type Unavailable } from "./control";
 import type { SectionId } from "./sections";
 
 export type Session = components["schemas"]["Session"];
 type SessionPage = components["schemas"]["Page_Session_"];
+type SessionsView = components["schemas"]["SessionsView"];
 export type SessionQuery = NonNullable<ApiParams<"/api/v1/sessions">["query"]>;
+type SectionQueries = Record<SectionId, SessionQuery | null>;
 
 /** Rows per page ("Showing 50 of ~1,240"). */
 export const PAGE_SIZE = 50;
 
+/** The paged query of the sessions matching `query`: the key a section reads and the read seeds. */
+const sessionPagesKey = (query: SessionQuery) =>
+  [...apiKey("/api/v1/sessions", { query }), "pages"] as const;
+
+/** The first page a screen read wrote under a paged key, if it wrote one. */
+const firstPage = (data: unknown) => (data as { pages?: SessionPage[] } | undefined)?.pages?.[0];
+
 /** Sessions matching `query` (null: not asked), page by page; "Load more" asks for the next cursor (spec 14). */
 export function useSessionPages(query: SessionQuery | null) {
+  const screenRead = useContext(ScreenReadContext);
   return useInfiniteQuery<
     SessionPage,
     ApiProblem,
@@ -38,15 +50,21 @@ export function useSessionPages(query: SessionQuery | null) {
     readonly unknown[],
     string | null
   >({
-    queryKey: [...apiKey("/api/v1/sessions", { query: query ?? {} }), "pages"],
+    queryKey: sessionPagesKey(query ?? {}),
     enabled: query !== null,
     initialPageParam: null,
-    queryFn: ({ pageParam, signal }) =>
-      apiGet(
-        "/api/v1/sessions",
-        { query: { ...(query ?? {}), limit: PAGE_SIZE, cursor: pageParam } },
-        signal,
-      ),
+    queryFn: ({ pageParam, queryKey, signal }) => {
+      const read = () =>
+        apiGet(
+          "/api/v1/sessions",
+          { query: { ...(query ?? {}), limit: PAGE_SIZE, cursor: pageParam } },
+          signal,
+        );
+      // The first page waits for a screen read above that brings it (ADR 0056).
+      const held = pageParam === null ? screenRead?.hold(queryKey) : null;
+      if (!held) return read();
+      return held.then((data) => firstPage(data) ?? read());
+    },
     getNextPageParam: (last) => last.next_cursor ?? undefined,
     // A filter or sort change keeps the shown pages until the new ones arrive: no flash, no jump.
     placeholderData: keepPreviousData,
@@ -157,6 +175,63 @@ export function useProjects() {
   return useApi("/api/v1/projects");
 }
 
+/** Sessions' screen read (ADR 0056): the sections' first pages and what the inbox reads beside. */
+export const SESSIONS_READ = "/api/v1/screens/sessions";
+
+/** The section query fields the read answers for: its scope, sort and status, Finished's start. */
+const READ_FIELDS: ReadonlySet<string> = new Set(["project", "sort", "status", "from"]);
+
+/** Whether the sessions read answers every section `queries` asks: no filter is set but the
+ * period, the sort and the status tab. */
+export function readCovers(queries: SectionQueries): boolean {
+  return Object.values(queries).every(
+    (query) => query !== null && Object.keys(query).every((field) => READ_FIELDS.has(field)),
+  );
+}
+
+/** The sessions read of the view `queries` describe: the scope, the sort, Finished's start. */
+export function sessionsReadParams(
+  queries: SectionQueries,
+  scope: string | null,
+): ApiParams<typeof SESSIONS_READ> {
+  const { sort, from } = queries.ended ?? {};
+  return { query: { project: scope, ...(sort ? { sort } : {}), ...(from ? { from } : {}) } };
+}
+
+/**
+ * The sessions read's parts, each under the key its region's query reads: the sections' first
+ * pages, every project's card, every project's features (as the inbox's ticket names read them)
+ * and, when the read carries them, `scope`'s agent sessions and whether this machine can drive
+ * sessions. A `null` agent part (no access, or `claude` still being checked) is not written, so
+ * its query reads its route once the read has answered.
+ */
+export function sessionsSeeds(
+  queries: SectionQueries,
+  scope: string | null,
+  read: SessionsView,
+): ScreenReadSeed[] {
+  const sections = (Object.keys(queries) as SectionId[]).flatMap((id): ScreenReadSeed[] => {
+    const query = queries[id];
+    return query === null
+      ? []
+      : [[sessionPagesKey(query), { pages: [read[id]], pageParams: [null] }]];
+  });
+  // Only a null part is left out: the answer that names the covered keys has no parts at all.
+  const agentParts: ScreenReadSeed[] = [];
+  if (read.agent_sessions !== null) {
+    agentParts.push([apiKey(AGENT_SESSIONS, agentSessionsParams(scope)), read.agent_sessions]);
+  }
+  if (read.capabilities !== null) {
+    agentParts.push([apiKey("/api/v1/agent-sessions/capabilities"), read.capabilities]);
+  }
+  return [
+    ...sections,
+    [apiKey("/api/v1/projects"), read.projects],
+    [apiKey("/api/v1/features", { query: { project: null } }), read.features],
+    ...agentParts,
+  ];
+}
+
 /* ---------- Sessions hub web drives (AGH-165) ---------- */
 
 export type AgentSession = components["schemas"]["AgentSession"];
@@ -168,17 +243,18 @@ export const AGENT_LIST_REFRESH_MS = 5_000;
 
 const live = (s: AgentSession) => s.status !== "ended" && s.status !== "failed";
 
+const AGENT_SESSIONS = "/api/v1/agent-sessions";
+const agentSessionsParams = (project: string | null): ApiParams<typeof AGENT_SESSIONS> => ({
+  query: project ? { project } : {},
+});
+
 /** The agent sessions of `project` (null: every project), newest first. */
 export function useAgentSessions(project: string | null) {
-  return useApi(
-    "/api/v1/agent-sessions",
-    { query: project ? { project } : {} },
-    {
-      retry: false,
-      refetchInterval: (query) =>
-        (query.state.data?.items ?? []).some(live) ? AGENT_LIST_REFRESH_MS : false,
-    },
-  );
+  return useApi(AGENT_SESSIONS, agentSessionsParams(project), {
+    retry: false,
+    refetchInterval: (query) =>
+      (query.state.data?.items ?? []).some(live) ? AGENT_LIST_REFRESH_MS : false,
+  });
 }
 
 /** Whether this machine can drive sessions, and why not. */

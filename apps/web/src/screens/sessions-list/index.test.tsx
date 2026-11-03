@@ -1191,6 +1191,32 @@ describe("SessionsListScreen screen read", () => {
     },
   );
 
+  it("reads the capabilities itself when the screen read carries none over a kept answer", async () => {
+    // An answer kept from an earlier visit, past its 60 s: the query reads again as it mounts.
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      apiKey("/api/v1/agent-sessions/capabilities"),
+      aCapabilities({ available: false, reason: "an earlier answer" }),
+      { updatedAt: Date.now() - 120_000 },
+    );
+    const { calls } = renderWithApi(<SessionsListScreen />, {
+      routes: {
+        [READ]: aSessionsRead({ capabilities: null }),
+        [CAPABILITIES]: aCapabilities({ available: false, reason: "claude was not found on PATH" }),
+      },
+      path: "/sessions",
+      queryClient,
+    });
+
+    // The part the read left out is read from its route, not taken from the kept answer.
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Sessions cannot start here. claude was not found on PATH",
+      );
+    });
+    expect(calls().filter((p) => p === CAPABILITIES)).toEqual([CAPABILITIES]);
+  });
+
   it("keeps the screen mounted when a filter is set", async () => {
     const { calls, requests, router } = renderFromRead({ ...routes(), [READ]: aSessionsRead() });
     expect(await screen.findByText("ACME-1511: orders-export")).toBeInTheDocument();

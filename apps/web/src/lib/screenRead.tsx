@@ -6,9 +6,10 @@
  * While the read is on its way, a query of a key it covers sends no request: `useApi` waits for
  * the read (`ScreenReadContext`) and takes the part written under its key. When the read fails,
  * does not answer within `SCREEN_READ_TIMEOUT_MS` or is switched off, each such query reads its
- * resource route as before, so a failure stays in its region. A part is written only from this
- * visit's read, and never over an entry updated after that read started. A derived part, never
- * written under a resource's key, is read from the answer itself with `useScreenRead`.
+ * resource route as before, so a failure stays in its region; so does a query whose part the
+ * answer leaves out (a `null` part is not written). A part is written only from this visit's read,
+ * and never over an entry updated after that read started. A derived part, never written under a
+ * resource's key, is read from the answer itself with `useScreenRead`.
  */
 import { hashKey, useQueryClient, type QueryClient, type QueryKey } from "@tanstack/react-query";
 import {
@@ -45,7 +46,8 @@ export interface ScreenReadProviderProps<P extends GetPath> {
   params?: ApiParams<P>;
   /** The parts to write once the read has answered, each under its resource's key. It is also
    * called when the visit begins, with an answer that has no parts, to learn the keys the read
-   * covers: it picks each part by name. */
+   * covers: it picks each part by name. A part it leaves out of the answer (a `null` one) lets
+   * that key's query read its route. */
   seeds: Seeds<P>;
   /** Off: no read and no key covered, the children still mounted (default on). A provider off
    * when its visit begins covers nothing for that visit, even once turned on. */
@@ -123,8 +125,9 @@ class ScreenVisit<P extends GetPath> implements ScreenReadHold {
   readonly #request: ScreenRequest<P>;
   readonly #outer: ScreenReadHold | null;
   readonly #covered: ReadonlySet<string>;
-  readonly #answer: Promise<boolean>;
-  #settle: (seeded: boolean) => void = () => undefined;
+  /** The keys whose parts the answer brought; none when the visit settled without one. */
+  readonly #answer: Promise<ReadonlySet<string>>;
+  #settle: (brought: ReadonlySet<string>) => void = () => undefined;
   #settled = false;
 
   constructor(client: QueryClient, request: ScreenRequest<P>, outer: ScreenReadHold | null) {
@@ -139,8 +142,11 @@ class ScreenVisit<P extends GetPath> implements ScreenReadHold {
   }
 
   hold(key: QueryKey): Promise<unknown> | null {
-    if (this.#settled || !this.#covered.has(hashKey(key))) return this.#outer?.hold(key) ?? null;
-    return this.#answer.then((seeded) => (seeded ? this.#client.getQueryData(key) : undefined));
+    const hashed = hashKey(key);
+    if (this.#settled || !this.#covered.has(hashed)) return this.#outer?.hold(key) ?? null;
+    return this.#answer.then((brought) =>
+      brought.has(hashed) ? this.#client.getQueryData(key) : undefined,
+    );
   }
 
   /** Reads the screen once and settles the visit. The cleanup drops that read and leaves the
@@ -157,8 +163,9 @@ class ScreenVisit<P extends GetPath> implements ScreenReadHold {
       (read) => {
         clearTimeout(timer);
         if (!current || this.#settled) return;
-        writeSeeds(this.#client, this.#request.seeds(read), startedAt);
-        this.#finish(read);
+        const seeds = this.#request.seeds(read);
+        writeSeeds(this.#client, seeds, startedAt);
+        this.#finish(read, new Set(seeds.map(([key]) => hashKey(key))));
       },
       () => {
         clearTimeout(timer);
@@ -174,13 +181,13 @@ class ScreenVisit<P extends GetPath> implements ScreenReadHold {
 
   /** Lets every waiting query read its resource route, and covers nothing from then on. */
   release(): void {
-    this.#finish(null);
+    this.#finish(null, new Set());
   }
 
-  #finish(read: ApiData<P> | null): void {
+  #finish(read: ApiData<P> | null, brought: ReadonlySet<string>): void {
     if (this.#settled) return;
     this.#settled = true;
-    this.#settle(read !== null);
+    this.#settle(brought);
     this.#request.onAnswer(read);
   }
 }
