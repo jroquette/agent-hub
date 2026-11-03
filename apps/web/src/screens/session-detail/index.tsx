@@ -7,6 +7,7 @@ import { Banner, Button, AppLink, ProblemError, Skeleton, Tabs } from "../../com
 import { useNow } from "../../lib/clock";
 import { fmtClock, fmtDuration } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
+import { ScreenReadProvider } from "../../lib/screenRead";
 import { useShell } from "../../shell/AppShell";
 import { useCollectorState } from "../../shell/GlobalStream";
 import { CostTab } from "./CostTab";
@@ -14,6 +15,8 @@ import { FilesTab } from "./FilesTab";
 import { Header } from "./Header";
 import { ProblemsPanel } from "./ProblemsPanel";
 import {
+  SESSION_DETAIL_READ,
+  sessionDetailSeeds,
   usePrefetchSessionEvents,
   useSession,
   useSessionEvents,
@@ -50,9 +53,22 @@ function LoadingBody() {
   );
 }
 
-/** Session detail: "What did this agent do, in what order, and why?" (spec 10). */
+/** Session detail: "What did this agent do, in what order, and why?" (spec 10). Its first view
+ * comes from one screen read (ADR 0056). */
 export function SessionDetailScreen() {
   const { sessionId = "" } = useParams();
+  return (
+    <ScreenReadProvider
+      path={SESSION_DETAIL_READ}
+      params={{ path: { session_id: sessionId } }}
+      seeds={(read) => sessionDetailSeeds(sessionId, read)}
+    >
+      <SessionDetail sessionId={sessionId} />
+    </ScreenReadProvider>
+  );
+}
+
+function SessionDetail({ sessionId }: { sessionId: string }) {
   const session = useSession(sessionId);
   usePrefetchSessionEvents(sessionId);
   const { openPalette } = useShell();
