@@ -1,0 +1,1 @@
+import{P as e}from"./vendor-CAK6l6am.js";import{Hn as t,Mn as n,zt as r}from"./components-BCtOrq6E.js";import{r as i}from"./index-DZCzGQUk.js";var a=e();function o(){let{state:e,asOf:o}=i(),{tz:s}=t();return e===`offline`?(0,a.jsx)(r,{stale:!0,time:n(o,s)}):null}export{o as t};
