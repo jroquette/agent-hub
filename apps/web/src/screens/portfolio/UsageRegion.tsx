@@ -78,15 +78,22 @@ function NotRead() {
 /**
  * Skills and agents (spec 12, AGH-482): the hub's own skills and agents with their runs in the
  * chosen window, never used first. The window is local state (30 d by default, as the Toolkit),
- * not the page's `?period=`.
+ * not the page's `?period=`. `single` (one project in scope: no Project column) is undefined
+ * while the projects are on their way: the region keeps its skeleton, so the table draws once.
  */
-export function UsageRegion({ project, single }: { project: string | null; single: boolean }) {
+export function UsageRegion({
+  project,
+  single,
+}: {
+  project: string | null;
+  single: boolean | undefined;
+}) {
   const [days, setDays] = useState<UsageDays>(30);
   const [all, setAll] = useState(false);
   const usage = useSkillUsage(project, days);
   const now = useNow(60_000);
   let body;
-  if (usage.isPending) {
+  if (usage.isPending || single === undefined) {
     body = <Skeleton lines={4} />;
   } else if (usage.isError) {
     body = (
@@ -138,7 +145,9 @@ export function UsageRegion({ project, single }: { project: string | null; singl
   return (
     <section
       aria-labelledby="usage-title"
-      aria-busy={usage.isPending || usage.isPlaceholderData ? "true" : undefined}
+      aria-busy={
+        usage.isPending || single === undefined || usage.isPlaceholderData ? "true" : undefined
+      }
     >
       <div className="ah-section-title ah-wrap">
         <div className="ah-stack" style={{ gap: 2 }}>

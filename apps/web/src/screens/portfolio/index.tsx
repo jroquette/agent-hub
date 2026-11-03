@@ -516,7 +516,10 @@ function Portfolio() {
             )}
           </div>
           {list.length > 1 && <TotalsRow projects={list} />}
-          <UsageRegion project={scope} single={list.length === 1} />
+          <UsageRegion
+            project={scope}
+            single={projects.isPending ? undefined : list.length === 1}
+          />
         </div>
         <ActivityRegion project={scope} single={list.length === 1} />
       </div>
