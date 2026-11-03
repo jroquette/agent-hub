@@ -17,16 +17,20 @@ import {
   aSession,
   aSessionLabel,
   aSessionsByStatus,
+  aSessionsView,
+  aShellView,
   aStreamCounts,
   aTicketRow,
   anId,
   at,
   renderWithApi,
   type ApiRoutes,
+  type SessionsView,
   T0,
 } from "../../testing/builders";
-import { apiKey } from "../../lib/api";
+import { apiKey, createQueryClient } from "../../lib/api";
 import { servedCheckout } from "../../lib/devCheckout";
+import { AppShell } from "../../shell/AppShell";
 import { GLOBAL_STREAM, GlobalStreamProvider } from "../../shell/GlobalStream";
 import { SessionsListScreen } from "./index";
 import { codeText } from "../../testing/text";
@@ -1027,5 +1031,188 @@ describe("SessionsListScreen (session-name)", () => {
 
     expect(await screen.findByText("ACME-1511: Export orders as CSV")).toBeInTheDocument();
     expect(view.requests.some((r) => r.url.includes("/tickets"))).toBe(false);
+  });
+});
+
+const READ = "/api/v1/screens/sessions";
+const CAPABILITIES = `${AGENT}/capabilities`;
+
+/** The routes whose answers the sessions read (ADR 0056) carries, and the agent reads that follow
+ * a machine able to drive sessions. */
+const readResources = [
+  SESSIONS,
+  "/api/v1/projects",
+  "/api/v1/features",
+  AGENT,
+  CAPABILITIES,
+  `${AGENT}/workdirs`,
+  `${AGENT}/cloud`,
+];
+
+/** Finished's start under the default period: the pinned clock (T0 + 1 day) less 7 days. */
+const WEEK_FROM = "2026-10-05T14:00:00.000Z";
+
+/** The sessions read: a session on ACME-1511 waiting for your turn, named by its feature, a chat
+ * started from hub web, two projects, and a machine that cannot drive sessions (no `claude` on its
+ * PATH, as under `make perf`), so no folder or cloud start follows. */
+function aSessionsRead(overrides: Partial<SessionsView> = {}): SessionsView {
+  return aSessionsView({
+    idle: aPage([
+      aSession({
+        id: anId(5, "aaaa0005"),
+        status: "idle",
+        outcome: null,
+        label: aSessionLabel({ issue: "ACME-1511", repo: "storefront", branch: "main" }),
+      }),
+    ]),
+    projects: aPage([aProjectSummary(), aProjectSummary({ name: "loki-trader" })]),
+    features: aPage([
+      aFeature({ project: "storefront", slug: "orders-export", issues: ["ACME-1511"] }),
+    ]),
+    agent_sessions: {
+      items: [anAgentSession({ id: anId(15, "0192a5e5"), title: "Check the export" })],
+    },
+    capabilities: aCapabilities({ available: false, reason: "claude was not found on PATH" }),
+    ...overrides,
+  });
+}
+
+/** Renders the screen on the app's own query client: under its 10 s staleTime a seeded query does
+ * not fetch. */
+function renderFromRead(apiRoutes: ApiRoutes, path = "/sessions") {
+  return renderWithApi(<SessionsListScreen />, {
+    routes: apiRoutes,
+    path,
+    queryClient: createQueryClient(),
+  });
+}
+
+/** The URLs of the `/sessions` requests a render sent, in order. */
+const sectionRequests = (requests: Request[]) =>
+  requests.map((r) => new URL(r.url)).filter((url) => url.pathname === SESSIONS);
+
+describe("SessionsListScreen screen read", () => {
+  it.each([
+    { path: "/sessions", asks: { from: WEEK_FROM } },
+    // 24 hours before the pinned clock is T0; the status tab is applied on screen.
+    { path: "/sessions?period=24 h&sort=-cost&status=idle", asks: { from: T0, sort: "-cost" } },
+  ])(
+    "AC-36 loads in at most 5 API requests with the shell mounted ($path)",
+    async ({ path, asks }) => {
+      const { calls, requests } = renderWithApi(
+        <AppShell>
+          <SessionsListScreen />
+        </AppShell>,
+        {
+          routes: { "/api/v1/screens/shell": aShellView(), [READ]: aSessionsRead() },
+          path,
+          queryClient: createQueryClient(),
+        },
+      );
+
+      // The row named by its feature, the chat and why sessions cannot start come from the read.
+      expect(await screen.findByText("ACME-1511: orders-export")).toBeInTheDocument();
+      expect(await screen.findByText("Check the export")).toBeInTheDocument();
+      expect(await screen.findByText(/claude was not found on PATH/)).toBeInTheDocument();
+      const asked = calls();
+      expect(asked.filter((p) => readResources.includes(p))).toEqual([]);
+      expect(asked.filter((p) => p === READ)).toHaveLength(1);
+      expect(asked.length).toBeLessThanOrEqual(5);
+      // The read asks for the view the sections show: the URL's sort and the period's start.
+      const read = requests.map((r) => new URL(r.url)).filter((url) => url.pathname === READ);
+      expect(read).toHaveLength(1);
+      expect(Object.fromEntries(read[0]?.searchParams ?? [])).toMatchObject(asks);
+    },
+  );
+
+  it.each([
+    { search: "?repo=agent-hub", key: "repo", value: "agent-hub", shows: "/evaluator" },
+    { search: "?outcome=error", key: "outcome", value: "error", shows: "ACME-1511 · /feature" },
+  ])(
+    "asks each section itself when a filter is set ($search)",
+    async ({ search, key, value, shows }) => {
+      // The read lists a session no section route has: a screen seeded from it would show it.
+      const { calls, requests } = renderFromRead(
+        {
+          ...routes(),
+          [READ]: aSessionsRead({
+            live: aPage([aSession({ id: anId(6, "aaaa0006"), label: named("from-read") })]),
+          }),
+        },
+        `/sessions${search}`,
+      );
+
+      expect(await screen.findByText(shows)).toBeInTheDocument();
+      expect(screen.queryByText("/from-read")).toBeNull();
+      expect(calls()).not.toContain(READ);
+      // An outcome asks only Finished; any other filter asks every section.
+      const statuses = key === "outcome" ? ["ended"] : ["ended", "idle", "live", "waiting"];
+      const asked = sectionRequests(requests);
+      expect(asked.map((url) => url.searchParams.get("status")).sort()).toEqual(statuses);
+      expect(asked.map((url) => url.searchParams.get(key))).toEqual(statuses.map(() => value));
+    },
+  );
+
+  const locked = aProblem({ status: 401, title: "Session control is locked" });
+
+  it.each([
+    {
+      carried: "neither part",
+      parts: { agent_sessions: null, capabilities: null },
+      agentRoutes: { [AGENT]: locked, [CAPABILITIES]: locked },
+      notice: "Session control is locked in this browser.",
+      reads: [AGENT, CAPABILITIES],
+    },
+    {
+      carried: "agent sessions, capabilities null while the probe runs",
+      parts: { capabilities: null },
+      agentRoutes: {
+        [AGENT]: { items: [] },
+        [CAPABILITIES]: aCapabilities({ available: false, reason: "claude was not found on PATH" }),
+      },
+      notice: "Sessions cannot start here. claude was not found on PATH",
+      reads: [CAPABILITIES],
+    },
+  ])(
+    "reads agent sessions itself when the screen read carries none ($carried)",
+    async ({ parts, agentRoutes, notice, reads }) => {
+      const { calls } = renderFromRead({ [READ]: aSessionsRead(parts), ...agentRoutes });
+
+      // A null part is not seeded: its route answers, and its notice shows as today.
+      await waitFor(() => {
+        expect(screen.getByRole("status")).toHaveTextContent(notice);
+      });
+      // The sections still come from the read.
+      expect(await screen.findByText("ACME-1511: orders-export")).toBeInTheDocument();
+      const asked = calls();
+      expect(asked.filter((p) => p === READ)).toHaveLength(1);
+      expect(asked).not.toContain(SESSIONS);
+      expect(asked.filter((p) => p === AGENT || p === CAPABILITIES).sort()).toEqual(reads);
+    },
+  );
+
+  it("keeps the screen mounted when a filter is set", async () => {
+    const { calls, requests, router } = renderFromRead({ ...routes(), [READ]: aSessionsRead() });
+    expect(await screen.findByText("ACME-1511: orders-export")).toBeInTheDocument();
+    // The read covers the sections: none has asked its route yet.
+    expect(calls().filter((p) => p === READ)).toHaveLength(1);
+    expect(sectionRequests(requests)).toEqual([]);
+
+    // 10 s after the screen read, a filter is set: the sections read their routes.
+    vi.setSystemTime(Date.now() + 10_000);
+    await act(async () => {
+      await router.navigate("/sessions?repo=agent-hub");
+    });
+    const ended = () =>
+      sectionRequests(requests).filter((url) => url.searchParams.get("status") === "ended");
+    await waitFor(() => {
+      expect(ended()).toHaveLength(1);
+    });
+
+    // Finished keeps the period's start of the first render: a screen mounted again would count
+    // its 7 days back from 10 s later.
+    expect(ended()[0]?.searchParams.get("from")).toBe(WEEK_FROM);
+    expect(ended()[0]?.searchParams.get("repo")).toBe("agent-hub");
+    expect(calls().filter((p) => p === READ)).toHaveLength(1);
   });
 });

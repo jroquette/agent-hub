@@ -27,6 +27,7 @@ export type FindingView = Schemas["FindingView"];
 export type DoctorFindings = Schemas["DoctorFindings"];
 export type HubView = Schemas["HubView"];
 export type ShellView = Schemas["ShellView"];
+export type SessionsView = Schemas["SessionsView"];
 export type CollectorStatus = Schemas["CollectorStatus"];
 export type ProblemDetails = Schemas["ProblemDetails"];
 export type SessionLabel = Schemas["SessionLabel"];
@@ -995,6 +996,22 @@ export function aShellView(overrides: Partial<ShellView> = {}): ShellView {
     projects: [{ name: "agent-hub", live_sessions: 1 }],
     features_needing_you: 0,
     has_workflow_runs: false,
+    ...overrides,
+  };
+}
+
+/** A `GET /screens/sessions` answer: no session in any section, one project, no feature, no agent
+ * session and a machine that can drive sessions, unless overridden. */
+export function aSessionsView(overrides: Partial<SessionsView> = {}): SessionsView {
+  return {
+    waiting: aPage<Session>([]),
+    live: aPage<Session>([]),
+    idle: aPage<Session>([]),
+    ended: aPage<Session>([]),
+    projects: aPage([aProjectSummary()]),
+    agent_sessions: { items: [] },
+    capabilities: aCapabilities(),
+    features: aPage<FeatureView>([]),
     ...overrides,
   };
 }
