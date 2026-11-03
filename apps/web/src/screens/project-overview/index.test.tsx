@@ -994,6 +994,133 @@ describe("ProjectOverviewScreen", () => {
     ]);
   });
 
+  it("keeps the read's Recent work drawn until the sessions route answers after the counts change", async () => {
+    const later = aPage([
+      aSession({
+        id: anId(21),
+        status: "ended",
+        outcome: "done",
+        last_activity_at: recent,
+        label: aSessionLabel({ issue: "ACME-99", workflow: "/fix", workflows: ["/fix"] }),
+      }),
+    ]);
+    const { stream } = renderWithApi(
+      <GlobalStreamProvider project={null}>
+        <ProjectOverviewScreen />
+      </GlobalStreamProvider>,
+      {
+        routes: { ...routes, [OVERVIEW_READ]: anOverviewRead(), "/api/v1/sessions": later },
+        path: "/projects/agent-hub",
+        route: "/projects/:project",
+        queryClient: createQueryClient(),
+      },
+    );
+    const recentWork = await screen.findByRole("region", { name: "Recent work" });
+    expect(await within(recentWork).findByText("ACME-7")).toBeInTheDocument();
+    // The sessions route answers only once let through.
+    const answer = vi.mocked(globalThis.fetch).getMockImplementation();
+    if (answer === undefined) throw new Error("fetch is not stubbed");
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let asked = 0;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (new URL(url, window.location.origin).pathname === "/api/v1/sessions") {
+        asked += 1;
+        await held;
+      }
+      return answer(input, init);
+    });
+
+    const global = stream("/api/v1/events/stream");
+    act(() => {
+      global.open();
+      global.emit("counts", aStreamCounts());
+    });
+    act(() => {
+      global.emit("counts", aStreamCounts({ live_sessions: 4 }));
+    });
+    await waitFor(() => {
+      expect(asked).toBe(1);
+    });
+    // Past a skeleton's 300 ms delay, the route still held: the read's sessions stay drawn.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    });
+    const waiting = screen.getByRole("region", { name: "Recent work" });
+    expect(within(waiting).queryByText("ACME-7")).toBeInTheDocument();
+    expect(waiting.querySelector("[aria-busy='true']")).toBeNull();
+    expect(within(waiting).queryByText("ACME-99")).toBeNull();
+
+    release();
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole("region", { name: "Recent work" })).queryByText("ACME-99"),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("shows the newer session in Recent work after moving in place to another project and back", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      // ACME-99 was worked on after the first visit: the return's read and the route both have it.
+      const later = aPage([
+        aSession({
+          id: anId(21),
+          status: "ended",
+          outcome: "done",
+          last_activity_at: recent,
+          label: aSessionLabel({ issue: "ACME-99", workflow: "/fix", workflows: ["/fix"] }),
+        }),
+        ...weekSessions.items,
+      ]);
+      let reads = 0;
+      const { router } = renderWithApi(<ProjectOverviewScreen />, {
+        routes: {
+          ...routes,
+          [OVERVIEW_READ]: () => {
+            reads += 1;
+            return anOverviewRead(reads === 1 ? {} : { recent_sessions: later });
+          },
+          "/api/v1/screens/project-overview/other": anOverviewRead({
+            project: aProjectDetail({ name: "other" }),
+          }),
+          "/api/v1/sessions": later,
+        },
+        path: "/projects/agent-hub",
+        route: "/projects/:project",
+        queryClient: createQueryClient(),
+      });
+      const recentWork = await screen.findByRole("region", { name: "Recent work" });
+      expect(await within(recentWork).findByText("ACME-7")).toBeInTheDocument();
+      expect(within(recentWork).queryByText("ACME-99")).toBeNull();
+
+      // To another project's overview in place, then Back more than 10 s later.
+      await act(async () => {
+        await router.navigate("/projects/other");
+      });
+      expect(router.state.location.pathname).toBe("/projects/other");
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+      vi.setSystemTime(Date.now() + 11_000);
+      await act(async () => {
+        await router.navigate(-1);
+      });
+      expect(router.state.location.pathname).toBe("/projects/agent-hub");
+
+      await waitFor(() => {
+        expect(
+          within(screen.getByRole("region", { name: "Recent work" })).queryByText("ACME-99"),
+        ).toBeInTheDocument();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // The sessions route answers the opposite each time, so a screen that read it would show the
   // other state.
   it.each([

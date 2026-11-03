@@ -596,4 +596,60 @@ describe("SessionDetailScreen screen read", () => {
     expect(calls().filter((p) => p === `${BASE}/events`)).toEqual([]);
     expect(screen.queryByText("npm test")).toBeInTheDocument();
   });
+
+  it("opens the parent session from its own read when its crumb is followed", async () => {
+    const PARENT = anId(2, "9c4e12aa");
+    const PARENT_BASE = `/api/v1/sessions/${PARENT}`;
+    const PARENT_READ = `/api/v1/screens/session-detail/${PARENT}`;
+    const parent = aSession({
+      id: PARENT,
+      status: "ended",
+      outcome: "done",
+      ended_at: at(900),
+      label: onTicket,
+    });
+    const parentSummary = aSessionSummary({
+      session_id: PARENT,
+      lines: [{ event_id: anId(3, "0192aaaa"), text: "Planned the ticket summaries" }],
+    });
+    const { calls } = renderFromRead({
+      // A subagent's session, whose header links the session that started it.
+      [READ]: aDetailRead({
+        session: aSession({
+          status: "ended",
+          outcome: "done",
+          ended_at: at(900),
+          label: onTicket,
+          parent_session_id: PARENT,
+        }),
+      }),
+      [PARENT_READ]: aDetailRead({ session: parent, summary: parentSummary }),
+      // The parent's own routes answer as its read does: only the calls tell them apart.
+      [PARENT_BASE]: parent,
+      [`${PARENT_BASE}/events`]: aPage(defaultEvents()),
+      [`${PARENT_BASE}/summary`]: parentSummary,
+    });
+    expect(await screen.findByText("Ran make check-fast: passed")).toBeInTheDocument();
+    const before = calls().length;
+
+    // The crumb moves to the parent in place: the screen stays mounted.
+    fireEvent.click(screen.getByRole("link", { name: "Session 9c4e12aa" }));
+    expect(await screen.findByText("Planned the ticket summaries")).toBeInTheDocument();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+
+    const asked = calls().slice(before);
+    const parentResources = [
+      PARENT_BASE,
+      `${PARENT_BASE}/events`,
+      `${PARENT_BASE}/summary`,
+      `${PARENT_BASE}/problems`,
+      "/api/v1/features",
+      CAPABILITIES,
+    ];
+    expect(asked.filter((p) => p === PARENT_READ)).toHaveLength(1);
+    expect(asked.filter((p) => parentResources.includes(p))).toEqual([]);
+    expect(asked.length).toBeLessThanOrEqual(5);
+  });
 });

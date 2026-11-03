@@ -1241,4 +1241,62 @@ describe("SessionsListScreen screen read", () => {
     expect(ended()[0]?.searchParams.get("repo")).toBe("agent-hub");
     expect(calls().filter((p) => p === READ)).toHaveLength(1);
   });
+
+  it("reads a stale revisit's further pages after the read's first page", async () => {
+    const working = (n: number, name: string) =>
+      aSession({ id: anId(n, "aaaa0030"), status: "live", outcome: null, label: named(name) });
+    // Each visit's read gives Working another first page, with its own cursor to page 2.
+    let reads = 0;
+    const apiRoutes: ApiRoutes = {
+      ...routes(),
+      [READ]: () => {
+        reads += 1;
+        return aSessionsRead({
+          live:
+            reads === 1
+              ? aPage([working(1, "kept-1")], { next_cursor: "k2" })
+              : aPage([working(3, "read-1")], { next_cursor: "r2" }),
+        });
+      },
+      [SESSIONS]: (request: Request) => {
+        const cursor = new URL(request.url).searchParams.get("cursor");
+        if (cursor === "k2") return aPage([working(2, "kept-2")]);
+        if (cursor === "r2") return aPage([working(4, "route-after-read")]);
+        return aPage([]);
+      },
+    };
+    const queryClient = createQueryClient();
+    const first = renderWithApi(<SessionsListScreen />, {
+      routes: apiRoutes,
+      path: "/sessions",
+      queryClient,
+    });
+    // Working holds two pages: the first visit's read, then Load more from the route.
+    const live = await screen.findByRole("region", { name: /^Working/ });
+    expect(await within(live).findByText("/kept-1")).toBeInTheDocument();
+    fireEvent.click(await within(live).findByRole("button", { name: "Load more" }));
+    expect(await within(live).findByText("/kept-2")).toBeInTheDocument();
+    first.unmount();
+
+    // Revisited 11 s later, past the 10 s staleTime: Working reads its pages again.
+    vi.setSystemTime(Date.now() + 11_000);
+    const { calls, requests } = renderWithApi(<SessionsListScreen />, {
+      routes: apiRoutes,
+      path: "/sessions",
+      queryClient,
+    });
+
+    // Its first page is the revisit's read, and page 2 is read with that page's cursor.
+    await waitFor(() => {
+      expect(sectionRequests(requests).map((url) => url.searchParams.get("cursor"))).toEqual([
+        "r2",
+      ]);
+    });
+    const again = screen.getByRole("region", { name: /^Working/ });
+    expect(await within(again).findByText("/route-after-read")).toBeInTheDocument();
+    expect(within(again).getByText("/read-1")).toBeInTheDocument();
+    expect(within(again).queryByText("/kept-1")).toBeNull();
+    expect(sectionRequests(requests)[0]?.searchParams.get("status")).toBe("live");
+    expect(calls().filter((p) => p === READ)).toHaveLength(1);
+  });
 });
