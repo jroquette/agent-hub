@@ -2,6 +2,8 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { createQueryClient } from "../../lib/api";
+import { AppShell } from "../../shell/AppShell";
 import { seriousViolations } from "../../testing/axe";
 import {
   aDoctorFindings,
@@ -18,6 +20,7 @@ import {
   aRun,
   aSession,
   aSessionLabel,
+  aShellView,
   at,
   renderWithApi,
   type ApiRoutes,
@@ -264,6 +267,75 @@ function renderProject(overrides: ApiRoutes = {}, name = "agent-hub") {
     routes: { ...routes, ...overrides },
     path: `/projects/${name}`,
     route: "/projects/:project",
+  });
+}
+
+const OVERVIEW_READ = "/api/v1/screens/project-overview/agent-hub";
+
+/** The routes whose answers the overview read (ADR 0056) carries. */
+const overviewResources = [
+  "/api/v1/projects/agent-hub",
+  "/api/v1/doctor/findings",
+  "/api/v1/projects",
+  "/api/v1/needs-you",
+  "/api/v1/workflow-runs",
+  "/api/v1/projects/agent-hub/now",
+  "/api/v1/features",
+  "/api/v1/projects/agent-hub/repos",
+  "/api/v1/projects/agent-hub/config",
+  "/api/v1/sessions",
+];
+
+/** The sessions of the issues worked on this week: a feature's (ACME-1511) and a ticket's. */
+const weekSessions = aPage([
+  aSession({
+    id: anId(11),
+    status: "ended",
+    outcome: "done",
+    last_activity_at: recent,
+    label: aSessionLabel({ issue: "ACME-1511", repo: "storefront", branch: "main" }),
+  }),
+  aSession({
+    id: anId(13),
+    status: "ended",
+    outcome: "done",
+    last_activity_at: recent,
+    label: aSessionLabel({
+      issue: "ACME-7",
+      title: "Fix the order export",
+      workflow: "/fix",
+      workflows: ["/fix"],
+    }),
+  }),
+]);
+
+/** The overview read of `agent-hub`: each region's part as `routes` answers it, and this week's
+ * sessions. */
+function anOverviewRead(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    project: routes["/api/v1/projects/agent-hub"],
+    findings: routes["/api/v1/doctor/findings"],
+    projects: routes["/api/v1/projects"],
+    needs_you: routes["/api/v1/needs-you"],
+    runs: routes["/api/v1/workflow-runs"],
+    now: routes["/api/v1/projects/agent-hub/now"],
+    features: routes["/api/v1/features"],
+    repos: routes["/api/v1/projects/agent-hub/repos"],
+    config: routes["/api/v1/projects/agent-hub/config"],
+    recent_sessions: weekSessions,
+    has_sessions: true,
+    ...overrides,
+  };
+}
+
+/** Renders the screen from its overview read, every resource route answered too, on the app's own
+ * query client: under its 10 s staleTime a seeded query does not fetch. */
+function renderFromRead(read: Record<string, unknown>, overrides: ApiRoutes = {}) {
+  return renderWithApi(<ProjectOverviewScreen />, {
+    routes: { ...routes, [OVERVIEW_READ]: read, ...overrides },
+    path: "/projects/agent-hub",
+    route: "/projects/:project",
+    queryClient: createQueryClient(),
   });
 }
 
@@ -778,4 +850,91 @@ describe("ProjectOverviewScreen", () => {
     expect(link).not.toHaveTextContent(/pull request/i);
     expect(link.querySelector(".po-steps")).toBeNull();
   });
+
+  it("AC-36 loads in at most 5 API requests with the shell mounted", async () => {
+    // The app's own query client: under its 10 s staleTime a seeded query does not fetch.
+    const { calls } = renderWithApi(
+      <AppShell>
+        <ProjectOverviewScreen />
+      </AppShell>,
+      {
+        routes: {
+          "/api/v1/screens/shell": aShellView(),
+          [OVERVIEW_READ]: anOverviewRead(),
+          "/api/v1/feature-names": aPage([]),
+        },
+        path: "/projects/agent-hub",
+        route: "/projects/:project",
+        queryClient: createQueryClient(),
+      },
+    );
+
+    // Each region shows its part of the overview read; feature names stay their own call.
+    expect(await screen.findByRole("heading", { level: 1, name: "agent-hub" })).toBeInTheDocument();
+    expect(await screen.findByText("Setup · 1 error, 1 warning")).toBeInTheDocument();
+    expect(await screen.findByText("Cap the tracker team list")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: /Approve the plan/ })).toBeInTheDocument();
+    expect(await screen.findByText("Bench stderr test is flaky")).toBeInTheDocument();
+    const recentWork = await screen.findByRole("region", { name: "Recent work" });
+    expect(await within(recentWork).findByText("control-plane")).toBeInTheDocument();
+    expect(await within(recentWork).findByText("ACME-7")).toBeInTheDocument();
+    const asked = calls();
+    expect(asked.filter((path) => overviewResources.includes(path))).toEqual([]);
+    expect(asked.filter((path) => path === OVERVIEW_READ)).toHaveLength(1);
+    expect(asked.length).toBeLessThanOrEqual(5);
+  });
+
+  it("shows recent work from the overview read's sessions", async () => {
+    // The sessions route lists another ticket: a screen that read it would show ACME-99.
+    const { calls } = renderFromRead(anOverviewRead(), {
+      "/api/v1/sessions": aPage([
+        aSession({
+          id: anId(21),
+          status: "ended",
+          outcome: "done",
+          last_activity_at: recent,
+          label: aSessionLabel({ issue: "ACME-99", workflow: "/fix", workflows: ["/fix"] }),
+        }),
+      ]),
+    });
+
+    const recentWork = await screen.findByRole("region", { name: "Recent work" });
+    const features = within(await within(recentWork).findByRole("list", { name: "Features" }));
+    expect(await features.findByText("control-plane")).toBeInTheDocument();
+    const tickets = within(await within(recentWork).findByRole("list", { name: "Tickets" }));
+    expect(await tickets.findByText("ACME-7")).toBeInTheDocument();
+    expect(tickets.getByText("Fix the order export")).toBeInTheDocument();
+    expect(tickets.queryByText("ACME-99")).not.toBeInTheDocument();
+    expect(calls()).not.toContain("/api/v1/sessions");
+  });
+
+  // The sessions route answers the opposite each time, so a screen that read it would show the
+  // other state.
+  it.each([
+    {
+      has_sessions: false,
+      sessions: weekSessions,
+      shown: "No sessions yet.",
+      absent: "No feature was worked on in the last 7 days.",
+    },
+    {
+      has_sessions: true,
+      sessions: aPage([]),
+      shown: "No feature was worked on in the last 7 days.",
+      absent: "No sessions yet.",
+    },
+  ])(
+    "says there are no sessions yet when the overview read has none (has_sessions $has_sessions)",
+    async ({ has_sessions, sessions, shown, absent }) => {
+      const { calls } = renderFromRead(
+        anOverviewRead({ recent_sessions: aPage([]), has_sessions }),
+        { "/api/v1/sessions": sessions },
+      );
+
+      const recentWork = await screen.findByRole("region", { name: "Recent work" });
+      expect(await within(recentWork).findByText(shown)).toBeInTheDocument();
+      expect(within(recentWork).queryByText(absent)).not.toBeInTheDocument();
+      expect(calls()).not.toContain("/api/v1/sessions");
+    },
+  );
 });
