@@ -1,7 +1,10 @@
+import { useEffect, useRef, useState } from "react";
+
 import type { components } from "../../api/schema";
 import { apiKey, useApi, type ApiProblem } from "../../lib/api";
 import { useCheckPoll } from "../../lib/checkPoll";
 import { useScreenRead, type ScreenReadSeed } from "../../lib/screenRead";
+import { useGlobalStream } from "../../shell/GlobalStream";
 import { SESSIONS_READ } from "../tickets/model";
 
 export type DoctorFindings = components["schemas"]["DoctorFindings"];
@@ -53,21 +56,41 @@ export interface RecentSessions {
 const noRetry = () => undefined;
 
 /**
+ * Whether the global stream's counts have changed since `armed` turned on: the first counts seen
+ * from then on only arm it, as in `useRefreshOnCounts`.
+ */
+function useCountsChanged(armed: boolean): boolean {
+  const { counts } = useGlobalStream();
+  const key = armed && counts ? JSON.stringify(counts) : null;
+  const first = useRef<string | null>(null);
+  const [changed, setChanged] = useState(false);
+  useEffect(() => {
+    if (key === null) return;
+    if (first.current === null) first.current = key;
+    else if (key !== first.current) setChanged(true);
+  }, [key]);
+  return changed;
+}
+
+/**
  * The sessions Recent work reads: the overview read's sessions of the issues worked on this week,
- * once it has answered. When it failed, the project's newest sessions from their route, read as
- * the Tickets screen reads them (one shared cache entry, never written by the overview read).
+ * once it has answered. When it failed, or once the stream's counts change after it (Recent work
+ * stays live), the project's newest sessions from their route, read as the Tickets screen reads
+ * them (one shared cache entry, never written by the overview read, which those changes refresh).
  */
 export function useRecentSessions(project: string): RecentSessions {
   const read = useScreenRead(OVERVIEW_READ, path(project));
+  const live = useCountsChanged(read !== undefined);
   const route = useApi(
     "/api/v1/sessions",
     { query: { project, limit: SESSIONS_READ, sort: "-last_activity_at" } },
-    { enabled: read === null },
+    { enabled: read === null || live },
   );
   if (read === undefined) {
     return { items: [], none: false, isPending: true, error: null, refetch: noRetry };
   }
-  if (read !== null) {
+  // The read's sessions stay until the route has answered since this screen opened.
+  if (read !== null && !(live && route.isFetchedAfterMount)) {
     const items = read.recent_sessions.items;
     return { items, none: !read.has_sessions, isPending: false, error: null, refetch: noRetry };
   }
