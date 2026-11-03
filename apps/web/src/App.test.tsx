@@ -11,6 +11,7 @@ import {
   aFeatureDetail,
   aHub,
   aPage,
+  aShellView,
   aSkillCatalog,
   aSkillDetail,
   aWorkflowCatalog,
@@ -23,6 +24,7 @@ import {
 } from "./testing/builders";
 
 const withHub: ApiRoutes = {
+  "/api/v1/screens/shell": aShellView({ hub_count: 1 }),
   "/api/v1/hubs": aPage([aHub()]),
   "/api/v1/projects": aPage([]),
   "/api/v1/features/agent-hub/control-plane": aFeatureDetail(),
@@ -37,7 +39,11 @@ const withHub: ApiRoutes = {
       markdown: `# Note ${new URL(request.url).searchParams.get("path") ?? ""}\n`,
     }),
 };
-const noHub: ApiRoutes = { "/api/v1/hubs": aPage([]), "/api/v1/projects": aPage([]) };
+const noHub: ApiRoutes = {
+  "/api/v1/screens/shell": aShellView({ hub_count: 0 }),
+  "/api/v1/hubs": aPage([]),
+  "/api/v1/projects": aPage([]),
+};
 
 // Each route's screen loads on demand. In a busy test run a screen's first import can take most of
 // findBy's default second, and once the page skeleton has shown it stays 300 ms (spec 22), so this

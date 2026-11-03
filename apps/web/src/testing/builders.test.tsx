@@ -245,6 +245,18 @@ describe("renderWithApi", () => {
     expect(stream("/api/v1/live-sessions/stream").url).toBe("/api/v1/live-sessions/stream");
     expect(() => stream("/api/v1/nothing")).toThrow("No EventSource opened for /api/v1/nothing");
   });
+
+  it("lists the API paths a render asked, fetches and streams, in order", async () => {
+    const { calls } = renderWithApi(<HubCount />, {
+      routes: { "/api/v1/hubs": aPage([aHub()]) },
+    });
+    expect(await screen.findByText("1")).toBeInTheDocument();
+
+    new EventSource("/api/v1/live-sessions/stream?project=agent-hub");
+    new EventSource("/assets/not-the-api");
+
+    expect(calls()).toEqual(["/api/v1/hubs", "/api/v1/live-sessions/stream"]);
+  });
 });
 
 describe("agent-session builders", () => {

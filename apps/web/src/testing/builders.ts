@@ -26,6 +26,7 @@ export type FeatureView = Schemas["FeatureView"];
 export type FindingView = Schemas["FindingView"];
 export type DoctorFindings = Schemas["DoctorFindings"];
 export type HubView = Schemas["HubView"];
+export type ShellView = Schemas["ShellView"];
 export type CollectorStatus = Schemas["CollectorStatus"];
 export type ProblemDetails = Schemas["ProblemDetails"];
 export type SessionLabel = Schemas["SessionLabel"];
@@ -986,6 +987,18 @@ export function aHub(overrides: Partial<HubView> = {}): HubView {
   };
 }
 
+/** A `GET /screens/shell` answer: one registered hub, one project with a live session, no
+ * feature needing you and no workflow run, unless overridden. */
+export function aShellView(overrides: Partial<ShellView> = {}): ShellView {
+  return {
+    hub_count: 1,
+    projects: [{ name: "agent-hub", live_sessions: 1 }],
+    features_needing_you: 0,
+    has_workflow_runs: false,
+    ...overrides,
+  };
+}
+
 export function aCollectorStatus(overrides: Partial<CollectorStatus> = {}): CollectorStatus {
   return {
     appended: 120,
@@ -1871,13 +1884,24 @@ function jsonResponse(body: unknown, status: number, type = "application/json"):
   });
 }
 
+/** The `/api/v1/` paths fetched or streamed since the last `stubApi`, in the order the stubs
+ * saw them. */
+let apiCalls: string[] = [];
+
+function noteApiCall(url: string): void {
+  const path = new URL(url, window.location.origin).pathname;
+  if (path.startsWith("/api/v1/")) apiCalls.push(path);
+}
+
 /** Answers fetches from `routes`; an unknown route is a 404 problem naming it. */
 export function stubApi(routes: ApiRoutes): Request[] {
   const requests: Request[] = [];
+  apiCalls = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(
     (input: RequestInfo | URL, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
       requests.push(request);
+      noteApiCall(request.url);
       const path = new URL(request.url).pathname;
       const reply =
         routes[`${request.method} ${path}`] ??
@@ -1953,6 +1977,7 @@ export class FakeEventSource {
   constructor(url: string | URL) {
     this.url = String(url);
     FakeEventSource.instances.push(this);
+    noteApiCall(this.url);
   }
 
   addEventListener(type: string, listener: Listener): void {
@@ -2018,6 +2043,8 @@ export interface RenderWithApiOptions {
 
 export interface RenderWithApiResult extends RenderResult {
   requests: Request[];
+  /** Every `/api/v1/` path the render has asked, fetches and `EventSource`s, in order. */
+  calls: () => string[];
   queryClient: QueryClient;
   router: ReturnType<typeof createMemoryRouter>;
   stream: (urlPrefix: string) => FakeEventSource;
@@ -2059,7 +2086,7 @@ export function renderWithApi(
       children: createElement(RouterProvider, { router }),
     }),
   );
-  return { ...result, requests, queryClient, router, stream };
+  return { ...result, requests, calls: () => [...apiCalls], queryClient, router, stream };
 }
 
 /* ---------- Scenarios (AGH-350 T13) ---------- */

@@ -8,16 +8,14 @@ import { ConfirmDialog } from "../components/feedback";
 import { seriousViolations } from "../testing/axe";
 import {
   aCapabilities,
-  aPage,
-  aProjectSummary,
-  aRun,
+  aShellView,
   aStreamCounts,
   aWorkdir,
   renderWithApi,
 } from "../testing/builders";
 import { AppShell, useShell } from "./AppShell";
 
-const routes = { "/api/v1/projects": aPage([aProjectSummary()]) };
+const routes = { "/api/v1/screens/shell": aShellView() };
 
 /** A Dialog whose buttons open the shell's palette and shortcut sheet over it. */
 function ShellLayersOver({ onClose }: { onClose: () => void }) {
@@ -45,9 +43,54 @@ describe("AppShell", () => {
     expect(screen.getByRole("main")).toBeInTheDocument();
   });
 
+  it("AC-40 makes two requests when it mounts: the shell read and the stream", async () => {
+    window.localStorage.clear();
+    const { calls } = renderWithApi(<AppShell />, {
+      routes: { "/api/v1/screens/shell": aShellView({ has_workflow_runs: true }) },
+    });
+    const both = ["/api/v1/events/stream", "/api/v1/screens/shell"];
+
+    await waitFor(() => {
+      expect([...calls()].sort()).toEqual(both);
+    });
+    // Once the read's facts are drawn, the shell has asked for nothing more.
+    expect(await screen.findByRole("link", { name: "Workflow runs" })).toBeInTheDocument();
+    expect([...calls()].sort()).toEqual(both);
+  });
+
+  it.each([
+    ["/sessions?scope=storefront", "storefront"],
+    // On a project's Skills the switcher shows the route's project; the badge keeps the scope.
+    ["/projects/storefront/skills?scope=agent-hub", "agent-hub"],
+  ])("asks the shell read with the badge's scope on %s", async (path, project) => {
+    window.localStorage.clear();
+    const { requests } = renderWithApi(<AppShell />, { routes, path });
+    const asked = () =>
+      requests
+        .filter((request) => new URL(request.url).pathname === "/api/v1/screens/shell")
+        .map((request) => new URL(request.url).searchParams.get("project"));
+
+    await waitFor(() => {
+      expect(asked()).toEqual([project]);
+    });
+  });
+
+  it("badges Features with the shell read's count of the features that need you", async () => {
+    renderWithApi(<AppShell />, {
+      routes: { "/api/v1/screens/shell": aShellView({ features_needing_you: 2 }) },
+    });
+    const nav = screen.getByRole("navigation", { name: "Main" });
+
+    await waitFor(() => {
+      expect(within(nav).getByRole("link", { name: /^Features/ })).toHaveAccessibleName(
+        "Features, 2 need you",
+      );
+    });
+  });
+
   it("shows Workflow runs in the sidebar only once a workflow has run", async () => {
     const { unmount } = renderWithApi(<AppShell />, {
-      routes: { ...routes, "/api/v1/workflow-runs": aPage([]) },
+      routes: { "/api/v1/screens/shell": aShellView({ has_workflow_runs: false }) },
     });
     const nav = screen.getByRole("navigation", { name: "Main" });
     await waitFor(() => {
@@ -57,7 +100,7 @@ describe("AppShell", () => {
     unmount();
 
     renderWithApi(<AppShell />, {
-      routes: { ...routes, "/api/v1/workflow-runs": aPage([aRun()]) },
+      routes: { "/api/v1/screens/shell": aShellView({ has_workflow_runs: true }) },
     });
 
     expect(await screen.findByRole("link", { name: "Workflow runs" })).toHaveAttribute(
@@ -391,10 +434,12 @@ describe("AppShell", () => {
 
 describe("AppShell scope on a project's Brain or Skills", () => {
   const scoped = {
-    "/api/v1/projects": aPage([
-      aProjectSummary({ name: "storefront" }),
-      aProjectSummary({ name: "agent-hub" }),
-    ]),
+    "/api/v1/screens/shell": aShellView({
+      projects: [
+        { name: "storefront", live_sessions: 1 },
+        { name: "agent-hub", live_sessions: 1 },
+      ],
+    }),
   };
   const switcher = () =>
     within(screen.getByRole("banner")).getByRole("button", {
