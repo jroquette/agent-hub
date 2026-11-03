@@ -1,5 +1,6 @@
-import { act, screen } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { act, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { useState, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -65,6 +66,68 @@ function Home({ enabled = true, children }: { enabled?: boolean; children: React
       {children}
     </ScreenReadProvider>
   );
+}
+
+/** Home's activity after "Load more": the same path with another page size. */
+function MoreActivity() {
+  const more = useApi("/api/v1/activity", { query: { project: null, limit: 40 } });
+  return <p>{`more activity: ${more.data?.items[0]?.text ?? "waiting"}`}</p>;
+}
+
+/** Home with its read's coverage on or off, as Sessions switches it when a filter is set. */
+function Filterable({ covered, children }: { covered: boolean; children: ReactNode }) {
+  const [enabled, setEnabled] = useState(covered);
+  return (
+    <>
+      <button
+        onClick={() => {
+          setEnabled((on) => !on);
+        }}
+      >
+        {enabled ? "Set a filter" : "Clear the filter"}
+      </button>
+      <Home enabled={enabled}>{children}</Home>
+    </>
+  );
+}
+
+/** Mounts Home once "Open Home" is pressed, as a visit does. */
+function Visit({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  if (open) return <>{children}</>;
+  return (
+    <button
+      onClick={() => {
+        setOpen(true);
+      }}
+    >
+      Open Home
+    </button>
+  );
+}
+
+/** Holds the screen read's answer until `release()`; `startedAt` is when it was asked. */
+function holdScreenRead(): { release: () => void; startedAt: () => number | null } {
+  const fetchMock = vi.mocked(globalThis.fetch);
+  const answer = fetchMock.getMockImplementation();
+  if (answer === undefined) throw new Error("holdScreenRead: render first");
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let startedAt: number | null = null;
+  fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (new URL(url, window.location.origin).pathname !== PORTFOLIO) return answer(input, init);
+    startedAt = Date.now();
+    return gate.then(() => answer(input, init));
+  });
+  return {
+    release: () => {
+      release();
+    },
+    startedAt: () => startedAt,
+  };
 }
 
 /** Lets a fetch that the last answer would start go out before the calls are read. */
@@ -138,5 +201,107 @@ describe("ScreenReadProvider", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("never overwrites an entry newer than the screen read", async () => {
+    const user = userEvent.setup();
+    const { queryClient } = renderWithApi(
+      <Visit>
+        <Home>
+          <Regions />
+        </Home>
+      </Visit>,
+      { routes: { [PORTFOLIO]: read, ...resources }, queryClient: createQueryClient() },
+    );
+    // Written before the visit, so older than the read: its part replaces it.
+    queryClient.setQueryData(projectsKey, aPage([aProjectSummary({ name: "older-project" })]));
+    const olderAt = Date.now();
+    const held = holdScreenRead();
+    await waitFor(() => {
+      expect(Date.now()).toBeGreaterThan(olderAt);
+    });
+
+    await user.click(screen.getByRole("button", { name: "Open Home" }));
+    expect(screen.getByText("projects: older-project")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(held.startedAt()).not.toBeNull();
+    });
+    const askedAt = held.startedAt() ?? Infinity;
+    await waitFor(() => {
+      expect(Date.now()).toBeGreaterThan(askedAt);
+    });
+    // Written while the read is on its way, so newer than it: it stays.
+    act(() => {
+      queryClient.setQueryData(needsKey, aPage([aNeedsYouItem({ verb: "Newer need" })]));
+    });
+    held.release();
+
+    expect(await screen.findByText("projects: read-project")).toBeInTheDocument();
+    expect(await screen.findByText("activity: Read activity")).toBeInTheDocument();
+    await settle();
+    expect(screen.getByText("needs: Newer need")).toBeInTheDocument();
+  });
+
+  it("leaves a query it does not cover alone", async () => {
+    const { requests } = renderWithApi(
+      <Home>
+        <Regions />
+        <MoreActivity />
+      </Home>,
+      { routes: { [PORTFOLIO]: "pending", ...resources }, queryClient: createQueryClient() },
+    );
+
+    // The same path with another page size is another key: it reads its route at once.
+    expect(await screen.findByText("more activity: Route activity")).toBeInTheDocument();
+    expect(screen.getByText("projects: waiting")).toBeInTheDocument();
+    expect(screen.getByText("activity: waiting")).toBeInTheDocument();
+    const asked = requests.map((request) => {
+      const url = new URL(request.url);
+      return [url.pathname, url.searchParams.get("limit")];
+    });
+    expect(asked.filter(([path]) => path !== PORTFOLIO)).toEqual([["/api/v1/activity", "40"]]);
+  });
+
+  it("fetches nothing and covers nothing while disabled, even once enabled later", async () => {
+    const user = userEvent.setup();
+    const { calls } = renderWithApi(
+      <Filterable covered={false}>
+        <Regions />
+      </Filterable>,
+      { routes: { [PORTFOLIO]: read, ...resources }, queryClient: createQueryClient() },
+    );
+
+    expect(await screen.findByText("projects: route-project")).toBeInTheDocument();
+    expect(await screen.findByText("needs: Route need")).toBeInTheDocument();
+    expect(await screen.findByText("activity: Route activity")).toBeInTheDocument();
+    expect([...calls()].sort()).toEqual(RESOURCES);
+
+    // A visit that began uncovered stays uncovered: no read, the routes' answers kept.
+    await user.click(screen.getByRole("button", { name: "Clear the filter" }));
+    await settle();
+    expect([...calls()].sort()).toEqual(RESOURCES);
+    expect(screen.getByText("projects: route-project")).toBeInTheDocument();
+  });
+
+  it("keeps its children mounted and stops covering when disabled later", async () => {
+    const user = userEvent.setup();
+    const { calls } = renderWithApi(
+      <Filterable covered>
+        <input aria-label="Period anchor" />
+        <Regions />
+      </Filterable>,
+      { routes: { [PORTFOLIO]: "pending", ...resources }, queryClient: createQueryClient() },
+    );
+    await user.type(screen.getByRole("textbox", { name: "Period anchor" }), "2026-10-11");
+    expect(screen.getByText("projects: waiting")).toBeInTheDocument();
+    expect(calls()).toEqual([PORTFOLIO]);
+
+    await user.click(screen.getByRole("button", { name: "Set a filter" }));
+
+    expect(await screen.findByText("projects: route-project")).toBeInTheDocument();
+    expect(await screen.findByText("needs: Route need")).toBeInTheDocument();
+    expect(await screen.findByText("activity: Route activity")).toBeInTheDocument();
+    // The screen's own state survives: the children were not mounted again.
+    expect(screen.getByRole("textbox", { name: "Period anchor" })).toHaveValue("2026-10-11");
   });
 });
