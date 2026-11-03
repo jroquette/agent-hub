@@ -5,11 +5,12 @@
  *
  * While the read is on its way, a query of a key it covers sends no request: `useApi` waits for
  * the read (`ScreenReadContext`) and takes the part written under its key. When the read fails,
- * does not answer within `SCREEN_READ_TIMEOUT_MS` or is switched off, each such query reads its
- * resource route as before, so a failure stays in its region; so does a query whose part the
- * answer leaves out (a `null` part is not written). A part is written only from this visit's read,
- * and never over an entry updated after that read started. A derived part, never written under a
- * resource's key, is read from the answer itself with `useScreenRead`.
+ * does not answer within `SCREEN_READ_TIMEOUT_MS`, is switched off or its screen is left, each
+ * such query reads its resource route as before, so a failure stays in its region; so does a
+ * query whose part the answer leaves out (a `null` part is not written). A part is written only
+ * from this visit's read, and never over an entry updated after that read started. A derived
+ * part, never written under a resource's key, is read from the answer itself with
+ * `useScreenRead`.
  */
 import { hashKey, useQueryClient, type QueryClient, type QueryKey } from "@tanstack/react-query";
 import {
@@ -129,6 +130,8 @@ class ScreenVisit<P extends GetPath> implements ScreenReadHold {
   readonly #answer: Promise<ReadonlySet<string>>;
   #settle: (brought: ReadonlySet<string>) => void = () => undefined;
   #settled = false;
+  /** The reads started and not yet dropped by their cleanup. */
+  #reading = 0;
 
   constructor(client: QueryClient, request: ScreenRequest<P>, outer: ScreenReadHold | null) {
     this.key = hashKey(apiKey(request.path, request.params));
@@ -149,12 +152,15 @@ class ScreenVisit<P extends GetPath> implements ScreenReadHold {
     );
   }
 
-  /** Reads the screen once and settles the visit. The cleanup drops that read and leaves the
-   * queries waiting, for a read started again (React's strict mode mounts twice). */
+  /** Reads the screen once and settles the visit. The cleanup drops that read; unless a read
+   * starts again at once (React's strict mode mounts twice), the screen is left, and the cleanup
+   * settles the visit too, so a waiting query that a component outside the screen also reads
+   * gets its route's answer instead of waiting for good. */
   read(): () => void {
     const controller = new AbortController();
     const startedAt = Date.now();
     let current = true;
+    this.#reading += 1;
     const timer = setTimeout(() => {
       controller.abort();
       this.release();
@@ -176,6 +182,11 @@ class ScreenVisit<P extends GetPath> implements ScreenReadHold {
       current = false;
       clearTimeout(timer);
       controller.abort();
+      this.#reading -= 1;
+      // Strict mode's second mount reads again before this runs.
+      queueMicrotask(() => {
+        if (this.#reading === 0) this.release();
+      });
     };
   }
 
