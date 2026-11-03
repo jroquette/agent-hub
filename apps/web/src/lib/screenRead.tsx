@@ -8,9 +8,9 @@
  * does not answer within `SCREEN_READ_TIMEOUT_MS`, is switched off or its screen is left, each
  * such query reads its resource route as before, so a failure stays in its region; so does a
  * query whose part the answer leaves out (a `null` part is not written). A part is written only
- * from this visit's read, and never over an entry updated after that read started. A derived
- * part, never written under a resource's key, is read from the answer itself with
- * `useScreenRead`.
+ * from this visit's read, and never over an entry updated after that read started or over a paged
+ * entry holding more pages than the part. A derived part, never written under a resource's key,
+ * is read from the answer itself with `useScreenRead`.
  */
 import { hashKey, useQueryClient, type QueryClient, type QueryKey } from "@tanstack/react-query";
 import {
@@ -126,9 +126,10 @@ class ScreenVisit<P extends GetPath> implements ScreenReadHold {
   readonly #request: ScreenRequest<P>;
   readonly #outer: ScreenReadHold | null;
   readonly #covered: ReadonlySet<string>;
-  /** The keys whose parts the answer brought; none when the visit settled without one. */
-  readonly #answer: Promise<ReadonlySet<string>>;
-  #settle: (brought: ReadonlySet<string>) => void = () => undefined;
+  /** What the answer brought for each key, as the query waiting for that key takes it; nothing
+   * when the visit settled without an answer. */
+  readonly #answer: Promise<ReadonlyMap<string, unknown>>;
+  #settle: (parts: ReadonlyMap<string, unknown>) => void = () => undefined;
   #settled = false;
   /** The reads started and not yet dropped by their cleanup. */
   #reading = 0;
@@ -147,9 +148,7 @@ class ScreenVisit<P extends GetPath> implements ScreenReadHold {
   hold(key: QueryKey): Promise<unknown> | null {
     const hashed = hashKey(key);
     if (this.#settled || !this.#covered.has(hashed)) return this.#outer?.hold(key) ?? null;
-    return this.#answer.then((brought) =>
-      brought.has(hashed) ? this.#client.getQueryData(key) : undefined,
-    );
+    return this.#answer.then((parts) => parts.get(hashed));
   }
 
   /** Reads the screen once and settles the visit. The cleanup drops that read; unless a read
@@ -169,9 +168,7 @@ class ScreenVisit<P extends GetPath> implements ScreenReadHold {
       (read) => {
         clearTimeout(timer);
         if (!current || this.#settled) return;
-        const seeds = this.#request.seeds(read);
-        writeSeeds(this.#client, seeds, startedAt);
-        this.#finish(read, new Set(seeds.map(([key]) => hashKey(key))));
+        this.#finish(read, writeSeeds(this.#client, this.#request.seeds(read), startedAt));
       },
       () => {
         clearTimeout(timer);
@@ -192,13 +189,13 @@ class ScreenVisit<P extends GetPath> implements ScreenReadHold {
 
   /** Lets every waiting query read its resource route, and covers nothing from then on. */
   release(): void {
-    this.#finish(null, new Set());
+    this.#finish(null, new Map());
   }
 
-  #finish(read: ApiData<P> | null, brought: ReadonlySet<string>): void {
+  #finish(read: ApiData<P> | null, parts: ReadonlyMap<string, unknown>): void {
     if (this.#settled) return;
     this.#settled = true;
-    this.#settle(brought);
+    this.#settle(parts);
     this.#request.onAnswer(read);
   }
 }
@@ -209,10 +206,30 @@ function coveredKeys<P extends GetPath>(seeds: Seeds<P>): ReadonlySet<string> {
   return new Set(seeds(noParts).map(([key]) => hashKey(key)));
 }
 
-/** Writes each part under its key, unless that key holds data updated after the read started. */
-function writeSeeds(client: QueryClient, seeds: readonly ScreenReadSeed[], startedAt: number) {
+/**
+ * Writes each part under its key and returns, by key, what the query waiting for it takes. A key
+ * that holds data updated after the read started keeps it, and its query takes that data. A paged
+ * entry holding more pages than its part (pages loaded with Load more) stays whole too: the read's
+ * first page beside the kept further pages could list a row twice or miss one. A refetch waiting
+ * for it, which reads the further pages again from the first, takes the read's first page.
+ */
+function writeSeeds(
+  client: QueryClient,
+  seeds: readonly ScreenReadSeed[],
+  startedAt: number,
+): ReadonlyMap<string, unknown> {
+  const parts = new Map<string, unknown>();
   for (const [key, data] of seeds) {
-    if ((client.getQueryState(key)?.dataUpdatedAt ?? 0) > startedAt) continue;
-    client.setQueryData(key, data);
+    const state = client.getQueryState(key);
+    let part = data;
+    if ((state?.dataUpdatedAt ?? 0) > startedAt) part = state?.data;
+    else if (pageCount(state?.data) <= pageCount(data)) part = client.setQueryData(key, data);
+    parts.set(hashKey(key), part);
   }
+  return parts;
+}
+
+/** The pages a paged entry (`{ pages, pageParams }`) holds; 0 for any other data. */
+function pageCount(data: unknown): number {
+  return (data as { pages?: readonly unknown[] } | null | undefined)?.pages?.length ?? 0;
 }
