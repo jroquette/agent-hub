@@ -925,7 +925,12 @@ def build_app(
             post=linear_post,
         ),
         browsers=browsers,
-        screen_reads=ScreenReads(events, hubs, None if sessions is None else sessions.control),
+        screen_reads=ScreenReads(
+            events,
+            hubs,
+            None if sessions is None else sessions.control,
+            clock=settings.clock,
+        ),
     )
     closers = [store.close, versions.close, knowledge.close]
     if agent_store is not None:

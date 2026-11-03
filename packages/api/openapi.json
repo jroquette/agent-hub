@@ -9659,6 +9659,61 @@
         "title": "ProjectNow",
         "type": "object"
       },
+      "ProjectOverviewView": {
+        "additionalProperties": false,
+        "description": "The Project overview's first view: each resource part as its route answers it for the\nproject (``runs`` its first 200, ``projects`` every card), and ``recent_sessions``, the\nproject's 200 newest sessions narrowed to those of issues with a session active in the last\n7 days, newest first; ``has_sessions`` says whether those 200 held any session.",
+        "properties": {
+          "config": {
+            "$ref": "#/components/schemas/HubConfigView"
+          },
+          "features": {
+            "$ref": "#/components/schemas/Page_FeatureView_"
+          },
+          "findings": {
+            "$ref": "#/components/schemas/DoctorFindings"
+          },
+          "has_sessions": {
+            "title": "Has Sessions",
+            "type": "boolean"
+          },
+          "needs_you": {
+            "$ref": "#/components/schemas/Page_NeedsYouItem_"
+          },
+          "now": {
+            "$ref": "#/components/schemas/ProjectNow"
+          },
+          "project": {
+            "$ref": "#/components/schemas/ProjectDetail"
+          },
+          "projects": {
+            "$ref": "#/components/schemas/Page_ProjectSummary_"
+          },
+          "recent_sessions": {
+            "$ref": "#/components/schemas/Page_Session_"
+          },
+          "repos": {
+            "$ref": "#/components/schemas/Page_RepoView_"
+          },
+          "runs": {
+            "$ref": "#/components/schemas/Page_WorkflowRun_"
+          }
+        },
+        "required": [
+          "project",
+          "findings",
+          "projects",
+          "needs_you",
+          "runs",
+          "now",
+          "features",
+          "repos",
+          "config",
+          "recent_sessions",
+          "has_sessions"
+        ],
+        "title": "ProjectOverviewView",
+        "type": "object"
+      },
       "ProjectSummary": {
         "additionalProperties": false,
         "description": "A Portfolio card: hub config plus the project's activity; PRs and issues need sources\nnot connected in Phase 2 (``null``). ``hub_health`` comes from the hub's last doctor check,\nwhich ended at ``checked_at``; both are None before its first one.",
@@ -24221,6 +24276,61 @@
           }
         },
         "summary": "Read Portfolio",
+        "tags": [
+          "screens"
+        ]
+      }
+    },
+    "/api/v1/screens/project-overview/{project}": {
+      "get": {
+        "description": "The Project overview's first view in one read: the project's header, findings, every\ncard, what needs you, its first 200 runs, ``now.md``, features, repos and config, each as its\nroute answers it, and ``recent_sessions``: of its 200 sessions newest by last activity, those\nof the issues with a session active in the last 7 days. An unknown project answers 404, as\n``GET /projects/{project}`` does.",
+        "operationId": "read_project_overview_api_v1_screens_project_overview__project__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectOverviewView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Read Project Overview",
         "tags": [
           "screens"
         ]

@@ -1859,6 +1859,30 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/screens/project-overview/{project}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read Project Overview
+     * @description The Project overview's first view in one read: the project's header, findings, every
+     *     card, what needs you, its first 200 runs, ``now.md``, features, repos and config, each as its
+     *     route answers it, and ``recent_sessions``: of its 200 sessions newest by last activity, those
+     *     of the issues with a session active in the last 7 days. An unknown project answers 404, as
+     *     ``GET /projects/{project}`` does.
+     */
+    get: operations["read_project_overview_api_v1_screens_project_overview__project__get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/screens/shell": {
     parameters: {
       query?: never;
@@ -5799,6 +5823,27 @@ export interface components {
       source_path: string | null;
       /** Watch */
       watch: components["schemas"]["NowItem"][];
+    };
+    /**
+     * ProjectOverviewView
+     * @description The Project overview's first view: each resource part as its route answers it for the
+     *     project (``runs`` its first 200, ``projects`` every card), and ``recent_sessions``, the
+     *     project's 200 newest sessions narrowed to those of issues with a session active in the last
+     *     7 days, newest first; ``has_sessions`` says whether those 200 held any session.
+     */
+    ProjectOverviewView: {
+      config: components["schemas"]["HubConfigView"];
+      features: components["schemas"]["Page_FeatureView_"];
+      findings: components["schemas"]["DoctorFindings"];
+      /** Has Sessions */
+      has_sessions: boolean;
+      needs_you: components["schemas"]["Page_NeedsYouItem_"];
+      now: components["schemas"]["ProjectNow"];
+      project: components["schemas"]["ProjectDetail"];
+      projects: components["schemas"]["Page_ProjectSummary_"];
+      recent_sessions: components["schemas"]["Page_Session_"];
+      repos: components["schemas"]["Page_RepoView_"];
+      runs: components["schemas"]["Page_WorkflowRun_"];
     };
     /**
      * ProjectSummary
@@ -12980,6 +13025,46 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["PortfolioView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  read_project_overview_api_v1_screens_project_overview__project__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProjectOverviewView"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

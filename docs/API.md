@@ -54,8 +54,8 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   added to them: `DELETE /scenarios/{project}/{name}` ([Scenarios](#scenarios)), and the two AGH-393 added
   (`KNOWLEDGE_PATHS`, both GET):
   `/projects/{project}/knowledge/search` and `/projects/{project}/brain/backlinks` ([Knowledge](#knowledge)), and the
-  screen reads AGH-623 added (`SCREEN_PATHS`, all GET): `/screens/shell` and `/screens/portfolio`
-  ([Screen reads](#screen-reads)). A test
+  screen reads AGH-623 added (`SCREEN_PATHS`, all GET): `/screens/shell`, `/screens/portfolio` and
+  `/screens/project-overview/{project}` ([Screen reads](#screen-reads)). A test
   fails on any other path.
 - A field kept only for compatibility is marked `deprecated` in the document and stays until `/api/v2`: a session's
   and a live tile's `agent` (read `label` and `actors`) and a learning's `target` (read `note_path`).
@@ -252,6 +252,28 @@ for the same scope, and the web writes it under that resource's query key:
 | `activity` | the scope's first activity page of 20 items, as `GET /activity?project=&limit=20` answers; Home's "Load more" reads `GET /activity` |
 
 Skill usage stays its own call (`GET /skill-usage`), so Home loads in 4 calls with the shell's two.
+
+`GET /api/v1/screens/project-overview/{project}` → `ProjectOverviewView`, the Project overview's first view. An
+unknown project answers the same 404 problem as `GET /projects/{project}`. Each resource part is its route's answer,
+and the web writes it under that route's query key:
+
+| Field | Value |
+| --- | --- |
+| `project` | the header, as `GET /projects/{project}` answers |
+| `findings` | the project's doctor findings, as `GET /doctor/findings?project=` answers |
+| `projects` | every project's card, as `GET /projects` answers |
+| `needs_you` | what waits for a person in the project, as `GET /needs-you?project=` answers |
+| `runs` | the project's first 200 runs, as `GET /workflow-runs?project=&limit=200` answers |
+| `now` | the project's `brain/now.md`, as `GET /projects/{project}/now` answers |
+| `features` | the project's features, as `GET /features?project=` answers |
+| `repos` | the project's repos, as `GET /projects/{project}/repos` answers |
+| `config` | the project's hub config, as `GET /projects/{project}/config` answers |
+| `recent_sessions` | derived, never written under a resource's key: of the project's 200 sessions newest by last activity (`GET /sessions?project=&limit=200&sort=-last_activity_at`), those whose issue (the label's, else the session's own, upper case) has a session active in the last 7 days by the server's clock, newest first |
+| `has_sessions` | derived: whether those 200 held any session (Recent work's "No sessions yet.") |
+
+The browser still derives Recent work's rows, the week's numbers and the agents' tickets from these parts. The
+recent sessions are not written under the 200-session key, which the Tickets screen shares and reads whole. The
+feature names stay their own call (`GET /feature-names`), so the overview loads in 4 calls with the shell's two.
 
 ## Sessions
 
