@@ -154,6 +154,17 @@ AGH-613 (the Features list in one call, [specs/17-features.md](specs/17-features
   (it reads a feature's tickets again when its snapshot is 14 min old), and the list's 30 s reread shows a feature
   moving to Shipped once its tickets are all done.
 
+AGH-623 (each screen's first view in one call, [ADR 0056](../../adr/0056-screen-shaped-reads.md)) changes one rule
+of spec 22 and how the shell's facts arrive:
+
+- **Regions arrive together.** On Portfolio, Project overview, Sessions and Session detail, the regions a screen read
+  covers arrive together, from that one read. Spec 22's "Region independence" (each region loads on its own, the
+  fastest first, `22-first-run-and-errors.md:278`) holds only when the read fails or takes over 5 s: then each region
+  reads its own route, as before, and loads and fails on its own.
+- **Shell facts.** The switcher's projects, the Workflow runs item and the Features badge come from one shell read,
+  and they hide together only when its first read fails. When the scope changes, the projects and the runs item stay,
+  and the badge hides until the new scope's count arrives.
+
 ## Design system
 
 The control plane of agent-hub is an observability and governance console for teams of AI coding agents. It answers five questions: how are my projects doing (Portfolio), what are the agents doing right now (Live sessions), why did the agent do that (Session timeline), what does it know and what did it learn (Knowledge), and how should work flow and where does it get stuck (Workflows). A busy engineering lead should understand any screen in five seconds and be able to trust it.
