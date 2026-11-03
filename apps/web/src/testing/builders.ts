@@ -28,6 +28,7 @@ export type DoctorFindings = Schemas["DoctorFindings"];
 export type HubView = Schemas["HubView"];
 export type ShellView = Schemas["ShellView"];
 export type SessionsView = Schemas["SessionsView"];
+export type SessionDetailView = Schemas["SessionDetailView"];
 export type CollectorStatus = Schemas["CollectorStatus"];
 export type ProblemDetails = Schemas["ProblemDetails"];
 export type SessionLabel = Schemas["SessionLabel"];
@@ -1012,6 +1013,21 @@ export function aSessionsView(overrides: Partial<SessionsView> = {}): SessionsVi
     agent_sessions: { items: [] },
     capabilities: aCapabilities(),
     features: aPage<FeatureView>([]),
+    ...overrides,
+  };
+}
+
+/** A `GET /screens/session-detail/{session_id}` answer: session `anId(1, "5091b986")` ended with
+ * no event, its summary, no problem, no feature and a machine that can drive sessions, unless
+ * overridden. */
+export function aSessionDetailView(overrides: Partial<SessionDetailView> = {}): SessionDetailView {
+  return {
+    session: aSession({ status: "ended", outcome: "done", ended_at: at(900) }),
+    events: aPage<TimelineEventBody>([]),
+    summary: aSessionSummary(),
+    problems: null,
+    features: aPage<FeatureView>([]),
+    capabilities: aCapabilities(),
     ...overrides,
   };
 }
