@@ -1,6 +1,6 @@
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState, type ReactNode } from "react";
+import { StrictMode, useState, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -106,6 +106,30 @@ function Visit({ children }: { children: ReactNode }) {
   );
 }
 
+/** The projects read outside Home, as the shell reads keys a screen read also covers. */
+function OuterProjects() {
+  const projects = useApi("/api/v1/projects", ALL).data?.items.map((item) => item.name);
+  return <p>{`outer projects: ${projects?.join(", ") ?? "waiting"}`}</p>;
+}
+
+/** Mounts Home once "Open Home" is pressed and unmounts it once "Leave Home" is, as a navigation
+ * away does. */
+function Leavable({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        onClick={() => {
+          setOpen((on) => !on);
+        }}
+      >
+        {open ? "Leave Home" : "Open Home"}
+      </button>
+      {open && children}
+    </>
+  );
+}
+
 /** Holds the screen read's answer until `release()`; `startedAt` is when it was asked. */
 function holdScreenRead(): { release: () => void; startedAt: () => number | null } {
   const fetchMock = vi.mocked(globalThis.fetch);
@@ -151,6 +175,27 @@ describe("ScreenReadProvider", () => {
     expect(await screen.findByText("activity: Read activity")).toBeInTheDocument();
     await settle();
     expect(calls()).toEqual([PORTFOLIO]);
+  });
+
+  it("seeds the covered queries under StrictMode, which mounts the screen twice", async () => {
+    const { calls, requests } = renderWithApi(
+      <StrictMode>
+        <Home>
+          <Regions />
+        </Home>
+      </StrictMode>,
+      { routes: { [PORTFOLIO]: read, ...resources }, queryClient: createQueryClient() },
+    );
+
+    expect(await screen.findByText("projects: read-project")).toBeInTheDocument();
+    expect(await screen.findByText("needs: Read need")).toBeInTheDocument();
+    expect(await screen.findByText("activity: Read activity")).toBeInTheDocument();
+    await settle();
+    // React unmounts the first mount at once: its read is given up, the second one stands, and no
+    // covered query reads its route.
+    const reads = requests.filter((request) => new URL(request.url).pathname === PORTFOLIO);
+    expect(reads.filter((request) => !request.signal.aborted)).toHaveLength(1);
+    expect(calls().filter((path) => RESOURCES.includes(path))).toEqual([]);
   });
 
   it("lets each covered query read its resource when the screen read fails", async () => {
@@ -240,6 +285,83 @@ describe("ScreenReadProvider", () => {
     expect(await screen.findByText("activity: Read activity")).toBeInTheDocument();
     await settle();
     expect(screen.getByText("needs: Newer need")).toBeInTheDocument();
+  });
+
+  it("lets a query outside the screen get its route's answer when the screen is left mid-read", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const user = userEvent.setup();
+      const queryClient = createQueryClient();
+      queryClient.setQueryData(projectsKey, aPage([aProjectSummary({ name: "kept-project" })]));
+      const { calls } = renderWithApi(
+        <>
+          <OuterProjects />
+          <Leavable>
+            <Home>
+              <Regions />
+            </Home>
+          </Leavable>
+        </>,
+        { routes: { [PORTFOLIO]: "pending", ...resources }, queryClient },
+      );
+      expect(screen.getByText("outer projects: kept-project")).toBeInTheDocument();
+      // 11 s later the kept projects are stale (staleTime 10 s): Home's query reads them again as
+      // it mounts, and waits for the screen read, which does not answer.
+      vi.setSystemTime(Date.now() + 11_000);
+      await user.click(screen.getByRole("button", { name: "Open Home" }));
+      await waitFor(() => {
+        expect(queryClient.getQueryState(projectsKey)?.fetchStatus).toBe("fetching");
+      });
+      expect(calls()).toEqual([PORTFOLIO]);
+
+      await user.click(screen.getByRole("button", { name: "Leave Home" }));
+
+      // The query outside Home still reads the key: it gets the route's answer.
+      await waitFor(() => {
+        expect(screen.getByText(/^outer projects:/)).toHaveTextContent(
+          "outer projects: route-project",
+        );
+      });
+      expect(calls()).toContain("/api/v1/projects");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the further pages of a paged entry when it writes its first page", async () => {
+    // Home's activity as pages, after Load more: two pages, kept from an earlier visit.
+    const pagesKey = [...activityKey, "pages"];
+    const loaded = {
+      pages: [
+        aPage([anActivityItem({ text: "Kept first page" })], { next_cursor: "c2" }),
+        aPage([anActivityItem({ text: "Kept second page" })]),
+      ],
+      pageParams: [null, "c2"],
+    };
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(pagesKey, loaded, { updatedAt: Date.now() - 1_000 });
+    expect(queryClient.getQueryData(pagesKey)).toEqual(loaded);
+
+    renderWithApi(
+      <ScreenReadProvider
+        path={PORTFOLIO}
+        params={ALL}
+        seeds={(data) => [
+          [projectsKey, data.projects],
+          [pagesKey, { pages: [data.activity], pageParams: [null] }],
+        ]}
+      >
+        <Regions />
+      </ScreenReadProvider>,
+      { routes: { [PORTFOLIO]: read, ...resources }, queryClient },
+    );
+
+    // The read has answered and its parts are written.
+    expect(await screen.findByText("projects: read-project")).toBeInTheDocument();
+    const kept = queryClient.getQueryData<typeof loaded>(pagesKey);
+    expect(kept?.pages).toHaveLength(2);
+    expect(kept?.pages[1]).toEqual(loaded.pages[1]);
+    expect(kept?.pageParams).toEqual([null, "c2"]);
   });
 
   it("leaves a query it does not cover alone", async () => {
