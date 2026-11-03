@@ -9,7 +9,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Path, Response
 
-from agent_hub.api.dependencies import HubReadModelsDep
+from agent_hub.api.dependencies import HubReadModelsDep, OptionalScreenReadsDep
 from agent_hub.api.doctor_fix import DoctorFixRequest, DoctorFixResult, fix_hub
 from agent_hub.api.platform_sync import (
     PlatformSyncError,
@@ -32,17 +32,30 @@ def list_hubs(models: HubReadModelsDep) -> Page[HubView]:
 
 
 @router.post("/hubs", status_code=201)
-def register_hub(hub: HubCreate, models: HubReadModelsDep) -> HubView:
+def register_hub(
+    hub: HubCreate, models: HubReadModelsDep, screens: OptionalScreenReadsDep
+) -> HubView:
     """Register a hub by its path."""
-    return models.register_hub(hub.path)
+    registered = models.register_hub(hub.path)
+    # Once registered, the shell read lists the features again at its next poll, so its badge
+    # counts the new hub's at once (ADR 0056).
+    if screens is not None:
+        screens.forget_features()
+    return registered
 
 
 @router.delete("/hubs/{hub_id}", status_code=204, response_class=Response)
 def remove_hub(
-    hub_id: Annotated[str, Path(min_length=1, max_length=64)], models: HubReadModelsDep
+    hub_id: Annotated[str, Path(min_length=1, max_length=64)],
+    models: HubReadModelsDep,
+    screens: OptionalScreenReadsDep,
 ) -> None:
     """Forget a hub; its events stay in the store."""
     models.remove_hub(hub_id)
+    # Once removed, the shell read lists the features again at its next poll, so its badge no
+    # longer counts the removed hub's (ADR 0056).
+    if screens is not None:
+        screens.forget_features()
 
 
 @router.post("/hubs/{hub_id}/platform-sync")
