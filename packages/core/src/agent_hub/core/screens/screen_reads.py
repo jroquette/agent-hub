@@ -22,8 +22,10 @@ from typing import Final
 from agent_hub.core.agent_sessions.agent_session import AgentSessionList
 from agent_hub.core.agent_sessions.control import AgentSessionCommands
 from agent_hub.core.agent_sessions.driver import DriverCapabilities
+from agent_hub.core.errors import AgentHubError
 from agent_hub.core.features.feature_view import FeatureView
 from agent_hub.core.features.owner_needs import features_needing_you
+from agent_hub.core.projects.project_views import LiveTile
 from agent_hub.core.readmodels.filters import (
     EventPageRequest,
     PageRequest,
@@ -105,7 +107,7 @@ class ScreenReads:
         """The app shell's facts: the registered hubs, every project for the switcher, the
         features of ``scope`` that need you, and whether any project has a workflow run."""
         features = self._scope_features(scope)
-        tiles = self._events.list_live_sessions(Scope(project=scope)).items if features else ()
+        tiles = self._live_tiles(scope) if features else ()
         runs = self._events.list_runs(RunFilter(kind="workflow", limit=1))
         return ShellView(
             hub_count=len(self._hubs.list_hubs().items),
@@ -277,6 +279,16 @@ class ScreenReads:
         if self._probe is probe:
             self._probe = None
         return answer
+
+    def _live_tiles(self, scope: str | None) -> tuple[LiveTile, ...]:
+        """The scope's live tiles; none when the event store cannot read them, so the badge still
+        counts what the features need without a session (AC-374.7), as the Features list did."""
+        try:
+            return self._events.list_live_sessions(Scope(project=scope)).items
+        except AgentHubError:
+            # The store's own failure (the storage's ``DatabaseAccessError``, which core cannot
+            # name); any other error fails the read.
+            return ()
 
     def _scope_features(self, scope: str | None) -> tuple[FeatureView, ...]:
         now = self._monotonic()
