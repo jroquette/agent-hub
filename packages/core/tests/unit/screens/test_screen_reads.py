@@ -15,8 +15,15 @@ runs' first 200, of any kind; every card), and the project's 200 newest sessions
 those of issues (``label.issue``, else ``issue``, upper case) with a session active in the last 7
 days, newest first; ``has_sessions`` says whether those 200 held any. "Now" is the real clock,
 so each session's age is set hours or days away from the 7-day edge.
+
+The sessions read (the inbox): each status section's first page of 50 for the scope and sort,
+the period's ``from`` bounding Finished only; every project's card; every project's features;
+and, only for a request allowed to read them, the agent sessions of the scope and the driver's
+capabilities, the latter only when they answer within the read's wait (a probe of ``claude`` is
+left running, shared by the reads that overlap it, and its answer taken by the next read).
 """
 
+import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -25,6 +32,12 @@ from typing import Any
 
 import pytest
 
+from agent_hub.core.agent_sessions.agent_session import (
+    AgentSession,
+    AgentSessionList,
+    AgentSessionStatus,
+)
+from agent_hub.core.agent_sessions.driver import DriverCapabilities
 from agent_hub.core.features.feature_view import FeatureView
 from agent_hub.core.hub_config.config_view import HubConfigView
 from agent_hub.core.hubs.finding_view import DoctorFindings, FindingView
@@ -46,7 +59,13 @@ from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.runs.workflow_run import IssueRef, RunStep, WorkflowRun
 from agent_hub.core.screens.screen_reads import ScreenReads
 from agent_hub.core.screens.screen_views import PortfolioView, ShellProject, ShellView
-from agent_hub.core.sessions.session import Actor, Session, SessionSegment
+from agent_hub.core.sessions.session import (
+    Actor,
+    Outcome,
+    Session,
+    SessionSegment,
+    SessionStatus,
+)
 from agent_hub.core.testing.discovery_fakes import a_demo_config_view
 from agent_hub.core.testing.read_model_builders import (
     EVENT_ID,
@@ -58,6 +77,7 @@ from agent_hub.core.testing.read_model_builders import (
     a_run,
     a_session,
     a_session_label,
+    an_agent_session,
 )
 
 AT = datetime(2026, 10, 9, 14, 0, tzinfo=UTC)
@@ -104,7 +124,14 @@ class CountingEvents:
 
     def list_sessions(self, session_filter: SessionFilter) -> Page[Session]:
         self.calls.append(("list_sessions", session_filter))
-        kept = [item for item in self.sessions if session_filter.project in {None, item.project}]
+        since = session_filter.started_from
+        kept = [
+            item
+            for item in self.sessions
+            if session_filter.project in {None, item.project}
+            and session_filter.status in {None, item.status}
+            and (since is None or item.started_at >= since)
+        ]
         sort = session_filter.sort
         kept.sort(key=attrgetter(sort.removeprefix("-")), reverse=sort.startswith("-"))
         return _page(kept[: session_filter.limit])
@@ -661,3 +688,215 @@ def test_bounds_overview_bytes_when_project_is_real_shaped() -> None:
         500,
     )
     assert len(view.model_dump_json().encode()) < 1_500_000
+
+
+CAPABILITIES = DriverCapabilities(available=True, engine="in-memory", cli_version="2.1.0")
+
+
+@dataclass
+class CountingAgentSessions:
+    """The agent-session reads the sessions read makes: the sessions as ``GET /agent-sessions``
+    filters them, and the driver's capabilities, which wait for ``release`` when it is set and
+    raise ``failure`` when it is set; records each call and counts the answered probes."""
+
+    sessions: list[AgentSession] = field(default_factory=list)
+    release: asyncio.Event | None = None
+    failure: Exception | None = None
+    answered: int = 0
+    calls: list[tuple[str, object]] = field(default_factory=list)
+
+    async def list_sessions(
+        self,
+        *,
+        project: str | None,
+        status: AgentSessionStatus | None,
+        wrote: str | None = None,
+    ) -> AgentSessionList:
+        self.calls.append(("list_sessions", (project, status, wrote)))
+        return AgentSessionList(
+            items=tuple(
+                item
+                for item in self.sessions
+                if project in {None, item.project} and status in {None, item.status}
+            )
+        )
+
+    async def capabilities(self) -> DriverCapabilities:
+        self.calls.append(("capabilities", None))
+        if self.failure is not None:
+            raise self.failure
+        if self.release is not None:
+            await self.release.wait()
+        self.answered += 1
+        return CAPABILITIES
+
+
+def an_inbox_session(
+    session: str, status: SessionStatus, started_ago: timedelta, **overrides: object
+) -> Session:
+    """A session of ``demo`` in ``status``, started ``started_ago`` before ``AT`` and last active
+    a minute later (when it ended, if it did)."""
+    started = AT - started_ago
+    last = started + timedelta(minutes=1)
+    fields: dict[str, object] = {
+        "id": session,
+        "status": status,
+        "started_at": started,
+        "last_activity_at": last,
+    }
+    if status == SessionStatus.ENDED:
+        fields |= {"ended_at": last, "outcome": Outcome.DONE, "end_reason": "prompt_input_exit"}
+    return a_session(**(fields | overrides))
+
+
+SECTIONS = ("waiting", "live", "idle", "ended")
+# The period the inbox asks Finished for, a week before AT.
+PERIOD_FROM = AT - timedelta(days=7)
+# 51 waiting sessions of demo, each started an hour before the previous: one more than a page.
+WAITING = [f"waiting-{number:02d}" for number in range(51)]
+
+
+def _inbox_world() -> tuple[CountingEvents, CountingHubs, CountingAgentSessions]:
+    """The shell's world (two projects, four features: three of ``demo``, one of ``other``),
+    plus sessions in every section: the 51 waiting; a live one in each project; an idle one of
+    ``demo`` started before the period; in Finished one of ``demo`` in the period, one before
+    it and one of ``other``. The agent sessions: an idle and a running one of ``demo``, an idle
+    one of ``other``."""
+    events, hubs = _world()
+    events.sessions = [
+        *(
+            an_inbox_session(session, SessionStatus.WAITING, timedelta(hours=number + 1))
+            for number, session in enumerate(WAITING)
+        ),
+        an_inbox_session("live-demo", SessionStatus.LIVE, timedelta(hours=1)),
+        an_inbox_session("live-other", SessionStatus.LIVE, timedelta(minutes=30), project="other"),
+        an_inbox_session("idle-before-period", SessionStatus.IDLE, timedelta(days=30)),
+        an_inbox_session("ended-in-period", SessionStatus.ENDED, timedelta(days=2)),
+        an_inbox_session("ended-before-period", SessionStatus.ENDED, timedelta(days=20)),
+        an_inbox_session("ended-other", SessionStatus.ENDED, timedelta(days=1), project="other"),
+    ]
+    agents = CountingAgentSessions(
+        sessions=[
+            an_agent_session(id="agent-demo-idle"),
+            an_agent_session(id="agent-demo-running", status=AgentSessionStatus.RUNNING),
+            an_agent_session(id="agent-other", project="other"),
+        ]
+    )
+    return events, hubs, agents
+
+
+# Each section as GET /sessions?status=<s>&project=&sort=&limit=50 answers it, the period's from on
+# Finished only (an idle session started before it still shows); every card and every project's
+# features whatever the scope; the scope's agent sessions in any status; the driver's answer.
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("scope", "sort", "period_from", "sections", "agent_sessions"),
+    [
+        (
+            None,
+            "-started_at",
+            None,
+            {
+                "waiting": WAITING[:50],
+                "live": ["live-other", "live-demo"],
+                "idle": ["idle-before-period"],
+                "ended": ["ended-other", "ended-in-period", "ended-before-period"],
+            },
+            ["agent-demo-idle", "agent-demo-running", "agent-other"],
+        ),
+        (
+            "demo",
+            "last_activity_at",
+            PERIOD_FROM,
+            {
+                "waiting": WAITING[:0:-1],
+                "live": ["live-demo"],
+                "idle": ["idle-before-period"],
+                "ended": ["ended-in-period"],
+            },
+            ["agent-demo-idle", "agent-demo-running"],
+        ),
+    ],
+    ids=["all-projects-newest-first", "one-project-in-period-by-activity"],
+)
+async def test_composes_sessions_screen_from_its_resources_when_read(
+    scope: str | None,
+    sort: str,
+    period_from: datetime | None,
+    *,
+    sections: dict[str, list[str]],
+    agent_sessions: list[str],
+) -> None:
+    events, hubs, agents = _inbox_world()
+    assert (len(events.sessions), len(hubs.projects), len(hubs.features)) == (57, 2, 4)
+    reads = ScreenReads(events, hubs, agents, monotonic=SteppedClock())
+
+    view = await reads.sessions(scope, sort, period_from, agent_reads=True)
+
+    by_id = {item.id: item for item in events.sessions}
+    assert {section: getattr(view, section) for section in SECTIONS} == {
+        section: _page([by_id[session] for session in sessions])
+        for section, sessions in sections.items()
+    }
+    assert (view.projects, view.features) == (_page(hubs.projects), _page(hubs.features))
+    shown = {item.id: item for item in agents.sessions}
+    assert view.agent_sessions == AgentSessionList(
+        items=tuple(shown[session] for session in agent_sessions)
+    )
+    assert view.capabilities == CAPABILITIES
+
+
+# A request the agent-session read checks refused (agent_reads false), or the sessions off (no
+# agent-session port): both agent parts are None and no agent-session read is made; the sections
+# still answer.
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("wired", "agent_reads"),
+    [(True, False), (False, True)],
+    ids=["agent-reads-not-allowed", "sessions-off"],
+)
+async def test_reads_no_agent_session_when_agent_reads_not_allowed(
+    *, wired: bool, agent_reads: bool
+) -> None:
+    events, hubs, agents = _inbox_world()
+    reads = ScreenReads(events, hubs, agents if wired else None, monotonic=SteppedClock())
+
+    view = await reads.sessions(None, "-started_at", None, agent_reads=agent_reads)
+
+    assert (view.agent_sessions, view.capabilities) == (None, None)
+    assert agents.calls == []
+    assert [len(getattr(view, section).items) for section in SECTIONS] == [50, 2, 1, 3]
+
+
+# The driver probes claude when its answer is older than 60 s: a read waits for it only
+# capabilities_wait, then answers without it while the probe goes on; overlapping reads share the
+# probe; the next read after it ends takes its answer, and the one after asks the driver again,
+# whose failure also answers None. No time is asserted.
+@pytest.mark.anyio
+async def test_answers_without_capabilities_when_driver_probe_is_slow() -> None:
+    events, hubs, agents = _inbox_world()
+    agents.release = asyncio.Event()
+    reads = ScreenReads(events, hubs, agents, monotonic=SteppedClock(), capabilities_wait=0.01)
+
+    # Not a time bound: a read that waited for the held probe would hang the suite instead.
+    async with asyncio.timeout(5):
+        first = await reads.sessions(None, "-started_at", None, agent_reads=True)
+        second = await reads.sessions(None, "-started_at", None, agent_reads=True)
+    probes_while_held = _count(agents.calls, "capabilities")
+    agents.release.set()
+    for _turn in range(100):
+        if agents.answered:
+            break
+        await asyncio.sleep(0)
+    assert agents.answered == 1
+    third = await reads.sessions(None, "-started_at", None, agent_reads=True)
+    agents.failure = OSError("claude could not start")
+    fourth = await reads.sessions(None, "-started_at", None, agent_reads=True)
+
+    assert (first.capabilities, second.capabilities, probes_while_held) == (None, None, 1)
+    assert (len(first.waiting.items), first.agent_sessions) == (
+        50,
+        AgentSessionList(items=tuple(agents.sessions)),
+    )
+    assert third.capabilities == CAPABILITIES
+    assert (fourth.capabilities, _count(agents.calls, "capabilities")) == (None, 2)

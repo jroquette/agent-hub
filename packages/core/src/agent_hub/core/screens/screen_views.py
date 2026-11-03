@@ -2,6 +2,8 @@
 
 from pydantic import Field
 
+from agent_hub.core.agent_sessions.agent_session import AgentSessionList
+from agent_hub.core.agent_sessions.driver import DriverCapabilities
 from agent_hub.core.features.feature_view import FeatureView
 from agent_hub.core.hub_config.config_view import HubConfigView
 from agent_hub.core.hubs.finding_view import DoctorFindings
@@ -62,3 +64,20 @@ class ProjectOverviewView(ViewModel):
     config: HubConfigView
     recent_sessions: Page[Session]
     has_sessions: bool
+
+
+class SessionsView(ViewModel):
+    """The Sessions inbox's first view: each status section's first page of 50 as ``GET /sessions``
+    answers it for the scope and sort (``from`` bounds Finished only), every project's card, every
+    project's features, and the agent sessions and the driver's capabilities as their routes
+    answer them, or ``None`` when the request may not read them, the sessions are off, or (the
+    capabilities only) the driver does not answer within the read's wait."""
+
+    waiting: Page[Session]
+    live: Page[Session]
+    idle: Page[Session]
+    ended: Page[Session]
+    projects: Page[ProjectSummary]
+    agent_sessions: AgentSessionList | None
+    capabilities: DriverCapabilities | None
+    features: Page[FeatureView]

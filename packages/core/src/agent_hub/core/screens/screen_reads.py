@@ -16,12 +16,19 @@ from typing import Final
 from agent_hub.core.agent_sessions.control import AgentSessionCommands
 from agent_hub.core.features.feature_view import FeatureView
 from agent_hub.core.features.owner_needs import features_needing_you
-from agent_hub.core.readmodels.filters import PageRequest, RunFilter, Scope, SessionFilter
+from agent_hub.core.readmodels.filters import (
+    PageRequest,
+    RunFilter,
+    Scope,
+    SessionFilter,
+    SessionSort,
+)
 from agent_hub.core.readmodels.page import Page
 from agent_hub.core.readmodels.read_ports import EventReadModels, HubReadModels
 from agent_hub.core.screens.screen_views import (
     PortfolioView,
     ProjectOverviewView,
+    SessionsView,
     ShellProject,
     ShellView,
 )
@@ -36,6 +43,9 @@ ACTIVITY_PAGE: Final = 20
 OVERVIEW_PAGE: Final = 200
 # Recent work's period, the web's WEEK_MS: a session active this long ago or less counts.
 RECENT_WORK: Final = timedelta(days=7)
+# How long the Sessions read waits for the driver's capabilities: a cached answer comes at once,
+# while a probe of ``claude`` (up to 5 s) must not hold the screen's first paint.
+CAPABILITIES_WAIT_SECONDS: Final = 0.05
 
 
 def _utc_now() -> datetime:
@@ -53,12 +63,15 @@ class ScreenReads:
         *,
         monotonic: Callable[[], float] = time.monotonic,
         clock: Callable[[], datetime] = _utc_now,
+        capabilities_wait: float = CAPABILITIES_WAIT_SECONDS,
     ) -> None:
         self._events = events
         self._hubs = hubs
         self._agent_sessions = agent_sessions
         self._monotonic = monotonic
         self._clock = clock
+        # RED stub for AGH-623 (plan SCREEN-3 commit 42a): kept, not used yet.
+        self._capabilities_wait = capabilities_wait
         self._features: OrderedDict[str | None, tuple[float, tuple[FeatureView, ...]]] = (
             OrderedDict()
         )
@@ -114,6 +127,20 @@ class ScreenReads:
             recent_sessions=Page[Session](items=recent, total_estimate=len(recent)),
             has_sessions=bool(sessions),
         )
+
+    async def sessions(
+        self,
+        project: str | None,
+        sort: SessionSort,
+        from_: datetime | None,
+        *,
+        agent_reads: bool,
+    ) -> SessionsView:
+        """The Sessions inbox's first view for ``project``, ``sort`` and the period ``from_``.
+
+        RED stub for AGH-623 (plan SCREEN-3 commit 42a): the name the tests call, no logic yet.
+        """
+        raise NotImplementedError
 
     def forget_features(self) -> None:
         """Drop every kept feature list, after a write of a feature record."""
