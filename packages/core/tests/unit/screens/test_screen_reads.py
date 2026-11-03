@@ -866,6 +866,10 @@ def test_bounds_overview_bytes_when_project_is_real_shaped() -> None:
 
 
 CAPABILITIES = DriverCapabilities(available=True, engine="in-memory", cli_version="2.1.0")
+# How long the reads that expect the driver's capabilities wait for them here. The counting
+# driver answers at once, but the default 50 ms is wall-clock time, which a loaded runner can
+# spend on the read's other parts before the event loop takes that answer.
+CAPABILITIES_WAIT = 10.0
 
 
 @dataclass
@@ -1004,7 +1008,9 @@ async def test_composes_sessions_screen_from_its_resources_when_read(
 ) -> None:
     events, hubs, agents = _inbox_world()
     assert (len(events.sessions), len(hubs.projects), len(hubs.features)) == (57, 2, 4)
-    reads = ScreenReads(events, hubs, agents, monotonic=SteppedClock())
+    reads = ScreenReads(
+        events, hubs, agents, monotonic=SteppedClock(), capabilities_wait=CAPABILITIES_WAIT
+    )
 
     view = await reads.sessions(scope, sort, period_from, agent_reads=True)
 
@@ -1158,7 +1164,13 @@ async def test_composes_session_detail_from_its_resources_when_read(
         ("live-handled", SessionStatus.LIVE, ProblemCounts(handled=1)),
     ]
     assert {len(timeline) for timeline in events.timeline.values()} == {DETAIL_EVENTS}
-    reads = ScreenReads(events, hubs, CountingAgentSessions(), monotonic=SteppedClock())
+    reads = ScreenReads(
+        events,
+        hubs,
+        CountingAgentSessions(),
+        monotonic=SteppedClock(),
+        capabilities_wait=CAPABILITIES_WAIT,
+    )
 
     view = await reads.session_detail(session, agent_reads=True)
 
