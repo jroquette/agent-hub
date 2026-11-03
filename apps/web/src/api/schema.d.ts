@@ -1883,6 +1883,32 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/screens/sessions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read Sessions
+     * @description The Sessions inbox's first view in one read: each status section's first page of 50 (as
+     *     ``GET /sessions?status=&project=&sort=&limit=50``, ``from`` on Finished only), every
+     *     project's card (as ``GET /projects``) and every project's features (as ``GET /features``).
+     *     ``agent_sessions`` and ``capabilities`` answer as ``GET /agent-sessions?project=`` and ``GET
+     *     /agent-sessions/capabilities`` only for a request those routes would answer (the launch
+     *     cookie, this server's pages, the sessions on), else null; ``capabilities`` is also null while
+     *     the driver is still checking ``claude``.
+     */
+    get: operations["read_sessions_api_v1_screens_sessions_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/screens/shell": {
     parameters: {
       query?: never;
@@ -7337,6 +7363,24 @@ export interface components {
        * @default false
        */
       stored: boolean;
+    };
+    /**
+     * SessionsView
+     * @description The Sessions inbox's first view: each status section's first page of 50 as ``GET /sessions``
+     *     answers it for the scope and sort (``from`` bounds Finished only), every project's card, every
+     *     project's features, and the agent sessions and the driver's capabilities as their routes
+     *     answer them, or ``None`` when the request may not read them, the sessions are off, or (the
+     *     capabilities only) the driver does not answer within the read's wait.
+     */
+    SessionsView: {
+      agent_sessions: components["schemas"]["AgentSessionList"] | null;
+      capabilities: components["schemas"]["DriverCapabilities"] | null;
+      ended: components["schemas"]["Page_Session_"];
+      features: components["schemas"]["Page_FeatureView_"];
+      idle: components["schemas"]["Page_Session_"];
+      live: components["schemas"]["Page_Session_"];
+      projects: components["schemas"]["Page_ProjectSummary_"];
+      waiting: components["schemas"]["Page_Session_"];
     };
     /**
      * SetEnvironment
@@ -13065,6 +13109,54 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ProjectOverviewView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  read_sessions_api_v1_screens_sessions_get: {
+    parameters: {
+      query?: {
+        project?: string | null;
+        sort?:
+          | "started_at"
+          | "-started_at"
+          | "last_activity_at"
+          | "-last_activity_at"
+          | "cost"
+          | "-cost";
+        from?: string | null;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionsView"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

@@ -250,6 +250,7 @@ SCREEN_PATHS: frozenset[tuple[str, str]] = frozenset(
         ("get", f"{API_PREFIX}/screens/shell"),
         ("get", f"{API_PREFIX}/screens/portfolio"),
         ("get", f"{API_PREFIX}/screens/project-overview/{{project}}"),
+        ("get", f"{API_PREFIX}/screens/sessions"),
     }
 )
 

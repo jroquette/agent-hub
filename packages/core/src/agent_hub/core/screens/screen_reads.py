@@ -4,8 +4,14 @@ Each read composes the existing read use cases: it adds no data source, writes n
 calls the tracker. The shell read keeps each scope's feature list for ``FEATURES_FRESH_SECONDS``
 (the Features list's own refresh), so the shell's 5 s poll reads the live tiles again but not every
 feature folder; the routes that write feature records call ``forget_features()``.
+
+The Sessions read fills its agent-session parts only when the caller says the request may read
+them, and takes the driver's capabilities only when they answer within ``capabilities_wait``: a
+slower probe goes on, kept and shared by the reads that overlap it, and the next read takes its
+answer.
 """
 
+import asyncio
 import threading
 import time
 from collections import OrderedDict
@@ -13,7 +19,9 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Final
 
+from agent_hub.core.agent_sessions.agent_session import AgentSessionList
 from agent_hub.core.agent_sessions.control import AgentSessionCommands
+from agent_hub.core.agent_sessions.driver import DriverCapabilities
 from agent_hub.core.features.feature_view import FeatureView
 from agent_hub.core.features.owner_needs import features_needing_you
 from agent_hub.core.readmodels.filters import (
@@ -32,7 +40,7 @@ from agent_hub.core.screens.screen_views import (
     ShellProject,
     ShellView,
 )
-from agent_hub.core.sessions.session import Session
+from agent_hub.core.sessions.session import Session, SessionStatus
 
 FEATURES_FRESH_SECONDS: Final = 30.0
 # The scopes whose feature list is kept: All projects and a few projects at once.
@@ -46,6 +54,14 @@ RECENT_WORK: Final = timedelta(days=7)
 # How long the Sessions read waits for the driver's capabilities: a cached answer comes at once,
 # while a probe of ``claude`` (up to 5 s) must not hold the screen's first paint.
 CAPABILITIES_WAIT_SECONDS: Final = 0.05
+# The inbox's status sections and their page, the web's sectionQueries and PAGE_SIZE.
+INBOX_SECTIONS: Final = (
+    SessionStatus.WAITING,
+    SessionStatus.LIVE,
+    SessionStatus.IDLE,
+    SessionStatus.ENDED,
+)
+INBOX_PAGE: Final = 50
 
 
 def _utc_now() -> datetime:
@@ -70,8 +86,9 @@ class ScreenReads:
         self._agent_sessions = agent_sessions
         self._monotonic = monotonic
         self._clock = clock
-        # RED stub for AGH-623 (plan SCREEN-3 commit 42a): kept, not used yet.
         self._capabilities_wait = capabilities_wait
+        # The driver's capabilities probe still to be taken, kept so the loop cannot drop it.
+        self._probe: asyncio.Task[DriverCapabilities] | None = None
         self._features: OrderedDict[str | None, tuple[float, tuple[FeatureView, ...]]] = (
             OrderedDict()
         )
@@ -136,17 +153,76 @@ class ScreenReads:
         *,
         agent_reads: bool,
     ) -> SessionsView:
-        """The Sessions inbox's first view for ``project``, ``sort`` and the period ``from_``.
-
-        RED stub for AGH-623 (plan SCREEN-3 commit 42a): the name the tests call, no logic yet.
-        """
-        raise NotImplementedError
+        """The Sessions inbox's first view for ``project``, ``sort`` and the period ``from_``:
+        each status section's first page of 50 as ``GET /sessions`` answers it (``from_`` bounds
+        Finished only), every project's card and every project's features; and, only when
+        ``agent_reads`` and the sessions are on, the scope's agent sessions and the driver's
+        capabilities (these only when they answer within the wait), else None."""
+        sections = (
+            asyncio.to_thread(
+                self._events.list_sessions,
+                SessionFilter(
+                    project=project,
+                    status=status,
+                    started_from=from_ if status is SessionStatus.ENDED else None,
+                    sort=sort,
+                    limit=INBOX_PAGE,
+                ),
+            )
+            for status in INBOX_SECTIONS
+        )
+        (waiting, live, idle, ended), projects, features, agent_parts = await asyncio.gather(
+            asyncio.gather(*sections),
+            asyncio.to_thread(self._hubs.list_projects),
+            asyncio.to_thread(self._hubs.list_features, Scope()),
+            self._agent_parts(project, agent_reads=agent_reads),
+        )
+        return SessionsView(
+            waiting=waiting,
+            live=live,
+            idle=idle,
+            ended=ended,
+            projects=projects,
+            agent_sessions=agent_parts[0],
+            capabilities=agent_parts[1],
+            features=features,
+        )
 
     def forget_features(self) -> None:
         """Drop every kept feature list, after a write of a feature record."""
         with self._guard:
             self._features.clear()
             self._generation += 1
+
+    async def _agent_parts(
+        self, project: str | None, *, agent_reads: bool
+    ) -> tuple[AgentSessionList | None, DriverCapabilities | None]:
+        agent_sessions = self._agent_sessions
+        if agent_sessions is None or not agent_reads:
+            return None, None
+        listed = await agent_sessions.list_sessions(project=project, status=None)
+        return listed, await self._capabilities(agent_sessions)
+
+    async def _capabilities(
+        self, agent_sessions: AgentSessionCommands
+    ) -> DriverCapabilities | None:
+        """The driver's answer when it comes within the wait; else None while its probe goes on,
+        kept for the next read (one probe at a time, on this event loop)."""
+        probe = self._probe
+        if probe is None or probe.get_loop() is not asyncio.get_running_loop():
+            probe = asyncio.create_task(agent_sessions.capabilities())
+            self._probe = probe
+        try:
+            answer: DriverCapabilities | None = await asyncio.wait_for(
+                asyncio.shield(probe), self._capabilities_wait
+            )
+        except TimeoutError:
+            return None
+        except Exception:  # noqa: BLE001 - a failed probe answers None; the web reads the route
+            answer = None
+        if self._probe is probe:
+            self._probe = None
+        return answer
 
     def _scope_features(self, scope: str | None) -> tuple[FeatureView, ...]:
         now = self._monotonic()

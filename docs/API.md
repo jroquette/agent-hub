@@ -54,8 +54,8 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   added to them: `DELETE /scenarios/{project}/{name}` ([Scenarios](#scenarios)), and the two AGH-393 added
   (`KNOWLEDGE_PATHS`, both GET):
   `/projects/{project}/knowledge/search` and `/projects/{project}/brain/backlinks` ([Knowledge](#knowledge)), and the
-  screen reads AGH-623 added (`SCREEN_PATHS`, all GET): `/screens/shell`, `/screens/portfolio` and
-  `/screens/project-overview/{project}` ([Screen reads](#screen-reads)). A test
+  screen reads AGH-623 added (`SCREEN_PATHS`, all GET): `/screens/shell`, `/screens/portfolio`,
+  `/screens/project-overview/{project}` and `/screens/sessions` ([Screen reads](#screen-reads)). A test
   fails on any other path.
 - A field kept only for compatibility is marked `deprecated` in the document and stays until `/api/v2`: a session's
   and a live tile's `agent` (read `label` and `actors`) and a learning's `target` (read `note_path`).
@@ -222,7 +222,10 @@ The rules:
   source, no write, no tracker call. A value the browser already derives stays in the browser, unless the server must
   derive it to bound the payload.
 - Each part keeps its resource's access rule: a part that comes from a guarded route is filled only for a request
-  that route would answer, else it is `null`.
+  that route would answer, else it is `null`. For the agent-session parts, `SessionAccessMiddleware` marks a `GET` or
+  `HEAD` that passes the agent-session read checks (the sessions on, the launch cookie, this server's `Origin` and a
+  `Sec-Fetch-Site` of `same-origin` or `none` when sent); every other request is marked false and gets those parts as
+  `null`, with no agent-session read made.
 - A part the web writes under a resource's key is that resource's own model with its own bounds, equal to what the
   resource route answers for the same parameters. A derived part is never written under a resource's key.
 - The resource routes stay unchanged for the CLI, the MCP server and the other screens. When a screen read fails, the
@@ -274,6 +277,22 @@ and the web writes it under that route's query key:
 The browser still derives Recent work's rows, the week's numbers and the agents' tickets from these parts. The
 recent sessions are not written under the 200-session key, which the Tickets screen shares and reads whole. The
 feature names stay their own call (`GET /feature-names`), so the overview loads in 4 calls with the shell's two.
+
+`GET /api/v1/screens/sessions?project=&sort=&from=` → `SessionsView`, the Sessions inbox's first view. The parameters
+are `GET /sessions`' own, validated the same way. Each part is its route's answer, and the web writes it under that
+route's query key:
+
+| Field | Value |
+| --- | --- |
+| `waiting` · `live` · `idle` · `ended` | each status section's first page of 50, as `GET /sessions?status=<section>&project=&sort=&limit=50` answers; `from` bounds `ended` only. "Load more" reads `GET /sessions` |
+| `projects` | every project's card, as `GET /projects` answers, whatever the scope (the Repo facet and the cost tile read it) |
+| `features` | every project's features, as `GET /features` answers |
+| `agent_sessions` | the scope's agent sessions, as `GET /agent-sessions?project=` answers; `null` for a request those routes would not answer, or with the sessions off |
+| `capabilities` | whether this machine can drive sessions, as `GET /agent-sessions/capabilities` answers, under the same rule; also `null` when the driver does not answer within 50 ms (it keeps its answer 60 s, then checks `claude` for up to 5 s): the check goes on, and a later read or that route gets its answer |
+
+A `null` agent part is not written under its route's key, so the web reads that route and shows its 401 or 404 as
+before. The inbox loads in 4 calls with the shell's two and its live-tile stream where this machine cannot drive
+sessions; where it can, the workdirs and the cloud starts follow, as before.
 
 ## Sessions
 

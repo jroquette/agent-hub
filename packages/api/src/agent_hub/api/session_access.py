@@ -26,6 +26,10 @@ refuses before routing, so a refused request never reaches a port.
 - **Reads** (the stream included) refuse any ``Origin`` other than this server's and a
   ``Sec-Fetch-Site`` of ``cross-site`` or ``same-site``: another port on the loopback is
   same-site and carries the Strict cookie (spike, L1). A missing ``Origin`` passes.
+- **Read mark.** Every request it passes on carries ``scope[AGENT_SESSION_READS]``, always a
+  bool: True only for a ``GET`` or ``HEAD`` that the agent-session read checks pass (the
+  sessions on, the cookie, the reads' Origin rules), so a screen read fills its agent-session
+  parts only then (ADR 0056); False otherwise, over any value set earlier.
 
 The token, the cookie and the query string are never logged or echoed in a problem.
 """
@@ -56,8 +60,7 @@ OFF_PROBLEM_TYPE = "urn:agent-hub:problem:agent-sessions-off"
 RUNS_OFF_PROBLEM_TYPE = "urn:agent-hub:problem:run-control-off"
 UNAUTHORIZED_PROBLEM_TYPE = "urn:agent-hub:problem:agent-session-unauthorized"
 EXCHANGE_METHODS = frozenset({"GET", "HEAD"})
-# RED stub for AGH-623 (plan SCREEN-3 commit 42b): the scope key of the agent-session read
-# mark, not written yet.
+# The scope key of the read mark: whether this request may read agent-session data.
 AGENT_SESSION_READS: Final = "agent_hub.agent_session_reads"
 BODILESS_WRITES = frozenset({"DELETE"})
 # What a browser sends for a request this server's own page (or the address bar) made.
@@ -155,9 +158,19 @@ class SessionAccessMiddleware:
         else:
             response = self._exchange(scope)
         if response is None:
+            scope[AGENT_SESSION_READS] = self._may_read_agent_sessions(scope, headers)
             await self.app(scope, receive, send)
             return
         await response(scope, receive, send)
+
+    def _may_read_agent_sessions(self, scope: Scope, headers: Headers) -> bool:
+        """Whether the agent-session routes would answer this request as a read."""
+        return (
+            not self._off
+            and scope["method"] in EXCHANGE_METHODS
+            and self._has_cookie(headers)
+            and read_refusal(headers) is None
+        )
 
     def _exchange(self, scope: Scope) -> Response | None:
         query: bytes = scope.get("query_string", b"")

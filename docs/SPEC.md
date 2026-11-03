@@ -658,7 +658,9 @@ in [design/agent-sessions.md](design/agent-sessions.md)):
   ("Open chat"), and its live tile shows `waiting` while a permission request is open.
 - **Access.** The `/api/v1/agent-sessions/**` routes need the cookie the printed `/?token=` address sets (per launch,
   `HttpOnly`, `SameSite=Strict`); writes also need the server's own `Origin` and a JSON body; no WebSocket is served.
-  Every other route is unchanged. In the container, session control is off (404) and no token is minted.
+  Every other route is unchanged; a screen read ([ADR 0056](adr/0056-screen-shaped-reads.md)) carries agent-session
+  data only for a request that passes the same cookie and `Origin` checks, else those parts are null. In the container,
+  session control is off (404) and no token is minted.
 - **Data.** Only these sessions' conversations are stored, in the `hub web` database, redacted before storage, kept
   30 days after the session ends (or deleted at once); the owner's live view is not redacted, a reload shows the
   stored copy. No server log line holds conversation text. Cloud sessions are link-out guidance through the CLI

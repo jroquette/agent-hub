@@ -19,6 +19,7 @@ from agent_hub.api.linear_connection import LinearConnection
 from agent_hub.api.rfc9457 import InvalidParameterError, NotImplementedInBuildError
 from agent_hub.api.scenario_catalog import ScenarioCatalog, ScenarioCommands
 from agent_hub.api.scenario_investigation import ScenarioInvestigations
+from agent_hub.api.session_access import AGENT_SESSION_READS
 from agent_hub.api.settings import ApiSettings
 from agent_hub.core.agent_sessions.cloud import CloudSessionCommands
 from agent_hub.core.agent_sessions.control import AgentSessionCommands
@@ -121,11 +122,9 @@ def optional_screen_reads(request: Request) -> ScreenReads | None:
 
 
 def agent_session_reads(request: Request) -> bool:
-    """Whether the request may read agent-session data.
-
-    RED stub for AGH-623 (plan SCREEN-3 commit 42b): answers False until the mark is read.
-    """
-    return False
+    """Whether the request may read agent-session data: the mark ``SessionAccessMiddleware``
+    writes; an app without that middleware reads none."""
+    return request.scope.get(AGENT_SESSION_READS) is True
 
 
 def knowledge_reads(request: Request) -> KnowledgeReads:
@@ -408,6 +407,7 @@ HubReadModelsDep = Annotated[HubReadModels, Depends(hub_read_models)]
 KnowledgeReadsDep = Annotated[KnowledgeReads, Depends(knowledge_reads)]
 ScreenReadsDep = Annotated[ScreenReads, Depends(screen_reads)]
 OptionalScreenReadsDep = Annotated[ScreenReads | None, Depends(optional_screen_reads)]
+AgentSessionReadsDep = Annotated[bool, Depends(agent_session_reads)]
 OwnerSignOffDep = Annotated[SignOffOwnerSteps, Depends(owner_signoff)]
 ChangeRequestDecisionsDep = Annotated[DecideChangeRequest, Depends(change_request_decisions)]
 OptionalChangeRequestDecisionsDep = Annotated[
