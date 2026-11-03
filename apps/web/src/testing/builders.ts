@@ -2039,6 +2039,9 @@ export interface RenderWithApiOptions {
   path?: string;
   /** The route pattern `ui` is mounted at (default "*"), for screens reading params. */
   route?: string;
+  /** The query client (default `testQueryClient()`). A test of seeded queries passes the app's
+   * own, `createQueryClient()`: under its 10 s `staleTime` a seeded query does not fetch. */
+  queryClient?: QueryClient;
 }
 
 export interface RenderWithApiResult extends RenderResult {
@@ -2074,11 +2077,15 @@ export function TestProviders({
 /** Renders `ui` in a memory router with the API stubbed by `routes` (fetch and EventSource). */
 export function renderWithApi(
   ui: ReactElement,
-  { routes = {}, path = "/", route = "*" }: RenderWithApiOptions = {},
+  {
+    routes = {},
+    path = "/",
+    route = "*",
+    queryClient = testQueryClient(),
+  }: RenderWithApiOptions = {},
 ): RenderWithApiResult {
   const requests = stubApi(routes);
   const stream = stubEventSource();
-  const queryClient = testQueryClient();
   const router = createMemoryRouter([{ path: route, element: ui }], { initialEntries: [path] });
   const result = render(
     createElement(TestProviders, {

@@ -5,6 +5,8 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createQueryClient } from "../../lib/api";
+import { AppShell } from "../../shell/AppShell";
 import { GlobalStreamProvider } from "../../shell/GlobalStream";
 import { seriousViolations } from "../../testing/axe";
 import {
@@ -13,6 +15,7 @@ import {
   aPage,
   aProblem,
   aProjectSummary,
+  aShellView,
   aStreamCounts,
   aUsageReport,
   at,
@@ -248,6 +251,40 @@ describe("PortfolioScreen", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("AC-36 loads in at most 5 API requests with the shell mounted", async () => {
+    // The app's own query client: under its 10 s staleTime a seeded query does not fetch.
+    const { calls } = renderWithApi(
+      <AppShell>
+        <PortfolioScreen />
+      </AppShell>,
+      {
+        routes: {
+          "/api/v1/screens/shell": aShellView(),
+          "/api/v1/screens/portfolio": {
+            projects: twoProjects,
+            needs_you: sixNeeds,
+            activity: aPage([anActivityItem({ text: "Run AGH-79 failed at Verifying" })]),
+          },
+          "/api/v1/skill-usage": aUsageReport(),
+        },
+        queryClient: createQueryClient(),
+      },
+    );
+    const homeResources = ["/api/v1/projects", "/api/v1/needs-you", "/api/v1/activity"];
+
+    // Skill usage stays its own call; Home's three regions ask nothing of their own.
+    expect(await screen.findByRole("table", { name: "Skills and agents" })).toBeInTheDocument();
+    expect(calls().filter((path) => homeResources.includes(path))).toEqual([]);
+    // The cards, what needs you and the activity come from the portfolio read.
+    expect(await screen.findByRole("article", { name: "Project agent-hub" })).toBeInTheDocument();
+    expect(screen.getByText("Allow edit under docs/adr/")).toBeInTheDocument();
+    expect(screen.getByText("Run AGH-79 failed at Verifying")).toBeInTheDocument();
+    const asked = calls();
+    expect(asked.filter((path) => homeResources.includes(path))).toEqual([]);
+    expect(asked.filter((path) => path === "/api/v1/screens/portfolio")).toHaveLength(1);
+    expect(asked.length).toBeLessThanOrEqual(5);
   });
 
   describe("states", () => {
