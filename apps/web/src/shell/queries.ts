@@ -1,3 +1,5 @@
+import { keepPreviousData } from "@tanstack/react-query";
+
 import { apiQuery, useApi } from "../lib/api";
 
 /**
@@ -18,8 +20,13 @@ export function shellReadQuery(scope: string | null) {
  * The shell's facts in one read (ADR 0056): how many hubs are registered (the first-run gate),
  * every project with its live sessions (the switcher), how many features of `scope` need you (the
  * Features badge) and whether any workflow run exists (the sidebar item). The shell, the gate and
- * the app's early request all pass `useScope()`'s project, so they share one request.
+ * the app's early request all pass `useScope()`'s project, so they share one request. A scope
+ * change keeps the previous answer until the new one arrives: only the badge depends on the scope,
+ * so it alone hides while the data is that placeholder.
  */
 export function useShellRead(scope: string | null) {
-  return useApi(SHELL, shellParams(scope), { refetchInterval: SHELL_REFRESH_MS });
+  return useApi(SHELL, shellParams(scope), {
+    refetchInterval: SHELL_REFRESH_MS,
+    placeholderData: keepPreviousData,
+  });
 }

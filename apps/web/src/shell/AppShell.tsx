@@ -134,7 +134,8 @@ function ShellLayout({ children }: { children?: ReactNode }) {
   const { health, counts } = useGlobalStream();
   // The badge counts the stored or `?scope=` project, not the switcher's route project.
   const [badgeScope] = useScope();
-  const shell = useShellRead(badgeScope).data;
+  const shellRead = useShellRead(badgeScope);
+  const shell = shellRead.data;
   const [palette, setPalette] = useState<{ query: string } | null>(null);
   const [sheet, setSheet] = useState(false);
   const discuss = useDiscuss();
@@ -181,7 +182,8 @@ function ShellLayout({ children }: { children?: ReactNode }) {
           counts={{
             live: counts?.live_sessions,
             learnings: counts?.learnings_proposed,
-            features: shell?.features_needing_you,
+            // The previous scope's count while the new scope's read is on its way: hidden.
+            features: shellRead.isPlaceholderData ? undefined : shell?.features_needing_you,
             health: counts?.doctor_errors ?? undefined,
           }}
           showRuns={shell?.has_workflow_runs ?? false}
