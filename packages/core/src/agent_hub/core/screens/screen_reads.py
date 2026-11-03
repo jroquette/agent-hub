@@ -5,10 +5,10 @@ calls the tracker. The shell read keeps each scope's feature list for ``FEATURES
 (the Features list's own refresh), so the shell's 5 s poll reads the live tiles again but not every
 feature folder; the routes that write feature records call ``forget_features()``.
 
-The Sessions read fills its agent-session parts only when the caller says the request may read
-them, and takes the driver's capabilities only when they answer within ``capabilities_wait``: a
-slower probe goes on, kept and shared by the reads that overlap it, and the next read takes its
-answer.
+The Sessions and Session detail reads fill their agent-session parts only when the caller says the
+request may read them, and take the driver's capabilities only when they answer within
+``capabilities_wait``: a slower probe goes on, kept and shared by the reads that overlap it, and
+the next read takes its answer.
 """
 
 import asyncio
@@ -25,6 +25,7 @@ from agent_hub.core.agent_sessions.driver import DriverCapabilities
 from agent_hub.core.features.feature_view import FeatureView
 from agent_hub.core.features.owner_needs import features_needing_you
 from agent_hub.core.readmodels.filters import (
+    EventPageRequest,
     PageRequest,
     RunFilter,
     Scope,
@@ -41,7 +42,8 @@ from agent_hub.core.screens.screen_views import (
     ShellProject,
     ShellView,
 )
-from agent_hub.core.sessions.session import Session, SessionStatus
+from agent_hub.core.sessions.problem import SessionProblems
+from agent_hub.core.sessions.session import Session, SessionStatus, SessionSummary
 
 FEATURES_FRESH_SECONDS: Final = 30.0
 # The scopes whose feature list is kept: All projects and a few projects at once.
@@ -63,6 +65,8 @@ INBOX_SECTIONS: Final = (
     SessionStatus.ENDED,
 )
 INBOX_PAGE: Final = 50
+# Session detail's events page, the web's EVENTS_PAGE (the API's largest).
+DETAIL_EVENTS_PAGE: Final = 1_000
 
 
 def _utc_now() -> datetime:
@@ -190,11 +194,33 @@ class ScreenReads:
         )
 
     async def session_detail(self, session_id: str, *, agent_reads: bool) -> SessionDetailView:
-        """Session detail's first view of ``session_id``.
-
-        RED stub for AGH-623 (plan SCREEN-4 commit 46): the name the tests call, no logic yet.
-        """
-        raise NotImplementedError
+        """Session detail's first view of ``session_id``: the session, its first page of 1,000
+        events of every type, its summary once it has ended, its problems when it counts one and
+        its project's features, each as its route answers it; and, only when ``agent_reads`` and
+        the sessions are on, the driver's capabilities when they answer within the wait, else
+        None."""
+        # First, so an unknown session answers the session route's own not-found error.
+        session = await asyncio.to_thread(self._events.get_session, session_id)
+        events, summary, problems, features, capabilities = await asyncio.gather(
+            asyncio.to_thread(
+                self._events.session_events,
+                session_id,
+                types=frozenset(),
+                page=EventPageRequest(limit=DETAIL_EVENTS_PAGE),
+            ),
+            self._ended_summary(session),
+            self._counted_problems(session),
+            asyncio.to_thread(self._hubs.list_features, Scope(project=session.project)),
+            self._agent_capabilities(agent_reads=agent_reads),
+        )
+        return SessionDetailView(
+            session=session,
+            events=events,
+            summary=summary,
+            problems=problems,
+            features=features,
+            capabilities=capabilities,
+        )
 
     def forget_features(self) -> None:
         """Drop every kept feature list, after a write of a feature record."""
@@ -210,6 +236,26 @@ class ScreenReads:
             return None, None
         listed = await agent_sessions.list_sessions(project=project, status=None)
         return listed, await self._capabilities(agent_sessions)
+
+    async def _ended_summary(self, session: Session) -> SessionSummary | None:
+        """The session's summary once it has ended, when the web asks for it; else None."""
+        if session.status is not SessionStatus.ENDED:
+            return None
+        return await asyncio.to_thread(self._events.session_summary, session.id)
+
+    async def _counted_problems(self, session: Session) -> SessionProblems | None:
+        """The session's problems when it counts one, whoever handled it (the web's
+        ``problemTotal > 0``); else None."""
+        counts = session.problems
+        if not any((counts.needs_you, counts.open, counts.handled, counts.by_you)):
+            return None
+        return await asyncio.to_thread(self._events.session_problems, session.id)
+
+    async def _agent_capabilities(self, *, agent_reads: bool) -> DriverCapabilities | None:
+        agent_sessions = self._agent_sessions
+        if agent_sessions is None or not agent_reads:
+            return None
+        return await self._capabilities(agent_sessions)
 
     async def _capabilities(
         self, agent_sessions: AgentSessionCommands

@@ -7,11 +7,13 @@ from fastapi import APIRouter, Query
 
 from agent_hub.api.dependencies import AgentSessionReadsDep, ScreenReadsDep, parse_filter
 from agent_hub.api.routes.projects import ProjectPath
+from agent_hub.api.routes.sessions import SessionPath
 from agent_hub.api.schemas import PROBLEM_RESPONSES, ProjectParam
 from agent_hub.core.readmodels.filters import SessionFilter, SessionSort
 from agent_hub.core.screens.screen_views import (
     PortfolioView,
     ProjectOverviewView,
+    SessionDetailView,
     SessionsView,
     ShellView,
 )
@@ -63,3 +65,18 @@ async def read_sessions(
     the driver is still checking ``claude``."""
     period = parse_filter(SessionFilter, project=project, sort=sort, started_from=started_from)
     return await screens.sessions(project, sort, period.started_from, agent_reads=agent_reads)
+
+
+@router.get("/screens/session-detail/{session_id}")
+async def read_session_detail(
+    session_id: SessionPath, screens: ScreenReadsDep, agent_reads: AgentSessionReadsDep
+) -> SessionDetailView:
+    """Session detail's first view in one read: the session (as ``GET /sessions/{session_id}``),
+    its first 1,000 events of every type (as ``GET /sessions/{session_id}/events?limit=1000``),
+    its summary once it has ended (as ``GET /sessions/{session_id}/summary``, else null), its
+    problems when it counts one (as ``GET /sessions/{session_id}/problems``, else null) and its
+    project's features (as ``GET /features?project=``). ``capabilities`` answers as ``GET
+    /agent-sessions/capabilities`` only for a request that route would answer (the launch cookie,
+    this server's pages, the sessions on), else null; it is also null while the driver is still
+    checking ``claude``. An unknown session answers 404, as ``GET /sessions/{session_id}`` does."""
+    return await screens.session_detail(session_id, agent_reads=agent_reads)

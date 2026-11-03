@@ -1883,6 +1883,33 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/screens/session-detail/{session_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read Session Detail
+     * @description Session detail's first view in one read: the session (as ``GET /sessions/{session_id}``),
+     *     its first 1,000 events of every type (as ``GET /sessions/{session_id}/events?limit=1000``),
+     *     its summary once it has ended (as ``GET /sessions/{session_id}/summary``, else null), its
+     *     problems when it counts one (as ``GET /sessions/{session_id}/problems``, else null) and its
+     *     project's features (as ``GET /features?project=``). ``capabilities`` answers as ``GET
+     *     /agent-sessions/capabilities`` only for a request that route would answer (the launch cookie,
+     *     this server's pages, the sessions on), else null; it is also null while the driver is still
+     *     checking ``claude``. An unknown session answers 404, as ``GET /sessions/{session_id}`` does.
+     */
+    get: operations["read_session_detail_api_v1_screens_session_detail__session_id__get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/screens/sessions": {
     parameters: {
       query?: never;
@@ -7216,6 +7243,22 @@ export interface components {
       total_usd: components["schemas"]["Money"] | null;
       /** Unknown Reason */
       unknown_reason?: string | null;
+    };
+    /**
+     * SessionDetailView
+     * @description Session detail's first view: the session, its first page of 1,000 events, its summary
+     *     once it has ended, its problems when it counts one and its project's features, each as
+     *     its route answers it, and the driver's capabilities as their route answers them, or
+     *     ``None`` when the request may not read them, the sessions are off, or the driver does not
+     *     answer within the read's wait.
+     */
+    SessionDetailView: {
+      capabilities: components["schemas"]["DriverCapabilities"] | null;
+      events: components["schemas"]["Page_TimelineEvent_"];
+      features: components["schemas"]["Page_FeatureView_"];
+      problems: components["schemas"]["SessionProblems"] | null;
+      session: components["schemas"]["Session"];
+      summary: components["schemas"]["SessionSummary"] | null;
     };
     /**
      * SessionFileChange
@@ -13109,6 +13152,46 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ProjectOverviewView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  read_session_detail_api_v1_screens_session_detail__session_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionDetailView"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

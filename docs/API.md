@@ -55,8 +55,8 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   (`KNOWLEDGE_PATHS`, both GET):
   `/projects/{project}/knowledge/search` and `/projects/{project}/brain/backlinks` ([Knowledge](#knowledge)), and the
   screen reads AGH-623 added (`SCREEN_PATHS`, all GET): `/screens/shell`, `/screens/portfolio`,
-  `/screens/project-overview/{project}` and `/screens/sessions` ([Screen reads](#screen-reads)). A test
-  fails on any other path.
+  `/screens/project-overview/{project}`, `/screens/sessions` and `/screens/session-detail/{session_id}`
+  ([Screen reads](#screen-reads)). A test fails on any other path.
 - A field kept only for compatibility is marked `deprecated` in the document and stays until `/api/v2`: a session's
   and a live tile's `agent` (read `label` and `actors`) and a learning's `target` (read `note_path`).
 
@@ -293,6 +293,24 @@ route's query key:
 A `null` agent part is not written under its route's key, so the web reads that route and shows its 401 or 404 as
 before. The inbox loads in 4 calls with the shell's two and its live-tile stream where this machine cannot drive
 sessions; where it can, the workdirs and the cloud starts follow, as before.
+
+`GET /api/v1/screens/session-detail/{session_id}` → `SessionDetailView`, Session detail's first view. An unknown
+session answers the same 404 problem as `GET /sessions/{session_id}`. Each part is its route's answer, and the web
+writes it under that route's query key:
+
+| Field | Value |
+| --- | --- |
+| `session` | the session, as `GET /sessions/{session_id}` answers |
+| `events` | its first page of 1,000 events of every type, as `GET /sessions/{session_id}/events?limit=1000` answers; the next pages read that route |
+| `summary` | its summary lines, as `GET /sessions/{session_id}/summary` answers, once it has ended; `null` before |
+| `problems` | its problems, as `GET /sessions/{session_id}/problems` answers, when it counts one (whoever handled it); `null` otherwise |
+| `features` | its project's features, as `GET /features?project=` answers |
+| `capabilities` | whether this machine can drive sessions, as `GET /agent-sessions/capabilities` answers, under the agent-session rule above; also `null` when the driver does not answer within 50 ms, as on the inbox |
+
+A `null` part is not written under its route's key. The ticket titles stay their own call, so the only read that may
+reach Linear stays where it was. Session detail loads in 3 calls with the shell's two, 4 when its issue names a
+feature (the tickets read); a live session adds its event stream, and the capabilities read follows without the
+cookie or while the driver is checking `claude`.
 
 ## Sessions
 
