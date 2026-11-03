@@ -12,6 +12,7 @@ import {
   aProblem,
   aSession,
   aSettings,
+  aShellView,
   renderWithApi,
   stubApi,
   stubEventSource,
@@ -158,6 +159,9 @@ describe("WelcomeScreen", () => {
 });
 
 describe("welcome redirect", () => {
+  // The gate counts hubs from the shell read, which counts none here.
+  const noHub: ApiRoutes = { ...fresh, "/api/v1/screens/shell": aShellView({ hub_count: 0 }) };
+
   function renderAt(path: string, routes: ApiRoutes) {
     stubApi(routes);
     stubEventSource();
@@ -173,7 +177,7 @@ describe("welcome redirect", () => {
   it.each(["/", "/sessions", "/health"])(
     "redirects %s to the welcome page when no hub is registered",
     async (path) => {
-      const router = renderAt(path, { ...fresh, "/api/v1/projects": aPage([]) });
+      const router = renderAt(path, { ...noHub, "/api/v1/projects": aPage([]) });
 
       expect(
         await screen.findByRole("heading", { level: 1, name: "Set up agent-hub on this machine" }),
@@ -183,7 +187,7 @@ describe("welcome redirect", () => {
   );
 
   it("keeps settings open when no hub is registered", async () => {
-    const router = renderAt("/settings/hubs", fresh);
+    const router = renderAt("/settings/hubs", noHub);
 
     expect(await screen.findByRole("heading", { level: 1, name: "Settings" })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/settings/hubs");

@@ -3,7 +3,7 @@
 The predicate mirrors the web's ``reasonOf(...).needs !== null``: a non-shipped feature with a
 main-session tile waiting on you or idle on its issue (or titled with its slug), any feature with a
 problem, a non-shipped NO-SHIP, and a non-shipped feature waiting on an owner decision. The first
-row is the web badge test's case (``useFeaturesNeedingYou``: plain, asked, broken, refused).
+row is the case the web's badge test held before the shell read (plain, asked, broken, refused).
 """
 
 from collections.abc import Sequence

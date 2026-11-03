@@ -24,15 +24,6 @@ export function useRuns(filters: RunFilters, limit: number) {
   return useApi("/api/v1/workflow-runs", { query: { ...filters, kind: "workflow", limit } });
 }
 
-/** Whether any workflow run (kind `workflow`) exists, of any project: the sidebar shows Workflow
- * runs only then (AC-382.9), so a hub with only scenario runs shows no empty item. */
-export function useHasWorkflowRuns(): boolean {
-  return (
-    (useApi("/api/v1/workflow-runs", { query: { kind: "workflow", limit: 1 } }).data?.items
-      .length ?? 0) > 0
-  );
-}
-
 /** Whether the project in scope (or any) has a scenario run: the empty list points to Scenarios. */
 export function useHasScenarioRuns(project: string | null): boolean {
   return (

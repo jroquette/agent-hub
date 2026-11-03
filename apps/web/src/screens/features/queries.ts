@@ -3,7 +3,7 @@ import { useMemo } from "react";
 
 import type { TicketInfo, TicketLookup } from "../../components";
 import { apiGet, apiKey, useApi } from "../../lib/api";
-import { issueId, reasonOf, sessionWaitOf } from "./groups";
+import { issueId } from "./groups";
 
 /** How often the open Features list rereads the records (local files, Linear cached server-side). */
 export const FEATURES_REFRESH_MS = 30_000;
@@ -84,16 +84,4 @@ export function useLiveSessions(project: string | null) {
     { query: { project } },
     { refetchInterval: LIVE_SESSIONS_REFRESH_MS, retry: false },
   );
-}
-
-/**
- * How many features need you, as the Features list counts them (a session waiting on you, a broken
- * record, NO-SHIP, owner steps), for the sidebar badge. It shares the list's queries, so the open
- * list and the badge read the same data.
- */
-export function useFeaturesNeedingYou(project: string | null): number | undefined {
-  const features = useFeatures(project).data?.items;
-  const tiles = useLiveSessions(project).data?.items ?? [];
-  if (!features) return undefined;
-  return features.filter((f) => reasonOf(f, sessionWaitOf(f, tiles)).needs !== null).length;
 }

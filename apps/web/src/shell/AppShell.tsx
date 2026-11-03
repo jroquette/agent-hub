@@ -12,8 +12,6 @@ import { useNavigate } from "react-router";
 
 import { usePreferences } from "../lib/preferences";
 import { useScope } from "../lib/scope";
-import { useFeaturesNeedingYou } from "../screens/features/queries";
-import { useHasWorkflowRuns } from "../screens/runs-list/queries";
 import { usePageScope } from "./pageScope";
 import { CommandPalette } from "./CommandPalette";
 import { DiscussProvider, useDiscuss } from "./discuss";
@@ -23,6 +21,7 @@ import { ScreenDiscussFallback } from "./screenContext";
 import { GlobalStreamProvider, useGlobalStream } from "./GlobalStream";
 import { GO, armGoSequence, clearGoSequence, goSequencePending, typingIn } from "./goSequence";
 import { OfflineBanner } from "./OfflineBanner";
+import { useShellRead } from "./queries";
 import { PageSkeletonContext, RouteOutlet, usePageSkeleton } from "./routeLoading";
 import { ShakeToSession } from "./ShakeToSession";
 import { ShortcutSheet } from "./ShortcutSheet";
@@ -133,9 +132,9 @@ function ShellLayout({ children }: { children?: ReactNode }) {
   const preferences = usePreferences();
   const [scope, setScope] = usePageScope();
   const { health, counts } = useGlobalStream();
-  const [featureScope] = useScope();
-  const featuresNeedingYou = useFeaturesNeedingYou(featureScope);
-  const hasRuns = useHasWorkflowRuns();
+  // The badge counts the stored or `?scope=` project, not the switcher's route project.
+  const [badgeScope] = useScope();
+  const shell = useShellRead(badgeScope).data;
   const [palette, setPalette] = useState<{ query: string } | null>(null);
   const [sheet, setSheet] = useState(false);
   const discuss = useDiscuss();
@@ -182,10 +181,10 @@ function ShellLayout({ children }: { children?: ReactNode }) {
           counts={{
             live: counts?.live_sessions,
             learnings: counts?.learnings_proposed,
-            features: featuresNeedingYou,
+            features: shell?.features_needing_you,
             health: counts?.doctor_errors ?? undefined,
           }}
-          showRuns={hasRuns}
+          showRuns={shell?.has_workflow_runs ?? false}
           onShortcuts={actions.openShortcuts}
         />
         <TopBar

@@ -2,33 +2,36 @@ import type { QueryClient } from "@tanstack/react-query";
 import { Outlet, useLocation } from "react-router";
 import type { RouteObject } from "react-router";
 
-import { apiQuery, useApi } from "./lib/api";
+import { scopeOf, useScope } from "./lib/scope";
 import { liveRedirectTarget } from "./screens/sessions-list/liveRedirect";
 import { AppShell } from "./shell/AppShell";
+import { shellReadQuery, useShellRead } from "./shell/queries";
 import { RouteError } from "./shell/RouteError";
 import { lazyRedirect, lazyScreen, Redirect, RouteSkeleton } from "./shell/routeLoading";
 
 /**
- * Asks `client` for the hub gate's list at once. The app does it before its router starts loading
- * the first page's code: on a first run the list is then in when the gate first draws, so the gate
- * draws only its redirect to Welcome, never the page under it.
+ * Asks `client` for the shell read the hub gate counts hubs from, at once, with the scope of the
+ * page's URL or the stored choice: the key the shell and the gate read. The app does it before its
+ * router starts loading the first page's code: on a first run the count is then in when the gate
+ * first draws, so the gate draws only its redirect to Welcome, never the page under it.
  */
 export function askForHubList(client: QueryClient): void {
+  const scope = scopeOf(new URLSearchParams(window.location.search));
   // Nothing to do on a failure: the gate reads it from the query, and its page shows.
-  client.query(apiQuery("/api/v1/hubs")).catch(() => undefined);
+  client.query(shellReadQuery(scope)).catch(() => undefined);
 }
 
 /**
  * With no registered hub every route but `/settings/*` (and `/welcome` itself) redirects to
- * `/welcome` (AC-200.54). While the hub list loads, or when it cannot be read, the page shows.
- * Once the list comes back empty only the redirect is drawn, so the page's own empty state never
- * stands in for Welcome, and a page skeleton shown by then stays until Welcome renders. It
- * redirects again from each page it lands on: a later navigation cancels the one before.
+ * `/welcome` (AC-200.54). While the shell read loads, or when it cannot be read, the page shows.
+ * Once it counts no hub only the redirect is drawn, so the page's own empty state never stands in
+ * for Welcome, and a page skeleton shown by then stays until Welcome renders. It redirects again
+ * from each page it lands on: a later navigation cancels the one before.
  */
 export function HubGate() {
-  const hubs = useApi("/api/v1/hubs");
+  const shell = useShellRead(useScope()[0]);
   const { key } = useLocation();
-  if (hubs.data?.items.length === 0) return <Redirect key={key} to="/welcome" />;
+  if (shell.data?.hub_count === 0) return <Redirect key={key} to="/welcome" />;
   return <Outlet />;
 }
 

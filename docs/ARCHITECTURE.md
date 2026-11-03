@@ -80,11 +80,12 @@ redirects to the Toolkit, and the Studio's two routes, which fall back to the To
 (`lazyScreen`'s third argument loads the Toolkit's code with theirs). A page that only redirects draws `Redirect`
 (`src/shell/routeLoading.tsx`), which keeps a page skeleton shown at that moment until the router lands on the target;
 Run detail for a scenario run keeps its skeleton drawn next to its `<Navigate>` until then, since the target's code
-may still be loading. The first-run gate (`HubGate`) reads the hub list, which `App.tsx` asks for before it creates
-the router (`askForHubList`): while the list loads, or when it cannot be read, the page shows; once it comes back
-empty, the gate draws only `Redirect` to `/welcome`, so the page's own empty state never stands in for Welcome. A chunk that
-fails to load, or a screen that throws while it renders, shows `RouteError` (`src/shell/RouteError.tsx`) inside the
-shell, after a page skeleton shown on a first load has had its 300 ms
+may still be loading. The first-run gate (`HubGate`) reads `hub_count` from the shell read (`GET /screens/shell`,
+ADR 0056), which `App.tsx` asks for before it creates the router (`askForHubList`), with the scope from the URL or the
+stored choice, so the shell and the gate share that one request: while the read loads, or when it cannot be read, the
+page shows; once it counts no hub, the gate draws only `Redirect` to `/welcome`, so the page's own empty state never
+stands in for Welcome. A chunk that fails to load, or a screen that throws while it renders, shows `RouteError`
+(`src/shell/RouteError.tsx`) inside the shell, after a page skeleton shown on a first load has had its 300 ms
 ([spec 22](design/control-plane/specs/22-first-run-and-errors.md)).
 
 Each package has the same shape:
