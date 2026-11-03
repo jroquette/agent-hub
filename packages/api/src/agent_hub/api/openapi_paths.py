@@ -245,7 +245,12 @@ KNOWLEDGE_PATHS: frozenset[tuple[str, str]] = frozenset(
 )
 
 # The screen reads (ADR 0056): one GET per screen whose first view needs more than 5 calls.
-SCREEN_PATHS: frozenset[tuple[str, str]] = frozenset({("get", f"{API_PREFIX}/screens/shell")})
+SCREEN_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("get", f"{API_PREFIX}/screens/shell"),
+        ("get", f"{API_PREFIX}/screens/portfolio"),
+    }
+)
 
 # Every path the document lists.
 SERVED_PATHS: frozenset[tuple[str, str]] = (

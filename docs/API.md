@@ -54,7 +54,8 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   added to them: `DELETE /scenarios/{project}/{name}` ([Scenarios](#scenarios)), and the two AGH-393 added
   (`KNOWLEDGE_PATHS`, both GET):
   `/projects/{project}/knowledge/search` and `/projects/{project}/brain/backlinks` ([Knowledge](#knowledge)), and the
-  screen reads AGH-623 added (`SCREEN_PATHS`, all GET): `/screens/shell` ([Screen reads](#screen-reads)). A test
+  screen reads AGH-623 added (`SCREEN_PATHS`, all GET): `/screens/shell` and `/screens/portfolio`
+  ([Screen reads](#screen-reads)). A test
   fails on any other path.
 - A field kept only for compatibility is marked `deprecated` in the document and stays until `/api/v2`: a session's
   and a live tile's `agent` (read `label` and `actors`) and a learning's `target` (read `note_path`).
@@ -240,6 +241,17 @@ The feature list behind `features_needing_you` is kept 30 s per scope (the Featu
 shell's polls read the live sessions again but not every feature folder; a scope with no feature reads no live
 session. A change-request decision or an owner sign-off through the app forgets the kept lists, so the next read
 counts it; a feature folder changed outside the app shows within 30 s.
+
+`GET /api/v1/screens/portfolio?project=` → `PortfolioView`, Home's first view. Each part is its resource's answer
+for the same scope, and the web writes it under that resource's query key:
+
+| Field | Value |
+| --- | --- |
+| `projects` | every project's card, as `GET /projects` answers, whatever the scope |
+| `needs_you` | what waits for a person in the scope, as `GET /needs-you?project=` answers |
+| `activity` | the scope's first activity page of 20 items, as `GET /activity?project=&limit=20` answers; Home's "Load more" reads `GET /activity` |
+
+Skill usage stays its own call (`GET /skill-usage`), so Home loads in 4 calls with the shell's two.
 
 ## Sessions
 

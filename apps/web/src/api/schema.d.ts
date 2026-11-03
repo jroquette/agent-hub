@@ -1837,6 +1837,28 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/screens/portfolio": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read Portfolio
+     * @description Home's first view in one read: every project's card (as ``GET /projects``), what needs
+     *     you in the scope (as ``GET /needs-you``) and the scope's first activity page of 20 items (as
+     *     ``GET /activity?limit=20``).
+     */
+    get: operations["read_portfolio_api_v1_screens_portfolio_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/screens/shell": {
     parameters: {
       query?: never;
@@ -5576,6 +5598,16 @@ export interface components {
       node: string;
       /** Poll */
       poll: number | null;
+    };
+    /**
+     * PortfolioView
+     * @description Home's first view: every project's card, what needs you in the scope and the scope's
+     *     newest activity page, each as its resource route answers it.
+     */
+    PortfolioView: {
+      activity: components["schemas"]["Page_ActivityItem_"];
+      needs_you: components["schemas"]["Page_NeedsYouItem_"];
+      projects: components["schemas"]["Page_ProjectSummary_"];
     };
     /**
      * PreflightRun
@@ -12908,6 +12940,46 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["RunAccepted"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  read_portfolio_api_v1_screens_portfolio_get: {
+    parameters: {
+      query?: {
+        project?: string | null;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PortfolioView"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

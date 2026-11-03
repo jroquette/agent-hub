@@ -15,13 +15,15 @@ from typing import Final
 from agent_hub.core.agent_sessions.control import AgentSessionCommands
 from agent_hub.core.features.feature_view import FeatureView
 from agent_hub.core.features.owner_needs import features_needing_you
-from agent_hub.core.readmodels.filters import RunFilter, Scope
+from agent_hub.core.readmodels.filters import PageRequest, RunFilter, Scope
 from agent_hub.core.readmodels.read_ports import EventReadModels, HubReadModels
 from agent_hub.core.screens.screen_views import PortfolioView, ShellProject, ShellView
 
 FEATURES_FRESH_SECONDS: Final = 30.0
 # The scopes whose feature list is kept: All projects and a few projects at once.
 FEATURE_SCOPES_KEPT: Final = 8
+# Home's first activity page, the web's ACTIVITY_PAGE: the part it writes under that page's key.
+ACTIVITY_PAGE: Final = 20
 
 
 class ScreenReads:
@@ -64,11 +66,12 @@ class ScreenReads:
 
     def portfolio(self, scope: str | None) -> PortfolioView:
         """Home's first view: every project's card, what needs you in ``scope`` and its newest
-        activity page.
-
-        RED stub for AGH-623 (plan SCREEN-1 commit 34): the name the tests call, no logic yet.
-        """
-        raise NotImplementedError
+        activity page, each as its resource route answers it."""
+        return PortfolioView(
+            projects=self._hubs.list_projects(),
+            needs_you=self._events.needs_you(Scope(project=scope)),
+            activity=self._events.activity(PageRequest(project=scope, limit=ACTIVITY_PAGE)),
+        )
 
     def forget_features(self) -> None:
         """Drop every kept feature list, after a write of a feature record."""

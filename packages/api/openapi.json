@@ -9155,6 +9155,28 @@
         "title": "PollEntry",
         "type": "object"
       },
+      "PortfolioView": {
+        "additionalProperties": false,
+        "description": "Home's first view: every project's card, what needs you in the scope and the scope's\nnewest activity page, each as its resource route answers it.",
+        "properties": {
+          "activity": {
+            "$ref": "#/components/schemas/Page_ActivityItem_"
+          },
+          "needs_you": {
+            "$ref": "#/components/schemas/Page_NeedsYouItem_"
+          },
+          "projects": {
+            "$ref": "#/components/schemas/Page_ProjectSummary_"
+          }
+        },
+        "required": [
+          "projects",
+          "needs_you",
+          "activity"
+        ],
+        "title": "PortfolioView",
+        "type": "object"
+      },
       "PreflightRun": {
         "additionalProperties": false,
         "description": "One preflight run of a ticket: when it ran, the plan version and commit it checked, the\nblocker outcomes it read, the input it was given (a discovery or a declined change's note,\n``input_text``; for ``none``, null or a note such as an approval another one superseded,\ntwo-level-flows A23), the drift it found with its local notes (at least one for\n``local``), the change request it opened (required for ``plan``, unless a plain check with a\nnote: a superseded approval's re-check, A24) and the workflow\nrun it belongs to.",
@@ -24139,6 +24161,68 @@
         "summary": "Start Scenario",
         "tags": [
           "scenarios"
+        ]
+      }
+    },
+    "/api/v1/screens/portfolio": {
+      "get": {
+        "description": "Home's first view in one read: every project's card (as ``GET /projects``), what needs\nyou in the scope (as ``GET /needs-you``) and the scope's first activity page of 20 items (as\n``GET /activity?limit=20``).",
+        "operationId": "read_portfolio_api_v1_screens_portfolio_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortfolioView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Read Portfolio",
+        "tags": [
+          "screens"
         ]
       }
     },
