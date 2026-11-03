@@ -2,9 +2,10 @@
 
 The shell read: ``hub_count`` from ``list_hubs``; every project of ``list_projects`` in its order,
 whatever the scope; the features of the scope that need you, counted over a fresh
-``list_live_sessions(scope)`` and a feature list kept per scope for 30 s (the Features list's own
-refresh), which ``forget_features()`` drops; ``has_workflow_runs`` from one workflow run of any
-project. The clock is the read's ``monotonic`` keyword, moved by the test.
+``list_live_sessions(scope)`` (or no tile when the store cannot read them) and a feature list kept
+per scope for 30 s (the Features list's own refresh), for at most 8 scopes, which
+``forget_features()`` drops; ``has_workflow_runs`` from one workflow run of any project. The clock
+is the read's ``monotonic`` keyword, moved by the test.
 
 The portfolio read (Home): every project of ``list_projects`` whatever the scope, what
 ``needs_you`` answers for the scope, and the scope's first ``activity`` page of 20 items
@@ -28,7 +29,7 @@ project's features, and the driver's capabilities, each as its read port answers
 """
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from operator import attrgetter
@@ -42,6 +43,7 @@ from agent_hub.core.agent_sessions.agent_session import (
     AgentSessionStatus,
 )
 from agent_hub.core.agent_sessions.driver import DriverCapabilities
+from agent_hub.core.errors import AgentHubError
 from agent_hub.core.events.event import EventSource, EventType
 from agent_hub.core.features.feature_view import FeatureView
 from agent_hub.core.hub_config.config_view import HubConfigView
@@ -109,7 +111,8 @@ def _page[T](items: Sequence[T]) -> Page[T]:
 class CountingEvents:
     """The event reads the screen reads make, over lists, filtered and cut to a page as the
     read models do; records each call. A session's events page names, as its next cursor, how
-    many events came before the next page."""
+    many events came before the next page. The live tiles and the runs raise the error
+    ``failures`` holds for them, once the call is recorded."""
 
     tiles: list[LiveTile] = field(default_factory=list)
     runs: list[WorkflowRun] = field(default_factory=list)
@@ -119,6 +122,7 @@ class CountingEvents:
     timeline: dict[str, list[TimelineEvent]] = field(default_factory=dict)
     summaries: dict[str, SessionSummary] = field(default_factory=dict)
     problems: dict[str, SessionProblems] = field(default_factory=dict)
+    failures: dict[str, Exception] = field(default_factory=dict)
     calls: list[tuple[str, object]] = field(default_factory=list)
 
     def get_session(self, session_id: str) -> Session:
@@ -151,10 +155,14 @@ class CountingEvents:
 
     def list_live_sessions(self, scope: Scope) -> Page[LiveTile]:
         self.calls.append(("list_live_sessions", scope))
+        if "list_live_sessions" in self.failures:
+            raise self.failures["list_live_sessions"]
         return _page([tile for tile in self.tiles if scope.project in {None, tile.project}])
 
     def list_runs(self, run_filter: RunFilter) -> Page[WorkflowRun]:
         self.calls.append(("list_runs", run_filter))
+        if "list_runs" in self.failures:
+            raise self.failures["list_runs"]
         kept = [
             run
             for run in self.runs
@@ -189,7 +197,7 @@ class CountingEvents:
 @dataclass
 class CountingHubs:
     """The hub reads the screen reads make, over lists and per-project entries; records each
-    call."""
+    call. ``during_listing``, when set, is called once from inside the next feature listing."""
 
     hubs: list[HubView] = field(default_factory=list)
     projects: list[ProjectSummary] = field(default_factory=list)
@@ -199,6 +207,7 @@ class CountingHubs:
     repos: dict[str, list[RepoView]] = field(default_factory=dict)
     configs: dict[str, HubConfigView] = field(default_factory=dict)
     findings: list[FindingView] = field(default_factory=list)
+    during_listing: Callable[[], None] | None = None
     calls: list[tuple[str, object]] = field(default_factory=list)
 
     def list_hubs(self) -> Page[HubView]:
@@ -211,6 +220,9 @@ class CountingHubs:
 
     def list_features(self, scope: Scope) -> Page[FeatureView]:
         self.calls.append(("list_features", scope))
+        if self.during_listing is not None:
+            landed, self.during_listing = self.during_listing, None
+            landed()
         return _page([item for item in self.features if scope.project in {None, item.project}])
 
     def get_project(self, project: str) -> ProjectDetail:
@@ -399,6 +411,113 @@ def test_lists_features_again_when_features_forgotten() -> None:
     reads.shell("demo")
 
     assert _count(hubs.calls, "list_features") == 4
+
+
+# A feature record written while the shell lists the features: that listing may be older than the
+# write, so it is not kept and the next read lists again; the listing after it is kept.
+def test_lists_features_again_when_forgotten_while_listing() -> None:
+    events, hubs = _world()
+    clock = SteppedClock()
+    reads = ScreenReads(events, hubs, monotonic=clock)
+    hubs.during_listing = reads.forget_features
+    listed = []
+
+    for elapsed in (0, 5, 10):
+        clock.now = START + elapsed
+        reads.shell(None)
+        listed.append(_count(hubs.calls, "list_features"))
+
+    assert hubs.during_listing is None
+    assert listed == [1, 2, 2]
+
+
+# The plan's bound on the kept lists (any ?project= value is a scope): at most 8 scopes.
+SCOPES_KEPT = 8
+
+
+# Within the bound the first scope read is still kept; one scope more drops it, so its next read
+# lists it again. The clock does not move.
+@pytest.mark.parametrize(
+    ("scopes_read", "listed_again"),
+    [(SCOPES_KEPT, False), (SCOPES_KEPT + 1, True)],
+    ids=["as-many-as-kept", "one-more-than-kept"],
+)
+def test_keeps_at_most_eight_scope_lists_when_many_scopes_read(
+    scopes_read: int, *, listed_again: bool
+) -> None:
+    events, hubs = _world()
+    scopes = [f"project-{number}" for number in range(scopes_read)]
+    hubs.features += [a_feature_view(project=scope, slug="plain", issues=()) for scope in scopes]
+    reads = ScreenReads(events, hubs, monotonic=SteppedClock())
+    for scope in scopes:
+        reads.shell(scope)
+    assert _count(hubs.calls, "list_features") == scopes_read
+
+    reads.shell(scopes[0])
+
+    assert _count(hubs.calls, "list_features") == scopes_read + int(listed_again)
+
+
+# The scope's own live tiles, as the Features list read them (useLiveSessions(project)): a tile of
+# other waiting on AGH-1, the issue of demo's plain feature, is not read for demo; All projects
+# reads every project's tiles, where it counts.
+@pytest.mark.parametrize(
+    ("scope", "expected"), [("demo", 2), (None, 4)], ids=["one-project", "all-projects"]
+)
+def test_counts_scope_tiles_only_when_another_project_waits_on_same_issue(
+    scope: str | None, expected: int
+) -> None:
+    events, hubs = _world()
+    elsewhere = a_tile("AGH-1", "waiting").model_copy(
+        update={"project": "other", "id": "session-other-AGH-1"}
+    )
+    events.tiles.append(elsewhere)
+    assert [(tile.project, tile.group) for tile in events.tiles] == [
+        ("demo", "waiting"),
+        ("demo", "live"),
+        ("other", "waiting"),
+    ]
+
+    view = ScreenReads(events, hubs, monotonic=SteppedClock()).shell(scope)
+
+    assert view.features_needing_you == expected
+
+
+# AC-374.7: the badge count still comes when the store cannot read the live sessions. It is then
+# counted with no tile, as the Features list counted it (its tiles default to none): in All
+# projects the NO-SHIP and the broken record, not the feature a session waits on.
+def test_counts_features_without_tiles_when_live_sessions_unreadable() -> None:
+    events, hubs = _world()
+    events.failures["list_live_sessions"] = AgentHubError("the event database could not be read")
+
+    view = ScreenReads(events, hubs, monotonic=SteppedClock()).shell(None)
+
+    assert view == ShellView(
+        hub_count=3, projects=SWITCHER, features_needing_you=2, has_workflow_runs=True
+    )
+    assert _count(events.calls, "list_live_sessions") == 1
+
+
+# Only the live tiles may go unread: the store failing another part, or the live tiles failing
+# for another reason than the store, still fails the read.
+@pytest.mark.parametrize(
+    ("read", "failure"),
+    [
+        ("list_runs", AgentHubError("the event database could not be read")),
+        ("list_live_sessions", RuntimeError("the tiles could not be folded")),
+    ],
+    ids=["runs-unreadable", "live-sessions-fail-otherwise"],
+)
+def test_fails_shell_read_when_failure_is_not_unreadable_live_sessions(
+    read: str, failure: Exception
+) -> None:
+    events, hubs = _world()
+    events.failures[read] = failure
+
+    with pytest.raises(type(failure)) as raised:
+        ScreenReads(events, hubs, monotonic=SteppedClock()).shell(None)
+
+    assert raised.value is failure
 
 
 def _no_hub() -> tuple[CountingEvents, CountingHubs]:
@@ -1054,3 +1173,31 @@ async def test_composes_session_detail_from_its_resources_when_read(
         features=_page(hubs.features[features]),
         capabilities=CAPABILITIES,
     )
+
+
+# The web reads a session's problems when its problemTotal (needs_you + open + handled + by_you) is
+# above 0: a session counting one problem of any of those statuses carries them.
+@pytest.mark.anyio
+@pytest.mark.parametrize("status", ["needs_you", "open", "by_you"])
+async def test_carries_problems_when_session_counts_one_of_any_status(status: str) -> None:
+    events, hubs = _detail_world()
+    counted = an_inbox_session(
+        "live-counted",
+        SessionStatus.LIVE,
+        timedelta(hours=1),
+        problems=ProblemCounts.model_validate({status: 1}),
+    )
+    assert (sum(counted.problems.model_dump().values()), getattr(counted.problems, status)) == (
+        1,
+        1,
+    )
+    events.sessions.append(counted)
+    events.timeline[counted.id] = [a_timeline_event(counted, 1)]
+    events.problems[counted.id] = a_session_problems(
+        session_id=counted.id, summary=(), items=(a_problem(resolution=Resolution(status)),)
+    )
+    reads = ScreenReads(events, hubs, CountingAgentSessions(), monotonic=SteppedClock())
+
+    view = await reads.session_detail(counted.id, agent_reads=True)
+
+    assert view.problems == events.problems[counted.id]

@@ -90,6 +90,8 @@ CASES = [
     pytest.param(
         [feature(issues=("AGH-12 search box",))], [on_issue("agh-12")], 1, id="issue-id-any-case"
     ),
+    # An entry that does not start with an id is its own id, upper case (the web's issueId).
+    pytest.param([feature(issues=("agh-12",))], [on_issue("AGH-12")], 1, id="entry-not-an-id"),
     pytest.param([feature(problem=BROKEN)], [], 1, id="problem"),
     pytest.param([feature(phase="shipped", problem=BROKEN)], [], 1, id="shipped-problem"),
     pytest.param([feature(verdict="NO-SHIP")], [], 1, id="no-ship"),

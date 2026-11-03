@@ -14,6 +14,7 @@ from agent_hub.core.testing.builders import an_event
 from agent_hub.core.testing.repo_edit_cases import MODEL_CASES, REFUSAL_CASES, RepoEditCase
 
 HUBS = "/api/v1/hubs"
+SHELL = "/api/v1/screens/shell"
 # The registry writes require this server's Origin (A11).
 OWN = {"Origin": "http://127.0.0.1:7420"}
 
@@ -107,6 +108,63 @@ def test_removes_hub_and_keeps_its_events_when_deleted(
     assert composed.client.get(HUBS).json()["items"] == []
     assert [row.project for row in composed.rows()] == ["demo"]
     assert composed.client.delete(f"{HUBS}/{hub_id}", headers=OWN).status_code == 404
+
+
+def _broken_feature(hub: Path) -> None:
+    """A feature folder whose record cannot be parsed: the Features list flags it as needing you."""
+    folder = hub / "brain" / "features" / "malformed"
+    folder.mkdir(parents=True)
+    (folder / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    (folder / "features.json").write_text('{"acs": [}', encoding="utf-8")
+
+
+# The shell read keeps each scope's feature list 30 s (ADR 0056). Registering a hub forgets them,
+# so the next read counts its features: the first hub, registered from the first-run screen, is
+# not shown with a badge of 0 for up to 30 s.
+def test_counts_new_hub_features_when_shell_read_after_registration(
+    composed: Any, make_hub: Callable[..., Path]
+) -> None:
+    hub = make_hub()
+    _broken_feature(hub)
+    before = composed.client.get(SHELL)
+    assert (before.status_code, before.json()["features_needing_you"]) == (200, 0)
+
+    registered = composed.client.post(HUBS, json={"path": str(hub)}, headers=OWN)
+
+    assert registered.status_code == 201, registered.text
+    listed = composed.client.get("/api/v1/features").json()["items"]
+    assert [(item["slug"], item["problem"] is not None) for item in listed] == [("malformed", True)]
+    assert composed.client.get(SHELL).json() == {
+        "hub_count": 1,
+        "projects": [{"name": "demo", "live_sessions": 0}],
+        "features_needing_you": 1,
+        "has_workflow_runs": False,
+    }
+
+
+# Removing a hub forgets the kept lists too: the next read no longer counts its features.
+def test_drops_removed_hub_features_when_shell_read_after_removal(
+    composed: Any, make_hub: Callable[..., Path]
+) -> None:
+    hub_ids = {}
+    for project in ("demo", "other"):
+        hub = make_hub(project)
+        _broken_feature(hub)
+        registered = composed.client.post(HUBS, json={"path": str(hub)}, headers=OWN)
+        assert registered.status_code == 201, registered.text
+        hub_ids[project] = registered.json()["id"]
+    before = composed.client.get(SHELL)
+    assert (before.status_code, before.json()["features_needing_you"]) == (200, 2)
+
+    removed = composed.client.delete(f"{HUBS}/{hub_ids['other']}", headers=OWN)
+
+    assert removed.status_code == 204, removed.text
+    assert composed.client.get(SHELL).json() == {
+        "hub_count": 1,
+        "projects": [{"name": "demo", "live_sessions": 0}],
+        "features_needing_you": 1,
+        "has_workflow_runs": False,
+    }
 
 
 # AC-PG-38.1: the composed GET /projects/{project}/config reads the registered hub's hub.json and
