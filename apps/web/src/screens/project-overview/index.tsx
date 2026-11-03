@@ -1439,12 +1439,13 @@ function ProjectNotFound({ name }: { name: string }) {
  * Project overview (spec 12), written for anyone on the team: what needs you, this week in numbers,
  * the team's focus, the agents' tickets and recent work; engineering detail folds away at the end.
  * Its regions' first answers and the sessions of this week's issues come from one screen read
- * (ADR 0056).
+ * (ADR 0056), made again for each project opened in place.
  */
 export function ProjectOverviewScreen() {
   const { project: name = "" } = useParams();
   return (
     <ScreenReadProvider
+      key={name}
       path={OVERVIEW_READ}
       params={{ path: { project: name } }}
       seeds={(read) => overviewSeeds(name, read)}

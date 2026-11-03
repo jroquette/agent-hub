@@ -54,11 +54,12 @@ function LoadingBody() {
 }
 
 /** Session detail: "What did this agent do, in what order, and why?" (spec 10). Its first view
- * comes from one screen read (ADR 0056). */
+ * comes from one screen read (ADR 0056), made again for each session opened in place. */
 export function SessionDetailScreen() {
   const { sessionId = "" } = useParams();
   return (
     <ScreenReadProvider
+      key={sessionId}
       path={SESSION_DETAIL_READ}
       params={{ path: { session_id: sessionId } }}
       seeds={(read) => sessionDetailSeeds(sessionId, read)}
