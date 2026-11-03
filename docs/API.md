@@ -230,6 +230,8 @@ The rules:
   resource route answers for the same parameters. A derived part is never written under a resource's key.
 - The resource routes stay unchanged for the CLI, the MCP server and the other screens. When a screen read fails, the
   web reads each region from its resource route, so a failure stays in its region.
+- The web makes a screen read once per visit, and a visit is one screen open for one project or session: moving in
+  place to another project's overview or another session starts a new visit, with its own read.
 
 `GET /api/v1/screens/shell?project=` → `ShellView`, the app shell's facts:
 
@@ -242,8 +244,9 @@ The rules:
 
 The feature list behind `features_needing_you` is kept 30 s per scope (the Features list's own refresh), so the
 shell's polls read the live sessions again but not every feature folder; a scope with no feature reads no live
-session. A change-request decision or an owner sign-off through the app forgets the kept lists, so the next read
-counts it; a feature folder changed outside the app shows within 30 s.
+session. These writes through the app forget the kept lists, so the next read counts them: a change-request
+decision, an owner sign-off, and registering or removing a hub (`POST /hubs`, `DELETE /hubs/{hub_id}`). A feature
+folder changed outside the app shows within 30 s.
 
 `GET /api/v1/screens/portfolio?project=` → `PortfolioView`, Home's first view. Each part is its resource's answer
 for the same scope, and the web writes it under that resource's query key:
