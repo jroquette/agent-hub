@@ -36,6 +36,7 @@ from agent_hub.core.readmodels.read_ports import EventReadModels, HubReadModels
 from agent_hub.core.screens.screen_views import (
     PortfolioView,
     ProjectOverviewView,
+    SessionDetailView,
     SessionsView,
     ShellProject,
     ShellView,
@@ -187,6 +188,13 @@ class ScreenReads:
             capabilities=agent_parts[1],
             features=features,
         )
+
+    async def session_detail(self, session_id: str, *, agent_reads: bool) -> SessionDetailView:
+        """Session detail's first view of ``session_id``.
+
+        RED stub for AGH-623 (plan SCREEN-4 commit 46): the name the tests call, no logic yet.
+        """
+        raise NotImplementedError
 
     def forget_features(self) -> None:
         """Drop every kept feature list, after a write of a feature record."""

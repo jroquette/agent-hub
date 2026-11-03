@@ -401,6 +401,7 @@ SCREEN_SPEC_PATHS = {
     ("get", "/api/v1/screens/portfolio"),
     ("get", "/api/v1/screens/project-overview/{project}"),
     ("get", "/api/v1/screens/sessions"),
+    ("get", "/api/v1/screens/session-detail/{session_id}"),
 }
 
 

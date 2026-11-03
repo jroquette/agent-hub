@@ -18,7 +18,8 @@ from agent_hub.core.projects.project_views import (
 from agent_hub.core.readmodels.page import Page
 from agent_hub.core.readmodels.view_types import ViewModel
 from agent_hub.core.runs.workflow_run import WorkflowRun
-from agent_hub.core.sessions.session import Session
+from agent_hub.core.sessions.problem import SessionProblems
+from agent_hub.core.sessions.session import Session, SessionSummary, TimelineEvent
 
 
 class ShellProject(ViewModel):
@@ -81,3 +82,18 @@ class SessionsView(ViewModel):
     agent_sessions: AgentSessionList | None
     capabilities: DriverCapabilities | None
     features: Page[FeatureView]
+
+
+class SessionDetailView(ViewModel):
+    """Session detail's first view: the session, its first page of 1,000 events, its summary
+    once it has ended, its problems when it counts one and its project's features, each as
+    its route answers it, and the driver's capabilities as their route answers them, or
+    ``None`` when the request may not read them, the sessions are off, or the driver does not
+    answer within the read's wait."""
+
+    session: Session
+    events: Page[TimelineEvent]
+    summary: SessionSummary | None
+    problems: SessionProblems | None
+    features: Page[FeatureView]
+    capabilities: DriverCapabilities | None

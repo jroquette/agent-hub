@@ -8,7 +8,11 @@ in the last 7 days by the server's clock, and the same 404 problem as ``/project
 ``GET /api/v1/screens/sessions`` answers the inbox's four sections, the cards and the features as
 their routes answer them, and the agent sessions and the driver's capabilities only for a request
 that the agent-session routes would answer (the launch cookie, this server's own pages, the
-sessions on); for any other request those two parts are null."""
+sessions on); for any other request those two parts are null.
+``GET /api/v1/screens/session-detail/{session_id}`` answers the session, its first 1,000 events,
+its summary, its problems and its project's features as their routes answer them, the driver's
+capabilities only for a request the agent-session routes would answer, and the same 404 problem
+as ``/sessions/{session_id}``."""
 
 import json
 from collections.abc import Callable
@@ -25,6 +29,7 @@ from agent_hub.core.events.event import Event
 from agent_hub.core.testing.builders import an_event
 from agent_hub.core.testing.session_driver_fakes import InMemorySessionDriver
 from agent_hub.core.testing.session_scenarios import (
+    DEFAULT_TOOLS,
     a_run_events,
     a_session_events,
     learning_events,
@@ -35,6 +40,7 @@ SHELL = "/api/v1/screens/shell"
 PORTFOLIO = "/api/v1/screens/portfolio"
 OVERVIEW = "/api/v1/screens/project-overview"
 SESSIONS = "/api/v1/screens/sessions"
+DETAIL = "/api/v1/screens/session-detail"
 AGENT_SESSIONS = "/api/v1/agent-sessions"
 SPEC = "---\ntype: spec\nprocess_size: bounded\nrepos: [demo-api]\nlinear: [DEM-7]\n---\n# Spec\n"
 RECORD = json.dumps(
@@ -474,3 +480,80 @@ def test_refuses_unknown_sort_when_sessions_screen_read(composed: Any) -> None:
 
     assert response.status_code == 400, response.text
     assert _without_instance(response.json()) == _without_instance(resource.json())
+
+
+# 501 tool calls: with its start, its prompt and its end, the session has 1,005 events, more than
+# the detail's first events page of 1,000.
+DETAIL_TOOLS = DEFAULT_TOOLS * 167
+# Each resource the detail's regions read for the session, with the parameters the web asks it
+# with.
+DETAIL_RESOURCES: dict[str, tuple[str, dict[str, Any]]] = {
+    "session": ("/api/v1/sessions/detail-ended", {}),
+    "events": ("/api/v1/sessions/detail-ended/events", {"limit": 1000}),
+    "summary": ("/api/v1/sessions/detail-ended/summary", {}),
+    "problems": ("/api/v1/sessions/detail-ended/problems", {}),
+    "features": ("/api/v1/features", {"project": "demo"}),
+    "capabilities": (f"{AGENT_SESSIONS}/capabilities", {}),
+}
+
+
+def _ended_session(now: datetime) -> list[Event]:
+    """Session ``detail-ended`` of ``demo``, two days before ``now``: 501 tool calls, the first
+    ``make check-fast`` failed, then its end."""
+    return a_session_events(
+        "detail-ended",
+        start=now - timedelta(days=2),
+        tools=DETAIL_TOOLS,
+        failed_tools=frozenset({2}),
+    )
+
+
+def test_answers_detail_like_its_resources_when_session_ended(sessions_on: Any) -> None:
+    _sign_in(sessions_on)
+    sessions_on.store.append(_ended_session(sessions_on.settings.clock()))
+    read = {
+        part: sessions_on.client.get(path, params=params)
+        for part, (path, params) in DETAIL_RESOURCES.items()
+    }
+    assert {part: answer.status_code for part, answer in read.items()} == dict.fromkeys(read, 200)
+    answers = {part: answer.json() for part, answer in read.items()}
+    # What the regions show: an ended session that counts a problem, a full first events page
+    # with more to come, its summary lines and its problem, and demo's feature alone.
+    session = answers["session"]
+    assert (session["status"], sum(session["problems"].values()) > 0) == ("ended", True)
+    page = answers["events"]
+    assert (len(page["items"]), page["next_cursor"] is not None) == (1000, True)
+    assert (answers["summary"]["lines"] != [], answers["problems"]["items"] != []) == (True, True)
+    every = sessions_on.client.get("/api/v1/features").json()["items"]
+    assert sorted(item["project"] for item in every) == ["demo", "other"]
+    assert [item["project"] for item in answers["features"]["items"]] == ["demo"]
+
+    response = sessions_on.client.get(f"{DETAIL}/detail-ended")
+
+    assert response.status_code == 200, response.text
+    assert {part: response.json()[part] for part in DETAIL_RESOURCES} == answers
+
+
+def test_answers_no_capabilities_when_request_has_no_session_cookie(sessions_on: Any) -> None:
+    now = sessions_on.settings.clock()
+    sessions_on.store.append(a_session_events("detail-ended", start=now - timedelta(days=2)))
+    refused = sessions_on.client.get(f"{AGENT_SESSIONS}/capabilities")
+    assert refused.status_code == 401, refused.text
+    session = sessions_on.client.get("/api/v1/sessions/detail-ended")
+    assert session.status_code == 200, session.text
+
+    response = sessions_on.client.get(f"{DETAIL}/detail-ended")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert (body["session"], body["capabilities"]) == (session.json(), None)
+
+
+def test_answers_session_not_found_when_detail_session_unknown(composed: Any) -> None:
+    session = composed.client.get("/api/v1/sessions/nobody")
+    assert session.status_code == 404, session.text
+
+    response = composed.client.get(f"{DETAIL}/nobody")
+
+    assert response.status_code == 404, response.text
+    assert _without_instance(response.json()) == _without_instance(session.json())

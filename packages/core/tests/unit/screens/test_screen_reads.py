@@ -21,6 +21,10 @@ the period's ``from`` bounding Finished only; every project's card; every projec
 and, only for a request allowed to read them, the agent sessions of the scope and the driver's
 capabilities, the latter only when they answer within the read's wait (a probe of ``claude`` is
 left running, shared by the reads that overlap it, and its answer taken by the next read).
+
+The session detail read: the session, its first page of 1,000 events of every type, its summary
+only once it has ended, its problems only when it counts one (whatever its status), its
+project's features, and the driver's capabilities, each as its read port answers it.
 """
 
 import asyncio
@@ -38,6 +42,7 @@ from agent_hub.core.agent_sessions.agent_session import (
     AgentSessionStatus,
 )
 from agent_hub.core.agent_sessions.driver import DriverCapabilities
+from agent_hub.core.events.event import EventSource, EventType
 from agent_hub.core.features.feature_view import FeatureView
 from agent_hub.core.hub_config.config_view import HubConfigView
 from agent_hub.core.hubs.finding_view import DoctorFindings, FindingView
@@ -58,13 +63,23 @@ from agent_hub.core.readmodels.page import Page
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.runs.workflow_run import IssueRef, RunStep, WorkflowRun
 from agent_hub.core.screens.screen_reads import ScreenReads
-from agent_hub.core.screens.screen_views import PortfolioView, ShellProject, ShellView
+from agent_hub.core.screens.screen_views import (
+    PortfolioView,
+    SessionDetailView,
+    ShellProject,
+    ShellView,
+)
+from agent_hub.core.sessions.problem import Resolution, SessionProblems
 from agent_hub.core.sessions.session import (
     Actor,
     Outcome,
+    ProblemCounts,
     Session,
     SessionSegment,
     SessionStatus,
+    SessionSummary,
+    SummaryLine,
+    TimelineEvent,
 )
 from agent_hub.core.testing.discovery_fakes import a_demo_config_view
 from agent_hub.core.testing.read_model_builders import (
@@ -73,10 +88,12 @@ from agent_hub.core.testing.read_model_builders import (
     a_feature_view,
     a_finding_view,
     a_hub_view,
+    a_problem,
     a_project_summary,
     a_run,
     a_session,
     a_session_label,
+    a_session_problems,
     an_agent_session,
 )
 
@@ -91,14 +108,46 @@ def _page[T](items: Sequence[T]) -> Page[T]:
 @dataclass
 class CountingEvents:
     """The event reads the screen reads make, over lists, filtered and cut to a page as the
-    read models do; records each call."""
+    read models do; records each call. A session's events page names, as its next cursor, how
+    many events came before the next page."""
 
     tiles: list[LiveTile] = field(default_factory=list)
     runs: list[WorkflowRun] = field(default_factory=list)
     needs: list[NeedsYouItem] = field(default_factory=list)
     feed: list[ActivityItem] = field(default_factory=list)
     sessions: list[Session] = field(default_factory=list)
+    timeline: dict[str, list[TimelineEvent]] = field(default_factory=dict)
+    summaries: dict[str, SessionSummary] = field(default_factory=dict)
+    problems: dict[str, SessionProblems] = field(default_factory=dict)
     calls: list[tuple[str, object]] = field(default_factory=list)
+
+    def get_session(self, session_id: str) -> Session:
+        self.calls.append(("get_session", session_id))
+        return _session_of({item.id: item for item in self.sessions}, session_id)
+
+    def session_summary(self, session_id: str) -> SessionSummary:
+        self.calls.append(("session_summary", session_id))
+        return _session_of(self.summaries, session_id)
+
+    def session_events(
+        self, session_id: str, *, types: frozenset[EventType], page: PageRequest
+    ) -> Page[TimelineEvent]:
+        self.calls.append(("session_events", (session_id, types, page)))
+        kept = [
+            event
+            for event in _session_of(self.timeline, session_id)
+            if not types or event.type in types
+        ]
+        more = len(kept) > page.limit
+        return Page[TimelineEvent](
+            items=tuple(kept[: page.limit]),
+            next_cursor=str(page.limit) if more else None,
+            total_estimate=len(kept),
+        )
+
+    def session_problems(self, session_id: str) -> SessionProblems:
+        self.calls.append(("session_problems", session_id))
+        return _session_of(self.problems, session_id)
 
     def list_live_sessions(self, scope: Scope) -> Page[LiveTile]:
         self.calls.append(("list_live_sessions", scope))
@@ -190,6 +239,13 @@ def _of[T](entries: dict[str, T], project: str) -> T:
     if project not in entries:
         raise EntityNotFoundError(entity="project", entity_id=project)
     return entries[project]
+
+
+def _session_of[T](entries: dict[str, T], session: str) -> T:
+    """The session's entry; a session with none is unknown, as the read models answer it."""
+    if session not in entries:
+        raise EntityNotFoundError(entity="session", entity_id=session)
+    return entries[session]
 
 
 def _findings(items: Sequence[FindingView]) -> DoctorFindings:
@@ -900,3 +956,101 @@ async def test_answers_without_capabilities_when_driver_probe_is_slow() -> None:
     )
     assert third.capabilities == CAPABILITIES
     assert (fourth.capabilities, _count(agents.calls, "capabilities")) == (None, 2)
+
+
+# One more event than the detail's first events page, GET /sessions/{id}/events?limit=1000.
+DETAIL_EVENTS = 1_001
+
+
+def a_timeline_event(session: Session, seq: int) -> TimelineEvent:
+    """Event ``seq`` of ``session``: a tool call, its result or a message in turn, a second
+    apart from its start."""
+    kinds = (EventType.TOOL_CALL, EventType.TOOL_RESULT, EventType.MESSAGE)
+    return TimelineEvent(
+        event_id=f"01929a4e-6c1d-7f3a-9b2e-{seq:012x}",
+        seq=seq,
+        project=session.project,
+        session=session.id,
+        type=kinds[seq % len(kinds)],
+        timestamp=session.started_at + timedelta(seconds=seq),
+        received_at=None,
+        latency_ms=None,
+        source=EventSource.CLAUDE_CODE,
+        source_id=f"{session.id}:event:{seq}",
+        repo=session.repo,
+        agent="main",
+        workflow=None,
+        step=None,
+        payload={},
+    )
+
+
+def _detail_world() -> tuple[CountingEvents, CountingHubs]:
+    """The shell's world (three features of ``demo``, one of ``other``), plus two sessions with
+    1,001 events, a summary and a problems answer each: ``ended-clean`` of ``other``, ended
+    with no problem, and ``live-handled`` of ``demo``, live with one problem the agent handled."""
+    events, hubs = _world()
+    events.sessions = [
+        an_inbox_session("ended-clean", SessionStatus.ENDED, timedelta(hours=3), project="other"),
+        an_inbox_session(
+            "live-handled",
+            SessionStatus.LIVE,
+            timedelta(hours=1),
+            problems=ProblemCounts(handled=1),
+        ),
+    ]
+    handled = a_problem(resolution=Resolution.RECOVERED)
+    for item in events.sessions:
+        events.timeline[item.id] = [
+            a_timeline_event(item, seq) for seq in range(1, DETAIL_EVENTS + 1)
+        ]
+        events.summaries[item.id] = SessionSummary(
+            session_id=item.id,
+            lines=(SummaryLine(text=f"Ran make check-fast in {item.id}", event_id=EVENT_ID),),
+            generated_at=AT,
+        )
+        problems = (handled,) if item.problems.handled else ()
+        events.problems[item.id] = a_session_problems(
+            session_id=item.id, summary=(), items=problems
+        )
+    return events, hubs
+
+
+# The session as GET /sessions/{id} answers it; its first 1,000 events of every type as GET
+# /sessions/{id}/events?limit=1000 does (the 1,001st left to the next page); its summary only
+# once it has ended and its problems only when it counts one (one the agent handled counts); its
+# project's features; the driver's answer.
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("session", "features", "carried"),
+    [
+        ("ended-clean", slice(3, 4), {"summary"}),
+        ("live-handled", slice(0, 3), {"problems"}),
+    ],
+    ids=["ended-without-problem", "live-with-handled-problem"],
+)
+async def test_composes_session_detail_from_its_resources_when_read(
+    session: str, features: slice, carried: set[str]
+) -> None:
+    events, hubs = _detail_world()
+    assert [item.project for item in hubs.features] == ["demo", "demo", "demo", "other"]
+    assert [(item.id, item.status, item.problems) for item in events.sessions] == [
+        ("ended-clean", SessionStatus.ENDED, ProblemCounts()),
+        ("live-handled", SessionStatus.LIVE, ProblemCounts(handled=1)),
+    ]
+    assert {len(timeline) for timeline in events.timeline.values()} == {DETAIL_EVENTS}
+    reads = ScreenReads(events, hubs, CountingAgentSessions(), monotonic=SteppedClock())
+
+    view = await reads.session_detail(session, agent_reads=True)
+
+    timeline = events.timeline[session]
+    assert view == SessionDetailView(
+        session=next(item for item in events.sessions if item.id == session),
+        events=Page[TimelineEvent](
+            items=tuple(timeline[:1000]), next_cursor="1000", total_estimate=DETAIL_EVENTS
+        ),
+        summary=events.summaries[session] if "summary" in carried else None,
+        problems=events.problems[session] if "problems" in carried else None,
+        features=_page(hubs.features[features]),
+        capabilities=CAPABILITIES,
+    )
