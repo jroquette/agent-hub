@@ -106,7 +106,8 @@ Rules:
   must derive it to bound the payload. The shell's badge count is the one value moved to the server: the shell would
   otherwise load every feature and live session on every screen. The shell read keeps the feature list behind that
   count for 30 s (the Features list's own refresh), so its 5 s poll re-reads the live tiles but not every feature
-  folder; the app's own writes of feature records forget that list, and a `make perf` route row measures it.
+  folder; the app's own writes of feature records, and registering or removing a hub through the app, forget that
+  list, and a `make perf` route row measures it.
 - **Access.** Each part keeps its resource's access rule. The agent-session parts (the agent sessions and the driver
   capabilities) are filled only for a request that passes the agent-session read checks of
   `agent_hub/api/session_access.py` (sessions on, the launch cookie, this server's `Origin` and a `Sec-Fetch-Site` of
@@ -166,7 +167,7 @@ Rules:
   every 5 s, while the list refetches every 30 s and right after a feature's tickets are read again: after a change
   the app did not write (a feature folder edited outside the app, a ticket snapshot refreshed), the badge and the list
   can disagree for up to about 35 s. The app's own writes of feature records (a change-request decision, an owner
-  sign-off) forget the kept list, so the next poll counts them.
+  sign-off) and registering or removing a hub through the app forget the kept list, so the next poll counts them.
 - Bad: the web cache keys must match the components' keys exactly. A mismatch shows as an extra request in the
   page-call tests (`calls()` in `apps/web/src/testing/builders.ts`). The app's early shell read is asked under the
   shell's key, so that key must match too; an `App`-level count checks it.
