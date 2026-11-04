@@ -348,6 +348,85 @@ describe("DiscussPanel", () => {
     expect(JSON.parse(await sent.clone().text())).toEqual({ text: "And add a check after it" });
   });
 
+  it("AC-681.9 AC-681.1 starts with the effort picked in the model menu and Ultracode once switched on", async () => {
+    const view = renderPanel();
+    await userEvent.click(screen.getByRole("button", { name: "point" }));
+    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+    await waitFor(() => {
+      expect(box).toBeEnabled();
+    });
+    const pill = screen.getByRole("button", { name: /^Model and effort/ });
+
+    await userEvent.click(pill);
+    await userEvent.click(screen.getByRole("menuitem", { name: /Effort/ }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: /^High/ }));
+    await userEvent.click(pill);
+    await userEvent.click(screen.getByRole("menuitem", { name: /Effort/ }));
+    const toggle = screen.getByRole("menuitemcheckbox", { name: "Ultracode" });
+    expect(toggle).not.toBeChecked();
+    await userEvent.click(toggle);
+    await userEvent.keyboard("{Escape}{Escape}");
+    expect(pill).toHaveAccessibleName(/, High, Ultracode$/);
+    await userEvent.type(box, "Is this still right?{Enter}");
+
+    const created = await waitFor(() => {
+      const found = view.requests.find(
+        (r) => r.method === "POST" && new URL(r.url).pathname === "/api/v1/agent-sessions",
+      );
+      if (!found) throw new Error("no POST");
+      return found;
+    });
+    const body = JSON.parse(await created.clone().text()) as Record<string, unknown>;
+    expect(body).toMatchObject({ effort: "high", ultracode: true });
+  });
+
+  it("AC-681.9 AC-681.1 starts a screen's ask with the effort remembered in this browser and Ultracode off, the menu untouched", async () => {
+    window.localStorage.setItem("ah.session.effort", "xhigh");
+    function Asker() {
+      useDiscussTarget(feature);
+      const { ask } = useDiscuss();
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              ask("Turn this description into blocks");
+            }}
+          >
+            ask
+          </button>
+          <DiscussPanel />
+        </>
+      );
+    }
+    const view = renderWithApi(
+      <DiscussProvider>
+        <Asker />
+      </DiscussProvider>,
+      {
+        routes: {
+          "/api/v1/agent-sessions/capabilities": aCapabilities(),
+          "/api/v1/agent-sessions/workdirs": { items: [aWorkdir()], warnings: [] },
+          "POST /api/v1/agent-sessions": anAgentSession({ id: ID, status: "running" }),
+          [SESSION]: anAgentSession({ id: ID, status: "idle", last_seq: 0 }),
+          [`${SESSION}/events`]: { items: [], next_after: null },
+        },
+      },
+    );
+    await userEvent.click(screen.getByRole("button", { name: "ask" }));
+
+    const created = await waitFor(() => {
+      const found = view.requests.find(
+        (r) => r.method === "POST" && new URL(r.url).pathname === "/api/v1/agent-sessions",
+      );
+      if (!found) throw new Error("no POST");
+      return found;
+    });
+    const body = JSON.parse(await created.clone().text()) as Record<string, unknown>;
+    expect(body.effort).toBe("xhigh");
+    expect(body.ultracode).toBeUndefined();
+  });
+
   it("offers no starters when the target has none", async () => {
     window.localStorage.setItem("ah.discuss.open", "1");
     renderPanel();

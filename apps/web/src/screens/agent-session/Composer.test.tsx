@@ -137,14 +137,84 @@ describe("Composer (composer)", () => {
     expect(within(mode).getByRole("option", { name: "Auto" })).toBeDisabled();
   });
 
-  it("posts a model change and keeps a custom current model in the list", async () => {
-    const { props } = open({ model: "claude-opus-4-1" });
-    const model = screen.getByRole("combobox", { name: "Model" });
+  it("AC-681.4 posts a model change and keeps a custom current model in the list", async () => {
+    const { props } = open({ model: "custom-model" });
+    const pill = screen.getByRole("button", { name: /^Model and effort/ });
 
-    expect(model).toHaveValue("claude-opus-4-1");
-    await userEvent.selectOptions(model, "haiku");
+    expect(pill).toHaveTextContent("custom-model");
+    await userEvent.click(pill);
+    expect(screen.getByRole("menuitemradio", { name: "custom-model" })).toBeChecked();
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "Haiku" }));
 
     expect(props.onSettings).toHaveBeenCalledWith({ model: "haiku" });
+  });
+
+  it("AC-681.4 shows a resolved model on its family's row and leaves that row alone when picked", async () => {
+    const { props } = open({ model: "claude-opus-5-5" });
+    const pill = screen.getByRole("button", { name: /^Model and effort/ });
+
+    expect(pill).toHaveTextContent("Opus 5.5");
+    await userEvent.click(pill);
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "Opus 5.5" }));
+
+    expect(props.onSettings).not.toHaveBeenCalled();
+  });
+
+  it("AC-681.4 posts an effort change and shows the level, warning at Max", async () => {
+    window.localStorage.removeItem("ah.session.effort");
+    const { props } = open({ effort: "medium" });
+    await userEvent.click(screen.getByRole("button", { name: /^Model and effort/ }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /Effort/ }));
+    expect(screen.getByRole("menuitemradio", { name: /^Medium/ })).toBeChecked();
+    expect(screen.getByRole("menuitemradio", { name: /^Max/ })).toHaveTextContent(
+      "3.5× or more usage",
+    );
+
+    await userEvent.click(screen.getByRole("menuitemradio", { name: /^Max/ }));
+
+    expect(props.onSettings).toHaveBeenCalledWith({ effort: "max" });
+    window.localStorage.removeItem("ah.session.effort");
+  });
+
+  it("AC-681.9 toggles Ultracode from the effort menu, which stays open", async () => {
+    const { props } = open({ ultracode: true });
+    const pill = screen.getByRole("button", { name: /^Model and effort/ });
+    expect(pill).toHaveTextContent("Ultracode");
+    await userEvent.click(pill);
+    await userEvent.click(screen.getByRole("menuitem", { name: /Effort/ }));
+    const toggle = screen.getByRole("menuitemcheckbox", { name: "Ultracode" });
+    expect(toggle).toBeChecked();
+
+    await userEvent.click(toggle);
+
+    expect(props.onSettings).toHaveBeenCalledWith({ ultracode: false });
+    expect(screen.getByRole("menuitemcheckbox", { name: "Ultracode" })).toBeInTheDocument();
+  });
+
+  it("AC-681.6 opens the menu on the body, so no parent can clip or move it", async () => {
+    open();
+    await userEvent.click(screen.getByRole("button", { name: /^Model and effort/ }));
+
+    const menu = screen.getByRole("menu", { name: "Model and effort" });
+    expect(menu.closest("form")).toBeNull();
+    expect(menu).toHaveClass("ah-pop", "as-model-pop");
+  });
+
+  it("AC-681.4 walks the effort levels by keyboard and closes one menu per Esc", async () => {
+    open({ effort: "low" });
+    await userEvent.click(screen.getByRole("button", { name: /^Model and effort/ }));
+    screen.getByRole("menuitem", { name: /Effort/ }).focus();
+
+    await userEvent.keyboard("{ArrowRight}");
+    expect(screen.getByRole("menuitemradio", { name: /^Low/ })).toHaveFocus();
+    await userEvent.keyboard("{ArrowDown}");
+    expect(screen.getByRole("menuitemradio", { name: /^Medium/ })).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByRole("menuitem", { name: /Effort/ })).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.getByRole("button", { name: /^Model and effort/ })).toHaveFocus();
   });
 
   it("disables sending and settings when the session has ended", () => {
@@ -507,7 +577,7 @@ describe("Composer (images)", () => {
     open({ modeLocked: true });
 
     expect(screen.queryByRole("combobox", { name: "Mode" })).toBeNull();
-    expect(screen.getByRole("combobox", { name: "Model" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Model and effort/ })).toBeInTheDocument();
   });
 });
 
@@ -535,9 +605,9 @@ describe("Composer (the floating card, AGH-422)", () => {
   it("AC-422.11 sizes the mode and model pickers to their value", () => {
     open({ mode: "acceptEdits", model: "opus" });
     const mode = screen.getByRole("combobox", { name: "Mode" });
-    const model = screen.getByRole("combobox", { name: "Model" });
+    const model = screen.getByRole("button", { name: /^Model and effort/ });
     expect(mode.closest("label")?.querySelector(".as-pill-value")).toHaveTextContent(/edits/i);
-    expect(model.closest("label")?.querySelector(".as-pill-value")).toHaveTextContent("opus");
+    expect(model.querySelector(".as-pill-value")).toHaveTextContent("Opus");
   });
 });
 

@@ -18,6 +18,7 @@ import { ApiProblem, apiPost } from "../lib/api";
 import { captureScreen } from "../lib/screenCapture";
 import type { MessageFile } from "../lib/messageFile";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "../screens/agent-session/Composer";
+import { rememberedEffort } from "../screens/agent-session/effort";
 import { DiscussChat } from "../screens/agent-session/DiscussChat";
 import {
   DRAWER_MIN,
@@ -42,7 +43,7 @@ import {
 } from "./discussSession";
 import { readScreenText } from "./screenContext";
 
-const DEFAULT_MODELS = ["default", "opus", "sonnet", "haiku"];
+const DEFAULT_MODELS = ["default", "opus", "fable", "sonnet", "haiku"];
 /** The width the owner chose for the panel, kept in this browser. */
 export const DISCUSS_WIDTH_KEY = "ah.discuss.width";
 /** Docked from this viewport width; below it the panel lays over the page. */
@@ -412,6 +413,8 @@ function StartDiscussion({
   } = useStartDiscussion(target.project);
   const [mode, setMode] = useState<PermissionMode>("default");
   const [model, setModel] = useState<string | null>(null);
+  const [effort, setEffort] = useState(rememberedEffort);
+  const [ultracode, setUltracode] = useState(false);
   // A screen's ask with no conversation yet starts one with that message.
   const { outbox, takeOutbox } = useDiscuss();
   useEffect(() => {
@@ -426,6 +429,8 @@ function StartDiscussion({
       capture: null,
       mode,
       model,
+      effort,
+      ultracode,
     }).then((id) => {
       if (id) onStarted(id);
     });
@@ -440,6 +445,8 @@ function StartDiscussion({
     references,
     mode,
     model,
+    effort,
+    ultracode,
     onStarted,
   ]);
 
@@ -470,6 +477,8 @@ function StartDiscussion({
       capture: screen?.screenshot,
       mode,
       model,
+      effort,
+      ultracode,
     });
     if (id) onStarted(id);
   };
@@ -522,11 +531,15 @@ function StartDiscussion({
             mode={mode}
             model={model}
             models={capabilities.data?.models ?? DEFAULT_MODELS}
+            effort={effort}
+            ultracode={ultracode}
             onSend={start}
             onInterrupt={() => undefined}
             onSettings={(change) => {
               if (change.mode) setMode(change.mode);
               if (change.model) setModel(change.model);
+              if (change.effort) setEffort(change.effort);
+              if (change.ultracode !== undefined) setUltracode(change.ultracode);
               return undefined;
             }}
             maxBytes={DEFAULT_MESSAGE_MAX_BYTES}

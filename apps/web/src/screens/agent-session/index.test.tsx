@@ -289,6 +289,41 @@ describe("AgentSessionScreen (transcript)", () => {
     });
   });
 
+  it("AC-681.5 resume: Fork… keeps the session's effort and Ultracode in New session", async () => {
+    window.localStorage.setItem("ah.session.effort", "low");
+    const NEXT = anId(2, "0192a5e5");
+    const view = renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "failed",
+          end_reason: "failed",
+          effort: "high",
+          ultracode: true,
+        }),
+        "POST /api/v1/agent-sessions": anAgentSession({ id: NEXT, status: "idle" }),
+        [`/api/v1/agent-sessions/${NEXT}`]: anAgentSession({ id: NEXT, status: "idle" }),
+        [`/api/v1/agent-sessions/${NEXT}/events`]: { items: [], next_after: null },
+      }),
+    );
+    await screen.findByText("Starting.");
+
+    await openSessionMenu();
+    await userEvent.click(await screen.findByRole("button", { name: "Fork…" }));
+    const dialog = screen.getByRole("dialog", { name: "Fork session" });
+    expect(within(dialog).getByRole("button", { name: /^Model and effort/ })).toHaveAccessibleName(
+      /, High, Ultracode$/,
+    );
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    await waitFor(() => {
+      expect(view.router.state.location.pathname).toBe(`/agent-sessions/${NEXT}`);
+    });
+    const create = view.requests.find(
+      (r) => r.method === "POST" && new URL(r.url).pathname === "/api/v1/agent-sessions",
+    );
+    expect(await bodyOf(create)).toMatchObject({ effort: "high", ultracode: true, fork: true });
+  });
+
   it("resume: a live, cloud or log-full session, or a machine that cannot start one, offers no Fork…", async () => {
     for (const [session, caps] of [
       [anAgentSession({ status: "idle" }), aCapabilities()],
@@ -766,6 +801,37 @@ describe("AgentSessionScreen (composer)", () => {
     expect(screen.queryByRole("button", { name: "Attach a file" })).toBeNull();
   });
 
+  it("AC-681.4 AC-681.9 shows the session's effort and Ultracode on the model pill and in its menu", async () => {
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({ status: "idle", last_seq: 3, effort: "high", ultracode: true }),
+      }),
+    );
+    await screen.findByText("Starting.");
+    const pill = screen.getByRole("button", { name: /^Model and effort/ });
+
+    expect(pill).toHaveAccessibleName(/, High, Ultracode$/);
+    expect(pill).toHaveTextContent("High");
+    await userEvent.click(pill);
+    await userEvent.click(screen.getByRole("menuitem", { name: /Effort/ }));
+
+    expect(screen.getByRole("menuitemradio", { name: /^High/ })).toBeChecked();
+    expect(screen.getByRole("menuitemcheckbox", { name: "Ultracode" })).toBeChecked();
+  });
+
+  it("AC-681.10 lists Fable in the model menu when the capabilities cannot be read", async () => {
+    renderChat(
+      routes({
+        "/api/v1/agent-sessions/capabilities": aProblem({ status: 500, title: "Server error" }),
+      }),
+    );
+    await screen.findByText("Starting.");
+
+    await userEvent.click(screen.getByRole("button", { name: /^Model and effort/ }));
+
+    expect(screen.getByRole("menuitemradio", { name: "Fable" })).toBeInTheDocument();
+  });
+
   it("focuses the composer on open", async () => {
     renderChat();
 
@@ -833,14 +899,20 @@ describe("AgentSessionScreen (composer)", () => {
     await screen.findByText("Starting.");
 
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "Mode" }), "plan");
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Model" }), "opus");
+    await userEvent.click(screen.getByRole("button", { name: /^Model and effort/ }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "Opus" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Model and effort/ }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /Effort/ }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: /^High/ }));
 
     await waitFor(() => {
-      expect(posts(view.requests, "/settings")).toHaveLength(2);
+      expect(posts(view.requests, "/settings")).toHaveLength(3);
     });
-    const [mode, model] = posts(view.requests, "/settings");
+    const [mode, model, effort] = posts(view.requests, "/settings");
     expect(await bodyOf(mode)).toEqual({ mode: "plan" });
     expect(await bodyOf(model)).toEqual({ model: "opus" });
+    expect(await bodyOf(effort)).toEqual({ effort: "high" });
+    window.localStorage.removeItem("ah.session.effort");
   });
 
   it("shows the reconnect banner while the stream is lost and hides it once it resumes", async () => {
@@ -1811,7 +1883,7 @@ describe("AgentSessionScreen (session-name)", () => {
   it("hides the mode switch of a session held to a tool policy (scenario investigation)", async () => {
     renderChat(routes({ [SESSION]: anAgentSession({ status: "idle", restricted: true }) }));
 
-    expect(await screen.findByRole("combobox", { name: "Model" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^Model and effort/ })).toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Mode" })).toBeNull();
   });
 });
