@@ -1489,6 +1489,100 @@ describe("ProjectOverviewScreen", () => {
     15_000,
   );
 
+  // A return draws the newer of the two answers the cache holds: the last overview read, or the
+  // sessions route's, which Recent work moved to once the stream's counts changed.
+  it("draws the sessions route's newer Recent work at once on a return after the counts moved it there", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const later = aPage([acme99Session, ...weekSessions.items]);
+      let reads = 0;
+      const { queryClient, router, stream } = renderWithApi(
+        <GlobalStreamProvider project={null}>
+          <Routes>
+            <Route path="/projects/:project" element={<ProjectOverviewScreen />} />
+            <Route path="/tickets/:id" element={<h1>Ticket ACME-99</h1>} />
+          </Routes>
+        </GlobalStreamProvider>,
+        {
+          routes: {
+            ...routes,
+            [OVERVIEW_READ]: () => {
+              reads += 1;
+              return anOverviewRead(reads === 1 ? {} : { recent_sessions: later });
+            },
+            "/api/v1/sessions": later,
+          },
+          path: "/projects/agent-hub",
+          queryClient: createQueryClient(),
+        },
+      );
+      const first = await screen.findByRole("region", { name: "Recent work" });
+      expect(await within(first).findByText("ACME-7")).toBeInTheDocument();
+      expect(within(first).queryByText("ACME-99")).toBeNull();
+
+      // A second later the stream's counts change: Recent work reads the sessions route.
+      vi.setSystemTime(Date.now() + 1_000);
+      const global = stream("/api/v1/events/stream");
+      act(() => {
+        global.open();
+        global.emit("counts", aStreamCounts());
+      });
+      act(() => {
+        global.emit("counts", aStreamCounts({ live_sessions: 4 }));
+      });
+      await waitFor(() => {
+        expect(
+          within(screen.getByRole("region", { name: "Recent work" })).queryByText("ACME-99"),
+        ).toBeInTheDocument();
+      });
+      expect(queryClient.getQueryState(sharedSessionsKey)?.dataUpdatedAt).toBeGreaterThan(
+        queryClient.getQueryState(keptOverviewKey)?.dataUpdatedAt ?? Infinity,
+      );
+
+      // ACME-99 is opened, then Back 11 s later, the overview read held.
+      const read = holdRequests(OVERVIEW_READ);
+      const sessions = holdRequests("/api/v1/sessions");
+      await act(async () => {
+        await router.navigate("/tickets/ACME-99");
+      });
+      expect(await screen.findByText("Ticket ACME-99")).toBeInTheDocument();
+      vi.setSystemTime(Date.now() + 11_000);
+      await act(async () => {
+        await router.navigate(-1);
+      });
+      expect(router.state.location.pathname).toBe("/projects/agent-hub");
+
+      // At once, and past a skeleton's 300 ms delay: the route's rows, ACME-99 among them.
+      const back = screen.getByRole("region", { name: "Recent work" });
+      expect(within(back).queryByText("ACME-99")).toBeInTheDocument();
+      expect(back.querySelector("[aria-busy='true']")).toBeNull();
+      await waitFor(() => {
+        expect(read.asked()).toBe(1);
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 350));
+      });
+      const waiting = screen.getByRole("region", { name: "Recent work" });
+      expect(within(waiting).queryByText("ACME-99")).toBeInTheDocument();
+      expect(within(waiting).queryByText("ACME-7")).toBeInTheDocument();
+      expect(waiting.querySelector("[aria-busy='true']")).toBeNull();
+      // Both answers come from the cache: no sessions request.
+      expect(sessions.asked()).toBe(0);
+
+      // This visit's read then answers, and Recent work stays on it.
+      read.release();
+      await waitFor(() => {
+        expect(reads).toBe(2);
+      });
+      expect(
+        within(screen.getByRole("region", { name: "Recent work" })).queryByText("ACME-99"),
+      ).toBeInTheDocument();
+      expect(sessions.asked()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // The sessions route answers the opposite each time, so a screen that read it would show the
   // other state.
   it.each([
