@@ -11,6 +11,14 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- A driven session can run at an effort level (`low`, `medium`, `high`, `xhigh`, `max`): `POST /agent-sessions`
+  takes `effort`, `POST /agent-sessions/{id}/settings` changes it while the session runs, and a reopened session
+  keeps it. Without one, the CLI picks it, as before. The same goes for `ultracode` (off by default), and `fable`
+  joins the model aliases. Migrations 0011 and 0012 add `agent_sessions.effort` and `agent_sessions.ultracode`,
+  and skip a column the database already has (AGH-681).
+
 ## [0.30.0] - 2026-11-01
 
 ### Added
