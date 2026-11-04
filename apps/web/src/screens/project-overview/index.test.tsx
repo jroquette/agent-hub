@@ -5,6 +5,7 @@ import { Route, Routes } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
 import { apiKey, createQueryClient } from "../../lib/api";
+import { SCREEN_READ_TIMEOUT_MS } from "../../lib/screenRead";
 import { AppShell } from "../../shell/AppShell";
 import { GlobalStreamProvider } from "../../shell/GlobalStream";
 import { seriousViolations } from "../../testing/axe";
@@ -1409,6 +1410,84 @@ describe("ProjectOverviewScreen", () => {
       vi.useRealTimers();
     }
   });
+
+  // A return whose read gives nothing keeps the last visit's rows drawn until the sessions route
+  // has answered, then shows the route's.
+  it.each([
+    { how: "fails", second: aProblem({ status: 500, title: "Internal error" }) },
+    { how: "does not answer in time", second: "pending" },
+  ])(
+    "keeps the last visit's Recent work drawn on a return whose read $how, until the sessions route answers",
+    async ({ second }) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        let reads = 0;
+        const { router } = renderWithApi(
+          <Routes>
+            <Route path="/projects/:project" element={<ProjectOverviewScreen />} />
+            <Route path="/tickets/:id" element={<h1>Ticket ACME-7</h1>} />
+          </Routes>,
+          {
+            routes: {
+              ...routes,
+              [OVERVIEW_READ]: () => {
+                reads += 1;
+                return reads === 1 ? anOverviewRead() : second;
+              },
+              "/api/v1/sessions": aPage([acme99Session]),
+            },
+            path: "/projects/agent-hub",
+            queryClient: createQueryClient(),
+          },
+        );
+        const first = await screen.findByRole("region", { name: "Recent work" });
+        expect(await within(first).findByText("ACME-7")).toBeInTheDocument();
+
+        const sessions = holdRequests("/api/v1/sessions");
+        await act(async () => {
+          await router.navigate("/tickets/ACME-7");
+        });
+        expect(await screen.findByText("Ticket ACME-7")).toBeInTheDocument();
+        vi.setSystemTime(Date.now() + 11_000);
+        await act(async () => {
+          await router.navigate(-1);
+        });
+        expect(router.state.location.pathname).toBe("/projects/agent-hub");
+
+        // The return's read gave nothing, so Recent work asks its route, which is held.
+        await waitFor(
+          () => {
+            expect(sessions.asked()).toBe(1);
+          },
+          { timeout: SCREEN_READ_TIMEOUT_MS + 2_000 },
+        );
+        expect(reads).toBe(2);
+        // Past a skeleton's 300 ms delay: the last visit's rows in both columns, no skeleton.
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 350));
+        });
+        const waiting = screen.getByRole("region", { name: "Recent work" });
+        expect(within(waiting).queryByText("ACME-7")).toBeInTheDocument();
+        expect(within(waiting).queryByText("control-plane")).toBeInTheDocument();
+        expect(waiting.querySelector("[aria-busy='true']")).toBeNull();
+        expect(waiting.querySelector(".ah-skel")).toBeNull();
+
+        // Once the route answers, its rows replace them.
+        sessions.release();
+        await waitFor(() => {
+          expect(
+            within(screen.getByRole("region", { name: "Recent work" })).queryByText("ACME-99"),
+          ).toBeInTheDocument();
+        });
+        expect(
+          within(screen.getByRole("region", { name: "Recent work" })).queryByText("ACME-7"),
+        ).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+    15_000,
+  );
 
   // The sessions route answers the opposite each time, so a screen that read it would show the
   // other state.
