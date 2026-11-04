@@ -188,7 +188,8 @@ PR_BODY_PHRASES = (
     "Link every AC, decision or plan step that the body cites to its record in the hub",
     "`https://github.com/acme/demo-hub/blob/main/brain/features/<slug>/<file>#<section>`",
     "`git ls-tree origin/main -- brain/features/<slug>/<file>`",
-    "keep the PR a draft until the record's hub PR merges",
+    "A record reaches the hub's default branch through a hub PR when its decision closes",
+    "keep the PR a draft until it merges",
 )
 # Each step that writes a PR body points to the rule, on the line that holds its anchor.
 PR_BODY_STEPS = [
@@ -224,6 +225,27 @@ def test_points_pr_step_to_pr_body_rule_when_skills_rendered(
     assert len(lines) == 1, lines
     assert "`plain-language` skill's PR bodies rules" in lines[0]
     assert skill == "fix" or f"`{FEATURES_URL}/<slug>/`" in lines[0]
+
+
+def test_lands_records_on_hub_before_build_when_feature_rendered(demo_config: HubConfig) -> None:
+    text = flat(rendered_text(demo_config, "plugin/hub-workflow/skills/feature/SKILL.md"))
+    records = text[text.index("**Records PR**") : text.index("5. **Build**")]
+
+    assert "before any code PR cites them" in records
+    assert "hub branch `jdoe/<parent issue in lowercase>-<slug>-records`" in records
+    assert "wait for their OK" in records
+    assert "`gh pr create --base main --title" in records
+    assert "Build starts once the owner merged it" in records
+
+
+def test_checks_cited_records_on_hub_branch_when_implement_rendered(
+    demo_config: HubConfig,
+) -> None:
+    text = flat(rendered_text(demo_config, "plugin/hub-workflow/skills/implement/SKILL.md"))
+
+    assert "`git fetch origin main` (a call of its own)" in text
+    assert "`git ls-tree origin/main -- brain/features/<slug>/<file>`" in text
+    assert "open this PR with `--draft` only if they say so" in text
 
 
 @pytest.mark.parametrize(("skill", "anchor"), CITATIONS)

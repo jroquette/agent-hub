@@ -650,8 +650,11 @@ PROJECT_BRANCH_READERS = {
     f"{TEMPLATES}/scripts/retro_metrics.py.tmpl": 2,
     # Config.default_branch, and the project's branch in the protected set (also the root file's)
     f"{TEMPLATES}/plugin/hub-workflow/hooks/hubhooks.py.tmpl": 2,
-    # the hub branch a PR body's record links must be on (the PR bodies rule)
+    # the hub branch a PR body's record links must be on (the PR bodies rule), the branch the
+    # feature's records PR targets, and the one /implement checks the cited records on
     f"{TEMPLATES}/plugin/hub-workflow/skills/plain-language/SKILL.md.tmpl": 1,
+    f"{TEMPLATES}/plugin/hub-workflow/skills/feature/SKILL.md.tmpl": 1,
+    f"{TEMPLATES}/plugin/hub-workflow/skills/implement/SKILL.md.tmpl": 1,
 }
 
 

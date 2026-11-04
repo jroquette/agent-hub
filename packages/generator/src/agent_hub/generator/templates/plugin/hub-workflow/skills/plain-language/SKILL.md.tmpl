@@ -90,8 +90,9 @@ No placeholders, templates or sections that nobody will fill in. No process note
 agent decisions: they live in the hub's records.
 Link every AC, decision or plan step that the body cites to its record in the hub:
 `@@{hub_features_url}/<slug>/<file>#<section>`.
+A record reaches the hub's default branch through a hub PR when its decision closes, before the code PR.
 If `git ls-tree origin/@@{project_default_branch} -- brain/features/<slug>/<file>` in the hub prints nothing,
-the link will break. Tell the owner, and keep the PR a draft until the record's hub PR merges.
+that PR has not merged and the link will break. Tell the owner, and keep the PR a draft until it merges.
 
 ## Never drop
 

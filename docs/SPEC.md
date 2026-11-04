@@ -218,8 +218,10 @@ The PR bodies `hub run` and `hub step pr` write stay short: the issue, the featu
 changed for the user and cites no AC, decision or plan step id. The skills that write a PR body (`/implement`,
 `/feature`, `/fix`) follow the `plain-language` skill's PR bodies rules: the ticket link, what changed for the user,
 the checks with their results, what is left before merge; no placeholders or process notes; every cited AC, decision
-or plan step linked to its record in the hub, and the PR kept a draft while that record is not on the hub's default
-branch.
+or plan step linked to its record in the hub. So the records land first: once its spec, plan and tickets are
+approved, `/feature` opens a hub PR with `brain/features/<slug>/` (its Records PR), and Build starts after the owner
+merges it; a later amendment or plan change goes the same way. Before a code PR, `/implement` checks each cited record
+on the hub's default branch and, when one is missing, asks the owner, who may let the PR open as a draft.
 
 The `implement` run's hub writes are `hub step` writers too (two-level-flows P7): `ticket-brief --feature --ticket`,
 `preflight --feature --ticket --run JSON`, `change-request --feature --ticket --run-id --evidence --proposal
