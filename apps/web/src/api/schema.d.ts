@@ -3934,7 +3934,8 @@ export interface components {
      * FeatureDetail
      * @description A feature with its acceptance criteria rows, its records (D3) and every eval; ``plan``
      *     (None without ``plan.md``) and ``acceptance_eval`` (None before one exists), whose verdict is
-     *     the header's ``verdict``; ``change_requests`` by number; ``cost`` what its sessions cost
+     *     the header's ``verdict``; ``ux_designs`` the screens designed for it, by file name;
+     *     ``change_requests`` by number; ``cost`` what its sessions cost
      *     (None when the events are not read).
      */
     FeatureDetail: {
@@ -3989,6 +3990,11 @@ export interface components {
        */
       sources_missing: components["schemas"]["EventSource"][];
       tickets_source: components["schemas"]["TicketsSource"];
+      /**
+       * Ux Designs
+       * @default []
+       */
+      ux_designs: components["schemas"]["UxDesignView"][];
       verdict: components["schemas"]["Verdict"] | null;
       /** Verdict Line */
       verdict_line: string | null;
@@ -8506,6 +8512,25 @@ export interface components {
     };
     /** Format: date-time */
     UtcTimestamp: string;
+    /**
+     * UxDesignView
+     * @description One ``ux-*.md`` of a feature folder, read from its head: ``path`` is relative to the hub's
+     *     ``brain/`` (the brain note route reads it), ``screen`` and ``change`` (``new`` or ``change``)
+     *     come from its frontmatter or else its file name, ``title`` is its first ``# `` heading, and
+     *     ``approved`` says its frontmatter reads ``status: approved``.
+     */
+    UxDesignView: {
+      /** Approved */
+      approved: boolean;
+      /** Change */
+      change: string;
+      /** Path */
+      path: string;
+      /** Screen */
+      screen: string;
+      /** Title */
+      title: string;
+    };
     /**
      * ValidateRequest
      * @description A scenario document to check: its pack and the document as the builder holds it.

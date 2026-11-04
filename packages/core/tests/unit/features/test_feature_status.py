@@ -606,6 +606,31 @@ def test_detail_has_no_plan_when_plan_absent() -> None:
     assert detail.acceptance_eval.delivery == "legacy"
 
 
+def test_detail_lists_ux_designs_when_folder_has_them() -> None:
+    approved = (
+        b"---\ntype: ux-design\nstatus: approved\nchange: change\nscreen: sidebar\n---\n# Sidebar\n"
+    )
+    folder = FeatureFolder(
+        slug="demo-feature",
+        files=("spec.md", "features.json"),
+        features_json=a_record(),
+        spec_head=SPEC,
+        ux_designs=(
+            RecordHead(name="ux-change-sidebar.md", head=approved, problem=None),
+            RecordHead(name="ux-new-orders.md", head=b"No frontmatter here.\n", problem=None),
+            RecordHead(name="ux-new-link.md", head=None, problem="a link, not a regular file"),
+        ),
+    )
+
+    detail = feature_detail(folder, project="demo", now=READ_TIME)
+
+    assert [(d.path, d.screen, d.change, d.title, d.approved) for d in detail.ux_designs] == [
+        ("features/demo-feature/ux-change-sidebar.md", "sidebar", "change", "Sidebar", True),
+        ("features/demo-feature/ux-new-orders.md", "orders", "new", "orders", False),
+        ("features/demo-feature/ux-new-link.md", "link", "new", "link", False),
+    ]
+
+
 # two-level-flows P1 (AGH-323): a plan over the cap is a record problem, not a page failure.
 def test_plan_too_large_is_a_record_problem_when_over_cap() -> None:
     folder = FeatureFolder(

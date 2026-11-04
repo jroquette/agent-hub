@@ -1,0 +1,53 @@
+/* The Designs tab: the designed screens on the left, the chosen design beside them. */
+.ah-designs {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+}
+.ah-designs-nav {
+  position: sticky;
+  top: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ah-designs-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ah-designs-item:hover {
+  background: var(--surface-hover, var(--code-bg));
+}
+.ah-designs-item[aria-current="true"] {
+  border-color: var(--border);
+  background: var(--code-bg);
+}
+.ah-designs-item-title {
+  font-weight: 500;
+}
+/* A wireframe is the point of a design: give its block room and a paper-like frame. */
+.ah-designs-body .ah-md-code {
+  border: 1px solid var(--border);
+}
+.ah-designs-body .ah-md-pre {
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+@media (max-width: 900px) {
+  .ah-designs {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ah-designs-nav {
+    position: static;
+  }
+}

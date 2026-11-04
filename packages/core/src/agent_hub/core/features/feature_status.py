@@ -53,6 +53,7 @@ from agent_hub.core.features.feature_view import (
     OwnerWaitView,
     PlanView,
     TicketsSource,
+    UxDesignView,
     Verdict,
     WaitingOnOwner,
 )
@@ -375,6 +376,7 @@ def feature_detail(
         sources_missing=(EventSource.GITHUB,),
         ac_rows=rows,
         records=_records(folder),
+        ux_designs=_ux_views(folder),
         evals=parts.evals,
         plan=plan_view(folder),
         acceptance_eval=(
@@ -413,6 +415,39 @@ def _ux_designs(folder: FeatureFolder) -> tuple[tuple[bool, ...], str | None]:
     return tuple(
         _frontmatter(design.head).get("status") == "approved" for design in folder.ux_designs
     ), None
+
+
+def _ux_views(folder: FeatureFolder) -> tuple[UxDesignView, ...]:
+    """Each UX design the folder holds, named from its frontmatter, else from its file name
+    (``ux-<new|change>-<screen>.md``); one whose head could not be read still shows, unapproved."""
+    views: list[UxDesignView] = []
+    for design in folder.ux_designs:
+        front = _frontmatter(design.head)
+        stem = design.name.removesuffix(".md").removeprefix(UX_PREFIX)
+        named_change, _, named_screen = stem.partition("-")
+        if named_change not in ("new", "change"):
+            named_change, named_screen = "new", stem
+        screen = front.get("screen") or named_screen
+        views.append(
+            UxDesignView(
+                path=f"{FEATURES_FOLDER}/{folder.slug}/{design.name}",
+                screen=screen,
+                change=front.get("change") or named_change,
+                title=_first_heading(design.head) or screen,
+                approved=front.get("status") == "approved",
+            )
+        )
+    return tuple(views)
+
+
+def _first_heading(head: bytes | None) -> str | None:
+    """The text of the first ``# `` heading of a head, None without one."""
+    if head is None:
+        return None
+    for line in head.decode("utf-8", "replace").splitlines():
+        if line.startswith("# "):
+            return line[2:].strip() or None
+    return None
 
 
 def _records(folder: FeatureFolder) -> tuple[FeatureRecord, ...]:

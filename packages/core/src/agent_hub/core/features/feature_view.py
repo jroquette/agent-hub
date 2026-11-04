@@ -157,6 +157,19 @@ class FeatureRecord(ViewModel):
     present: bool
 
 
+class UxDesignView(ViewModel):
+    """One ``ux-*.md`` of a feature folder, read from its head: ``path`` is relative to the hub's
+    ``brain/`` (the brain note route reads it), ``screen`` and ``change`` (``new`` or ``change``)
+    come from its frontmatter or else its file name, ``title`` is its first ``# `` heading, and
+    ``approved`` says its frontmatter reads ``status: approved``."""
+
+    path: str
+    screen: str
+    change: str
+    title: str
+    approved: bool
+
+
 class AmendmentView(ViewModel):
     """One ``A<n> (<date>, <who>): <title>`` entry of the plan's ``## Amendments``; ``anchor`` is
     the text of that ``## Amendments…`` heading, which the Plan record view links to."""
@@ -253,11 +266,13 @@ class FeatureCost(ViewModel):
 class FeatureDetail(FeatureView):
     """A feature with its acceptance criteria rows, its records (D3) and every eval; ``plan``
     (None without ``plan.md``) and ``acceptance_eval`` (None before one exists), whose verdict is
-    the header's ``verdict``; ``change_requests`` by number; ``cost`` what its sessions cost
+    the header's ``verdict``; ``ux_designs`` the screens designed for it, by file name;
+    ``change_requests`` by number; ``cost`` what its sessions cost
     (None when the events are not read)."""
 
     ac_rows: tuple[AcRow, ...] = ()
     records: tuple[FeatureRecord, ...] = ()
+    ux_designs: tuple[UxDesignView, ...] = ()
     evals: tuple[EvalRecord, ...] = ()
     plan: PlanView | None = None
     acceptance_eval: AcceptanceEval | None = None

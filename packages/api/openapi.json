@@ -3946,7 +3946,7 @@
       },
       "FeatureDetail": {
         "additionalProperties": false,
-        "description": "A feature with its acceptance criteria rows, its records (D3) and every eval; ``plan``\n(None without ``plan.md``) and ``acceptance_eval`` (None before one exists), whose verdict is\nthe header's ``verdict``; ``change_requests`` by number; ``cost`` what its sessions cost\n(None when the events are not read).",
+        "description": "A feature with its acceptance criteria rows, its records (D3) and every eval; ``plan``\n(None without ``plan.md``) and ``acceptance_eval`` (None before one exists), whose verdict is\nthe header's ``verdict``; ``ux_designs`` the screens designed for it, by file name;\n``change_requests`` by number; ``cost`` what its sessions cost\n(None when the events are not read).",
         "properties": {
           "ac_rows": {
             "default": [],
@@ -4097,6 +4097,14 @@
           },
           "tickets_source": {
             "$ref": "#/components/schemas/TicketsSource"
+          },
+          "ux_designs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/UxDesignView"
+            },
+            "title": "Ux Designs",
+            "type": "array"
           },
           "verdict": {
             "anyOf": [
@@ -16736,6 +16744,41 @@
       "UtcTimestamp": {
         "format": "date-time",
         "type": "string"
+      },
+      "UxDesignView": {
+        "additionalProperties": false,
+        "description": "One ``ux-*.md`` of a feature folder, read from its head: ``path`` is relative to the hub's\n``brain/`` (the brain note route reads it), ``screen`` and ``change`` (``new`` or ``change``)\ncome from its frontmatter or else its file name, ``title`` is its first ``# `` heading, and\n``approved`` says its frontmatter reads ``status: approved``.",
+        "properties": {
+          "approved": {
+            "title": "Approved",
+            "type": "boolean"
+          },
+          "change": {
+            "title": "Change",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "screen": {
+            "title": "Screen",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "screen",
+          "change",
+          "title",
+          "approved"
+        ],
+        "title": "UxDesignView",
+        "type": "object"
       },
       "ValidateRequest": {
         "additionalProperties": false,
