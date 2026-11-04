@@ -133,7 +133,8 @@ describe("Feature detail UX mockups", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Comment on a point" }));
     const layer = document.querySelector(".ah-mockup-layer");
     expect(layer).not.toBeNull();
-    await userEvent.click(layer!);
+    if (!layer) return;
+    await userEvent.click(layer);
 
     expect(await screen.findByTitle("Pin 1")).toHaveTextContent("1");
     expect(screen.getByText("1 pin in your next Discuss message")).toBeVisible();
