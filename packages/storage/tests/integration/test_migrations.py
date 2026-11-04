@@ -660,9 +660,7 @@ def _add_playground_columns(db_path: Path, statements: list[str]) -> None:
 
 
 PLAYGROUND_EFFORT = "ALTER TABLE agent_sessions ADD COLUMN effort VARCHAR"
-PLAYGROUND_ULTRACODE = (
-    "ALTER TABLE agent_sessions ADD COLUMN ultracode BOOLEAN DEFAULT (0) NOT NULL"
-)
+PLAYGROUND_ULTRACODE = "ALTER TABLE agent_sessions ADD COLUMN ultracode BOOLEAN DEFAULT 0 NOT NULL"
 
 
 # AC-681.8
@@ -691,20 +689,21 @@ def test_adds_each_column_once_when_effort_and_ultracode_already_exist(tmp_path:
     columns = _session_columns(db_path)
     assert _current_revision(db_path) == HEAD
     assert (columns.count("effort"), columns.count("ultracode")) == (1, 1)
-    check(config)  # the skipped columns match the metadata
+    check(config)  # the skipped columns keep the metadata's types and nullability
 
 
 # AC-681.8
-def test_keeps_schema_when_database_at_0012_upgrades_to_head(tmp_path: Path) -> None:
+def test_adds_each_column_once_when_ultracode_already_exists(tmp_path: Path) -> None:
     db_path = tmp_path / "agent-hub.db"
     config = alembic_config(f"sqlite:///{db_path}")
-    upgrade(config, "0012")
-    before = _schema(db_path, "agent_sessions")
+    upgrade(config, "0010")
+    _add_playground_columns(db_path, [PLAYGROUND_ULTRACODE])
 
     upgrade(config, "head")
 
-    assert _current_revision(db_path) == "0012"
-    assert _schema(db_path, "agent_sessions") == before
+    columns = _session_columns(db_path)
+    assert _current_revision(db_path) == HEAD
+    assert (columns.count("effort"), columns.count("ultracode")) == (1, 1)
 
 
 # AC-681.3, AC-681.9

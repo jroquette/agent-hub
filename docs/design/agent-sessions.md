@@ -912,8 +912,8 @@ the menus are the web app's. AC-681.9 and AC-681.10 are for the owner to confirm
   model, the session stores the effort and a `settings` record logs it; effort alone is a valid body, an empty one is
   not. Tests: `test_passes_effort_to_driver_and_stores_it_when_settings_change`,
   `test_logs_settings_once_when_effort_and_ultracode_changed_together` (core),
-  `test_accepts_settings_when_only_effort_or_ultracode_given`, `test_refuses_settings_when_empty_or_bypass`,
-  `test_answers_success_when_flag_settings_applied` (stub CLI),
+  `test_accepts_settings_when_only_effort_or_ultracode_given`, `test_refuses_settings_when_empty_or_bypass`
+  (`test_agent_session.py`), `test_answers_success_when_flag_settings_applied` (stub CLI),
   `test_sends_effort_and_ultracode_to_cli_when_started_and_changed`,
   `test_changes_effort_and_ultracode_when_settings_posted` (api).
 - **AC-681.3 Effort kept.** Given a session set to an effort, when it ends and a message reopens it, then `claude`
@@ -922,12 +922,12 @@ the menus are the web app's. AC-681.9 and AC-681.10 are for the owner to confirm
   `test_keeps_effort_and_ultracode_when_created_and_updated` (store contract),
   `test_keeps_sessions_when_effort_and_ultracode_added_and_dropped` (migrations).
 - **AC-681.8 Upgrade over the playground's columns.** Given a database whose `agent_sessions` already has `effort`, or
-  `effort` and `ultracode`, before `alembic_version` reaches 0011 (made by the playground's copies of the
-  migrations), when it upgrades to head, then each migration skips a column that exists and each column is there
-  once; a database at 0012 stays as it is; downgrading drops both. Offline (`--sql`) the columns are always added.
+  `ultracode`, or both, before `alembic_version` reaches 0011 (made by the playground's copies of the migrations),
+  when it upgrades to head, then each migration skips a column that exists and each column is there once; a
+  database the playground took to 0012 is already at head (same ids) and stays as it is; downgrading drops both. Offline (`--sql`) the columns are always added.
   Tests: `test_adds_each_column_once_when_effort_already_exists`,
   `test_adds_each_column_once_when_effort_and_ultracode_already_exist`,
-  `test_keeps_schema_when_database_at_0012_upgrades_to_head`,
+  `test_adds_each_column_once_when_ultracode_already_exists`,
   `test_keeps_sessions_when_effort_and_ultracode_added_and_dropped` (`test_migrations.py`).
 - **AC-681.9 Ultracode (owner to confirm).** Given `POST ""` with `ultracode: true`, then `claude` starts with
   `--settings {"ultracode": true}` (the CLI has no flag for it); given `POST /{id}/settings {ultracode}`, then the
