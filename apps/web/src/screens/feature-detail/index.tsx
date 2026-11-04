@@ -32,6 +32,7 @@ import { FeatureNameField, RenameButton, useFeatureNames } from "../features/nam
 import { PHASES, VERDICT_STATUS } from "../features/parts";
 import { ApproveRecord, sessionName } from "./ApproveRecord";
 import { DesignsTab, pickDesign } from "./DesignsTab";
+import { MOCKUP_WIDTH } from "./MockupView";
 import { QuestionsLink } from "./QuestionsBlock";
 import { NoteView } from "../brain/NoteView";
 import { NotFoundBody } from "../not-found";
@@ -313,10 +314,11 @@ function featureDiscussTarget(
   tab: string,
   evalPath: string | undefined,
   owner: AgentSession | null,
-  designPath?: string  ,
+  designPath?: string,
 ): DiscussTarget | null {
   if (!detail) return null;
   const folder = `brain/features/${detail.slug}`;
+  const design = designPath ? detail.ux_designs.find((d) => d.path === designPath) : undefined;
   const record = detail.records.find((r) => r.name === RECORDS[tab]?.name && r.present);
   const path = record
     ? `brain/${record.path}`
@@ -343,7 +345,7 @@ function featureDiscussTarget(
     path,
     openOnArrive: true,
     ownerSession: owner ? { id: owner.id, name: sessionName(owner) } : null,
-    starters: designPath
+    starters: design
       ? DESIGN_STARTERS
       : record
         ? [
@@ -362,6 +364,9 @@ function featureDiscussTarget(
         : "",
       detail.issues.length ? `Its Linear tickets: ${ticketIds(detail.issues).join(", ")}.` : "",
       `I am looking at its ${TAB_LABEL[tab] ?? tab} tab.`,
+      design?.mockup
+        ? `The design on screen has a visual mockup, \`${folder}/${design.mockup}\` (static HTML drawn ${String(MOCKUP_WIDTH)} px wide, no scripts, no external requests): my pins name points on it in its pixels. When I ask for a change to this screen, change both the written design and its mockup, and keep them saying the same thing.`
+        : "",
       "When a change touches several records (spec, plan, criteria), keep them consistent with each other.",
     ]
       .filter(Boolean)
@@ -815,6 +820,7 @@ export function FeatureDetailScreen() {
     body = (
       <DesignsTab
         project={detail.project}
+        slug={detail.slug}
         designs={detail.ux_designs}
         selected={selectedDesign}
         onSelect={(screen) => {

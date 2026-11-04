@@ -1,9 +1,10 @@
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
-import { EmptyState, Icon, StatusBadge } from "../../components";
+import { EmptyState, Icon, SegmentedControl, StatusBadge } from "../../components";
 import { brainRoute } from "../../lib/brainLinks";
 import { NoteView } from "../brain/NoteView";
+import { MockupView } from "./MockupView";
 import "./designs.css";
 
 type UxDesign = components["schemas"]["UxDesignView"];
@@ -28,15 +29,30 @@ function shortTitle(design: UxDesign): string {
  */
 export function DesignsTab({
   project,
+  slug,
   designs,
   selected,
   onSelect,
 }: {
   project: string;
+  slug: string;
   designs: readonly UxDesign[];
   selected: UxDesign | null;
   onSelect: (screen: string) => void;
 }) {
+  const [params, setParams] = useSearchParams();
+  const view = params.get("view");
+  const setView = (id: string) => {
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        if (id === "spec") next.set("view", "spec");
+        else next.delete("view");
+        return next;
+      },
+      { replace: true },
+    );
+  };
   if (designs.length === 0 || !selected) {
     return (
       <div className="ah-card">
@@ -49,11 +65,15 @@ export function DesignsTab({
     );
   }
   const approved = designs.filter((d) => d.approved).length;
+  const mockup = selected.mockup ?? null;
+  // A design with a mockup opens on it; `?view=spec` shows the written design instead.
+  const showMockup = mockup !== null && view !== "spec";
+  const folder = selected.path.slice(0, selected.path.lastIndexOf("/") + 1);
   return (
     <div className="ah-stack" style={{ gap: 10 }}>
       <p className="ah-small ah-muted" style={{ margin: 0 }}>
-        {designs.length} screen{designs.length === 1 ? "" : "s"} · {approved} approved. Select any
-        part of a design to discuss it with Claude.
+        {designs.length} screen{designs.length === 1 ? "" : "s"} · {approved} approved. Pin any
+        point of a mockup, or select any text of a written design, to discuss it with Claude.
       </p>
       <div className="ah-designs">
         <nav className="ah-designs-nav" aria-label="Designed screens">
@@ -89,17 +109,51 @@ export function DesignsTab({
               quiet
             />
             <span className="ah-grow" />
+            {mockup !== null && (
+              <SegmentedControl
+                label="Show the design"
+                value={showMockup ? "mockup" : "spec"}
+                onChange={(id) => {
+                  setView(id);
+                }}
+                options={[
+                  {
+                    id: "mockup",
+                    label: "Mockup",
+                    icon: "layout-dashboard",
+                    title: "The screen drawn as a page",
+                  },
+                  {
+                    id: "spec",
+                    label: "Written design",
+                    icon: "file-text",
+                    title: "The design as the agents wrote it: layout, states, components, copy",
+                  },
+                ]}
+              />
+            )}
             <Link className="ah-small" to={brainRoute(project, selected.path)}>
               Open in Brain
             </Link>
           </div>
-          <NoteView
-            key={selected.path}
-            project={project}
-            path={selected.path}
-            missing={`No ${selected.path} yet.`}
-            foldFrontmatter={{}}
-          />
+          {showMockup ? (
+            <MockupView
+              key={mockup}
+              project={project}
+              slug={slug}
+              name={mockup}
+              source={`brain/${folder}${mockup}`}
+              screen={selected.screen}
+            />
+          ) : (
+            <NoteView
+              key={selected.path}
+              project={project}
+              path={selected.path}
+              missing={`No ${selected.path} yet.`}
+              foldFrontmatter={{}}
+            />
+          )}
         </div>
       </div>
     </div>

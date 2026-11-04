@@ -51,3 +51,41 @@
     position: static;
   }
 }
+/* The mockup: a page drawn at its desktop width, scaled into the column, with pins over it. */
+.ah-mockup {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--code-bg);
+}
+.ah-mockup-stage {
+  position: relative;
+  overflow: hidden;
+}
+.ah-mockup-stage iframe {
+  display: block;
+  border: 0;
+  background: #fff;
+  transform-origin: 0 0;
+}
+.ah-mockup-layer {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+  background: color-mix(in srgb, var(--accent, #3b82f6) 6%, transparent);
+}
+.ah-mockup-pin {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: var(--accent, #3b82f6);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  pointer-events: none;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 35%);
+}
