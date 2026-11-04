@@ -45,7 +45,7 @@ from agent_hub.core.knowledge.knowledge_index import (
 )
 from agent_hub.core.knowledge.search_query import fts5_match, snippet_line
 from agent_hub.storage.db import knowledge_documents, knowledge_links
-from agent_hub.storage.engine import BUSY_TIMEOUT_MS, create_sqlite_engine
+from agent_hub.storage.engine import BUSY_TIMEOUT_MS, create_sqlite_engine, dispose_when_dropped
 from agent_hub.storage.errors import (
     DatabaseAccessError,
     Fts5UnavailableError,
@@ -123,6 +123,7 @@ class SqliteKnowledgeIndex:
 
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
+        dispose_when_dropped(self, engine)
 
     def stored(self, hub: str) -> StoredIndex:
         """What the hub's rows remember, by path; ``version`` only when every row shares it."""

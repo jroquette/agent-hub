@@ -48,7 +48,7 @@ from agent_hub.core.agent_sessions.errors import AgentSessionNotFoundError, Stor
 from agent_hub.core.agent_sessions.records import LogRecord, RecordKind
 from agent_hub.core.agent_sessions.store import AgentSessionFields
 from agent_hub.storage.db import agent_session_records, agent_sessions
-from agent_hub.storage.engine import create_sqlite_engine
+from agent_hub.storage.engine import create_sqlite_engine, dispose_when_dropped
 from agent_hub.storage.errors import DatabaseAccessError, describe_database_error
 from agent_hub.storage.event_store import DatabaseBusyError
 from agent_hub.storage.migration import upgrade_to_head
@@ -63,6 +63,7 @@ class SqliteAgentSessionStore:
 
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
+        dispose_when_dropped(self, engine)
 
     def create(self, session: AgentSession) -> None:
         """Store a new session; a non-zero ``last_seq`` is refused, ``open_permission`` dropped."""

@@ -272,7 +272,8 @@ file is `--db PATH`, else the environment variable `AGENT_HUB_DB`, else `$XDG_DA
 when `XDG_DATA_HOME` is absolute), else `~/.local/share/agent-hub/agent-hub.db`, where `~` is `HOME` when it is
 non-empty and absolute, else the account's home from the password database; with neither, `hub collect` exits 1 asking
 for `--db` or `AGENT_HUB_DB` (`agent_hub.cli.database_path`). SQLite runs in WAL mode. Each store's engine keeps up to
-five idle connections, with no cap on open ones so a read never waits, and `hub web` closes its stores when it stops.
+five idle connections, with no cap on open ones so a read never waits, and `hub web` closes its stores when it stops. A
+store dropped without `close()` closes its idle connections at once (`dispose_when_dropped`).
 
 Phase 2 adds the read side and the live ingestion, all in core, with no I/O:
 

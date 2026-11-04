@@ -17,7 +17,7 @@ from agent_hub.core.events.event_query import EventPage, EventQuery
 from agent_hub.core.events.event_store import AppendResult
 from agent_hub.core.events.stored_event import StoredEvent
 from agent_hub.storage.db import events
-from agent_hub.storage.engine import create_sqlite_engine
+from agent_hub.storage.engine import create_sqlite_engine, dispose_when_dropped
 from agent_hub.storage.errors import DatabaseAccessError, describe_database_error
 from agent_hub.storage.migration import upgrade_to_head
 
@@ -46,6 +46,7 @@ class SqliteEventStore:
 
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
+        dispose_when_dropped(self, engine)
 
     def append(self, events: Sequence[Event]) -> AppendResult:
         """Append a batch all-or-nothing (see ``EventStore.append``)."""

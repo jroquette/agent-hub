@@ -11,6 +11,7 @@ never hold the write lock and, with WAL, never block writers.
 import random
 import sqlite3
 import time
+import weakref
 from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
@@ -60,6 +61,15 @@ def create_sqlite_engine(path: Path, *, busy_timeout_ms: int = BUSY_TIMEOUT_MS) 
     event.listen(engine, "connect", configure_connection)
     event.listen(engine, "begin", _begin_transaction)
     return engine
+
+
+def dispose_when_dropped(owner: object, engine: Engine) -> None:
+    """Close the idle connections ``engine`` keeps as soon as ``owner`` is freed.
+
+    An owner dropped without ``close()`` would leave them to the garbage collector, which
+    finalizes each one unclosed. A connection checked out at that moment is not closed.
+    """
+    weakref.finalize(owner, engine.dispose)
 
 
 class _StatementCursor(Protocol):
