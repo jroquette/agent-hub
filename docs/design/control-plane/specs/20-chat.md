@@ -200,6 +200,41 @@ to send show under the card only while it has focus. The card is reused by every
 Discuss panel, its start state) through `Composer`'s `accessory` slot, so a new caller passes what rides with the
 message and keeps the card.
 
+### Model and effort menu (AGH-681)
+
+Replaces the model select of AC-422.11; the mode keeps its pill. Built after the owner validated it in the playground.
+
+- **AC-681.4 One pill, one menu.** Given the composer, then one pill (`ModelMenu`, `.as-model-trigger`) reads the
+  model ("Opus", `claude-opus-5-5[1m]` as "Opus 5.5 (1M)", an unknown id as itself) and, when set, the effort level
+  ("Extra") and "Ultracode"; Max or Ultracode adds a `triangle-alert`. It opens a menu (`role="menu"`, "Model and
+  effort") of the model rows (`menuitemradio`, the current one checked; a resolved id checks its family's alias row,
+  a model no row offers gets a row of its own), a rule, then an Effort row that names the level ("Default" with none)
+  and opens the effort levels in a side menu (on hover, a click or ArrowRight): Low, Medium "Recommended", High,
+  Extra, Max "3.5× or more usage" (a warning tag), under the note "More effort means fuller answers, but it takes
+  longer and uses your limits faster." Picking a row calls the change (`POST /{id}/settings` `{model}` or `{effort}`)
+  only when it differs, and closes both menus. The levels map to `--effort` `low`, `medium`, `high`, `xhigh`, `max`.
+- **Keyboard.** The menu opens with focus on the checked row; ArrowUp/ArrowDown move and wrap; ArrowRight on Effort
+  opens the side menu, ArrowLeft or Esc closes only it (focus back on Effort); Esc in the menu or Tab in either closes
+  all and gives focus back to the pill.
+- **AC-681.2 The change in the chat.** Given a settings record with an effort, then the transcript shows "Effort set
+  to High" (joined to the mode and model ones, "Model set to opus, effort set to Extra") and the pill follows it.
+- **AC-681.6 Placement.** Both menus render in a portal on `document.body` and are placed against the window
+  (`position: fixed`, `left` and `bottom` from the pill's rect, 6 px above it, kept 8 px from the window's edges), so
+  a dialog's scroll area never clips them, they sit over dialogs, and a container parent never moves them aside. The
+  side menu goes beside the list on the right where it fits, else on the left, else over the list (a narrow panel or
+  a phone). A press outside or a window resize closes them.
+- **AC-681.9 Ultracode.** Where a caller offers it, the side menu ends with an Ultracode switch
+  (`menuitemcheckbox`, a rule above, the note "Claude may start many agents on its own for a task. Uses far more of
+  your limits."); it stays open when toggled, as a switch does. In a running chat it posts `{ultracode}` and the
+  transcript says "Ultracode on" or "Ultracode off"; at start (New session, New feature, Discuss) it starts off and is
+  never remembered between sessions. Not asked in writing: the owner confirms it.
+- **AC-681.10 Fable.** The default model lists (Discuss, Studio, New feature, when capabilities are not known) read
+  default, opus, fable, sonnet, haiku; "fable" reads "Fable". Not asked in writing: the owner confirms it.
+- **AC-681.5 In New session.** The same menu replaces the dialog's model select, with "Other model id…" as an extra
+  row after the models (it opens the Model id field, AC-421.5); it starts with the effort last picked in this browser
+  (`ah.session.effort`, an unknown value ignored), none when nothing was picked; a fork keeps its session's effort and
+  Ultracode.
+
 ## Full chat header
 
 AC-422.13 to AC-422.17 in [agent-sessions.md](../../agent-sessions.md#chat-redesign-the-full-chats-header-agh-422).

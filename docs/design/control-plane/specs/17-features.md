@@ -1098,6 +1098,17 @@ note hides, below 480 px the key hint; below 560 px of `.ft-new` the project pil
   and `useAutoGrow` (the brief grows to half the viewport, the chat to 40 %), so paste, drop and the picker behave the
   same in both.
 
+### Departures (AGH-681, mode, model and effort)
+
+Built after the owner validated it in the playground; where the sections above say otherwise, this list wins.
+
+- **AC-681.7 Mode, model and effort next to Attach.** Given the brief box, then its bar holds, after Attach, the
+  chat's mode pill (named "Mode", the offered modes) and its model and effort menu with the Ultracode switch
+  ([20-chat.md](20-chat.md#model-and-effort-menu-agh-681), AC-681.4, AC-681.6, AC-681.9, AC-681.10); they start at
+  Ask before edits, the default model, the effort last picked in this browser and Ultracode off. When Start runs, the
+  conversation it starts uses them (`mode`, `model`, `effort` and `ultracode` in `POST /agent-sessions`). The New
+  session dialog's bar (AC-421.5 in [agent-sessions.md](../../agent-sessions.md)) has the same menu (AC-681.5).
+
 ## UX principles applied
 
 | Choice | Principle (brief §7) |
