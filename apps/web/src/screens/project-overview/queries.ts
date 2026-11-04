@@ -89,8 +89,10 @@ function drawn(items: readonly Session[], none: boolean): RecentSessions {
  * read is on its way the route stays off, so that answer costs no request. After the read failed
  * or did not answer in time, the route is asked, and the same cached answer stays until the route
  * has answered since the screen opened. So a return draws at once what was drawn before, or the
- * newer rows the route brought; only a visit with nothing cached waits, for the read (or, after it
- * failed, the route).
+ * newer rows the route brought. On a visit whose project is not cached (most first visits, and
+ * a return more than 5 min after leaving), the whole page waits for the read, Recent work with
+ * it. Otherwise Recent work waits only when the cache holds neither answer: for the read (or,
+ * after it failed, the route).
  */
 export function useRecentSessions(project: string): RecentSessions {
   const read = useScreenRead(OVERVIEW_READ, path(project));
