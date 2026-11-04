@@ -1440,7 +1440,8 @@ function ProjectNotFound({ name }: { name: string }) {
  * the team's focus, the agents' tickets and recent work; engineering detail folds away at the end.
  * Its regions' first answers and the sessions of this week's issues come from one screen read
  * (ADR 0056), made again for each project opened in place. The read's answer is kept, so a return
- * draws Recent work from the last one while its own read is on its way.
+ * draws Recent work at once from the cache (the last answer, or the sessions route's when newer)
+ * while its own read is on its way.
  */
 export function ProjectOverviewScreen() {
   const { project: name = "" } = useParams();

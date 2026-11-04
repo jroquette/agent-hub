@@ -72,14 +72,23 @@ function useCountsChanged(armed: boolean): boolean {
   return changed;
 }
 
+/** Sessions drawn from an answer at hand: nothing to wait for and nothing to retry. */
+function drawn(items: readonly Session[], none: boolean): RecentSessions {
+  return { items, none, isPending: false, error: null, refetch: noRetry };
+}
+
 /**
- * The sessions Recent work reads: the overview read's sessions of the issues worked on this week,
- * once it has answered. On a return to the overview, until then, those of the project's last
- * overview read, kept in the cache under the read's own key (no request), so the rows drawn before
- * stay drawn; only a first visit waits with nothing to show. When the read failed, or once the
- * stream's counts change after it (Recent work stays live), the project's newest sessions from
- * their route, read as the Tickets screen reads them (one shared cache entry, never written by the
- * overview read, which those changes refresh).
+ * The sessions Recent work reads. Once this visit's overview read has answered: its sessions of
+ * the issues worked on this week, and once the stream's counts change after it (Recent work stays
+ * live), the project's newest sessions from their route as soon as the route has answered since
+ * the screen opened. The route is read as the Tickets screen reads it: one shared cache entry,
+ * never written by the overview read, which those changes refresh.
+ *
+ * Until this visit's read answers, and after it failed or did not answer in time until the route
+ * has answered since the screen opened, the newest answer the cache holds, with no request: the
+ * project's last overview read (kept under the read's own key) or the route's entry, whichever was
+ * written last. So a return draws at once what was drawn before, or the newer rows the route
+ * brought; only a visit with nothing cached waits, for the read (or, after it failed, the route).
  */
 export function useRecentSessions(project: string): RecentSessions {
   const read = useScreenRead(OVERVIEW_READ, path(project));
@@ -90,14 +99,18 @@ export function useRecentSessions(project: string): RecentSessions {
     { query: { project, limit: SESSIONS_READ, sort: "-last_activity_at" } },
     { enabled: read === null || live },
   );
-  const shown = read === undefined ? kept : read;
-  if (shown === undefined) {
-    return { items: [], none: false, isPending: true, error: null, refetch: noRetry };
-  }
-  // The read's sessions stay until the route has answered since this screen opened.
-  if (shown !== null && !(live && route.isFetchedAfterMount)) {
-    const items = shown.recent_sessions.items;
-    return { items, none: !shown.has_sessions, isPending: false, error: null, refetch: noRetry };
+  if (read === undefined || (read === null && !route.isFetchedAfterMount)) {
+    // The route stays off while the read is on its way: its cached answer is read, never asked.
+    if (route.data && route.dataUpdatedAt > kept.updatedAt) {
+      return drawn(route.data.items, route.data.items.length === 0);
+    }
+    if (kept.read) return drawn(kept.read.recent_sessions.items, !kept.read.has_sessions);
+    if (read === undefined) {
+      return { items: [], none: false, isPending: true, error: null, refetch: noRetry };
+    }
+  } else if (read !== null && !(live && route.isFetchedAfterMount)) {
+    // The read's sessions stay until the route has answered since this screen opened.
+    return drawn(read.recent_sessions.items, !read.has_sessions);
   }
   const items = route.data?.items ?? [];
   return {

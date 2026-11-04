@@ -119,20 +119,30 @@ export function useScreenRead<P extends GetPath>(
   return answer.read as ApiData<P> | null | undefined;
 }
 
+/** A kept answer (undefined when none is kept) and when it was kept (0 when none is). */
+export interface KeptScreenRead<P extends GetPath> {
+  read: ApiData<P> | undefined;
+  updatedAt: number;
+}
+
 /**
  * The last answer a provider told to `keep` it used for this read with these `params`, from the
- * query cache under the read's own key; undefined when none is kept. It reads the cache only and
- * never sends a request: a return to the screen draws a derived part from it while
- * `useScreenRead` is still undefined, then from this visit's answer. While mounted it observes
- * that entry with a query that can never fetch (`skipToken`: no invalidation, refetch, focus or
- * reconnect makes it send a request), so the cache lets the kept answer go `gcTime` after the
- * screen is left, as it does every other entry, not `gcTime` after the answer was first kept.
+ * query cache under the read's own key. It reads the cache only and never sends a request: a
+ * return to the screen draws a derived part from it while `useScreenRead` is still undefined,
+ * then from this visit's answer. While mounted it observes that entry with a query that can never
+ * fetch (`skipToken`: no invalidation, refetch, focus or reconnect makes it send a request), so
+ * the cache lets the kept answer go `gcTime` after the screen is left, as it does every other
+ * entry, not `gcTime` after the answer was first kept.
  */
 export function useKeptScreenRead<P extends GetPath>(
   path: P,
   params?: ApiParams<P>,
-): ApiData<P> | undefined {
-  return useQuery<ApiData<P>>({ queryKey: apiKey(path, params), queryFn: skipToken }).data;
+): KeptScreenRead<P> {
+  const { data, dataUpdatedAt } = useQuery<ApiData<P>>({
+    queryKey: apiKey(path, params),
+    queryFn: skipToken,
+  });
+  return { read: data, updatedAt: dataUpdatedAt };
 }
 
 interface ScreenRequest<P extends GetPath> {
