@@ -160,9 +160,10 @@ of spec 22 and how the shell's facts arrive:
 - **Regions arrive together.** On Portfolio, Project overview, Sessions and Session detail, the regions a screen read
   covers arrive together, from that one read. Spec 22's "Region independence" (each region loads on its own, the
   fastest first, `22-first-run-and-errors.md:278`) holds only when the read fails or takes over 5 s: then each region
-  reads its own route, as before, and loads and fails on its own. A return to Project overview draws Recent work at
-  once from what the cache holds (the last overview read or the sessions route, whichever is newer) until the visit's
-  read answers; only a first visit waits for the read.
+  reads its own route, as before, and loads and fails on its own. On Project overview, Recent work draws at once what
+  the cache holds (the last overview read or the sessions route, whichever is newer) until the visit's read answers;
+  after a failed or timed-out read, those rows stay until the sessions route answers. Only a visit with nothing cached
+  waits for the read.
 - **Shell facts.** The switcher's projects, the Workflow runs item and the Features badge come from one shell read,
   and they hide together only when its first read fails. When the scope changes, the projects and the runs item stay,
   and the badge hides until the new scope's count arrives. When the event database cannot be read or is busy, the
