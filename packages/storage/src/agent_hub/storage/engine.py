@@ -68,6 +68,8 @@ def dispose_when_dropped(owner: object, engine: Engine) -> None:
 
     An owner dropped without ``close()`` would leave them to the garbage collector, which
     finalizes each one unclosed. A connection checked out at that moment is not closed.
+
+    ``owner`` owns ``engine``: freeing it disposes the engine for every user of it.
     """
     weakref.finalize(owner, engine.dispose)
 
