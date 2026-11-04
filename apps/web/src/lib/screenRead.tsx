@@ -10,7 +10,10 @@
  * query whose part the answer leaves out (a `null` part is not written). A part is written only
  * from this visit's read, and never over an entry updated after that read started or over a paged
  * entry holding more pages than the part. A derived part, never written under a resource's key,
- * is read from the answer itself with `useScreenRead`.
+ * is read from the answer itself with `useScreenRead`. A provider told to `keep` its answer also
+ * writes it whole under the read's own key, which is no resource's key, so a return to the screen
+ * can draw a derived part from the last answer (`useKeptScreenRead`) while its own read is on its
+ * way.
  */
 import { hashKey, useQueryClient, type QueryClient, type QueryKey } from "@tanstack/react-query";
 import {
@@ -53,6 +56,9 @@ export interface ScreenReadProviderProps<P extends GetPath> {
   /** Off: no read and no key covered, the children still mounted (default on). A provider off
    * when its visit begins covers nothing for that visit, even once turned on. */
   enabled?: boolean;
+  /** On: an answer this visit uses is also kept in the query cache under the read's own key, for
+   * `useKeptScreenRead` on the next visit (default off). */
+  keep?: boolean;
   children?: ReactNode;
 }
 
@@ -70,12 +76,13 @@ export function ScreenReadProvider<P extends GetPath>({
   params,
   seeds,
   enabled = true,
+  keep = false,
   children,
 }: ScreenReadProviderProps<P>): ReactElement {
   const client = useQueryClient();
   const [read, setRead] = useState<unknown>(undefined);
   const [visit] = useState(() =>
-    enabled ? new ScreenVisit(client, { path, params, seeds, onAnswer: setRead }) : null,
+    enabled ? new ScreenVisit(client, { path, params, seeds, keep, onAnswer: setRead }) : null,
   );
   useEffect(() => visit?.read(), [visit]);
   useEffect(() => {
@@ -105,10 +112,25 @@ export function useScreenRead<P extends GetPath>(
   return answer.read as ApiData<P> | null | undefined;
 }
 
+/**
+ * The last answer a provider told to `keep` it used for this read with these `params`, from the
+ * query cache under the read's own key; undefined when none is kept. It reads the cache only and
+ * never sends a request: a return to the screen draws a derived part from it while
+ * `useScreenRead` is still undefined, then from this visit's answer.
+ */
+export function useKeptScreenRead<P extends GetPath>(
+  path: P,
+  params?: ApiParams<P>,
+): ApiData<P> | undefined {
+  return useQueryClient().getQueryData<ApiData<P>>(apiKey(path, params));
+}
+
 interface ScreenRequest<P extends GetPath> {
   path: P;
   params: ApiParams<P> | undefined;
   seeds: Seeds<P>;
+  /** Whether a used answer is also written under the read's own key. */
+  keep: boolean;
   /** Told once, when the visit settles: the read, or null when its parts are not to be used. */
   onAnswer: (read: ApiData<P> | null) => void;
 }
@@ -161,7 +183,9 @@ class ScreenVisit<P extends GetPath> implements ScreenReadHold {
       (read) => {
         clearTimeout(timer);
         if (!current || this.#settled) return;
-        this.#finish(read, writeSeeds(this.#client, this.#request.seeds(read), startedAt));
+        const { path, params, seeds, keep } = this.#request;
+        if (keep) this.#client.setQueryData(apiKey(path, params), read);
+        this.#finish(read, writeSeeds(this.#client, seeds(read), startedAt));
       },
       () => {
         clearTimeout(timer);
