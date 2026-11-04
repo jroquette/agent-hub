@@ -9,7 +9,8 @@ holds no snapshot; and a closed store leaves its file alone, so leaving WAL succ
 the database file is left. A store dropped without ``close()`` closes its idle connections at
 once, so the garbage collector finds no unclosed connection to warn about (and keep open), and
 dropping a closed store reports nothing. Each test closes the stores and engines it opens,
-except the drop test, which frees its store without ``close()`` on purpose. No time is asserted.
+except ``test_closes_pooled_connections_when_store_dropped_without_close``, which frees its
+store without ``close()`` on purpose. No time is asserted.
 """
 
 import gc
@@ -301,11 +302,12 @@ def _open_database_files(path: Path) -> list[str]:
 def _collected_on_exit() -> Iterator[tuple[list[str], list[str]]]:
     """Keep the cyclic garbage collector off inside; on exit run it once, then turn it back on.
 
-    Yields two lists the run fills: the text of each ``ResourceWarning`` it raised (an unclosed
-    SQLite connection finalized warns ``unclosed database``), and of each error a finalizer
-    could not raise (``sys.unraisablehook``). Earlier garbage is collected first, unrecorded.
+    Yields two lists the run fills: each warning it raised, of any category, as
+    ``<category>: <text>`` (an unclosed SQLite connection finalized warns
+    ``ResourceWarning: unclosed database ...``), and the text of each error a finalizer could
+    not raise (``sys.unraisablehook``). Earlier garbage is collected first, unrecorded.
     """
-    resource_warnings: list[str] = []
+    warning_texts: list[str] = []
     finalizer_errors: list[str] = []
 
     def record_error(report: sys.UnraisableHookArgs) -> None:
@@ -316,17 +318,15 @@ def _collected_on_exit() -> Iterator[tuple[list[str], list[str]]]:
     sys.unraisablehook = record_error
     try:
         with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always", ResourceWarning)
+            warnings.simplefilter("always")
             gc.disable()
             try:
-                yield resource_warnings, finalizer_errors
+                yield warning_texts, finalizer_errors
                 gc.collect()
             finally:
                 gc.enable()
-        # Text only: a recorded warning's source is the connection, which it would keep open.
-        resource_warnings.extend(
-            str(seen.message) for seen in caught if issubclass(seen.category, ResourceWarning)
-        )
+        # Text only: a recorded warning's source can be the connection, which it would keep open.
+        warning_texts.extend(f"{seen.category.__name__}: {seen.message}" for seen in caught)
     finally:
         sys.unraisablehook = previous_hook
 
@@ -345,13 +345,13 @@ def test_closes_pooled_connections_when_store_dropped_without_close(
     if FD_FOLDER.is_dir():
         assert _open_database_files(path) == DATABASE_FILES
 
-    with _collected_on_exit() as (resource_warnings, finalizer_errors):
+    with _collected_on_exit() as (warning_texts, finalizer_errors):
         # The last reference: the store is freed here, before any cyclic collection.
         del store
         left_files = sorted(entry.name for entry in tmp_path.iterdir())
         left_open = _open_database_files(path) if FD_FOLDER.is_dir() else []
 
-    assert [text for text in resource_warnings if "unclosed database" in text] == []
+    assert [text for text in warning_texts if "unclosed database" in text] == []
     assert finalizer_errors == []
     assert left_files == ["events.db"]
     assert left_open == []
@@ -369,8 +369,8 @@ def test_drops_without_warning_or_error_when_closed_before_drop(
     )
     store.close()
 
-    with _collected_on_exit() as (resource_warnings, finalizer_errors):
+    with _collected_on_exit() as (warning_texts, finalizer_errors):
         del store
 
-    assert [text for text in resource_warnings if "unclosed database" in text] == []
+    assert warning_texts == []
     assert finalizer_errors == []
