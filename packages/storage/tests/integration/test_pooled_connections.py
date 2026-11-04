@@ -8,8 +8,8 @@ it; a connection that wrote, then went back to the pool, starts its next read de
 holds no snapshot; and a closed store leaves its file alone, so leaving WAL succeeds and only
 the database file is left. A store dropped without ``close()`` closes its idle connections at
 once, so the garbage collector finds no unclosed connection to warn about (and keep open), and
-dropping a closed store reports nothing. Each test closes the stores and engines it opens. No
-time is asserted.
+dropping a closed store reports nothing. Each test closes the stores and engines it opens,
+except the drop test, which frees its store without ``close()`` on purpose. No time is asserted.
 """
 
 import gc
@@ -220,54 +220,6 @@ def test_holds_no_snapshot_when_read_connection_returns_to_pool(tmp_path: Path) 
         assert store.high_water_mark() > first
 
 
-def _read_and_close_event_store(path: Path) -> None:
-    with closing(open_event_store(path)) as store:
-        store.high_water_mark()
-
-
-def _read_and_close_agent_session_store(path: Path) -> None:
-    with closing(open_agent_session_store(path)) as store:
-        store.list()
-
-
-def _read_and_close_item_version_store(path: Path) -> None:
-    with closing(open_item_version_store(path)) as store:
-        store.last("demo", "plugin/demo/agents/reviewer.md")
-
-
-def _read_and_close_knowledge_index(path: Path) -> None:
-    with closing(open_knowledge_index(path)) as index:
-        index.stored("/hubs/demo")
-
-
-@pytest.mark.parametrize(
-    "read_and_close",
-    [
-        pytest.param(_read_and_close_event_store, id="event-store"),
-        pytest.param(_read_and_close_agent_session_store, id="agent-session-store"),
-        pytest.param(_read_and_close_item_version_store, id="item-version-store"),
-        pytest.param(
-            _read_and_close_knowledge_index,
-            id="knowledge-index",
-            marks=pytest.mark.skipif(not fts5_available(), reason=FTS5_MISSING),
-        ),
-    ],
-)
-def test_leaves_one_file_when_store_closed_and_journal_left(
-    tmp_path: Path, read_and_close: Callable[[Path], None]
-) -> None:
-    """Q2, AC-7's mechanism: a closed store keeps no connection, so WAL can be left."""
-    path = tmp_path / "events.db"
-    read_and_close(path)
-
-    with closing(sqlite3.connect(path, timeout=OTHER_TIMEOUT_SECONDS)) as other:
-        assert other.execute("PRAGMA journal_mode").fetchone() == ("wal",)
-        left = other.execute("PRAGMA journal_mode=DELETE").fetchone()
-
-    assert left == ("delete",)
-    assert sorted(entry.name for entry in tmp_path.iterdir()) == ["events.db"]
-
-
 class _Store(Protocol):
     def close(self) -> None: ...
 
@@ -306,6 +258,31 @@ OPEN_AND_READ: Final = [
         marks=pytest.mark.skipif(not fts5_available(), reason=FTS5_MISSING),
     ),
 ]
+
+
+@pytest.mark.parametrize("open_and_read", OPEN_AND_READ)
+def test_leaves_one_file_when_store_closed_and_journal_left(
+    tmp_path: Path, open_and_read: Callable[[Path], _Store]
+) -> None:
+    """Q2, AC-7's mechanism: a closed store keeps no connection, so WAL can be left."""
+    path = tmp_path / "events.db"
+    # Referenced to the end: a store freed before the journal switch would release its
+    # connections when dropped, and the switch would pass without close().
+    store = open_and_read(path)
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == DATABASE_FILES, (
+        "no connection is open, so the close below proves nothing"
+    )
+
+    store.close()
+
+    if FD_FOLDER.is_dir():
+        assert _open_database_files(path) == []
+    with closing(sqlite3.connect(path, timeout=OTHER_TIMEOUT_SECONDS)) as other:
+        assert other.execute("PRAGMA journal_mode").fetchone() == ("wal",)
+        left = other.execute("PRAGMA journal_mode=DELETE").fetchone()
+
+    assert left == ("delete",)
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == ["events.db"]
 
 
 def _open_database_files(path: Path) -> list[str]:
