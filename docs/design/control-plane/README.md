@@ -163,8 +163,9 @@ of spec 22 and how the shell's facts arrive:
   reads its own route, as before, and loads and fails on its own. On Project overview, Recent work draws at once what
   the cache holds (the last overview read or the sessions route, whichever is newer) until the visit's read answers;
   after a failed or timed-out read, those rows stay until the sessions route answers. On a visit whose project is not
-  cached (most first visits, and a return more than 5 min after leaving), the whole page waits for the read. Otherwise
-  Recent work waits only when the cache holds neither the last overview read nor the sessions route's answer.
+  cached (most first visits, and most returns more than 5 min after leaving: the Learnings screen and a session's chat
+  also keep the project cached), the whole page waits for the read. Otherwise Recent work waits only when the cache
+  holds neither the last overview read nor the sessions route's answer.
 - **Shell facts.** The switcher's projects, the Workflow runs item and the Features badge come from one shell read,
   and they hide together only when its first read fails. When the scope changes, the projects and the runs item stay,
   and the badge hides until the new scope's count arrives. When the event database cannot be read or is busy, the
