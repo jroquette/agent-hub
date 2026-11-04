@@ -201,7 +201,7 @@ describe("NewFeatureScreen", () => {
     expect(window.localStorage.getItem(kept ?? "")).toBe(ID);
   });
 
-  it("starts the conversation with the mode, model, effort and Ultracode picked", async () => {
+  it("AC-681.7 starts the conversation with the mode, model, effort and Ultracode picked", async () => {
     window.localStorage.removeItem("ah.session.effort");
     const user = userEvent.setup();
     const view = renderNew();

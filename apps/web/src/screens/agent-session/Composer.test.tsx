@@ -137,7 +137,7 @@ describe("Composer (composer)", () => {
     expect(within(mode).getByRole("option", { name: "Auto" })).toBeDisabled();
   });
 
-  it("posts a model change and keeps a custom current model in the list", async () => {
+  it("AC-681.4 posts a model change and keeps a custom current model in the list", async () => {
     const { props } = open({ model: "custom-model" });
     const pill = screen.getByRole("button", { name: /^Model and effort/ });
 
@@ -149,7 +149,7 @@ describe("Composer (composer)", () => {
     expect(props.onSettings).toHaveBeenCalledWith({ model: "haiku" });
   });
 
-  it("shows a resolved model on its family's row and leaves that row alone when picked", async () => {
+  it("AC-681.4 shows a resolved model on its family's row and leaves that row alone when picked", async () => {
     const { props } = open({ model: "claude-opus-5-5" });
     const pill = screen.getByRole("button", { name: /^Model and effort/ });
 
@@ -160,7 +160,7 @@ describe("Composer (composer)", () => {
     expect(props.onSettings).not.toHaveBeenCalled();
   });
 
-  it("posts an effort change and shows the level, warning at Max", async () => {
+  it("AC-681.4 posts an effort change and shows the level, warning at Max", async () => {
     window.localStorage.removeItem("ah.session.effort");
     const { props } = open({ effort: "medium" });
     await userEvent.click(screen.getByRole("button", { name: /^Model and effort/ }));
@@ -176,7 +176,7 @@ describe("Composer (composer)", () => {
     window.localStorage.removeItem("ah.session.effort");
   });
 
-  it("toggles Ultracode from the effort menu, which stays open", async () => {
+  it("AC-681.9 toggles Ultracode from the effort menu, which stays open", async () => {
     const { props } = open({ ultracode: true });
     const pill = screen.getByRole("button", { name: /^Model and effort/ });
     expect(pill).toHaveTextContent("Ultracode");
@@ -191,7 +191,7 @@ describe("Composer (composer)", () => {
     expect(screen.getByRole("menuitemcheckbox", { name: "Ultracode" })).toBeInTheDocument();
   });
 
-  it("opens the menu on the body, so no parent can clip or move it", async () => {
+  it("AC-681.6 opens the menu on the body, so no parent can clip or move it", async () => {
     open();
     await userEvent.click(screen.getByRole("button", { name: /^Model and effort/ }));
 
@@ -200,7 +200,7 @@ describe("Composer (composer)", () => {
     expect(menu).toHaveClass("ah-pop", "as-model-pop");
   });
 
-  it("walks the effort levels by keyboard and closes one menu per Esc", async () => {
+  it("AC-681.4 walks the effort levels by keyboard and closes one menu per Esc", async () => {
     open({ effort: "low" });
     await userEvent.click(screen.getByRole("button", { name: /^Model and effort/ }));
     screen.getByRole("menuitem", { name: /Effort/ }).focus();

@@ -98,7 +98,7 @@ describe("NewSessionDialog (new-session)", () => {
     ]);
   });
 
-  it("marks the current model in the model and effort menu", async () => {
+  it("AC-681.5 marks the current model in the model and effort menu", async () => {
     const { dialog } = open();
 
     await userEvent.click(within(dialog).getByRole("button", { name: /^Model and effort/ }));
@@ -106,7 +106,7 @@ describe("NewSessionDialog (new-session)", () => {
     expect(screen.getByRole("menuitemradio", { name: "Default" })).toBeChecked();
   });
 
-  it("sends the effort picked and keeps it for the next new session", async () => {
+  it("AC-681.5 sends the effort picked and keeps it for the next new session", async () => {
     window.localStorage.removeItem("ah.session.effort");
     const { dialog, props, view } = open();
     await userEvent.click(within(dialog).getByRole("button", { name: /^Model and effort/ }));
@@ -143,7 +143,7 @@ describe("NewSessionDialog (new-session)", () => {
     ).not.toHaveTextContent("Ultracode");
   });
 
-  it("sends no effort when none was picked", async () => {
+  it("AC-681.5 sends no effort when none was picked", async () => {
     window.localStorage.removeItem("ah.session.effort");
     const { dialog, props } = open();
 
