@@ -210,6 +210,21 @@ def test_answers_success_when_interrupt_arrives_between_turns(tmp_path: Path) ->
     assert [m["type"] for m in out] == ["control_response"]
 
 
+def test_answers_success_when_flag_settings_applied(tmp_path: Path) -> None:
+    """AC-681.2, AC-681.9: the stub takes the control request a live effort or Ultracode change
+    sends, and records it."""
+    settings = {"effortLevel": "high"}
+    lines = [_control("req_7", "apply_flag_settings", settings=settings)]
+
+    _, out = _run(tmp_path, STREAM, lines, scenario=Scenario())
+
+    assert [m["response"]["subtype"] for m in out] == ["success"]
+    controls = [r for r in read_records(tmp_path / "record.jsonl") if r.event == "control"]
+    assert [(r.subtype, r.data.get("settings")) for r in controls] == [
+        ("apply_flag_settings", settings)
+    ]
+
+
 @pytest.mark.parametrize(
     ("flags", "reported"),
     [

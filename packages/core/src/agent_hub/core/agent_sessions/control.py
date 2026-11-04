@@ -394,7 +394,7 @@ class AgentSessionCommands(Protocol):
     async def change_settings(
         self, agent_session_id: str, settings: SessionSettings
     ) -> AgentSession:
-        """Change the mode or model."""
+        """Change the mode, model or effort."""
         ...
 
     async def close(self, agent_session_id: str) -> AgentSession:
@@ -869,6 +869,8 @@ class AgentSessionControl:
                 status=state.status,
                 mode=request.mode,
                 model=request.model,
+                effort=request.effort,
+                ultracode=request.ultracode is True,
                 title=record_text.title(prompt) if prompt else (past.title if past else None),
                 last_prompt=prompt_snippet(prompt) if prompt else None,
                 created_at=now,
@@ -882,6 +884,8 @@ class AgentSessionControl:
                 cwd=resolved.path,
                 mode=request.mode,
                 model=request.model,
+                effort=request.effort,
+                ultracode=request.ultracode is True,
                 resume=request.resume_session_id,
                 fork=request.fork,
                 session_id=minted,
@@ -1041,14 +1045,20 @@ class AgentSessionControl:
     async def change_settings(
         self, agent_session_id: str, settings: SessionSettings
     ) -> AgentSession:
-        """Change the mode or the model, logged as ``settings``. A session held to a restriction
+        """Change the mode, the model or the effort, logged as ``settings``. A session held to a
+        restriction
         keeps its mode (``SessionModeLockedError``, nothing logged or changed)."""
         live = await self._commandable(agent_session_id)
         async with live.commands:
             self._refuse(live, ChangeSettings())
             if settings.mode is not None and agent_session_id in self._restrictions:
                 raise SessionModeLockedError(agent_session_id)
-            body = SettingsBody(mode=settings.mode, model=settings.model).as_body()
+            body = SettingsBody(
+                mode=settings.mode,
+                model=settings.model,
+                effort=settings.effort,
+                ultracode=settings.ultracode,
+            ).as_body()
             if await self._emit(live, "settings", body, by="web") is None:
                 raise await self._log_full(live)
             fields: AgentSessionFields = {}
@@ -1058,6 +1068,12 @@ class AgentSessionControl:
             if settings.model is not None:
                 await self._driver.set_model(live.handle, settings.model)
                 fields["model"] = settings.model
+            if settings.effort is not None:
+                await self._driver.set_effort(live.handle, settings.effort)
+                fields["effort"] = settings.effort
+            if settings.ultracode is not None:
+                await self._driver.set_ultracode(live.handle, on=settings.ultracode)
+                fields["ultracode"] = settings.ultracode
             await self._sync(live, fields)
         return self._marked(live.view())
 
@@ -1262,6 +1278,8 @@ class AgentSessionControl:
                 cwd=resolved.path,
                 mode=reopened.mode,
                 model=reopened.model,
+                effort=reopened.effort,
+                ultracode=reopened.ultracode,
                 resume=claude_session_id,
                 session_id=None,
                 environment_extra=self._environment_extra,

@@ -11,6 +11,14 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- A driven session can run at an effort level (`low`, `medium`, `high`, `xhigh`, `max`): `POST /agent-sessions`
+  takes `effort`, `POST /agent-sessions/{id}/settings` changes it while the session runs, and a reopened session
+  keeps it. Without one, the CLI picks it, as before. The same goes for `ultracode` (off by default), and `fable`
+  joins the model aliases. Migrations 0011 and 0012 add `agent_sessions.effort` and `agent_sessions.ultracode`,
+  and skip a column the database already has (AGH-681).
+
 ### Changed
 
 - PR bodies stay short and link their sources. The `plain-language` skill has a PR bodies section: the ticket link,
@@ -19,10 +27,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   (`project.hub_repo`, `project.default_branch`). `/feature` now opens a hub PR with the feature's records once its
   spec, plan and tickets are approved, and Build waits until it merges; `/implement` checks the cited records are on
   the hub's default branch before it opens a code PR. `/implement`, `/feature` and `/fix` point to the rule where
-  they write the body; `/fix` now posts the
-  `quality-reviewer` verdict and its findings on the tracker issue, not in the PR body. `hub step pr --feature SLUG`
-  links the feature's folder in the body, and the `implement` workflow passes it. Run `hub sync` after bumping
-  `platform.version` to get the new skill texts.
+  they write the body; `/fix` now posts the `quality-reviewer` verdict and its findings on the tracker issue, not in
+  the PR body. `hub step pr --feature SLUG` links the feature's folder in the body, and the `implement` workflow
+  passes it. Run `hub sync` after bumping `platform.version` to get the new skill texts.
 
 ## [0.30.0] - 2026-11-01
 

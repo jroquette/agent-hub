@@ -348,7 +348,7 @@ export interface paths {
     put?: never;
     /**
      * Change Agent Session Settings
-     * @description Change the permission mode or the model.
+     * @description Change the permission mode, the model, the effort or Ultracode.
      */
     post: operations["change_agent_session_settings_api_v1_agent_sessions__agent_session_id__settings_post"];
     delete?: never;
@@ -2667,6 +2667,7 @@ export interface components {
       cloud_id?: string | null;
       cost_usd?: components["schemas"]["Money"] | null;
       created_at: components["schemas"]["ApiTimestamp"];
+      effort?: components["schemas"]["EffortLevel"] | null;
       end_reason?: components["schemas"]["EndReason"] | null;
       ended_at?: components["schemas"]["ApiTimestamp"] | null;
       /** Id */
@@ -2700,6 +2701,11 @@ export interface components {
       status: components["schemas"]["AgentSessionStatus"];
       /** Title */
       title?: string | null;
+      /**
+       * Ultracode
+       * @default false
+       */
+      ultracode: boolean;
       updated_at: components["schemas"]["ApiTimestamp"];
       /** Url */
       url?: string | null;
@@ -3259,6 +3265,7 @@ export interface components {
      *     message) and ``files`` go with the first prompt, so they need one.
      */
     CreateAgentSession: {
+      effort?: components["schemas"]["EffortLevel"] | null;
       /** Files */
       files?: components["schemas"]["MessageFile"][] | null;
       /**
@@ -3278,6 +3285,8 @@ export interface components {
       screenshot?: components["schemas"]["Screenshot"] | null;
       /** Screenshots */
       screenshots?: components["schemas"]["Screenshot"][] | null;
+      /** Ultracode */
+      ultracode?: boolean | null;
       /** Workdir Id */
       workdir_id: string;
     };
@@ -3463,6 +3472,7 @@ export interface components {
        * @default [
        *       "default",
        *       "opus",
+       *       "fable",
        *       "sonnet",
        *       "haiku"
        *     ]
@@ -3512,6 +3522,8 @@ export interface components {
       /** Services */
       services: components["schemas"]["SourcedService"][];
     };
+    /** @enum {string} */
+    EffortLevel: "low" | "medium" | "high" | "xhigh" | "max";
     /**
      * EndReason
      * @description Why a session ended.
@@ -7188,11 +7200,14 @@ export interface components {
     };
     /**
      * SessionSettings
-     * @description ``POST /{id}/settings``: a new mode, a new model, or both (at least one).
+     * @description ``POST /{id}/settings``: a new mode, model, effort or Ultracode (at least one).
      */
     SessionSettings: {
+      effort?: components["schemas"]["EffortLevel"] | null;
       mode?: components["schemas"]["PermissionMode"] | null;
       model?: components["schemas"]["ModelName"] | null;
+      /** Ultracode */
+      ultracode?: boolean | null;
     };
     /**
      * SessionStatus

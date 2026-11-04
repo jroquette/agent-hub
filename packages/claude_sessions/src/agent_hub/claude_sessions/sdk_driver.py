@@ -54,6 +54,7 @@ from agent_hub.core.agent_sessions.driver import (
     DriverFile,
     DriverHandle,
     DriverImage,
+    EffortLevel,
     Exited,
     PastSession,
     PermissionMode,
@@ -263,6 +264,24 @@ class ClaudeSdkSessionDriver:
     async def set_model(self, handle: DriverHandle, model: str | None) -> None:
         """Change the model (None: the CLI's default)."""
         await self._open(handle).client.set_model(model)
+
+    async def set_effort(self, handle: DriverHandle, effort: EffortLevel) -> None:
+        """Change the effort: the CLI applies it from its next request to the model."""
+        await self._apply_settings(handle, {"effortLevel": effort})
+
+    async def set_ultracode(self, handle: DriverHandle, *, on: bool) -> None:
+        """Turn Ultracode on or off: the CLI follows it from the next turn."""
+        await self._apply_settings(handle, {"ultracode": on})
+
+    async def _apply_settings(self, handle: DriverHandle, settings: dict[str, Any]) -> None:
+        """Change settings of the running CLI. The SDK only offers these at start, so this sends
+        the CLI's own control request through the client's query, the way ``set_model`` does."""
+        query = self._open(handle).client._query  # noqa: SLF001
+        if query is None:
+            raise SessionTerminalError(handle, status="ended")
+        await query._send_control_request(  # noqa: SLF001
+            {"subtype": "apply_flag_settings", "settings": settings}
+        )
 
     async def close(self, handle: DriverHandle) -> None:
         """Deny what is pending and end ``claude``; a second close waits for the first."""

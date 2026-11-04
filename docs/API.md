@@ -436,20 +436,20 @@ the app refetches the route; the cache still applies (`as_of` shows its age). `G
 | `GET /workdirs?project=` | `{items, warnings}`: the hub, its repos and their worktrees, by opaque `workdir_id` (16 hex) |
 | `GET /capabilities` | `{available, reason, engine, cli_version, models, cloud, cloud_followup}`; 200 even when unavailable |
 | `GET /resumable?project=&workdir_id=` | past Claude sessions of that workdir (at most 200, newest first) |
-| `GET ""` · `POST ""` | the sessions, newest first · start one: `{project, workdir_id, mode?, model?, prompt?, resume_session_id?, fork?, screenshot?}` → 201, `Location` |
+| `GET ""` · `POST ""` | the sessions, newest first · start one: `{project, workdir_id, mode?, model?, effort?, ultracode?, prompt?, resume_session_id?, fork?, screenshot?}` → 201, `Location` |
 | `GET /{id}` · `DELETE /{id}` | the session with its open permission request · delete an ended one with its log → 204 (409 when live) |
 | `GET /{id}/events?after=&limit=` | the persisted log, `seq` order, `limit` 1 to 500 (default 200), `next_after` |
 | `GET /{id}/stream` | the log over SSE (below) |
 | `POST /{id}/messages` | `{text, screenshots?}` (text 1 byte to `--message-max-bytes`, 1 MiB UTF-8 by default; 1 to 10 screenshots) → 202 `{seq}`; accepted while a turn runs |
 | `POST /{id}/interrupt` | `{}` → 202; the turn's `result` follows on the stream |
 | `POST /{id}/permissions/{request_id}` | `{decision: allow \| deny \| always, message?, answers?, suggestion?, mode?}` → 200 |
-| `POST /{id}/settings` | `{mode?, model?}` (at least one) → 200; a mode change of a session held to a tool policy (an investigation session) is 409 `mode-locked` and changes nothing |
+| `POST /{id}/settings` | `{mode?, model?, effort?, ultracode?}` (at least one) → 200; a mode change of a session held to a tool policy (an investigation session) is 409 `mode-locked` and changes nothing |
 | `POST /{id}/close` | `{}` → 200; idempotent |
 | `GET /cloud` · `POST /cloud` | cloud sessions recorded here, newest first (at most 50) · `{project, workdir_id, task}`: always 501 `cloud-unavailable` with the terminal command as `guidance` (`claude --cloud` needs a terminal; no process is run) |
 | `POST /cloud/{cloud_id}/messages` | `{text}`: 501 `cloud-unavailable` with `guidance` (no start is ever recorded, so a follow-up has nothing to reach; the `claude -p --cloud` path stays behind `cloud_followup`) |
 
 - **Modes and models.** `mode` is `default`, `acceptEdits` or `plan` (never a bypass mode). `model` is `default`,
-  `opus`, `sonnet`, `haiku` or an id matching `^[A-Za-z0-9._\-\[\]]{1,64}$`; anything else is 422 and the driver is
+  `opus`, `fable`, `sonnet`, `haiku` or an id matching `^[A-Za-z0-9._\-\[\]]{1,64}$`; anything else is 422 and the driver is
   not called. Status is `idle`, `running`, `waiting_permission`, `ended` or `failed`; without a first prompt a new
   session is `idle` with no `init` yet.
 - **Workdir ids.** A `workdir_id` is the first 16 hex digits of SHA-256 over `<kind>\0<real path>` (`kind` is `hub`,

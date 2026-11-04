@@ -6,7 +6,8 @@ sees to ``STUB_CLAUDE_RECORD``. It answers ``-v``/``--version`` and ``--help``, 
 ``--cloud`` forms, and in ``--input-format stream-json`` mode plays one scripted turn per user
 message: ``system/init``, partial text deltas (with ``--include-partial-messages``), assistant
 blocks, ``can_use_tool`` control requests (with ``--permission-prompt-tool stdio``) and a
-``result``. It answers ``initialize``, ``interrupt``, ``set_permission_mode`` and ``set_model``.
+``result``. It answers ``initialize``, ``interrupt``, ``set_permission_mode``, ``set_model`` and
+``apply_flag_settings``.
 
 It never reaches the network and holds no real output: the shapes are synthetic rewrites of what
 the Wave 0 spike observed from the local CLI.
@@ -68,6 +69,7 @@ class _Options:
     stdio_prompts: bool = False
     mode: str = NO_MODE
     model: str | None = None
+    effort: str | None = None
     resume: str | None = None
     session_id: str | None = None
     fork: bool = False
@@ -97,7 +99,12 @@ def parse_options(args: Sequence[str]) -> _Options:
 
 
 _SWITCHES = {"--include-partial-messages": "partials", "--fork-session": "fork"}
-_VALUES = {"--model": "model", "--resume": "resume", "--session-id": "session_id"}
+_VALUES = {
+    "--model": "model",
+    "--effort": "effort",
+    "--resume": "resume",
+    "--session-id": "session_id",
+}
 
 
 def _apply_flag(options: _Options, flag: str, value: str | None) -> None:
@@ -323,7 +330,7 @@ class StubSession:
         ]
         models = [
             {"value": alias, "displayName": alias}
-            for alias in ("default", "opus", "sonnet", "haiku")
+            for alias in ("default", "opus", "fable", "sonnet", "haiku")
         ]
         return {
             "commands": commands,

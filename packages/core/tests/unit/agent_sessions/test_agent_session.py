@@ -94,6 +94,30 @@ def test_refuses_settings_when_empty_or_bypass() -> None:
         SessionSettings.model_validate({"mode": "bypassPermissions"})
 
 
+@pytest.mark.parametrize(
+    ("body", "given"),
+    [({"effort": "low"}, ("low", None)), ({"ultracode": False}, (None, False))],
+)
+def test_accepts_settings_when_only_effort_or_ultracode_given(
+    body: dict[str, object], given: tuple[object, object]
+) -> None:
+    """AC-681.2, AC-681.9: effort or Ultracode alone is a change."""
+    settings = SessionSettings.model_validate(body)
+
+    assert (settings.effort, settings.ultracode) == given
+
+
+@pytest.mark.parametrize("effort", ["", "extra", "MAX", "ultra"])
+def test_refuses_settings_and_create_when_effort_unknown(effort: str) -> None:
+    """AC-681.1, AC-681.2: only low, medium, high, xhigh and max."""
+    with pytest.raises(ValidationError):
+        SessionSettings.model_validate({"effort": effort})
+    with pytest.raises(ValidationError):
+        CreateAgentSession.model_validate(
+            {"project": "demo", "workdir_id": WORKDIR_ID, "effort": effort}
+        )
+
+
 def test_refuses_cloud_task_when_it_starts_with_dash() -> None:
     with pytest.raises(ValidationError):
         StartCloud(project="demo", workdir_id=WORKDIR_ID, task="--dangerously-skip-permissions")
