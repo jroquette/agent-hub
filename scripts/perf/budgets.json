@@ -24,7 +24,7 @@
     {"kind": "route", "path": "/api/v1/sessions?issue=AGH-7", "p95_ms": 150, "source": "AGH-601 proposed"},
     {"kind": "route", "path": "/api/v1/features", "p95_ms": 150, "source": "AGH-601 proposed"},
     {"kind": "route", "path": "/api/v1/features/perf/search-index", "p95_ms": 150, "source": "AGH-601 proposed"},
-    {"kind": "route", "path": "/api/v1/projects/perf/skills", "p95_ms": 150, "source": "AGH-601 proposed"},
+    {"kind": "route", "path": "/api/v1/projects/perf/skills", "p95_ms": 50, "source": "AGH-601 proposed"},
     {"kind": "route", "path": "/api/v1/search?q=make", "p95_ms": 150, "source": "AGH-601 proposed"},
     {"kind": "route", "path": "/api/v1/live-sessions", "p95_ms": 150, "source": "AGH-601 proposed"},
     {"kind": "route", "path": "/api/v1/projects/perf/brain", "p95_ms": 150, "source": "ADR 0053"},
