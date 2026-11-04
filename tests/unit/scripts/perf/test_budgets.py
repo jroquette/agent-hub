@@ -275,10 +275,11 @@ ROUTES = (
     "/api/v1/sessions?issue=AGH-7",
     "/api/v1/features",
     f"/api/v1/features/perf/{FEATURE_SLUG}",
-    "/api/v1/projects/perf/skills",
     "/api/v1/search?q=make",
     "/api/v1/live-sessions",
 )
+# The skills route, at 50 ms once skill usage is kept across seconds (AGH-611).
+SKILLS_ROUTE = "/api/v1/projects/perf/skills"
 SEEDED_PAGES = ("/", "/features", f"/features/perf/{FEATURE_SLUG}", f"/sessions/{PAGE_SESSION}")
 PAGES = (*SEEDED_PAGES, *ADR_PAGES)
 # The seeded budgets, one (kind, path, budget) per suite row; None where a row has no budget.
@@ -311,6 +312,7 @@ OWNER_TABLE: list[tuple[str, str, Budget | None]] = [
         ("route", route, Budget(p95_ms=150, api_calls=None, rss_mb=None, source=PROPOSED))
         for route in ROUTES
     ],
+    ("route", SKILLS_ROUTE, Budget(p95_ms=50, api_calls=None, rss_mb=None, source=PROPOSED)),
     *[
         ("route", route, Budget(p95_ms=150, api_calls=None, rss_mb=None, source=ADR_SOURCE))
         for route in ADR_ROUTES
