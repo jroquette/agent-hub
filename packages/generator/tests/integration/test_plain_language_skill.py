@@ -232,7 +232,7 @@ def test_lands_records_on_hub_before_build_when_feature_rendered(demo_config: Hu
     records = text[text.index("**Records PR**") : text.index("5. **Build**")]
 
     assert "before any code PR cites them" in records
-    assert "hub branch `jdoe/<parent issue in lowercase>-<slug>-records`" in records
+    assert "new hub branch for the parent issue (the branch rule in `AGENTS.md`)" in records
     assert "wait for their OK" in records
     assert "`gh pr create --base main --title" in records
     assert "Build starts once the owner merged it" in records

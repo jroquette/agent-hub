@@ -178,9 +178,7 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
         "project_branch_prefix": shown_prefix(config),
         "project_default_branch": project.default_branch,
         # The hub's feature records on GitHub, for the links PR bodies give (record_links).
-        "hub_features_url": features_url(
-            hub_repo=project.hub_repo, branch=project.default_branch
-        ),
+        "hub_features_url": features_url(hub_repo=project.hub_repo, branch=project.default_branch),
         "tracker_team": config.tracker.default_team,
         "repo_dirs": _LIST_SEPARATOR.join(repo.dir for repo in repos),
         "repo_githubs": _LIST_SEPARATOR.join(repo.github for repo in repos),
