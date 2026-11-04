@@ -230,8 +230,9 @@ The rules:
   resource route answers for the same parameters. A derived part is never written under a resource's key.
 - The resource routes stay unchanged for the CLI, the MCP server and the other screens. When a screen read fails, the
   web reads each region from its resource route, so a failure stays in its region.
-- The web makes a screen read once per visit, and a visit is one screen open for one project or session: moving in
-  place to another project's overview or another session starts a new visit, with its own read.
+- The web makes a screen read once per visit. Moving in place to another project's overview or to another session
+  starts a new visit, with its own read. On Home and Sessions, a change of scope, sort, period or filter keeps the
+  visit and makes no new read: the regions then read their own routes.
 
 `GET /api/v1/screens/shell?project=` → `ShellView`, the app shell's facts:
 
@@ -249,8 +250,9 @@ decision, an owner sign-off, and registering or removing a hub (`POST /hubs`, `D
 folder changed outside the app shows within 30 s.
 
 When the event database cannot be read or is busy, the shell read answers the same 503 as `GET /live-sessions`
-("Collector database unavailable" or "Collector database busy"), so the switcher, the Workflow runs item and the badge
-hide together; when only the live sessions cannot be read, `features_needing_you` still counts.
+("Collector database unavailable" or "Collector database busy"). When that is the shell's first read (a page load or
+a new scope), the switcher, the Workflow runs item and the badge hide together; a later poll's failure keeps the last
+facts. When only the live sessions cannot be read, `features_needing_you` still counts.
 
 `GET /api/v1/screens/portfolio?project=` → `PortfolioView`, Home's first view. Each part is its resource's answer
 for the same scope, and the web writes it under that resource's query key:

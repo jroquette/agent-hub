@@ -47,8 +47,9 @@ def test_answers_badge_count_when_store_cannot_read_live_sessions(
 
 # When the whole event store cannot be read, every event read the shell read makes raises the
 # store's error at once (the projects' activity reads the same store), and the shell read answers
-# the problem /live-sessions answers: the switcher, the Workflow runs item and the Features badge
-# hide together, the badge with them. The app carries the composed error mapping, as hub web does.
+# the problem /live-sessions answers. On the shell's first read, the switcher, the Workflow runs
+# item and the Features badge then hide together, the badge with them; a later poll's failure keeps
+# the last facts. The app carries the composed error mapping, as hub web does.
 @pytest.mark.parametrize(
     ("error", "title"),
     [
