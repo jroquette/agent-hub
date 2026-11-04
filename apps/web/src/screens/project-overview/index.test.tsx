@@ -1,5 +1,6 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { Route, Routes } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
 import { apiKey, createQueryClient } from "../../lib/api";
@@ -1120,6 +1121,132 @@ describe("ProjectOverviewScreen", () => {
       vi.useRealTimers();
     }
   });
+
+  // A return to the overview draws the last visit's Recent work at once, never a skeleton, while
+  // this visit's read is on its way; another project's read never stands in for it.
+  it.each([
+    { from: "a ticket", away: "/tickets/ACME-7", arrived: "Ticket ACME-7" },
+    { from: "another project's overview in place", away: "/projects/other", arrived: "OTHER-5" },
+  ])(
+    "draws the last visit's Recent work at once on a return from $from, until the read answers",
+    async ({ away, arrived }) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        // ACME-99 was worked on after the first visit: only the return's read has it.
+        const later = aPage([
+          aSession({
+            id: anId(21),
+            status: "ended",
+            outcome: "done",
+            last_activity_at: recent,
+            label: aSessionLabel({ issue: "ACME-99", workflow: "/fix", workflows: ["/fix"] }),
+          }),
+          ...weekSessions.items,
+        ]);
+        const otherWeek = aPage([
+          aSession({
+            id: anId(31),
+            project: "other",
+            status: "ended",
+            outcome: "done",
+            last_activity_at: recent,
+            label: aSessionLabel({ issue: "OTHER-5", workflow: "/fix", workflows: ["/fix"] }),
+          }),
+        ]);
+        let reads = 0;
+        const { calls, router } = renderWithApi(
+          <Routes>
+            <Route path="/projects/:project" element={<ProjectOverviewScreen />} />
+            <Route path="/tickets/:id" element={<h1>Ticket ACME-7</h1>} />
+          </Routes>,
+          {
+            routes: {
+              ...routes,
+              [OVERVIEW_READ]: () => {
+                reads += 1;
+                return anOverviewRead(reads === 1 ? {} : { recent_sessions: later });
+              },
+              "/api/v1/screens/project-overview/other": anOverviewRead({
+                project: aProjectDetail({ name: "other" }),
+                recent_sessions: otherWeek,
+              }),
+            },
+            path: "/projects/agent-hub",
+            queryClient: createQueryClient(),
+          },
+        );
+        const first = await screen.findByRole("region", { name: "Recent work" });
+        expect(await within(first).findByText("ACME-7")).toBeInTheDocument();
+        expect(within(first).queryByText("ACME-99")).toBeNull();
+        expect(reads).toBe(1);
+
+        // From here on, agent-hub's overview read answers only once let through.
+        const answer = vi.mocked(globalThis.fetch).getMockImplementation();
+        if (answer === undefined) throw new Error("fetch is not stubbed");
+        let release: () => void = () => undefined;
+        const held = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        let heldReads = 0;
+        vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+          const url = input instanceof Request ? input.url : String(input);
+          if (new URL(url, window.location.origin).pathname === OVERVIEW_READ) {
+            heldReads += 1;
+            await held;
+          }
+          return answer(input, init);
+        });
+
+        await act(async () => {
+          await router.navigate(away);
+        });
+        expect(await screen.findByText(arrived)).toBeInTheDocument();
+        // Back more than 10 s later: every entry the first visit read is stale.
+        vi.setSystemTime(Date.now() + 11_000);
+        await act(async () => {
+          await router.navigate(-1);
+        });
+        expect(router.state.location.pathname).toBe("/projects/agent-hub");
+
+        // At once: the first visit's rows in both columns, no empty card rows.
+        const back = screen.getByRole("region", { name: "Recent work" });
+        expect(within(back).queryByText("ACME-7")).toBeInTheDocument();
+        expect(within(back).queryByText("control-plane")).toBeInTheDocument();
+        expect(back.querySelector("[aria-busy='true']")).toBeNull();
+        await waitFor(() => {
+          expect(heldReads).toBe(1);
+        });
+
+        // Past a skeleton's 300 ms delay, the return's read still held: the same rows, no skeleton.
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 350));
+        });
+        const waiting = screen.getByRole("region", { name: "Recent work" });
+        expect(within(waiting).queryByText("ACME-7")).toBeInTheDocument();
+        expect(within(waiting).queryByText("control-plane")).toBeInTheDocument();
+        expect(within(waiting).queryByText("OTHER-5")).toBeNull();
+        expect(within(waiting).queryByText("ACME-99")).toBeNull();
+        expect(waiting.querySelector("[aria-busy='true']")).toBeNull();
+        expect(waiting.querySelector(".ah-skel")).toBeNull();
+        // The kept answer is read from the cache: no second read, no sessions route.
+        expect(heldReads).toBe(1);
+        expect(calls()).not.toContain("/api/v1/sessions");
+
+        // This visit's answer then replaces it.
+        release();
+        await waitFor(() => {
+          expect(
+            within(screen.getByRole("region", { name: "Recent work" })).queryByText("ACME-99"),
+          ).toBeInTheDocument();
+        });
+        expect(reads).toBe(2);
+        expect(heldReads).toBe(1);
+        expect(calls()).not.toContain("/api/v1/sessions");
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   // The sessions route answers the opposite each time, so a screen that read it would show the
   // other state.
