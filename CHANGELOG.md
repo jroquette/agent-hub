@@ -18,6 +18,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   keeps it. Without one, the CLI picks it, as before. The same goes for `ultracode` (off by default), and `fable`
   joins the model aliases. Migrations 0011 and 0012 add `agent_sessions.effort` and `agent_sessions.ultracode`,
   and skip a column the database already has (AGH-681).
+- `hub web`: one menu in the message box picks the model and the effort, as in Claude Desktop: the model list, with
+  the effort levels in a side menu and an Ultracode switch. The new session dialog and New feature have it too
+  (New feature also gets the mode), and new sessions start with the effort last picked in this browser. The menu
+  opens next to its pill, over dialogs. Fable is in the model list (AGH-681).
 
 ## [0.30.0] - 2026-11-01
 
