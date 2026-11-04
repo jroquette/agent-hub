@@ -163,7 +163,9 @@ of spec 22 and how the shell's facts arrive:
   reads its own route, as before, and loads and fails on its own.
 - **Shell facts.** The switcher's projects, the Workflow runs item and the Features badge come from one shell read,
   and they hide together only when its first read fails. When the scope changes, the projects and the runs item stay,
-  and the badge hides until the new scope's count arrives.
+  and the badge hides until the new scope's count arrives. When the event database cannot be read or is busy, the
+  shell read fails and the three hide together, the badge with them; the badge still counts when only the live
+  sessions cannot be read (AC-374.7, `17-features.md:213-216`).
 
 ## Design system
 

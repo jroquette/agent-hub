@@ -248,6 +248,10 @@ session. These writes through the app forget the kept lists, so the next read co
 decision, an owner sign-off, and registering or removing a hub (`POST /hubs`, `DELETE /hubs/{hub_id}`). A feature
 folder changed outside the app shows within 30 s.
 
+When the event database cannot be read or is busy, the shell read answers the same 503 as `GET /live-sessions`
+("Collector database unavailable" or "Collector database busy"), so the switcher, the Workflow runs item and the badge
+hide together; when only the live sessions cannot be read, `features_needing_you` still counts.
+
 `GET /api/v1/screens/portfolio?project=` → `PortfolioView`, Home's first view. Each part is its resource's answer
 for the same scope, and the web writes it under that resource's query key:
 
