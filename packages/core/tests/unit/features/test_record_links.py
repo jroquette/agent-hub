@@ -3,7 +3,7 @@ import pytest
 from agent_hub.core.features.record_links import feature_url, features_url
 
 
-def test_builds_features_url_from_hub_repo_and_branch() -> None:
+def test_builds_features_url_when_hub_repo_and_branch_given() -> None:
     assert features_url(hub_repo="acme/demo-hub", branch="main") == (
         "https://github.com/acme/demo-hub/blob/main/brain/features"
     )
