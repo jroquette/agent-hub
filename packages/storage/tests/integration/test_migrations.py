@@ -642,3 +642,90 @@ def test_keeps_sessions_as_all_tools_when_tool_access_added_and_dropped(tmp_path
     assert columns[-1] == "tool_access"
     assert at_head == [(*before[0], "all")]
     assert _all_session_rows(db_path) == before
+
+
+def _session_columns(db_path: Path) -> list[str]:
+    return [str(name) for name, _, _ in _schema(db_path, "agent_sessions")["columns"]]
+
+
+def _add_playground_columns(db_path: Path, statements: list[str]) -> None:
+    """Add columns the way the playground's copies of 0011 and 0012 did, before the stamp."""
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            for statement in statements:
+                connection.exec_driver_sql(statement)
+    finally:
+        engine.dispose()
+
+
+PLAYGROUND_EFFORT = "ALTER TABLE agent_sessions ADD COLUMN effort VARCHAR"
+PLAYGROUND_ULTRACODE = (
+    "ALTER TABLE agent_sessions ADD COLUMN ultracode BOOLEAN DEFAULT (0) NOT NULL"
+)
+
+
+# AC-681.8
+def test_adds_each_column_once_when_effort_already_exists(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0010")
+    _add_playground_columns(db_path, [PLAYGROUND_EFFORT])
+
+    upgrade(config, "head")
+
+    columns = _session_columns(db_path)
+    assert _current_revision(db_path) == HEAD
+    assert (columns.count("effort"), columns.count("ultracode")) == (1, 1)
+
+
+# AC-681.8
+def test_adds_each_column_once_when_effort_and_ultracode_already_exist(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0010")
+    _add_playground_columns(db_path, [PLAYGROUND_EFFORT, PLAYGROUND_ULTRACODE])
+
+    upgrade(config, "head")
+
+    columns = _session_columns(db_path)
+    assert _current_revision(db_path) == HEAD
+    assert (columns.count("effort"), columns.count("ultracode")) == (1, 1)
+    check(config)  # the skipped columns match the metadata
+
+
+# AC-681.8
+def test_keeps_schema_when_database_at_0012_upgrades_to_head(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0012")
+    before = _schema(db_path, "agent_sessions")
+
+    upgrade(config, "head")
+
+    assert _current_revision(db_path) == "0012"
+    assert _schema(db_path, "agent_sessions") == before
+
+
+# AC-681.3, AC-681.9
+def test_keeps_sessions_when_effort_and_ultracode_added_and_dropped(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0010")
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(SESSION_INSERT)
+    finally:
+        engine.dispose()
+    before = _all_session_rows(db_path)
+
+    upgrade(config, "0012")
+    at_head = _all_session_rows(db_path)
+    columns = _session_columns(db_path)
+    downgrade(config, "0010")
+
+    assert columns[-2:] == ["effort", "ultracode"]
+    assert at_head == [(*before[0], None, 0)]
+    assert _all_session_rows(db_path) == before
+    assert {"effort", "ultracode"}.isdisjoint(_session_columns(db_path))
