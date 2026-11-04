@@ -620,10 +620,12 @@ def test_detail_lists_ux_designs_when_folder_has_them() -> None:
             RecordHead(name="ux-new-orders.md", head=b"No frontmatter here.\n", problem=None),
             RecordHead(name="ux-new-link.md", head=None, problem="a link, not a regular file"),
         ),
+        ux_mockups=("ux-change-sidebar.html", "ux-new-unpaired.html"),
     )
 
     detail = feature_detail(folder, project="demo", now=READ_TIME)
 
+    assert [d.mockup for d in detail.ux_designs] == ["ux-change-sidebar.html", None, None]
     assert [(d.path, d.screen, d.change, d.title, d.approved) for d in detail.ux_designs] == [
         ("features/demo-feature/ux-change-sidebar.md", "sidebar", "change", "Sidebar", True),
         ("features/demo-feature/ux-new-orders.md", "orders", "new", "orders", False),

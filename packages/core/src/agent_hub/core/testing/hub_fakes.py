@@ -269,6 +269,12 @@ class FakeHubFileReader:
             return UnreadHubFile(message=message, is_missing=False, kind="too_large")
         return content
 
+    def read_feature_mockup(
+        self, hub_path: str, slug: str, name: str, *, max_bytes: int
+    ) -> bytes | UnreadHubFile:
+        """The mockup's bytes, held as the brain file ``features/<slug>/<name>``, or why not."""
+        return self.read_brain_file(hub_path, f"features/{slug}/{name}", max_bytes=max_bytes)
+
     def brain_file_size(self, hub_path: str, path: str) -> int | None:
         """The brain file's size; None when absent or a link."""
         hub = self._hub(hub_path)

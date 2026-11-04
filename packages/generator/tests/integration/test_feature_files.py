@@ -38,6 +38,7 @@ from agent_hub.generator.feature_files import (
     READ_BUDGET_BYTES,
     read_feature_folder,
     read_feature_folders,
+    read_feature_mockup,
 )
 
 
@@ -432,6 +433,61 @@ def test_lists_ux_design_problem_when_linked(tmp_path: Path) -> None:
     assert read.ux_designs == (
         RecordHead(name="ux-linked.md", head=None, problem="not a regular file"),
     )
+
+
+def test_lists_ux_mockups_unread_when_html_beside_designs(tmp_path: Path) -> None:
+    folder = a_feature(
+        features_of(tmp_path),
+        "demo-feature",
+        {"ux-new-a.md": b"# A\n", "ux-new-a.html": b"<p>a</p>", "notes.html": b"<p>n</p>"},
+    )
+    (folder / ".ux-hidden.html").write_bytes(b"hidden")
+
+    [read] = read_feature_folders(tmp_path)
+
+    assert read.ux_mockups == ("ux-new-a.html",)
+
+
+def test_reads_ux_mockup_when_regular_and_under_cap(tmp_path: Path) -> None:
+    a_feature(features_of(tmp_path), "demo-feature", {"ux-new-a.html": b"<p>a</p>"})
+
+    assert read_feature_mockup(tmp_path, "demo-feature", "ux-new-a.html", max_bytes=64) == (
+        b"<p>a</p>"
+    )
+
+
+@pytest.mark.parametrize(
+    ("slug", "name"),
+    [
+        ("demo-feature", "ux-missing.html"),
+        ("demo-feature", "spec.md"),
+        ("demo-feature", "../ux-new-a.html"),
+        ("..", "ux-new-a.html"),
+        ("other", "ux-new-a.html"),
+    ],
+)
+def test_refuses_ux_mockup_when_name_or_place_wrong(tmp_path: Path, slug: str, name: str) -> None:
+    a_feature(features_of(tmp_path), "demo-feature", {"ux-new-a.html": b"<p>a</p>"})
+
+    read = read_feature_mockup(tmp_path, slug, name, max_bytes=64)
+
+    assert not isinstance(read, bytes)
+    assert read.is_missing
+
+
+def test_refuses_ux_mockup_when_linked_or_over_cap(tmp_path: Path) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {"ux-big.html": b"x" * 65})
+    secret = tmp_path / "secret.html"
+    secret.write_bytes(b"secret")
+    (folder / "ux-linked.html").symlink_to(secret)
+
+    linked = read_feature_mockup(tmp_path, "demo-feature", "ux-linked.html", max_bytes=64)
+    big = read_feature_mockup(tmp_path, "demo-feature", "ux-big.html", max_bytes=64)
+
+    assert not isinstance(linked, bytes)
+    assert linked.kind == "not_regular"
+    assert not isinstance(big, bytes)
+    assert big.kind == "too_large"
 
 
 # AGH-323 (two-level-flows P1): plan.md is read whole up to MAX_PLAN_BYTES, amendments included.

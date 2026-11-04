@@ -92,6 +92,10 @@ MAX_PLAN_BYTES: Final = 262_144
 UX_PREFIX: Final = "ux-"
 MAX_UX_FILES: Final = 50
 UX_HEAD_BYTES: Final = 4096
+# A design's visual mockup is the ``ux-*.html`` with its stem: listed with the folder, read alone.
+UX_MOCKUP_SUFFIX: Final = ".html"
+MAX_UX_MOCKUP_BYTES: Final = 1_048_576
+_UX_MOCKUP_NAME: Final = re.compile(r"ux-[A-Za-z0-9][A-Za-z0-9._-]*\.html")
 PLAN_TOO_LARGE: Final = (
     f"{PLAN} is larger than {MAX_PLAN_BYTES // 1024} KiB; its version could not be read."
 )
@@ -132,7 +136,8 @@ class FeatureFolder:
     name; ``evals_skipped`` counts the eval files left unread over the cap.
     ``plan`` holds ``plan.md`` whole, None when absent or larger than ``MAX_PLAN_BYTES``
     (``plan_too_large`` then says so). ``ux_designs`` holds the heads of the folder's own
-    ``ux-*.md`` sorted by name; ``ux_skipped`` counts those left unread over ``MAX_UX_FILES``.
+    ``ux-*.md`` sorted by name; ``ux_skipped`` counts those left unread over ``MAX_UX_FILES``;
+    ``ux_mockups`` names its ``ux-*.html`` mockups (listed, never read here).
     ``review_round_tickets`` names the ``reviews/`` ticket folders holding a review round
     (``<reviewer>-r<N>.json``, never read). ``ticket_folders`` holds what was read of each
     ``tickets/<ticket>/`` (``ticket_folders_skipped`` counts those left unread over the cap);
@@ -153,6 +158,7 @@ class FeatureFolder:
     plan_too_large: bool = False
     ux_designs: tuple[RecordHead, ...] = ()
     ux_skipped: int = 0
+    ux_mockups: tuple[str, ...] = ()
     review_round_tickets: tuple[str, ...] = ()
     ticket_folders: tuple[TicketFiles, ...] = ()
     ticket_folders_skipped: int = 0
@@ -428,6 +434,7 @@ def _ux_views(folder: FeatureFolder) -> tuple[UxDesignView, ...]:
         if named_change not in ("new", "change"):
             named_change, named_screen = "new", stem
         screen = front.get("screen") or named_screen
+        mockup = f"{design.name.removesuffix('.md')}{UX_MOCKUP_SUFFIX}"
         views.append(
             UxDesignView(
                 path=f"{FEATURES_FOLDER}/{folder.slug}/{design.name}",
@@ -435,9 +442,16 @@ def _ux_views(folder: FeatureFolder) -> tuple[UxDesignView, ...]:
                 change=front.get("change") or named_change,
                 title=_first_heading(design.head) or screen,
                 approved=front.get("status") == "approved",
+                mockup=mockup if mockup in folder.ux_mockups else None,
             )
         )
     return tuple(views)
+
+
+def is_ux_mockup_name(name: str) -> bool:
+    """Whether ``name`` is one file name a UX mockup may have (``ux-<stem>.html``, no folder, not
+    hidden), checked before any read."""
+    return _UX_MOCKUP_NAME.fullmatch(name) is not None
 
 
 def _first_heading(head: bytes | None) -> str | None:

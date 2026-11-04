@@ -43,9 +43,11 @@ from agent_hub.core.brain.frontmatter import split_frontmatter
 from agent_hub.core.doctor.finding import Finding
 from agent_hub.core.events.event import EventSource
 from agent_hub.core.features.feature_status import (
+    MAX_UX_MOCKUP_BYTES,
     FeatureFolder,
     feature_detail,
     feature_view,
+    is_ux_mockup_name,
     ticket_ids,
 )
 from agent_hub.core.features.feature_tickets import (
@@ -53,7 +55,7 @@ from agent_hub.core.features.feature_tickets import (
     feature_tickets,
     ticket_records,
 )
-from agent_hub.core.features.feature_view import FeatureDetail, FeatureView
+from agent_hub.core.features.feature_view import FeatureDetail, FeatureView, UxMockup
 from agent_hub.core.features.ticket_snapshots import (
     SnapshotRead,
     SnapshotRequest,
@@ -261,6 +263,33 @@ class HubFilesReadModels:
         return feature_detail(
             folder, project=found.name, now=self._clock(), read=self._cached(found, folder)
         )
+
+    def ux_mockup(self, project: str, slug: str, name: str) -> UxMockup:
+        """One UX mockup of a feature folder: a refused name, an unknown feature, a missing
+        file, a link or one over ``MAX_UX_MOCKUP_BYTES`` are all ``EntityNotFoundError``."""
+        missing = EntityNotFoundError(entity="ux mockup", entity_id=f"{project}/{slug}/{name}")
+        if not is_ux_mockup_name(name):
+            raise missing
+        found = self._project_or(project, missing)
+        read = self._reader.read_feature_mockup(
+            found.path, slug, name, max_bytes=MAX_UX_MOCKUP_BYTES
+        )
+        if isinstance(read, UnreadHubFile):
+            raise missing
+        return UxMockup(
+            project=found.name,
+            slug=slug,
+            name=name,
+            html=read.decode("utf-8", "replace"),
+            size=len(read),
+            sha256=hashlib.sha256(read).hexdigest(),
+        )
+
+    def _project_or(self, project: str, missing: EntityNotFoundError) -> _Project:
+        try:
+            return self._project(project)
+        except EntityNotFoundError:
+            raise missing from None
 
     def feature_tickets(self, project: str, slug: str) -> FeatureTickets:
         """One feature's tickets, planning and golden path: the only read that may call the

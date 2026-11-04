@@ -29,6 +29,7 @@ from agent_hub.core.features.feature_view import (
     EvalRecord,
     FeatureDetail,
     FeatureView,
+    UxMockup,
 )
 from agent_hub.core.features.ticket_view import FeatureTickets, TicketRecords
 from agent_hub.core.readmodels.filters import Scope
@@ -39,6 +40,9 @@ from agent_hub.core.screens.screen_reads import ScreenReads
 router = APIRouter(tags=["features"], responses=PROBLEM_RESPONSES)
 
 NamePath = Annotated[str, Path(min_length=1, max_length=MAX_QUERY_TEXT)]
+MockupNamePath = Annotated[
+    str, Path(pattern=r"^ux-[A-Za-z0-9][A-Za-z0-9._-]*\.html$", max_length=200)
+]
 
 
 @router.get("/features")
@@ -63,6 +67,15 @@ def get_feature(
     requests = _with_runs(project, detail.change_requests, events=events, decisions=decisions)
     cost = events.feature_cost(project, slug, detail.issues)
     return detail.model_copy(update={"change_requests": requests, "cost": cost})
+
+
+@router.get("/features/{project}/{slug}/mockups/{name}")
+def get_ux_mockup(
+    project: NamePath, slug: NamePath, name: MockupNamePath, *, models: HubReadModelsDep
+) -> UxMockup:
+    """One UX design's visual mockup (``ux-*.html`` of the feature folder) as text; 404 for any
+    other name, a missing file, a link or one over 1 MiB."""
+    return models.ux_mockup(project, slug, name)
 
 
 @router.get("/features/{project}/{slug}/tickets")

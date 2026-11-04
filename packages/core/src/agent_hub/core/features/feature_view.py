@@ -161,13 +161,27 @@ class UxDesignView(ViewModel):
     """One ``ux-*.md`` of a feature folder, read from its head: ``path`` is relative to the hub's
     ``brain/`` (the brain note route reads it), ``screen`` and ``change`` (``new`` or ``change``)
     come from its frontmatter or else its file name, ``title`` is its first ``# `` heading, and
-    ``approved`` says its frontmatter reads ``status: approved``."""
+    ``approved`` says its frontmatter reads ``status: approved``. ``mockup`` names the
+    ``ux-*.html`` beside it with the same stem (its visual mockup), None without one."""
 
     path: str
     screen: str
     change: str
     title: str
     approved: bool
+    mockup: str | None = None
+
+
+class UxMockup(ViewModel):
+    """One UX design's visual mockup (``ux-*.html`` of a feature folder) as text: hub web shows
+    it in a sandboxed frame, without scripts or network."""
+
+    project: str
+    slug: str
+    name: str
+    html: str
+    size: int = Field(ge=0)
+    sha256: str
 
 
 class AmendmentView(ViewModel):
