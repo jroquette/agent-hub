@@ -84,11 +84,13 @@ function drawn(items: readonly Session[], none: boolean): RecentSessions {
  * the screen opened. The route is read as the Tickets screen reads it: one shared cache entry,
  * never written by the overview read, which those changes refresh.
  *
- * Until this visit's read answers, and after it failed or did not answer in time until the route
- * has answered since the screen opened, the newest answer the cache holds, with no request: the
- * project's last overview read (kept under the read's own key) or the route's entry, whichever was
- * written last. So a return draws at once what was drawn before, or the newer rows the route
- * brought; only a visit with nothing cached waits, for the read (or, after it failed, the route).
+ * Until this visit's read answers, the newest answer the cache holds: the project's last overview
+ * read (kept under the read's own key) or the route's entry, whichever was written last. While the
+ * read is on its way the route stays off, so that answer costs no request. After the read failed
+ * or did not answer in time, the route is asked, and the same cached answer stays until the route
+ * has answered since the screen opened. So a return draws at once what was drawn before, or the
+ * newer rows the route brought; only a visit with nothing cached waits, for the read (or, after it
+ * failed, the route).
  */
 export function useRecentSessions(project: string): RecentSessions {
   const read = useScreenRead(OVERVIEW_READ, path(project));
@@ -100,7 +102,8 @@ export function useRecentSessions(project: string): RecentSessions {
     { enabled: read === null || live },
   );
   if (read === undefined || (read === null && !route.isFetchedAfterMount)) {
-    // The route stays off while the read is on its way: its cached answer is read, never asked.
+    // The cache's newest answer: while the read is on its way (the route off, no request), and
+    // after it failed or timed out (the route asked) until the route has answered on this visit.
     if (route.data && route.dataUpdatedAt > kept.updatedAt) {
       return drawn(route.data.items, route.data.items.length === 0);
     }
