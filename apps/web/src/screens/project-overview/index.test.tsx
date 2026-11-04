@@ -1,3 +1,4 @@
+import { timeoutManager } from "@tanstack/react-query";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Route, Routes } from "react-router";
@@ -350,6 +351,88 @@ function renderFromRead(
 const sharedSessionsKey = apiKey("/api/v1/sessions", {
   query: { project: "agent-hub", limit: 200, sort: "-last_activity_at" },
 });
+
+/** Where the overview keeps its last read for the next visit: under the read's own key. */
+const keptOverviewKey = apiKey("/api/v1/screens/project-overview/{project}", {
+  path: { project: "agent-hub" },
+});
+
+/** A session on ACME-99, a ticket an agent worked on after the first visit's read. */
+const acme99Session = aSession({
+  id: anId(21),
+  status: "ended",
+  outcome: "done",
+  last_activity_at: recent,
+  label: aSessionLabel({ issue: "ACME-99", workflow: "/fix", workflows: ["/fix"] }),
+});
+
+/** From now on, holds each request to `path` until `release()`. `asked()` counts them, held or
+ * not: `calls()` records a request only once the stub answers it. */
+function holdRequests(path: string): { release: () => void; asked: () => number } {
+  const answer = vi.mocked(globalThis.fetch).getMockImplementation();
+  if (answer === undefined) throw new Error("fetch is not stubbed");
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let asked = 0;
+  vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (new URL(url, window.location.origin).pathname === path) {
+      asked += 1;
+      await held;
+    }
+    return answer(input, init);
+  });
+  return {
+    release: () => {
+      release();
+    },
+    asked: () => asked,
+  };
+}
+
+/** TanStack Query's default gcTime, which `createQueryClient` keeps: an entry nothing observes is
+ * dropped 5 min after its removal timer starts. */
+const GC_TIME = 5 * 60_000;
+
+/**
+ * Time passing for the query cache. `pass(ms)` moves the faked Date `ms` on (fake it first) and
+ * runs each of TanStack Query's removal timers due by then; its other timers run as usual.
+ */
+function aRemovalClock(): { pass: (ms: number) => void } {
+  const setTimer = timeoutManager.setTimeout.bind(timeoutManager);
+  const clearTimer = timeoutManager.clearTimeout.bind(timeoutManager);
+  const due = new Map<number, { at: number; run: () => void }>();
+  let now = 0;
+  let lastId = 0;
+  vi.spyOn(timeoutManager, "setTimeout").mockImplementation((callback, delay) => {
+    if (delay !== GC_TIME) return setTimer(callback, delay);
+    lastId -= 1;
+    due.set(lastId, {
+      at: now + delay,
+      run: () => {
+        callback();
+      },
+    });
+    return lastId;
+  });
+  vi.spyOn(timeoutManager, "clearTimeout").mockImplementation((id) => {
+    if (typeof id === "number" && due.has(id)) due.delete(id);
+    else clearTimer(id);
+  });
+  return {
+    pass: (ms) => {
+      vi.setSystemTime(Date.now() + ms);
+      now += ms;
+      for (const [id, timer] of [...due]) {
+        if (timer.at > now) continue;
+        due.delete(id);
+        timer.run();
+      }
+    },
+  };
+}
 
 describe("ProjectOverviewScreen", () => {
   it("shows the header with setup status, a plain summary and warnings", async () => {
@@ -1247,6 +1330,85 @@ describe("ProjectOverviewScreen", () => {
       }
     },
   );
+
+  // The kept read lives as every other cached entry does: while the overview is open, then 5 min
+  // from leaving it, however long the stay.
+  it("draws the last visit's Recent work at once on a return after a stay past the cache's 5 min, and lets it go 5 min after leaving", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const clock = aRemovalClock();
+      const later = aPage([acme99Session, ...weekSessions.items]);
+      let reads = 0;
+      const { queryClient, router } = renderWithApi(
+        <Routes>
+          <Route path="/projects/:project" element={<ProjectOverviewScreen />} />
+          <Route path="/tickets/:id" element={<h1>Ticket ACME-7</h1>} />
+        </Routes>,
+        {
+          routes: {
+            ...routes,
+            [OVERVIEW_READ]: () => {
+              reads += 1;
+              return anOverviewRead(reads === 1 ? {} : { recent_sessions: later });
+            },
+          },
+          path: "/projects/agent-hub",
+          queryClient: createQueryClient(),
+        },
+      );
+      const first = await screen.findByRole("region", { name: "Recent work" });
+      expect(await within(first).findByText("ACME-7")).toBeInTheDocument();
+      expect(queryClient.getQueryData(keptOverviewKey)).toBeDefined();
+
+      // Six minutes on the overview, then to a ticket and Back 11 s later, the read held.
+      act(() => {
+        clock.pass(6 * 60_000);
+      });
+      const read = holdRequests(OVERVIEW_READ);
+      await act(async () => {
+        await router.navigate("/tickets/ACME-7");
+      });
+      expect(await screen.findByText("Ticket ACME-7")).toBeInTheDocument();
+      clock.pass(11_000);
+      await act(async () => {
+        await router.navigate(-1);
+      });
+      expect(router.state.location.pathname).toBe("/projects/agent-hub");
+
+      // At once: the first visit's rows in both columns, no skeleton.
+      const back = screen.getByRole("region", { name: "Recent work" });
+      expect(within(back).queryByText("ACME-7")).toBeInTheDocument();
+      expect(within(back).queryByText("control-plane")).toBeInTheDocument();
+      expect(back.querySelector("[aria-busy='true']")).toBeNull();
+      await waitFor(() => {
+        expect(read.asked()).toBe(1);
+      });
+
+      // This visit's answer replaces them, and is the one kept.
+      read.release();
+      await waitFor(() => {
+        expect(
+          within(screen.getByRole("region", { name: "Recent work" })).queryByText("ACME-99"),
+        ).toBeInTheDocument();
+      });
+
+      // Left again: the kept answer stays for 5 min, then the cache lets it go.
+      await act(async () => {
+        await router.navigate("/tickets/ACME-7");
+      });
+      expect(await screen.findByText("Ticket ACME-7")).toBeInTheDocument();
+      act(() => {
+        clock.pass(GC_TIME - 1_000);
+      });
+      expect(queryClient.getQueryData(keptOverviewKey)).toBeDefined();
+      act(() => {
+        clock.pass(2_000);
+      });
+      expect(queryClient.getQueryData(keptOverviewKey)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   // The sessions route answers the opposite each time, so a screen that read it would show the
   // other state.
