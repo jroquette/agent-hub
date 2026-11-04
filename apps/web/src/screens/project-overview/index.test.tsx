@@ -1716,11 +1716,12 @@ describe("ProjectOverviewScreen", () => {
 
   // A first visit keeps nothing of its own, but the Tickets screen's answer may be in the cache.
   it("draws the sessions route's cached Recent work on a first visit while its read is on its way", async () => {
-    // A second before, the Tickets screen read the project's newest 200 sessions, and another
-    // screen the project.
+    // 11 s before, the Tickets screen read the project's newest 200 sessions: past the client's
+    // 10 s staleTime, so the route would ask again if it were on. A second before, another screen
+    // read the project.
     const queryClient = createQueryClient();
     queryClient.setQueryData(sharedSessionsKey, aPage([acme99Session]), {
-      updatedAt: Date.now() - 1_000,
+      updatedAt: Date.now() - 11_000,
     });
     queryClient.setQueryData(
       apiKey("/api/v1/projects/{project}", { path: { project: "agent-hub" } }),
@@ -1862,4 +1863,99 @@ describe("ProjectOverviewScreen", () => {
       expect(calls()).not.toContain("/api/v1/sessions");
     },
   );
+
+  // While the read is on its way, the empty states follow the cached answer drawn. The last
+  // visit's read says whether the project has any session at all.
+  it("shows the last visit's empty week, not No sessions yet, on a return whose read is on its way", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const { queryClient, router } = renderWithApi(
+        <Routes>
+          <Route path="/projects/:project" element={<ProjectOverviewScreen />} />
+          <Route path="/tickets" element={<h1>Tickets screen</h1>} />
+        </Routes>,
+        {
+          routes: {
+            ...routes,
+            [OVERVIEW_READ]: anOverviewRead({ recent_sessions: aPage([]), has_sessions: true }),
+          },
+          path: "/projects/agent-hub",
+          queryClient: createQueryClient(),
+        },
+      );
+      const first = await screen.findByRole("region", { name: "Recent work" });
+      expect(
+        await within(first).findByText("No ticket was worked on in the last 7 days."),
+      ).toBeInTheDocument();
+      expect(queryClient.getQueryData(keptOverviewKey)).toBeDefined();
+      expect(queryClient.getQueryData(sharedSessionsKey)).toBeUndefined();
+
+      // To the Tickets screen, then Back 11 s later, the read held.
+      const read = holdRequests(OVERVIEW_READ);
+      await act(async () => {
+        await router.navigate("/tickets");
+      });
+      expect(await screen.findByText("Tickets screen")).toBeInTheDocument();
+      vi.setSystemTime(Date.now() + 11_000);
+      await act(async () => {
+        await router.navigate(-1);
+      });
+      expect(router.state.location.pathname).toBe("/projects/agent-hub");
+      await waitFor(() => {
+        expect(read.asked()).toBe(1);
+      });
+
+      // The project has sessions, none this week: the empty-week lines.
+      const back = screen.getByRole("region", { name: "Recent work" });
+      expect(
+        within(back).queryByText("No ticket was worked on in the last 7 days."),
+      ).toBeInTheDocument();
+      expect(within(back).queryByText("No sessions yet.")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The sessions route's cached answer says it by being empty.
+  it("says there are no sessions yet on a first visit whose read is on its way, from the sessions route's empty cached answer", async () => {
+    // A second before, the Tickets screen read the project's newest 200 sessions, none, and
+    // another screen the project.
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(sharedSessionsKey, aPage([]), { updatedAt: Date.now() - 1_000 });
+    queryClient.setQueryData(
+      apiKey("/api/v1/projects/{project}", { path: { project: "agent-hub" } }),
+      routes["/api/v1/projects/agent-hub"],
+      { updatedAt: Date.now() - 1_000 },
+    );
+    const { router } = renderWithApi(
+      <Routes>
+        <Route path="/projects/:project" element={<ProjectOverviewScreen />} />
+        <Route path="/tickets" element={<h1>Tickets screen</h1>} />
+      </Routes>,
+      {
+        routes: {
+          ...routes,
+          [OVERVIEW_READ]: anOverviewRead({ recent_sessions: aPage([]), has_sessions: false }),
+        },
+        path: "/tickets",
+        queryClient,
+      },
+    );
+    expect(await screen.findByText("Tickets screen")).toBeInTheDocument();
+    expect(queryClient.getQueryData(keptOverviewKey)).toBeUndefined();
+
+    // To the overview, its read held.
+    const read = holdRequests(OVERVIEW_READ);
+    await act(async () => {
+      await router.navigate("/projects/agent-hub");
+    });
+    await waitFor(() => {
+      expect(read.asked()).toBe(1);
+    });
+
+    // No session at all: "No sessions yet.", not the empty-week lines.
+    const waiting = await screen.findByRole("region", { name: "Recent work" });
+    expect(within(waiting).queryByText("No sessions yet.")).toBeInTheDocument();
+    expect(within(waiting).queryByText("No ticket was worked on in the last 7 days.")).toBeNull();
+  });
 });
