@@ -25,7 +25,7 @@ import { Transcript } from "./Transcript";
 import { pendingPermissions, resumable } from "./model";
 import { useStickToBottom } from "./useStickToBottom";
 
-const DEFAULT_MODELS = ["default", "opus", "sonnet", "haiku"];
+const DEFAULT_MODELS = ["default", "opus", "fable", "sonnet", "haiku"];
 
 export interface DiscussChatProps {
   agentSessionId: string;
@@ -170,6 +170,8 @@ export function DiscussChatView({
             status={status}
             mode={state.mode ?? session.mode}
             model={state.model ?? session.model ?? null}
+            effort={state.effort ?? session.effort ?? null}
+            ultracode={state.ultracode ?? session.ultracode}
             models={capabilities.data?.models ?? DEFAULT_MODELS}
             onSend={async (text, screenshots, files) => {
               await transcript.send(
