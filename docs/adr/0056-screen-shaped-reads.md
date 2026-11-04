@@ -156,8 +156,9 @@ Rules:
   opens pages with the cookie, as the owner does. While the driver probes `claude` (at most once per 60 s), the
   capabilities part is `null` too, and its read is one call more.
 - Bad: one failing part fails the whole screen read. Each region then reads its own route, but the shell has no
-  region of its own: the project switcher, the sidebar badge and the Workflow runs item hide together until the next
-  poll (they read the same registry, so today they mostly fail together too).
+  region of its own: when it is the shell's first read, the project switcher, the sidebar badge and the Workflow runs
+  item hide together until the next poll (they read the same registry, so today they mostly fail together too); a
+  later poll's failure keeps the last facts.
 - Bad: the badge's predicate exists twice: in TypeScript for the Features list (`reasonOf` in
   `apps/web/src/screens/features/groups.ts`, with its own tests) and in Python for the shell read
   (`agent_hub/core/features/owner_needs.py`). The Python tests take over the cases of the web badge tests that go with
