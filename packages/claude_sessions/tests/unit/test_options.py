@@ -85,6 +85,7 @@ def test_passes_model_resume_fork_and_session_id_when_spec_names_them() -> None:
 
 
 def test_passes_effort_only_when_spec_names_it() -> None:
+    """AC-681.1: ``--effort`` only when the session chose one; else the CLI picks."""
     chosen = sdk_options(
         _spec(effort="xhigh"), can_use_tool=_can_use_tool, cli_path=CLI, environ={}
     )
@@ -94,6 +95,7 @@ def test_passes_effort_only_when_spec_names_it() -> None:
 
 
 def test_passes_ultracode_setting_only_when_spec_turns_it_on() -> None:
+    """AC-681.9: the CLI has no Ultracode flag, so it goes as ``--settings``."""
     chosen = sdk_options(
         _spec(ultracode=True), can_use_tool=_can_use_tool, cli_path=CLI, environ={}
     )
