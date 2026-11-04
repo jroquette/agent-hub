@@ -11,6 +11,17 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Changed
+
+- PR bodies stay short and link their sources. The `plain-language` skill has a PR bodies section: the ticket link,
+  what changed for the user, the checks with their results, what is left before merge; no placeholders, templates or
+  process notes. Every AC, decision or plan step a body cites links to its record in the hub, built from `hub.json`
+  (`project.hub_repo`, `project.default_branch`), and a PR waits as a draft while that record is not on the hub's
+  default branch. `/implement`, `/feature` and `/fix` point to it where they write the body; `/fix` now posts the
+  `quality-reviewer` verdict and its findings on the tracker issue, not in the PR body. `hub step pr --feature SLUG`
+  links the feature's folder in the body, and the `implement` workflow passes it. Run `hub sync` after bumping
+  `platform.version` to get the new skill texts.
+
 ## [0.30.0] - 2026-11-01
 
 ### Added

@@ -15,7 +15,7 @@
 version: 1
 name: implement
 description: One ticket of a planned feature to a PR - context, preflight and plan change gate, review rounds, ticket eval.
-revision: 1
+revision: 2
 inputs:
   feature:
     required: true
@@ -331,7 +331,7 @@ nodes:
     description: Push the branch and open its PR, or find the one open - only on a ticket eval that ships.
     depends_on: [commits]
     when: "$eval.output.verdict == 'SHIP' && $commits.output.count > 0 && $commits.output.dirty == false || $eval.output.verdict == 'SHIP-WITH-OWNER-STEPS' && $commits.output.count > 0 && $commits.output.dirty == false"
-    command: [hub, step, pr, --issue, $INPUTS.issue, --target, $last.output.target]
+    command: [hub, step, pr, --issue, $INPUTS.issue, --target, $last.output.target, --feature, $INPUTS.feature]
     retry: {max_attempts: 0}
     output_format:
       type: object

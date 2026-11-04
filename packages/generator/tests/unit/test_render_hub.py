@@ -2523,7 +2523,7 @@ FIX_STEP_PHRASES = {
     ),
     6: ("`quality-reviewer`", "diff", "Minor findings", "follow-ups"),
     7: ("PR", NO_AI_ATTRIBUTION, "No push to the default branch, no force-push"),
-    8: ("In Review", "PR link"),
+    8: ("In Review", "PR link", "`quality-reviewer` verdict, with its findings and fixes"),
 }
 FIX_SWITCH_PHRASES = (
     "**Stop and switch to `/feature`**",
@@ -2547,7 +2547,7 @@ FIX_RECORD_PHRASES = (
     "`check_fast`, `check` and the review still apply",
     "On `FAIL` with `blocking` findings",
     "re-run `check_fast` and `check`",
-    "record the findings and the fixes in the PR body",
+    "record the findings and the fixes in the step 8 comment",
     "no second review pass",
     "`/learn`",
     "`/handoff`",

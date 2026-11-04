@@ -38,14 +38,24 @@ def prompt_for(issue: Issue, *, sensitive: tuple[str, ...] = ()) -> str:
     )
 
 
-# sha256 of ``prompt_for(an_issue())`` as built on c4d432a, before the full-gate step existed.
-PROMPT_DIGEST_WITH_FAST_GATE = "ca2d2873441aaf341b95b22e3e9882d7139ab8412adbb4b007faa8b5134abd0a"
+# sha256 of ``prompt_for(an_issue())``: built on c4d432a, before the full-gate step existed, and
+# changed only by the summary's wording (what changed for the user, no unlinked record ids).
+PROMPT_DIGEST_WITH_FAST_GATE = "4509453e0062863013b4f924042b9cba3801bfad84b75dec60ddf8883522003e"
 
 
 def test_keeps_prompt_bytes_when_fast_gate_configured() -> None:
     prompt = prompt_for(an_issue())
 
     assert hashlib.sha256(prompt.encode()).hexdigest() == PROMPT_DIGEST_WITH_FAST_GATE
+
+
+def test_asks_for_user_facing_summary_without_record_ids_when_prompt_built() -> None:
+    prompt = " ".join(prompt_for(an_issue()).split())
+
+    assert (
+        '"summary": "<2-4 sentences for the PR body: what changed, for the user;'
+        ' no AC, decision or plan step ids>"'
+    ) in prompt
 
 
 def test_pins_caps_when_module_loaded() -> None:

@@ -47,6 +47,7 @@ RENDERED_KEYS = {
     "project_hub_dir",
     "project_branch_prefix",
     "project_default_branch",
+    "hub_features_url",
     "tracker_team",
     "tracker_team_mention",
     "tracker_team_rule",
@@ -135,6 +136,7 @@ def test_takes_values_from_model_when_demo_mapped(demo_config: HubConfig) -> Non
         "project_hub_dir": "demo-hub",
         "project_branch_prefix": "jdoe/",
         "project_default_branch": "main",
+        "hub_features_url": "https://github.com/acme/demo-hub/blob/main/brain/features",
         "tracker_team": "DEM",
         "tracker_team_mention": " team DEM",
         "tracker_team_rule": " the\n   tracker team DEM",
@@ -215,6 +217,7 @@ def test_joins_repos_in_config_order_when_variant_mapped(variant_config: HubConf
     assert mapping["repo_dirs"] == "demo-api, demo-web"
     assert mapping["repo_githubs"] == "acme/demo-api, acme/demo-web"
     assert mapping["project_default_branch"] == "trunk"
+    assert mapping["hub_features_url"].endswith("/blob/trunk/brain/features")
 
 
 def test_mentions_project_branch_when_no_repo_sets_one(variant_config: HubConfig) -> None:

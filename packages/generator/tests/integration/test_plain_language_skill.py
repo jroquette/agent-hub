@@ -7,6 +7,7 @@ whether an agent follows the rules is not testable from the text.
 import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.generator.render_hub import render_hub
 
 SKILL = "plugin/hub-workflow/skills/plain-language/SKILL.md"
@@ -18,6 +19,7 @@ SECTIONS = [
     "Reply rules",
     "Code comments",
     "Document rules",
+    "PR bodies",
     "Never drop",
     "Sources",
 ]
@@ -67,7 +69,8 @@ SOURCE_PHRASES = (
     "danyuchn/asd-ste100-skill",
     "simplified-english",
 )
-MAX_SKILL_LINES = 100
+# 100 before the PR bodies section.
+MAX_SKILL_LINES = 120
 # AC-8: rule 6 of the rendered AGENTS.md points to the skill, in at most four lines.
 MAX_RULE_LINES = 4
 AGENTS_RULE_PHRASES = (
@@ -172,6 +175,55 @@ def test_states_agents_plain_language_rule_when_agents_rendered(
     skill_lines = {line.strip() for line in skill_text.splitlines()}
     long_lines = [line.strip() for line in rule.splitlines() if len(line.strip()) >= 60]
     assert not [line for line in long_lines if line in skill_lines]
+
+
+# The PR body rule, with the hub's records link built from hub.json (demo: acme/demo-hub, main).
+PR_BODY_PHRASES = (
+    "the ticket link",
+    "what changed, for the user",
+    "the checks you ran, each with its result",
+    "what is left to do before merge",
+    "No placeholders, templates or sections that nobody will fill in",
+    "No process notes, such as review rounds or agent decisions",
+    "Link every AC, decision or plan step that the body cites to its record in the hub",
+    "`https://github.com/acme/demo-hub/blob/main/brain/features/<slug>/<file>#<section>`",
+    "`git ls-tree origin/main -- brain/features/<slug>/<file>`",
+    "keep the PR a draft until the record's hub PR merges",
+)
+# Each step that writes a PR body points to the rule, on the line that holds its anchor.
+PR_BODY_STEPS = [
+    ("implement", "10. **PR**"),
+    ("feature", "**Finish**"),
+    ("fix", "The PR body follows"),
+]
+FEATURES_URL = "https://github.com/acme/demo-hub/blob/main/brain/features"
+
+
+def test_holds_pr_body_rule_when_skill_rendered(skill_text: str) -> None:
+    text = flat(section(skill_text, "PR bodies"))
+    for phrase in PR_BODY_PHRASES:
+        assert phrase in text, phrase
+
+
+def test_takes_records_link_from_hub_json_when_hub_differs() -> None:
+    document = a_hub_document()
+    document["project"] = {**document["project"], "hub_repo": "org/x-hub", "default_branch": "dev"}
+    text = flat(rendered_text(HubConfig.model_validate(document), SKILL))
+
+    assert "`https://github.com/org/x-hub/blob/dev/brain/features/<slug>/<file>#<section>`" in text
+    assert "acme" not in text
+
+
+@pytest.mark.parametrize(("skill", "anchor"), PR_BODY_STEPS)
+def test_points_pr_step_to_pr_body_rule_when_skills_rendered(
+    demo_config: HubConfig, skill: str, anchor: str
+) -> None:
+    text = rendered_text(demo_config, f"plugin/hub-workflow/skills/{skill}/SKILL.md")
+    lines = [line for line in text.splitlines() if anchor in line]
+
+    assert len(lines) == 1, lines
+    assert "`plain-language` skill's PR bodies rules" in lines[0]
+    assert skill == "fix" or f"`{FEATURES_URL}/<slug>/`" in lines[0]
 
 
 @pytest.mark.parametrize(("skill", "anchor"), CITATIONS)
