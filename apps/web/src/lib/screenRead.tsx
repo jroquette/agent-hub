@@ -15,7 +15,14 @@
  * can draw a derived part from the last answer (`useKeptScreenRead`) while its own read is on its
  * way.
  */
-import { hashKey, useQueryClient, type QueryClient, type QueryKey } from "@tanstack/react-query";
+import {
+  hashKey,
+  skipToken,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+  type QueryKey,
+} from "@tanstack/react-query";
 import {
   createContext,
   useContext,
@@ -116,13 +123,16 @@ export function useScreenRead<P extends GetPath>(
  * The last answer a provider told to `keep` it used for this read with these `params`, from the
  * query cache under the read's own key; undefined when none is kept. It reads the cache only and
  * never sends a request: a return to the screen draws a derived part from it while
- * `useScreenRead` is still undefined, then from this visit's answer.
+ * `useScreenRead` is still undefined, then from this visit's answer. While mounted it observes
+ * that entry with a query that can never fetch (`skipToken`: no invalidation, refetch, focus or
+ * reconnect makes it send a request), so the cache lets the kept answer go `gcTime` after the
+ * screen is left, as it does every other entry, not `gcTime` after the answer was first kept.
  */
 export function useKeptScreenRead<P extends GetPath>(
   path: P,
   params?: ApiParams<P>,
 ): ApiData<P> | undefined {
-  return useQueryClient().getQueryData<ApiData<P>>(apiKey(path, params));
+  return useQuery<ApiData<P>>({ queryKey: apiKey(path, params), queryFn: skipToken }).data;
 }
 
 interface ScreenRequest<P extends GetPath> {
