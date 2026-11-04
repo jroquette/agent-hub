@@ -99,6 +99,45 @@ describe("useStartDiscussion (AC-419.15, AC-419.13)", () => {
     expect(rememberMessageScreenshots).toHaveBeenCalledWith(ID, 1, [CAPTURE, PASTED]);
   });
 
+  const SETTINGS: [
+    string,
+    Pick<StartDiscussionRequest, "effort" | "ultracode">,
+    Record<string, unknown>,
+  ][] = [
+    ["none", { effort: null, ultracode: false }, {}],
+    ["both", { effort: "high", ultracode: true }, { effort: "high", ultracode: true }],
+  ];
+
+  it.each(SETTINGS)(
+    "AC-681.9 sends effort and Ultracode only when set (%s set)",
+    async (_set, settings, expected) => {
+      const view = renderWithApi(<Starter request={{ target, prompt: "Hi.", ...settings }} />, {
+        routes: {
+          "/api/v1/agent-sessions/capabilities": aCapabilities(),
+          "/api/v1/agent-sessions/workdirs": { items: [aWorkdir()], warnings: [] },
+          "POST /api/v1/agent-sessions": anAgentSession({ id: ID, status: "running" }),
+        },
+      });
+      expect(await screen.findByText("ready")).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole("button", { name: "start" }));
+
+      const created = await waitFor(() => {
+        const found = view.requests.find(
+          (r) => r.method === "POST" && new URL(r.url).pathname === "/api/v1/agent-sessions",
+        );
+        expect(found).toBeDefined();
+        return found;
+      });
+      const body = JSON.parse((await created?.clone().text()) ?? "{}") as Record<string, unknown>;
+      expect({ effort: body.effort, ultracode: body.ultracode }).toEqual({
+        effort: undefined,
+        ultracode: undefined,
+        ...expected,
+      });
+    },
+  );
+
   it("says why nothing can start when the project has no hub folder", async () => {
     renderWithApi(<Starter request={{ target, prompt: "Hi." }} />, {
       routes: {

@@ -124,6 +124,25 @@ describe("NewSessionDialog (new-session)", () => {
     window.localStorage.removeItem("ah.session.effort");
   });
 
+  it("AC-681.9 starts with Ultracode off, sends it once turned on and does not remember it", async () => {
+    const { dialog, props, view } = open();
+    await userEvent.click(within(dialog).getByRole("button", { name: /^Model and effort/ }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /Effort/ }));
+    const toggle = screen.getByRole("menuitemcheckbox", { name: "Ultracode" });
+    expect(toggle).not.toBeChecked();
+
+    await userEvent.click(toggle);
+    await userEvent.keyboard("{Tab}");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    expect(props.onSubmit).toHaveBeenCalledWith(expect.objectContaining({ ultracode: true }));
+    view.unmount();
+    const next = open();
+    expect(
+      within(next.dialog).getByRole("button", { name: /^Model and effort/ }),
+    ).not.toHaveTextContent("Ultracode");
+  });
+
   it("sends no effort when none was picked", async () => {
     window.localStorage.removeItem("ah.session.effort");
     const { dialog, props } = open();
@@ -707,6 +726,31 @@ describe("NewSessionDialog (resume: fork)", () => {
       resume_session_id: ENDED.claude_session_id,
       fork: true,
     });
+  });
+
+  it("AC-681.5 resume: a fork keeps its session's effort and Ultracode, not the remembered effort", async () => {
+    window.localStorage.setItem("ah.session.effort", "low");
+    const { dialog, props } = fork({ forkOf: { ...ENDED, effort: "max", ultracode: true } });
+
+    expect(
+      within(dialog).getByRole("button", { name: "Model and effort: Opus, Max, Ultracode" }),
+    ).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    expect(props.onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ effort: "max", ultracode: true }),
+    );
+    window.localStorage.removeItem("ah.session.effort");
+  });
+
+  it("AC-681.5 resume: a fork of a session with no effort sends none", async () => {
+    window.localStorage.setItem("ah.session.effort", "low");
+    const { dialog, props } = fork({ forkOf: { ...ENDED, effort: null } });
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    expect(vi.mocked(props.onSubmit).mock.calls[0]?.[0]).not.toHaveProperty("effort");
+    window.localStorage.removeItem("ah.session.effort");
   });
 
   it("resume: a fork keeps a model id the capabilities do not list", async () => {
