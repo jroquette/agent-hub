@@ -6,17 +6,23 @@ and once they are back five stay idle and eleven close. Reads one after another 
 one writer share an engine with no lock error, and a read started after an append returns sees
 it; a connection that wrote, then went back to the pool, starts its next read deferred and
 holds no snapshot; and a closed store leaves its file alone, so leaving WAL succeeds and only
-the database file is left. Each test closes the stores and engines it opens. No time is
-asserted.
+the database file is left. A store dropped without ``close()`` closes its idle connections at
+once, so the garbage collector finds no unclosed connection to warn about (and keep open), and
+dropping a closed store reports nothing. Each test closes the stores and engines it opens. No
+time is asserted.
 """
 
+import gc
+import os
 import sqlite3
+import sys
 import threading
-from collections.abc import Callable
+import warnings
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import ExitStack, closing
+from contextlib import ExitStack, closing, contextmanager, suppress
 from pathlib import Path
-from typing import Final
+from typing import Final, Protocol
 
 import pytest
 from sqlalchemy import event
@@ -39,6 +45,11 @@ APPENDED: Final = BATCHES * BATCH_SIZE
 WAIT_SECONDS: Final = 60.0
 # Another connection's lock wait: short, so a lock still held fails fast instead of waiting 5 s.
 OTHER_TIMEOUT_SECONDS: Final = 0.2
+# While a connection is open on a WAL database SQLite keeps its -wal and -shm files; the last
+# connection to close removes them.
+DATABASE_FILES: Final = ["events.db", "events.db-shm", "events.db-wal"]
+# Linux lists the process's open descriptors here; elsewhere the descriptor checks are left out.
+FD_FOLDER: Final = Path("/proc/self/fd")
 
 
 def _read_while_writing(store: SqliteEventStore, read: Callable[[int], None]) -> list[int]:
@@ -255,3 +266,134 @@ def test_leaves_one_file_when_store_closed_and_journal_left(
 
     assert left == ("delete",)
     assert sorted(entry.name for entry in tmp_path.iterdir()) == ["events.db"]
+
+
+class _Store(Protocol):
+    def close(self) -> None: ...
+
+
+def _open_and_read_event_store(path: Path) -> _Store:
+    store = open_event_store(path)
+    store.high_water_mark()
+    return store
+
+
+def _open_and_read_agent_session_store(path: Path) -> _Store:
+    store = open_agent_session_store(path)
+    store.list()
+    return store
+
+
+def _open_and_read_item_version_store(path: Path) -> _Store:
+    store = open_item_version_store(path)
+    store.last("demo", "plugin/demo/agents/reviewer.md")
+    return store
+
+
+def _open_and_read_knowledge_index(path: Path) -> _Store:
+    index = open_knowledge_index(path)
+    index.stored("/hubs/demo")
+    return index
+
+
+OPEN_AND_READ: Final = [
+    pytest.param(_open_and_read_event_store, id="event-store"),
+    pytest.param(_open_and_read_agent_session_store, id="agent-session-store"),
+    pytest.param(_open_and_read_item_version_store, id="item-version-store"),
+    pytest.param(
+        _open_and_read_knowledge_index,
+        id="knowledge-index",
+        marks=pytest.mark.skipif(not fts5_available(), reason=FTS5_MISSING),
+    ),
+]
+
+
+def _open_database_files(path: Path) -> list[str]:
+    """The names of ``path``, its ``-wal`` and its ``-shm`` among this process's open
+    descriptors (``FD_FOLDER``, so Linux only)."""
+    wanted = {f"{path.resolve()}{suffix}" for suffix in ("", "-wal", "-shm")}
+    targets: list[str] = []
+    for descriptor in FD_FOLDER.iterdir():
+        # The listing's own descriptor is closed by the time its entry is read.
+        with suppress(FileNotFoundError):
+            targets.append(os.readlink(descriptor))
+    return sorted(Path(target).name for target in targets if target in wanted)
+
+
+@contextmanager
+def _collected_on_exit() -> Iterator[tuple[list[str], list[str]]]:
+    """Keep the cyclic garbage collector off inside; on exit run it once, then turn it back on.
+
+    Yields two lists the run fills: the text of each ``ResourceWarning`` it raised (an unclosed
+    SQLite connection finalized warns ``unclosed database``), and of each error a finalizer
+    could not raise (``sys.unraisablehook``). Earlier garbage is collected first, unrecorded.
+    """
+    resource_warnings: list[str] = []
+    finalizer_errors: list[str] = []
+
+    def record_error(report: sys.UnraisableHookArgs) -> None:
+        finalizer_errors.append(repr(report.exc_value))
+
+    gc.collect()
+    previous_hook = sys.unraisablehook
+    sys.unraisablehook = record_error
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ResourceWarning)
+            gc.disable()
+            try:
+                yield resource_warnings, finalizer_errors
+                gc.collect()
+            finally:
+                gc.enable()
+        # Text only: a recorded warning's source is the connection, which it would keep open.
+        resource_warnings.extend(
+            str(seen.message) for seen in caught if issubclass(seen.category, ResourceWarning)
+        )
+    finally:
+        sys.unraisablehook = previous_hook
+
+
+@pytest.mark.parametrize("open_and_read", OPEN_AND_READ)
+def test_closes_pooled_connections_when_store_dropped_without_close(
+    tmp_path: Path, open_and_read: Callable[[Path], _Store]
+) -> None:
+    """Q2: a store freed without ``close()`` closes its idle connections at once, so the garbage
+    collector finds no unclosed connection to warn about and keep open."""
+    path = tmp_path / "events.db"
+    store = open_and_read(path)
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == DATABASE_FILES, (
+        "no connection is open, so the drop below proves nothing"
+    )
+    if FD_FOLDER.is_dir():
+        assert _open_database_files(path) == DATABASE_FILES
+
+    with _collected_on_exit() as (resource_warnings, finalizer_errors):
+        # The last reference: the store is freed here, before any cyclic collection.
+        del store
+        left_files = sorted(entry.name for entry in tmp_path.iterdir())
+        left_open = _open_database_files(path) if FD_FOLDER.is_dir() else []
+
+    assert [text for text in resource_warnings if "unclosed database" in text] == []
+    assert finalizer_errors == []
+    assert left_files == ["events.db"]
+    assert left_open == []
+
+
+@pytest.mark.parametrize("open_and_read", OPEN_AND_READ)
+def test_drops_without_warning_or_error_when_closed_before_drop(
+    tmp_path: Path, open_and_read: Callable[[Path], _Store]
+) -> None:
+    """Q2: freeing a store after its ``close()`` warns of nothing and raises nothing."""
+    path = tmp_path / "events.db"
+    store = open_and_read(path)
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == DATABASE_FILES, (
+        "no connection is open, so the close below proves nothing"
+    )
+    store.close()
+
+    with _collected_on_exit() as (resource_warnings, finalizer_errors):
+        del store
+
+    assert [text for text in resource_warnings if "unclosed database" in text] == []
+    assert finalizer_errors == []
