@@ -77,6 +77,23 @@ These apply to all text for people.
 - Use lists and headings where they help a person scan. SimpleEnglish asks for prose only in chat. We do not follow
   that rule, because summaries and handoffs use lists and sections.
 
+## PR bodies
+
+A PR body tells a reviewer what changed and what is left. It holds only:
+
+- the ticket link;
+- what changed, for the user;
+- the checks you ran, each with its result;
+- what is left to do before merge, if anything.
+
+No placeholders, templates or sections that nobody will fill in. No process notes, such as review rounds or
+agent decisions: they live in the hub's records.
+Link every AC, decision or plan step that the body cites to its record in the hub:
+`@@{hub_features_url}/<slug>/<file>#<section>`.
+A record reaches the hub's default branch through a hub PR when its decision closes, before the code PR.
+If `git ls-tree origin/@@{project_default_branch} -- brain/features/<slug>/<file>` in the hub prints nothing,
+that PR has not merged and the link will break. Tell the owner, and keep the PR a draft until it merges.
+
 ## Never drop
 
 These win over every rule above. If a rule makes you drop one of them, keep it and break the rule.

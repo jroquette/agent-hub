@@ -1229,6 +1229,7 @@ export function anAgentSession(overrides: Partial<AgentSession> = {}): AgentSess
     project: "agent-hub",
     status: "idle",
     title: "Run the tests",
+    ultracode: false,
     updated_at: at(60),
     url: null,
     usage: { cache_read: 0, cache_write: 0, input: 12, output: 5 },

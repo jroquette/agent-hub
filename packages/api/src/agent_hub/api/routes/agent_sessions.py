@@ -207,7 +207,7 @@ async def answer_agent_session_permission(
 async def change_agent_session_settings(
     agent_session_id: SessionIdPath, body: SessionSettings, control: AgentSessionControlDep
 ) -> AgentSession:
-    """Change the permission mode or the model."""
+    """Change the permission mode, the model, the effort or Ultracode."""
     return await control.change_settings(str(agent_session_id), body)
 
 

@@ -89,6 +89,7 @@ def test_declares_agent_session_tables_when_metadata_loaded() -> None:
         "cloud_id",
         "url",
         "model",
+        "effort",
         "title",
         "ended_at",
         "end_reason",

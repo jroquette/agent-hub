@@ -84,6 +84,26 @@ def test_passes_model_resume_fork_and_session_id_when_spec_names_them() -> None:
     assert options.extra_args == {}
 
 
+def test_passes_effort_only_when_spec_names_it() -> None:
+    """AC-681.1: ``--effort`` only when the session chose one; else the CLI picks."""
+    chosen = sdk_options(
+        _spec(effort="xhigh"), can_use_tool=_can_use_tool, cli_path=CLI, environ={}
+    )
+    left = sdk_options(_spec(), can_use_tool=_can_use_tool, cli_path=CLI, environ={})
+
+    assert (chosen.effort, left.effort) == ("xhigh", None)
+
+
+def test_passes_ultracode_setting_only_when_spec_turns_it_on() -> None:
+    """AC-681.9: the CLI has no Ultracode flag, so it goes as ``--settings``."""
+    chosen = sdk_options(
+        _spec(ultracode=True), can_use_tool=_can_use_tool, cli_path=CLI, environ={}
+    )
+    left = sdk_options(_spec(), can_use_tool=_can_use_tool, cli_path=CLI, environ={})
+
+    assert (chosen.settings, left.settings) == ('{"ultracode": true}', None)
+
+
 def test_passes_child_environment_when_spec_adds_web_url() -> None:
     spec = _spec(environment_extra={WEB_URL_VARIABLE: "http://127.0.0.1:7420"})
 

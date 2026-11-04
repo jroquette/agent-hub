@@ -25,7 +25,9 @@ tier ``models.agents`` gives it. A hub without ``models`` renders the models the
 before tiers (AGH-180). A hub that declares ``environments`` gets ``AGENTS.md``'s Environments and
 services section, from ``hub.json`` only; a hub without keeps its bytes (AGH-282). The README's
 Pick a flow table is ``flow_catalog``'s, built from the built-in packs, the same in every hub
-(AGH-495).
+(AGH-495). ``hub_features_url`` is the hub's ``brain/features`` folder on GitHub, built by core's
+``record_links`` from the hub's repo and default branch in ``hub.json``: the skills link the
+records a PR body cites under it.
 """
 
 import re
@@ -33,6 +35,7 @@ import textwrap
 from typing import Final
 
 from agent_hub.core.doctor.snapshot import module_makefiles
+from agent_hub.core.features.record_links import features_url
 from agent_hub.core.hub_config.model import PREFIX_PLACEHOLDER, HubConfig
 from agent_hub.core.hub_config.model_tiers import TIERS, Tier
 from agent_hub.core.hub_config.platform_repository import (
@@ -174,6 +177,8 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
         "project_hub_dir": project.hub_repo.split("/", 1)[1],
         "project_branch_prefix": shown_prefix(config),
         "project_default_branch": project.default_branch,
+        # The hub's feature records on GitHub, for the links PR bodies give (record_links).
+        "hub_features_url": features_url(hub_repo=project.hub_repo, branch=project.default_branch),
         "tracker_team": config.tracker.default_team,
         "repo_dirs": _LIST_SEPARATOR.join(repo.dir for repo in repos),
         "repo_githubs": _LIST_SEPARATOR.join(repo.github for repo in repos),

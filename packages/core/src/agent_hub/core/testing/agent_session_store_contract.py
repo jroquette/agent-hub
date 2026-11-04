@@ -151,6 +151,19 @@ class AgentSessionStoreContract:
         _check((updated.cost_usd, updated.usage) == (Decimal("0.0123"), usage), "cost kept")
         _check(updated.claude_session_id == CLAUDE_ID, "the Claude session id is linked")
 
+    def test_keeps_effort_and_ultracode_when_created_and_updated(
+        self, agent_session_store: AgentSessionStore
+    ) -> None:
+        """AC-681.3, AC-681.9: what a reopened session starts with is what the store kept."""
+        agent_session_store.create(_session(FIRST, effort="high", ultracode=True))
+        created = agent_session_store.get(FIRST)
+
+        updated = agent_session_store.update(FIRST, effort="max", ultracode=False)
+
+        _check((created.effort, created.ultracode) == ("high", True), f"created: {created}")
+        _check(updated == agent_session_store.get(FIRST), "update answers the stored session")
+        _check((updated.effort, updated.ultracode) == ("max", False), f"updated: {updated}")
+
     def test_keeps_digest_when_updated(self, agent_session_store: AgentSessionStore) -> None:
         agent_session_store.create(_session(FIRST))
         files = (

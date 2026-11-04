@@ -1,11 +1,12 @@
 """The texts ``hub run`` writes for others: the PR body, the tracker comments, the inbox line.
 
-The PR body and the comments are the user's (spec D14, D-comment). Every builder that takes
-text from the implementing session, a commit or a gate cleans it first (``sanitized_summary``):
-paths under the workspace become workspace-relative, control and bidi characters go, and every
-line ``hub doctor``'s ``attribution.ai`` rule would flag, or that holds the robot emoji, is
-dropped; no text names an agent. Each text is cut at its cap, so a PR body fits one argument and
-a comment stays short (E21).
+The PR body and the comments are the user's (spec D14, D-comment). The PR body stays short: the
+issue, the feature record's link when the caller knows the feature, the summary and the gate.
+Every builder that takes text from the implementing session, a commit or a gate cleans it first
+(``sanitized_summary``): paths under the workspace become workspace-relative, control and bidi
+characters go, and every line ``hub doctor``'s ``attribution.ai`` rule would flag, or that holds
+the robot emoji, is dropped; no text names an agent. Each text is cut at its cap, so a PR body
+fits one argument and a comment stays short (E21).
 
 When a repo's titles are configured (``hub_config.conventions``), the PR title is rendered from
 the parts of the newest commit subject, read with the repo's ``commit_title``; otherwise it is
@@ -116,10 +117,19 @@ def _cleaned_first_line(subject: str, *, workspace: str) -> str:
     return next((line for line in lines if line), "")
 
 
-def pr_body(*, issue_id: str, summary: str, gate: str, workspace: str) -> str:
-    """The PR body: the issue id, the summary (cleaned, cut at its cap) and the gate that passed."""
+def pr_body(
+    *, issue_id: str, summary: str, gate: str, workspace: str, record_url: str | None = None
+) -> str:
+    """The PR body: the issue id, the feature record's link when ``record_url`` is given, the
+    summary (cleaned, cut at its cap) and the gate that passed; nothing else.
+
+    ``record_url`` is the feature folder in the hub (``record_links.feature_url``). ``hub run``
+    passes none: it knows the issue, not the feature the issue may belong to, so its body links
+    no record. The ``implement`` workflow knows the feature and passes it.
+    """
     shown = sanitized_summary(summary, workspace=workspace)[:MAX_PR_SUMMARY_CHARS]
-    return f"{issue_id}\n\n{shown}\n\n## Verification\nGates green: `{gate}`."
+    record = "" if record_url is None else f"\nFeature record: {record_url}"
+    return f"{issue_id}{record}\n\n{shown}\n\n## Verification\nGates green: `{gate}`."
 
 
 def success_comment(*, run_id: str, pr_url: str, summary: str, workspace: str) -> str:

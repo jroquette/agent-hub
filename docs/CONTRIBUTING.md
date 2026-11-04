@@ -23,7 +23,7 @@ in [TESTING.md](TESTING.md).
 6. **Before the PR**, run `make check`. Redirect the output and check the exit code:
    `make check > check.log 2>&1; echo $?`.
 7. **PR** against `main`, with a Conventional Commit title (check it first with `make pr-title TITLE="<title>"`) and the body from `.github/pull_request_template.md` (tracker
-   issue, summary, ACs covered, the Definition of Done checklist). Move the issue to In Review.
+   issue, summary, ACs covered). Move the issue to In Review.
 8. **Review and merge.** The owner reviews and squash-merges. Fixes after review are new commits; no force-push. The issue
    moves to Done.
 
@@ -110,7 +110,7 @@ An issue can be labeled `agent-ready` (or picked up) when:
 - PR reviewed and merged by the owner;
 - issue Done.
 
-The same checklist is in the PR template.
+The owner checks it before merging; the PR template holds no checklist, since a box left open says nothing.
 
 ## Architecture Decision Records
 

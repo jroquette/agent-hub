@@ -62,10 +62,11 @@ TRACKER_MCP_SERVERS: Final = ("mcp__Linear", "mcp__claude_ai_Linear")
 PERMISSION_MODE: Final = "dontAsk"
 _EXAMPLE_PARTS: Final = TitleParts(type="feat", scope="core", summary="add the change")
 
-# The final line the session is asked for; verdict.py reads it.
+# The final line the session is asked for; verdict.py reads it. The run links no feature record,
+# so the summary cites no AC, decision or plan step a reader could not open.
 _VERDICT_SHAPE = (
-    '{"status": "done" | "blocked", "summary": "<2-4 sentences for the PR body>",'
-    ' "tests": "<commands you ran>"}'
+    '{"status": "done" | "blocked", "summary": "<2-4 sentences for the PR body: what changed,'
+    ' for the user; no AC, decision or plan step ids>", "tests": "<commands you ran>"}'
 )
 _STEPS = """You are implementing issue {issue} in this worktree ({repo}, branch {branch}).
 

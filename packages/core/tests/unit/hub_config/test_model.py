@@ -636,10 +636,12 @@ PROJECT_BRANCH_READERS = {
     "cli/src/agent_hub/cli/mcp_command.py": 1,
     # the hub checkout's branch in the brief
     "cli/src/agent_hub/cli/brief_command.py": 1,
-    # the hub repo's branch hub step config prints for the packs' scripts (the hub target's base)
-    "cli/src/agent_hub/cli/step_command.py": 1,
-    # project_default_branch for ci.yml, and the project branch in AGENTS.md's mentions
-    "generator/src/agent_hub/generator/placeholders.py": 2,
+    # the hub repo's branch hub step config prints for the packs' scripts (the hub target's base),
+    # and the branch hub step pr --feature links the feature record on
+    "cli/src/agent_hub/cli/step_command.py": 2,
+    # project_default_branch for ci.yml, the project branch in AGENTS.md's mentions, and the
+    # branch of hub_features_url (the feature records PR bodies link)
+    "generator/src/agent_hub/generator/placeholders.py": 3,
     # the project's branch in the managed settings' push denies (the guard's protected set)
     "generator/src/agent_hub/generator/built_json.py": 1,
     # the CI trigger branches
@@ -648,6 +650,11 @@ PROJECT_BRANCH_READERS = {
     f"{TEMPLATES}/scripts/retro_metrics.py.tmpl": 2,
     # Config.default_branch, and the project's branch in the protected set (also the root file's)
     f"{TEMPLATES}/plugin/hub-workflow/hooks/hubhooks.py.tmpl": 2,
+    # the hub branch a PR body's record links must be on (the PR bodies rule), the branch the
+    # feature's records PR targets, and the one /implement checks the cited records on
+    f"{TEMPLATES}/plugin/hub-workflow/skills/plain-language/SKILL.md.tmpl": 1,
+    f"{TEMPLATES}/plugin/hub-workflow/skills/feature/SKILL.md.tmpl": 1,
+    f"{TEMPLATES}/plugin/hub-workflow/skills/implement/SKILL.md.tmpl": 1,
 }
 
 

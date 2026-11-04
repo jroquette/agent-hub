@@ -19,6 +19,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   - the app shell's read, `/api/v1/screens/shell`;
   - the Project overview page, `/projects/perf`;
   - `api_kb` on each page row: the kilobytes of API answers the page read before it was ready.
+- A driven session can run at an effort level (`low`, `medium`, `high`, `xhigh`, `max`): `POST /agent-sessions`
+  takes `effort`, `POST /agent-sessions/{id}/settings` changes it while the session runs, and a reopened session
+  keeps it. Without one, the CLI picks it, as before. The same goes for `ultracode` (off by default), and `fable`
+  joins the model aliases. Migrations 0011 and 0012 add `agent_sessions.effort` and `agent_sessions.ultracode`,
+  and skip a column the database already has (AGH-681).
 
 ### Changed
 
@@ -58,6 +63,15 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   - Project overview reads the sessions of the issues worked on in the last 7 days, not the project's 200 newest
     sessions.
   - If a screen read fails, each part of the page reads its own route, as before. The resource routes stay as they are.
+- PR bodies stay short and link their sources. The `plain-language` skill has a PR bodies section: the ticket link,
+  what changed for the user, the checks with their results, what is left before merge; no placeholders, templates or
+  process notes. Every AC, decision or plan step a body cites links to its record in the hub, built from `hub.json`
+  (`project.hub_repo`, `project.default_branch`). `/feature` now opens a hub PR with the feature's records once its
+  spec, plan and tickets are approved, and Build waits until it merges; `/implement` checks the cited records are on
+  the hub's default branch before it opens a code PR. `/implement`, `/feature` and `/fix` point to the rule where
+  they write the body; `/fix` now posts the `quality-reviewer` verdict and its findings on the tracker issue, not in
+  the PR body. `hub step pr --feature SLUG` links the feature's folder in the body, and the `implement` workflow
+  passes it. Run `hub sync` after bumping `platform.version` to get the new skill texts.
 
 ## [0.30.0] - 2026-11-01
 

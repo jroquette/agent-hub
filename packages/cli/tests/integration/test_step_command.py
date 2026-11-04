@@ -267,6 +267,37 @@ class TestPr:
         assert "GH_TOKEN" in gh["env"]
         assert KEY_VARIABLE not in gh["env"]
 
+    def test_links_feature_record_on_hub_default_branch_when_feature_given(
+        self, run_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        workspace = run_workspace.workspace
+        target = target_of(run_command, workspace)
+        commit(workspace, SUBJECT)
+        feature = ("--feature", "demo-feature")
+
+        result = step(run_command, workspace, "pr", *PR_ISSUE, *target, *feature, "--summary", "x")
+
+        assert result.exit_code == 0, result.output
+        (gh,) = run_workspace.calls("gh")
+        assert gh["argv"][-1].splitlines()[:2] == [
+            "DEM-1",
+            "Feature record: https://github.com/acme/demo-hub/blob/trunk/brain/features"
+            "/demo-feature/",
+        ]
+
+    def test_refuses_feature_when_not_a_folder_name(
+        self, run_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        workspace = run_workspace.workspace
+        target = target_of(run_command, workspace)
+        commit(workspace, SUBJECT)
+
+        result = step(run_command, workspace, "pr", *PR_ISSUE, *target, "--feature", "../x")
+
+        assert result.exit_code == 2
+        assert "--feature" in unstyle(result.stderr)
+        assert run_workspace.calls("gh") == []
+
     def test_uses_commit_messages_when_summary_blank(
         self, run_workspace: Workspace, run_command: CommandRunner
     ) -> None:

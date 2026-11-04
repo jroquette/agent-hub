@@ -14,9 +14,10 @@ them; the routes and frames are in [API.md](../API.md#agent-sessions), the produ
 ### Port and adapter
 
 - `SessionDriver` (`driver.py`), async: `start(StartSpec)` → handle, `send`, `interrupt`, `answer_permission`,
-  `set_mode`, `set_model`, `close`, `events(handle)` (an async iterator), `list_resumable(cwd)`, `capabilities()`.
-  `StartSpec` holds a resolved `cwd`, the mode, an optional model, `resume` and `fork`, an optional `session_id` and
-  `environment_extra` (`AGENT_HUB_WEB_URL` only).
+  `set_mode`, `set_model`, `set_effort`, `set_ultracode`, `close`, `events(handle)` (an async iterator),
+  `list_resumable(cwd)`, `capabilities()`.
+  `StartSpec` holds a resolved `cwd`, the mode, an optional model and effort, `ultracode`, `resume` and `fork`, an
+  optional `session_id` and `environment_extra` (`AGENT_HUB_WEB_URL` only).
   `tool_access` is `all`, or `read_only` for a session only the server starts (a discovery,
   [ADR 0046](../adr/0046-read-only-discovery-sessions.md)): `Read`, `Grep` and `Glob` are its whole tool set, no MCP
   server, every other tool request denied without asking; stored with the session (migration 0009) so a reopened one
@@ -890,6 +891,61 @@ pattern), not by lowlight guessing a language, so ADR 0034's "no auto-detection"
 - **AC-423.11** Given a text result, then it wraps like a terminal, its label carries the line count ("1 line",
   "12 lines") and "Copy result" copies the whole text; an empty one reads "No output"; an error's label carries the
   failed icon before "Error".
+
+### Effort and Ultracode (AGH-681)
+
+A session runs at an effort (`low`, `medium`, `high`, `xhigh`, `max`; none leaves it to the CLI, which picks by
+model) and with Ultracode on or off (Claude may run workflows of many agents on its own). Both are chosen at start
+(`POST ""`) or while it runs (`POST /{id}/settings`), stored on `agent_sessions` (`effort`, migration 0011;
+`ultracode`, migration 0012) and kept when it reopens. Fable joins the model aliases. These are the backend halves;
+the menus are the web app's. AC-681.9 and AC-681.10 are for the owner to confirm.
+
+- **AC-681.1 Effort at start.** Given `POST ""` with an effort, then `claude` starts with `--effort <level>` and the
+  session shows it; without one, no `--effort` goes and the CLI picks; any other value is a 422 and nothing starts.
+  Tests: `test_starts_with_effort_and_ultracode_when_created_with_them`,
+  `test_leaves_effort_to_cli_when_created_without_effort` (core `test_control.py`),
+  `test_takes_effort_when_level_known` (`test_driver.py`), `test_refuses_settings_and_create_when_effort_unknown`
+  (`test_agent_session.py`), `test_passes_effort_only_when_spec_names_it` (`test_options.py`),
+  `test_sends_effort_and_ultracode_to_cli_when_started_and_changed` (claude_sessions contract),
+  `test_starts_with_effort_and_ultracode_when_create_names_them` and
+  `test_refuses_effort_without_driver_call_when_effort_unknown` (api integration).
+- **AC-681.2 Effort while it runs.** Given a live session, when `POST /{id}/settings {effort}` is called, then the
+  driver sends the CLI's `apply_flag_settings` control request (`effortLevel`), applied from its next request to the
+  model, the session stores the effort and a `settings` record logs it; effort alone is a valid body, an empty one is
+  not. Tests: `test_passes_effort_to_driver_and_stores_it_when_settings_change`,
+  `test_logs_settings_once_when_effort_and_ultracode_changed_together` (core),
+  `test_accepts_settings_when_only_effort_or_ultracode_given`, `test_refuses_settings_when_empty_or_bypass`
+  (`test_agent_session.py`), `test_answers_success_when_flag_settings_applied` (stub CLI),
+  `test_sends_effort_and_ultracode_to_cli_when_started_and_changed`,
+  `test_changes_effort_and_ultracode_when_settings_posted` (api).
+- **AC-681.3 Effort kept.** Given a session set to an effort, when it ends and a message reopens it, then `claude`
+  starts again with the stored effort (`agent_sessions.effort`). Tests:
+  `test_reopens_with_stored_effort_and_ultracode_when_message_sent` (core),
+  `test_keeps_effort_and_ultracode_when_created_and_updated` (store contract),
+  `test_keeps_sessions_when_effort_and_ultracode_added_and_dropped` (migrations).
+- **AC-681.8 Upgrade over the playground's columns.** Given a database whose `agent_sessions` already has `effort`, or
+  `ultracode`, or both, before `alembic_version` reaches 0011 (made by the playground's copies of the migrations),
+  when it upgrades to head, then each migration skips a column that exists and each column is there once; a
+  database the playground took to 0012 is already at head (same ids) and stays as it is; downgrading drops both. Offline (`--sql`) the columns are always added.
+  Tests: `test_adds_each_column_once_when_effort_already_exists`,
+  `test_adds_each_column_once_when_effort_and_ultracode_already_exist`,
+  `test_adds_each_column_once_when_ultracode_already_exists`,
+  `test_keeps_sessions_when_effort_and_ultracode_added_and_dropped` (`test_migrations.py`).
+- **AC-681.9 Ultracode (owner to confirm).** Given `POST ""` with `ultracode: true`, then `claude` starts with
+  `--settings {"ultracode": true}` (the CLI has no flag for it); given `POST /{id}/settings {ultracode}`, then the
+  driver sends `apply_flag_settings` (`ultracode`), the next turn follows it and a `settings` record logs it; the
+  session stores it and a reopened one keeps it; a new session starts with it off unless the request turns it on
+  (the server never carries it from one session to another). Tests:
+  `test_starts_with_effort_and_ultracode_when_created_with_them`,
+  `test_turns_ultracode_off_and_on_through_driver_when_settings_change`,
+  `test_reopens_with_stored_effort_and_ultracode_when_message_sent`,
+  `test_leaves_effort_to_cli_and_ultracode_off_when_spec_names_neither`,
+  `test_passes_ultracode_setting_only_when_spec_turns_it_on`,
+  `test_sends_effort_and_ultracode_to_cli_when_started_and_changed`,
+  `test_changes_effort_and_ultracode_when_settings_posted`.
+- **AC-681.10 Fable (owner to confirm).** Given the model aliases, then they are `default`, `opus`, `fable`,
+  `sonnet` and `haiku`, and `fable` is accepted wherever a model is. Tests: `test_offers_fable_when_model_aliases_listed`
+  (`test_driver.py`), `test_starts_with_fable_when_create_names_the_alias` (api).
 
 ## Invariants
 

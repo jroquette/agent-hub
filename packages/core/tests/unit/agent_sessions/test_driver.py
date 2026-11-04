@@ -60,6 +60,27 @@ def test_accepts_model_when_alias_or_pattern(model: str) -> None:
     assert StartSpec(cwd="/hub", mode="default", model=model).model == model
 
 
+def test_offers_fable_when_model_aliases_listed() -> None:
+    """AC-681.10: fable is an alias like opus and sonnet."""
+    assert MODEL_ALIASES == ("default", "opus", "fable", "sonnet", "haiku")
+    assert StartSpec(cwd="/hub", mode="default", model="fable").model == "fable"
+
+
+@pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh", "max"])
+def test_takes_effort_when_level_known(effort: str) -> None:
+    """AC-681.1: each effort level reaches the start spec."""
+    assert StartSpec.model_validate(
+        {"cwd": "/hub", "mode": "default", "effort": effort}
+    ).effort == (effort)
+
+
+def test_leaves_effort_to_cli_and_ultracode_off_when_spec_names_neither() -> None:
+    """AC-681.1, AC-681.9: no effort means the CLI picks; Ultracode starts off."""
+    spec = StartSpec(cwd="/hub", mode="default")
+
+    assert (spec.effort, spec.ultracode) == (None, False)
+
+
 @pytest.mark.parametrize(
     "model", ["", "opus sonnet", "--dangerously-skip-permissions" + "x" * 64, "a/b", "m;rm", "é"]
 )

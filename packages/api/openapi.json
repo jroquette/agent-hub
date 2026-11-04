@@ -1043,6 +1043,16 @@
           "created_at": {
             "$ref": "#/components/schemas/ApiTimestamp"
           },
+          "effort": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EffortLevel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "end_reason": {
             "anyOf": [
               {
@@ -1174,6 +1184,11 @@
               }
             ],
             "title": "Title"
+          },
+          "ultracode": {
+            "default": false,
+            "title": "Ultracode",
+            "type": "boolean"
           },
           "updated_at": {
             "$ref": "#/components/schemas/ApiTimestamp"
@@ -2588,6 +2603,16 @@
         "additionalProperties": false,
         "description": "``POST /agent-sessions``: where, how, and an optional first prompt (its byte size is\nchecked against the message limit, 413), or a past session to resume (and fork).\n``screenshot`` (the screen's capture), ``screenshots`` (images pasted in the first\nmessage) and ``files`` go with the first prompt, so they need one.",
         "properties": {
+          "effort": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EffortLevel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "files": {
             "anyOf": [
               {
@@ -2678,6 +2703,17 @@
               }
             ],
             "title": "Screenshots"
+          },
+          "ultracode": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ultracode"
           },
           "workdir_id": {
             "pattern": "^[0-9a-f]{16}$",
@@ -3147,6 +3183,7 @@
             "default": [
               "default",
               "opus",
+              "fable",
               "sonnet",
               "haiku"
             ],
@@ -3276,6 +3313,16 @@
         ],
         "title": "EffectiveEnvironments",
         "type": "object"
+      },
+      "EffortLevel": {
+        "enum": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "type": "string"
       },
       "EndReason": {
         "description": "Why a session ended.",
@@ -13786,8 +13833,18 @@
       },
       "SessionSettings": {
         "additionalProperties": false,
-        "description": "``POST /{id}/settings``: a new mode, a new model, or both (at least one).",
+        "description": "``POST /{id}/settings``: a new mode, model, effort or Ultracode (at least one).",
         "properties": {
+          "effort": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EffortLevel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "mode": {
             "anyOf": [
               {
@@ -13807,6 +13864,17 @@
                 "type": "null"
               }
             ]
+          },
+          "ultracode": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ultracode"
           }
         },
         "title": "SessionSettings",
@@ -18880,7 +18948,7 @@
     },
     "/api/v1/agent-sessions/{agent_session_id}/settings": {
       "post": {
-        "description": "Change the permission mode or the model.",
+        "description": "Change the permission mode, the model, the effort or Ultracode.",
         "operationId": "change_agent_session_settings_api_v1_agent_sessions__agent_session_id__settings_post",
         "parameters": [
           {

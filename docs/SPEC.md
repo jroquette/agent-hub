@@ -207,10 +207,23 @@ failure exits 1. No child gets `LINEAR_API_KEY`, and only the push and `gh` get 
 --issue --repo` makes or keeps the worktree as `hub run` does and prints its path, the prompt's texts and the repo's
 `target` (branch, base, GitHub repo, gate, conventions) read from `hub.json` before the session; `verdict` reads
 the session's reply on stdin as `hub run` does (done, or blocked, with its question); `commits --target` and `pr --issue
---target [--summary]` take that target back (a path outside the workspace exits 2) and never read `hub.json` again;
-`report` computes the delivery (`delivered`, `no_changes`, `blocked`, `failed`) from the other steps' outputs. A
-failure is one `hub step <name>: <reason>` stderr line and exit 1. No step reads or writes the tracker; only the
-fetch, the push and `gh` get a GitHub token.
+--target [--summary] [--feature SLUG]` take that target back (a path outside the workspace exits 2) and read
+`hub.json` again only for `--feature` (`project.hub_repo` and `project.default_branch`; a slug that is not a folder
+name exits 2); `report` computes the delivery (`delivered`, `no_changes`, `blocked`, `failed`) from the other steps'
+outputs. A failure is one `hub step <name>: <reason>` stderr line and exit 1. No step reads or writes the tracker; only
+the fetch, the push and `gh` get a GitHub token.
+
+The PR bodies `hub run` and `hub step pr` write stay short: the issue, the feature record's link
+(`https://github.com/<project.hub_repo>/blob/<project.default_branch>/brain/features/<slug>/`, only with
+`--feature`, which the `implement` workflow passes), the summary and the gate that passed. `hub run` and
+`issue-to-pr` know the issue, not a feature, so they link no record and ask the session for a summary that says what
+changed for the user and cites no AC, decision or plan step id. The skills that write a PR body (`/implement`,
+`/feature`, `/fix`) follow the `plain-language` skill's PR bodies rules: the ticket link, what changed for the user,
+the checks with their results, what is left before merge; no placeholders or process notes; every cited AC, decision
+or plan step linked to its record in the hub. So the records land first: once its spec, plan and tickets are
+approved, `/feature` opens a hub PR with `brain/features/<slug>/` (its Records PR), and Build starts after the owner
+merges it; a later amendment or plan change goes the same way. Before a code PR, `/implement` checks each cited record
+on the hub's default branch and, when one is missing, asks the owner, who may let the PR open as a draft.
 
 The `implement` run's hub writes are `hub step` writers too (two-level-flows P7): `ticket-brief --feature --ticket`,
 `preflight --feature --ticket --run JSON`, `change-request --feature --ticket --run-id --evidence --proposal
@@ -646,7 +659,9 @@ in [design/agent-sessions.md](design/agent-sessions.md)):
 - **Control.** Send messages (also while a turn runs), interrupt, answer permission prompts (allow once, deny with a
   message, always allow one suggested rule; `AskUserQuestion` and plan approval too; unanswered in 10 minutes is a
   deny), change mode (`default`, `acceptEdits`, `plan`, and `auto`, which only the dev app offers,
-  [ADR 0036](adr/0036-live-playground-and-auto-mode.md); never `bypassPermissions` or `dontAsk`) and model, close,
+  [ADR 0036](adr/0036-live-playground-and-auto-mode.md); never `bypassPermissions` or `dontAsk`), model (an alias,
+  `default`, `opus`, `fable`, `sonnet` or `haiku`, or a model id), effort (`low` to `max`, or the CLI's own pick) and
+  Ultracode, each also chosen at start and kept when the session reopens (AGH-681), close,
   resume or fork a past session of that workdir, delete an ended one. A message to an ended local session (not
   `log_full`) whose Claude conversation is still listed reopens it in place, same id and log (AGH-262). At most 4 live
   sessions; at the limit a new one ends the one idle the longest (a message reopens it in place), so only busy
