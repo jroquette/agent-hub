@@ -97,6 +97,7 @@ from agent_hub.cli.run_steps import (
 )
 from agent_hub.cli.ship_steps import ship_child, step_timeouts
 from agent_hub.cli.worktree_steps import check_branches, create_worktree, worktree_task
+from agent_hub.core.features.record_links import feature_url
 from agent_hub.core.features.ticket_writes import PreflightFacts, TicketRecordError
 from agent_hub.core.hub_config.conventions import DEFAULT_BRANCH, EffectiveConventions
 from agent_hub.core.hub_config.effective_identity import (
@@ -351,9 +352,16 @@ def pr(
     summary: Annotated[
         str, typer.Option("--summary", help="The PR's summary; blank, the commit messages.")
     ] = "",
+    feature: Annotated[
+        str,
+        typer.Option(
+            "--feature", metavar="SLUG", help="Link the body to brain/features/<SLUG>/ in the hub."
+        ),
+    ] = "",
 ) -> None:
     """Push the branch and open its PR (or find the one open); print its url."""
     facts = _target(target)
+    record_url = _record_url(feature)
     child, timeouts = ship_child(facts.path), step_timeouts()
     workspace = str(facts.workspace)
     pr_target = PrTarget(github=facts.github, base_branch=facts.default_branch, branch=facts.branch)
@@ -374,7 +382,13 @@ def pr(
             )
             # In process, past the stderr the step's exit reads: the user sees it, as in hub run.
             typer.echo(line, file=sys.stderr if mode is None else mode.stderr)
-        body = pr_body(issue_id=issue, summary=summary, gate=facts.gate, workspace=workspace)
+        body = pr_body(
+            issue_id=issue,
+            summary=summary,
+            gate=facts.gate,
+            workspace=workspace,
+            record_url=record_url,
+        )
         opened = open_or_find_pr(
             child,
             target=pr_target,
@@ -862,6 +876,18 @@ def _config_value(
         },
         "repos": repos,
     }
+
+
+def _record_url(feature: str) -> str | None:
+    """``pr``'s link to the feature's folder on the hub's default branch (``hub.json``); none
+    without ``--feature``; exit 2 when the slug is not a folder name."""
+    if not feature:
+        return None
+    project = load_hub_config_or_exit(_hub() / FILE_LABEL).project
+    try:
+        return feature_url(hub_repo=project.hub_repo, branch=project.default_branch, slug=feature)
+    except ValueError as error:
+        raise typer.BadParameter(str(error), param_hint="--feature") from None
 
 
 def _hub() -> Path:

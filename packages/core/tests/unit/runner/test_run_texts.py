@@ -87,6 +87,23 @@ def test_builds_pr_body_when_gate_green() -> None:
     assert body == "DEM-1\n\nAdds the parser.\n\n## Verification\nGates green: `make check`."
 
 
+def test_links_feature_record_when_pr_body_given_record_url() -> None:
+    record = "https://github.com/acme/demo-hub/blob/main/brain/features/pr-links/"
+
+    body = pr_body(
+        issue_id="DEM-1",
+        summary="Adds the parser.",
+        gate="make check",
+        workspace=WORKSPACE,
+        record_url=record,
+    )
+
+    assert body == (
+        f"DEM-1\nFeature record: {record}\n\nAdds the parser.\n\n"
+        "## Verification\nGates green: `make check`."
+    )
+
+
 def test_cuts_pr_summary_when_over_cap() -> None:
     body = pr_body(
         issue_id="DEM-1",
