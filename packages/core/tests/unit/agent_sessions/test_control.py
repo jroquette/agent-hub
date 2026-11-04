@@ -442,6 +442,104 @@ async def test_logs_settings_when_mode_and_model_changed(make_rig: MakeRig) -> N
     ]
 
 
+async def test_passes_effort_to_driver_and_stores_it_when_settings_change(
+    make_rig: MakeRig,
+) -> None:
+    """AC-681.2: the driver gets the effort, the session keeps it, a ``settings`` record logs it."""
+    rig = make_rig()
+    created = await rig.create()
+
+    changed = await rig.control.change_settings(created.id, SessionSettings(effort="max"))
+
+    assert changed.effort == "max"
+    assert [record.body for record in rig.records(created.id)] == [{"effort": "max"}]
+    calls = [(call.method, call.args) for call in rig.driver.calls if call.method.startswith("set")]
+    assert calls == [("set_effort", ("max",))]
+
+
+async def test_turns_ultracode_off_and_on_through_driver_when_settings_change(
+    make_rig: MakeRig,
+) -> None:
+    """AC-681.9: Ultracode switches either way while the session runs."""
+    rig = make_rig()
+    created = await rig.create()
+
+    changed = await rig.control.change_settings(created.id, SessionSettings(ultracode=True))
+    assert changed.ultracode is True
+    changed = await rig.control.change_settings(created.id, SessionSettings(ultracode=False))
+
+    assert changed.ultracode is False
+    assert [record.body for record in rig.records(created.id)] == [
+        {"ultracode": True},
+        {"ultracode": False},
+    ]
+    calls = [(call.method, call.args) for call in rig.driver.calls if call.method.startswith("set")]
+    assert calls == [("set_ultracode", (True,)), ("set_ultracode", (False,))]
+
+
+async def test_starts_with_effort_and_ultracode_when_created_with_them(make_rig: MakeRig) -> None:
+    """AC-681.1, AC-681.9: the start spec and the session carry what the request chose."""
+    rig = make_rig()
+
+    created = await rig.create("Say hello.", effort="xhigh", ultracode=True)
+
+    spec = _start_spec(rig.driver)
+    assert (spec.effort, spec.ultracode) == ("xhigh", True)
+    assert (created.effort, created.ultracode) == ("xhigh", True)
+    stored = rig.store.get(created.id)
+    assert (stored.effort, stored.ultracode) == ("xhigh", True)
+
+
+async def test_leaves_effort_to_cli_when_created_without_effort(make_rig: MakeRig) -> None:
+    """AC-681.1, AC-681.9: no effort reaches the CLI, and Ultracode starts off."""
+    rig = make_rig()
+
+    created = await rig.create("Say hello.")
+
+    spec = _start_spec(rig.driver)
+    assert (spec.effort, spec.ultracode) == (None, False)
+    assert (created.effort, created.ultracode) == (None, False)
+
+
+async def test_logs_settings_once_when_effort_and_ultracode_changed_together(
+    make_rig: MakeRig,
+) -> None:
+    """AC-681.2, AC-681.9: one ``settings`` record names both; the driver gets each."""
+    rig = make_rig()
+    created = await rig.create()
+
+    changed = await rig.control.change_settings(
+        created.id, SessionSettings(effort="high", ultracode=True)
+    )
+
+    assert (changed.effort, changed.ultracode, changed.mode) == ("high", True, "default")
+    assert [record.body for record in rig.records(created.id)] == [
+        {"effort": "high", "ultracode": True}
+    ]
+    calls = [(call.method, call.args) for call in rig.driver.calls if call.method.startswith("set")]
+    assert calls == [("set_effort", ("high",)), ("set_ultracode", (True,))]
+    stored = rig.store.get(created.id)
+    assert (stored.effort, stored.ultracode) == ("high", True)
+
+
+async def test_reopens_with_stored_effort_and_ultracode_when_message_sent(
+    make_rig: MakeRig,
+) -> None:
+    """AC-681.3, AC-681.9: a reopened session starts with what it was last set to."""
+    rig = make_rig(past_sessions=(PAST,))
+    created = await rig.create("Say hello.", effort="low", resume_session_id=PAST.session_id)
+    await rig.until_status(created.id, "idle")
+    await rig.control.change_settings(created.id, SessionSettings(effort="max", ultracode=True))
+    await rig.control.close(created.id)
+
+    await rig.control.send(created.id, SendMessage(text="Go on."))
+    reopened = await rig.until_status(created.id, "idle")
+
+    spec = _start_spec(rig.driver, 1)
+    assert (spec.effort, spec.ultracode, spec.resume) == ("max", True, PAST.session_id)
+    assert (reopened.effort, reopened.ultracode) == ("max", True)
+
+
 async def test_closes_once_when_closed_twice(make_rig: MakeRig) -> None:
     rig = make_rig()
     created = await rig.create("Say hello.")

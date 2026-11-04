@@ -1,5 +1,6 @@
 """``ClaudeSdkSessionDriver`` honours ``SessionDriverContract`` against the stub CLI (AC-165.2)."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -96,6 +97,38 @@ async def test_passes_spec_to_cli_when_started(tmp_path: Path) -> None:
         model="haiku",
         slash_commands=("compact", "review"),
     )
+
+
+async def test_sends_effort_and_ultracode_to_cli_when_started_and_changed(tmp_path: Path) -> None:
+    """AC-681.1, AC-681.2, AC-681.9: the start carries ``--effort`` and the Ultracode setting; a
+    change goes as ``apply_flag_settings``, which the CLI applies from its next request."""
+    cwd = tmp_path / "work"
+    cwd.mkdir()
+    environ = stub_environ(tmp_path, Scenario(replies={"hi": simple_turn()}))
+    driver = ClaudeSdkSessionDriver(environ=environ, lister=lambda _d, _l: [])
+
+    handle = await driver.start(
+        StartSpec(cwd=str(cwd), mode="default", effort="high", ultracode=True)
+    )
+    await driver.set_effort(handle, "max")
+    await driver.set_ultracode(handle, on=False)
+    await driver.send(handle, "hi")
+    async for event in driver.events(handle):
+        if isinstance(event, TurnResult):
+            break
+    await driver.close(handle)
+
+    records = read_records(Path(environ["STUB_CLAUDE_RECORD"]))
+    [start] = [r for r in records if r.event == "start" and "-v" not in r.args]
+    effort = start.args.index("--effort")
+    settings = start.args.index("--settings")
+    assert start.args[effort + 1] == "high"
+    assert json.loads(start.args[settings + 1]) == {"ultracode": True}
+    applied = [r.data for r in records if r.subtype == "apply_flag_settings"]
+    assert [entry.get("settings") for entry in applied] == [
+        {"effortLevel": "max"},
+        {"ultracode": False},
+    ]
 
 
 async def test_refuses_start_when_claude_missing(tmp_path: Path) -> None:

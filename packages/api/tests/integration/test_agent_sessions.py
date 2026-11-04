@@ -672,6 +672,60 @@ def test_refuses_model_without_driver_call_when_settings_model_invalid(
     assert all(call.method != "set_model" for call in agent_session_app.driver.calls)
 
 
+def test_starts_with_effort_and_ultracode_when_create_names_them(agent_session_app: Any) -> None:
+    """AC-681.1, AC-681.9: the session starts claude with what ``POST ""`` chose, and shows it."""
+    created = _created(agent_session_app, effort="high", ultracode=True)
+    default = _created(agent_session_app)
+
+    assert (created["effort"], created["ultracode"]) == ("high", True)
+    assert (default["effort"], default["ultracode"]) == (None, False)
+    specs = [call.args[0] for call in agent_session_app.driver.calls if call.method == "start"]
+    assert [(spec.effort, spec.ultracode) for spec in specs] == [("high", True), (None, False)]
+
+
+def test_changes_effort_and_ultracode_when_settings_posted(agent_session_app: Any) -> None:
+    """AC-681.2, AC-681.9: each change reaches the driver and is logged as ``settings``."""
+    session_id = _created(agent_session_app)["id"]
+
+    effort = agent_session_app.client.post(f"{BASE}/{session_id}/settings", json={"effort": "high"})
+    ultracode = agent_session_app.client.post(
+        f"{BASE}/{session_id}/settings", json={"ultracode": True}
+    )
+
+    assert (effort.status_code, ultracode.status_code) == (200, 200)
+    assert (ultracode.json()["effort"], ultracode.json()["ultracode"]) == ("high", True)
+    methods = [call.method for call in agent_session_app.driver.calls]
+    assert methods[-2:] == ["set_effort", "set_ultracode"]
+    assert agent_session_app.kinds(session_id) == ["settings", "settings"]
+    bodies = [record.body for record in agent_session_app.rig.records(session_id)]
+    assert bodies == [{"effort": "high"}, {"ultracode": True}]
+
+
+@pytest.mark.parametrize("path", ["", "/settings"])
+def test_refuses_effort_without_driver_call_when_effort_unknown(
+    agent_session_app: Any, path: str
+) -> None:
+    """AC-681.1, AC-681.2: an effort outside low to max is a 422 and reaches no driver."""
+    session_id = _created(agent_session_app)["id"]
+    url = BASE if not path else f"{BASE}/{session_id}{path}"
+    body = CREATE | {"effort": "ultra"} if not path else {"effort": "ultra"}
+
+    response = agent_session_app.client.post(url, json=body)
+
+    assert response.status_code == 422
+    methods = [call.method for call in agent_session_app.driver.calls]
+    assert (methods.count("start"), "set_effort" in methods) == (1, False)
+
+
+def test_starts_with_fable_when_create_names_the_alias(agent_session_app: Any) -> None:
+    """AC-681.10: fable is accepted like any other alias."""
+    created = _created(agent_session_app, model="fable")
+
+    assert created["model"] == "fable"
+    start = next(call for call in agent_session_app.driver.calls if call.method == "start")
+    assert start.args[0].model == "fable"
+
+
 def test_resumes_and_forks_listed_session_when_resume_fork_given(
     open_agent_session_app: Any,
 ) -> None:

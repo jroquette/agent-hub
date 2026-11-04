@@ -641,7 +641,9 @@ in [design/agent-sessions.md](design/agent-sessions.md)):
 - **Control.** Send messages (also while a turn runs), interrupt, answer permission prompts (allow once, deny with a
   message, always allow one suggested rule; `AskUserQuestion` and plan approval too; unanswered in 10 minutes is a
   deny), change mode (`default`, `acceptEdits`, `plan`, and `auto`, which only the dev app offers,
-  [ADR 0036](adr/0036-live-playground-and-auto-mode.md); never `bypassPermissions` or `dontAsk`) and model, close,
+  [ADR 0036](adr/0036-live-playground-and-auto-mode.md); never `bypassPermissions` or `dontAsk`), model (an alias,
+  `default`, `opus`, `fable`, `sonnet` or `haiku`, or a model id), effort (`low` to `max`, or the CLI's own pick) and
+  Ultracode, each also chosen at start and kept when the session reopens (AGH-681), close,
   resume or fork a past session of that workdir, delete an ended one. A message to an ended local session (not
   `log_full`) whose Claude conversation is still listed reopens it in place, same id and log (AGH-262). At most 4 live
   sessions; at the limit a new one ends the one idle the longest (a message reopens it in place), so only busy

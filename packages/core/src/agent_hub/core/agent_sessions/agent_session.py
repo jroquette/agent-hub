@@ -13,6 +13,7 @@ from typing import Annotated, Final, Literal
 from pydantic import AfterValidator, Field, JsonValue, StringConstraints, model_validator
 
 from agent_hub.core.agent_sessions.driver import (
+    EffortLevel,
     ModelName,
     PastSession,
     PermissionMode,
@@ -144,6 +145,8 @@ class AgentSession(ViewModel):
     status: AgentSessionStatus
     mode: PermissionMode
     model: str | None = None
+    effort: EffortLevel | None = None
+    ultracode: bool = False
     title: str | None = Field(default=None, max_length=MAX_TITLE_CHARS)
     created_at: ApiTimestamp
     updated_at: ApiTimestamp
@@ -291,6 +294,8 @@ class CreateAgentSession(ViewModel):
     workdir_id: WorkdirId
     mode: PermissionMode = "default"
     model: ModelName | None = None
+    effort: EffortLevel | None = None
+    ultracode: bool | None = None
     prompt: str | None = Field(default=None, min_length=1)
     resume_session_id: str | None = Field(default=None, pattern=UUID_PATTERN)
     fork: bool = False
@@ -367,15 +372,18 @@ class PermissionDecision(ViewModel):
 
 
 class SessionSettings(ViewModel):
-    """``POST /{id}/settings``: a new mode, a new model, or both (at least one)."""
+    """``POST /{id}/settings``: a new mode, model, effort or Ultracode (at least one)."""
 
     mode: PermissionMode | None = None
     model: ModelName | None = None
+    effort: EffortLevel | None = None
+    ultracode: bool | None = None
 
     @model_validator(mode="after")
     def _needs_one(self) -> SessionSettings:
-        if self.mode is None and self.model is None:
-            msg = "give mode, model or both"
+        given = (self.mode, self.model, self.effort, self.ultracode)
+        if all(value is None for value in given):
+            msg = "give mode, model, effort or ultracode"
             raise ValueError(msg)
         return self
 
