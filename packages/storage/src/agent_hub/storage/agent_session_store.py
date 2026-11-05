@@ -14,7 +14,7 @@ timeout); their messages carry no record text (the engine hides bound parameters
 
 import json
 import sqlite3
-from collections.abc import Collection, Iterator, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import datetime
 from decimal import Decimal
@@ -48,12 +48,12 @@ from agent_hub.core.agent_sessions.errors import AgentSessionNotFoundError, Stor
 from agent_hub.core.agent_sessions.records import LogRecord, RecordKind
 from agent_hub.core.agent_sessions.store import AgentSessionFields
 from agent_hub.storage.db import agent_session_records, agent_sessions
-from agent_hub.storage.engine import create_sqlite_engine
+from agent_hub.storage.engine import create_sqlite_engine, dispose_when_dropped
 from agent_hub.storage.errors import DatabaseAccessError, describe_database_error
 from agent_hub.storage.event_store import DatabaseBusyError
 from agent_hub.storage.migration import upgrade_to_head
 
-# Session ids per delete statement, far below SQLite's parameter limit.
+# Session ids per delete or first-record statement, far below SQLite's parameter limit.
 IDS_PER_STATEMENT = 500
 _TERMINAL = tuple(status.value for status in TERMINAL_STATUSES)
 
@@ -63,6 +63,7 @@ class SqliteAgentSessionStore:
 
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
+        dispose_when_dropped(self, engine)
 
     def create(self, session: AgentSession) -> None:
         """Store a new session; a non-zero ``last_seq`` is refused, ``open_permission`` dropped."""
@@ -175,6 +176,41 @@ class SqliteAgentSessionStore:
             found = connection.execute(statement).scalar()
         return None if found is None else str(found)
 
+    def links_of(self, project: str, claude_session_ids: Collection[str]) -> Mapping[str, str]:
+        """``link_of``'s answer for each asked id that has one, in one statement at any number
+        of ids: they go as one JSON array parameter, which ``json_each`` reads."""
+        if not claude_session_ids:
+            return {}
+        asked = func.json_each(json.dumps(list(claude_session_ids))).table_valued("value")
+        statement = (
+            select(agent_sessions.c.claude_session_id, agent_sessions.c.id)
+            .where(
+                agent_sessions.c.project == project,
+                agent_sessions.c.claude_session_id.in_(select(asked.c.value)),
+            )
+            .order_by(agent_sessions.c.created_at, agent_sessions.c.id)
+        )
+        with self._reading() as connection:
+            rows = connection.execute(statement).all()
+        # Oldest first, so each Claude session keeps its newest agent session, as in link_of.
+        return {str(claude_id): str(agent_session_id) for claude_id, agent_session_id in rows}
+
+    def first_records(
+        self, agent_session_ids: Collection[str], *, kinds: Collection[RecordKind]
+    ) -> Mapping[str, LogRecord]:
+        """Each asked session's lowest-``seq`` record of ``kinds`` (an unknown id, or a session
+        with none, is absent): one statement per ``IDS_PER_STATEMENT`` ids, in one transaction."""
+        ids = list(agent_session_ids)
+        found: dict[str, LogRecord] = {}
+        if not ids:
+            return found
+        with self._reading() as connection:
+            for start in range(0, len(ids), IDS_PER_STATEMENT):
+                statement = _first_records(ids[start : start + IDS_PER_STATEMENT], kinds)
+                for row in connection.execute(statement).mappings():
+                    found[str(row["agent_session_id"])] = _to_record(row)
+        return found
+
     def end_unfinished(self, at: datetime, reason: EndReason) -> int:
         """End every session not yet ``ended`` or ``failed``; answers how many."""
         statement = (
@@ -207,6 +243,14 @@ class SqliteAgentSessionStore:
         with self._writing() as connection:
             _session_row(connection, agent_session_id)
             _delete_sessions(connection, [agent_session_id])
+
+    def close(self) -> None:
+        """Close the idle connections the store's engine keeps; a later use opens new ones.
+
+        One checked out at that moment is not closed here: it goes back to the old pool when it
+        returns, and closes when that pool is garbage collected.
+        """
+        self._engine.dispose()
 
     @contextmanager
     def _writing(self) -> Iterator[Connection]:
@@ -255,6 +299,33 @@ def _session_row(connection: Connection, agent_session_id: str) -> RowMapping:
     if row is None:
         raise AgentSessionNotFoundError(agent_session_id)
     return row
+
+
+def _first_records(
+    agent_session_ids: Sequence[str], kinds: Collection[RecordKind]
+) -> Select[tuple[Any, ...]]:
+    """The first record of ``kinds`` of each of these sessions: its ``seq`` from a scan of the
+    session's log in primary key order that stops at the first match (no index covers
+    ``kind``, so a ``min(seq)`` group would read whole logs), then the record by primary key."""
+    records = agent_session_records
+    earlier = records.alias("earlier")
+    first_seq = (
+        select(earlier.c.seq)
+        .where(earlier.c.agent_session_id == agent_sessions.c.id)
+        .where(earlier.c.kind.in_(sorted(kinds)))
+        .order_by(earlier.c.seq)
+        .limit(1)
+        .scalar_subquery()
+    )
+    return (
+        select(records)
+        .join_from(
+            agent_sessions,
+            records,
+            (records.c.agent_session_id == agent_sessions.c.id) & (records.c.seq == first_seq),
+        )
+        .where(agent_sessions.c.id.in_(agent_session_ids))
+    )
 
 
 def _delete_sessions(connection: Connection, ids: Sequence[str]) -> None:

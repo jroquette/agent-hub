@@ -12,10 +12,11 @@ import {
 } from "../components/core";
 import { CollectorPill } from "../components/CollectorPill";
 import { Icon, type IconName } from "../components/Icon";
-import { useApi } from "../lib/api";
+import { useScope } from "../lib/scope";
 import { useDiscuss } from "./discuss";
 import { usePreferences, type ThemeChoice } from "../lib/preferences";
 import type { StreamHealth } from "../lib/sse";
+import { useShellRead } from "./queries";
 
 const THEME_ICON: Record<ThemeChoice, IconName> = { light: "sun", dark: "moon", system: "monitor" };
 
@@ -28,8 +29,8 @@ export interface ProjectSwitcherProps {
 export function ProjectSwitcher({ scope, onScope }: ProjectSwitcherProps) {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
-  const projects = useApi("/api/v1/projects");
-  const items = projects.data?.items ?? [];
+  // The shell read lists every project whatever its scope; read under the shell's own key.
+  const items = useShellRead(useScope()[0]).data?.projects ?? [];
   const pick = (project: string | null) => {
     setOpen(false);
     onScope(project);

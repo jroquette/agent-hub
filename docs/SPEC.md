@@ -128,7 +128,9 @@ problems (<T> in total)`, or one line naming an input that could not be read; a 
 
 `hub web` serves the control plane from one local process ([Layer 2](#layer-2-control-plane-and-observability)): the
 `/api/v1` REST and SSE API ([API.md](API.md)) and the committed build of the web app, from the database `hub collect`
-uses. The build is split by route: a first visit loads the shell, the shared libraries and the code of the page it
+uses. The API serves the resource routes and, under `/api/v1/screens/`, one read per screen whose first view would
+otherwise need more than 5 calls, composed of the same reads
+([ADR 0056](adr/0056-screen-shaped-reads.md)). The build is split by route: a first visit loads the shell, the shared libraries and the code of the page it
 opens, and each other page's code loads the first time that page opens. The build fails when the entry chunk, the
 one `index.html` loads, reaches 400,000 B. While a page's code loads, the previous page stays and a page skeleton
 shows after 300 ms; a page whose code cannot load says so inside the app's frame and offers to reload. The build's
@@ -543,7 +545,9 @@ out of scope.
 
 **Phase 2 (built).** `hub web` serves the views above that Phase 2 covers: Portfolio, Project overview,
 Approvals (read-only, since retired: AGH-273 answers an approval in its run or its session), Live sessions, Sessions and Session detail (Timeline, Files, Cost, Raw events), Workflow runs and
-Run detail, Features and Feature detail, Health (the doctor rules run in process per hub, cached 15 min), Knowledge ›
+Run detail, Features and Feature detail, Health (the doctor rules run in a background part of `hub web`, per hub, when
+a watched file changes, at most every 10 s except right after a write through the app (then at the next 2 s tick), and
+at least every 15 min; the app shows when they ran), Knowledge ›
 Learnings, Knowledge › Brain and Knowledge › Skills, Workflows (AGH-226, below), Settings and Welcome. Session, WorkflowRun, Learning and Approval are pure folds in core,
 recomputed on read and memoized in process by the store's high-water mark ([event-derivations.md](design/event-derivations.md)).
 Cost is estimated from transcript usage times a dated price table and always labelled so; OpenTelemetry and GitHub
@@ -602,11 +606,12 @@ Linear status ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md), records
   priority, estimate, a Linear link and its "blocked by" edges. `hub web` reads them through a read-only core port,
   `TrackerReader`, whose GraphQL adapter is the app's only Linear access: metadata only (never a description,
   comment or attachment), the key from `LINEAR_API_KEY` at call time, an in-memory cache (60 s, single flight, the
-  last snapshot served as stale for up to 15 minutes after a failed read), nothing stored. Only this route calls
-  Linear; the Features list and detail use a warm cache entry, else the plan. Without a key, with
-  `tracker.transport: "mcp"` (the app never spends tokens) or when Linear fails, the route still answers with the
-  plan, a notice and a `tracker_problem` naming the cause. Titles and names are redacted; a link outside
-  `https://linear.app/` is dropped.
+  last snapshot served as stale for up to 15 minutes after a failed read), nothing stored. Only this route and,
+  while a browser tab is open, `hub web`'s ticket warmer call Linear (the warmer reads a feature's snapshot again when
+  it is 14 minutes old, at most 224 features a tick; AGH-613); the Features list and detail use a warm cache entry,
+  else the plan. Without a key, with `tracker.transport: "mcp"` (the app never spends tokens) or when Linear fails,
+  the route still answers with the plan, a notice and a `tracker_problem` naming the cause. Titles and names are
+  redacted; a link outside `https://linear.app/` is dropped.
 - **Planning.** A pure core fold over the plan's `blocked_by` and Linear's relations: what can start now, parallel
   groups (dependency layers), a recommended order (topological, then priority, then plan order), waiting tickets with
   their blockers, cycles, blockers outside the feature and the critical path. It is a recommendation; the runner still
@@ -668,7 +673,9 @@ in [design/agent-sessions.md](design/agent-sessions.md)):
   ("Open chat"), and its live tile shows `waiting` while a permission request is open.
 - **Access.** The `/api/v1/agent-sessions/**` routes need the cookie the printed `/?token=` address sets (per launch,
   `HttpOnly`, `SameSite=Strict`); writes also need the server's own `Origin` and a JSON body; no WebSocket is served.
-  Every other route is unchanged. In the container, session control is off (404) and no token is minted.
+  Every other route is unchanged; a screen read ([ADR 0056](adr/0056-screen-shaped-reads.md)) carries agent-session
+  data only for a request that passes the same cookie and `Origin` checks, else those parts are null. In the container,
+  session control is off (404) and no token is minted.
 - **Data.** Only these sessions' conversations are stored, in the `hub web` database, redacted before storage, kept
   30 days after the session ends (or deleted at once); the owner's live view is not redacted, a reload shows the
   stored copy. No server log line holds conversation text. Cloud sessions are link-out guidance through the CLI

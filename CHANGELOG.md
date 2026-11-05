@@ -13,6 +13,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- For contributors, `make perf` measures more of `hub web` (AGH-608, AGH-623):
+  - the Brain list route, one request at a time and six at once, on a synthetic hub that now has thirty feature
+    folders;
+  - the app shell's read, `/api/v1/screens/shell`;
+  - the Project overview page, `/projects/perf`;
+  - `api_kb` on each page row: the kilobytes of API answers the page read before it was ready.
 - A driven session can run at an effort level (`low`, `medium`, `high`, `xhigh`, `max`): `POST /agent-sessions`
   takes `effort`, `POST /agent-sessions/{id}/settings` changes it while the session runs, and a reopened session
   keeps it. Without one, the CLI picks it, as before. The same goes for `ultracode` (off by default), and `fable`
@@ -25,6 +31,42 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
+- The session lists and the feature pages in `hub web` answer faster on a large event log (AGH-609, AGH-610).
+  - Database reads reuse open connections instead of opening a new connection for each read.
+  - A session list reads the agent-session links of all its sessions in one query. Each session's touched files are
+    kept until its events change.
+  - With 400,000 events, `/api/v1/sessions?issue=AGH-7` answers in about 75 ms instead of 2.9 s, and a feature page
+    is ready in about 0.5 s instead of 8 s.
+- The Toolkit page and the Portfolio's "Skills and agents" count the skill and agent uses once, and reuse that count
+  until a new event arrives or a new UTC day starts. Before, they counted the event log again in each new second. A
+  warm read of `/api/v1/projects/{project}/skills` takes about 30 ms with 400,000 events (AGH-611).
+- `hub web` runs the doctor's checks in the background, so no request waits for them (AGH-608).
+  - Soon after `hub web` starts, it checks each registered hub, one at a time. It checks a hub again when a file the
+    check reads changes (at most once every 10 s), when its last check is 15 min old, and at the next 2 s tick after
+    a config change or a hub action made through the app.
+  - Health shows when the last check ended, such as "Checked 12 s ago", or "The first check is running". Until a
+    hub's first check ends, its Portfolio card shows "Not checked".
+  - `GET /api/v1/doctor/findings`, `GET /api/v1/projects`, `GET /api/v1/projects/{project}` and `GET /api/v1/hubs`
+    carry `checked_at`, when that check ended. It is `null` before the hub's first check.
+- The Features page loads with one call for the feature list, and no longer asks for each feature's tickets every
+  minute (AGH-613).
+  - While a tab of the app is open and a Linear key is set, `hub web` keeps its ticket cache warm in the background.
+    The ticket counts on the list stay at most 15 min old, as before.
+  - It reads a feature's tickets again when they are missing or 14 min old. After a rate-limit answer it pauses for a
+    minute. After Linear refuses the key, it pauses for 15 min or until a minute after a new key is set.
+  - With no key, no open tab, or a hub that reaches Linear through MCP, it makes no Linear call.
+- The Portfolio, Project overview, Sessions and Session detail pages load in at most 5 API calls, as `make perf`
+  counts them: with the session cookie, on a machine that cannot drive sessions
+  ([ADR 0056](docs/adr/0056-screen-shaped-reads.md), AGH-623).
+  - Each page asks for its first view in one screen read under `/api/v1/screens/`. The app shell makes two requests
+    on every page: its own screen read and the event stream.
+  - On a machine that can drive sessions, Sessions also asks for its workdirs and, when the CLI offers cloud sessions,
+    for its cloud starts, as before: 5 or 6 calls there.
+  - Without the session cookie, or in the container where session control is off, the agent-session parts come from
+    their own routes: Sessions then makes 6 calls and Session detail one more.
+  - Project overview reads the sessions of the issues worked on in the last 7 days, not the project's 200 newest
+    sessions.
+  - If a screen read fails, each part of the page reads its own route, as before. The resource routes stay as they are.
 - PR bodies stay short and link their sources. The `plain-language` skill has a PR bodies section: the ticket link,
   what changed for the user, the checks with their results, what is left before merge; no placeholders, templates or
   process notes. Every AC, decision or plan step a body cites links to its record in the hub, built from `hub.json`

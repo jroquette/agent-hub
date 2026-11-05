@@ -13,7 +13,7 @@ import pytest
 from scripts.perf.budgets import Budget
 from scripts.perf.process_probes import SuiteError
 from scripts.perf.report import Row
-from scripts.perf.run_suite import Settings, main, run
+from scripts.perf.run_suite import Settings, Suite, main, run
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 MAKEFILE = REPO_ROOT / "Makefile"
@@ -22,6 +22,8 @@ SESSIONS_BUDGET_MS = 100
 VERSION_BUDGET_MS = 150
 BRAIN_PAGE = "/projects/perf/brain/tree-3/note-050.md"
 BRAIN_DOM_NODES = 6612
+OVERVIEW_PAGE = "/projects/perf"
+OVERVIEW_API_KB = 812.4
 _RULE = re.compile(r"^([A-Za-z0-9_.-]+(?:[ \t]+[A-Za-z0-9_.-]+)*)[ \t]*:(?![=:])(.*)$")
 _WORD = re.compile(r"[A-Za-z0-9_-]+")
 
@@ -153,6 +155,30 @@ def test_writes_dom_nodes_when_page_row_has_them(tmp_path: Path) -> None:
     assert [(row["kind"], row["path"], row["dom_nodes"]) for row in rows] == [
         ("cli", "hub --version", None),
         ("page", BRAIN_PAGE, BRAIN_DOM_NODES),
+    ]
+
+
+def test_writes_api_kb_when_page_row_has_it(tmp_path: Path) -> None:
+    out = tmp_path / "perf.json"
+    environ = {
+        "PERF_OUT": str(out),
+        "PERF_BUDGETS": str(_budgets_file(tmp_path)),
+        "PERF_CACHE": str(tmp_path / "cache"),
+    }
+    cli = _row("cli", "hub --version", p95_ms=50.0, budget_ms=VERSION_BUDGET_MS)
+
+    # The page phase builds its rows through Suite.row, the only way they reach perf.json.
+    def pages(suite: Suite) -> list[Row]:
+        samples = [400.0, 420.0]
+        return [suite.row("page", OVERVIEW_PAGE, samples, api_calls=17, api_kb=OVERVIEW_API_KB)]
+
+    code = run(Settings.from_env(environ), [_phase([cli]), pages])
+
+    assert code == 0
+    rows = json.loads(out.read_text("utf-8"))
+    assert [(row["kind"], row["path"], row["api_kb"]) for row in rows] == [
+        ("cli", "hub --version", None),
+        ("page", OVERVIEW_PAGE, OVERVIEW_API_KB),
     ]
 
 

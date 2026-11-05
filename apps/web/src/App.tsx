@@ -11,7 +11,7 @@ import "./styles/bundle.css";
 
 /** The app's root: queries, preferences and the router over the Phase 2 routes. */
 export function App() {
-  // The hub list first: the router starts loading the first page's code as it is made.
+  // The shell read first: the router starts loading the first page's code as it is made.
   const [queryClient] = useState(() => {
     const client = createQueryClient();
     askForHubList(client);

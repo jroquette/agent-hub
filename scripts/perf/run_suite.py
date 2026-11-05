@@ -51,6 +51,7 @@ from scripts.perf.web_probes import (
     route_probes,
     start_web,
     stop_web,
+    wait_for_check,
 )
 from scripts.perf.web_probes import (
     restart_rows as measure_restarts,
@@ -129,6 +130,7 @@ class Suite:
         rss_mb: float | None = None,
         reason: str | None = None,
         dom_nodes: int | None = None,
+        api_kb: float | None = None,
     ) -> Row:
         """A row not yet judged against its budget; no samples means skipped with ``reason``."""
         summary = summarize(samples) if samples else None
@@ -148,6 +150,7 @@ class Suite:
             commit=self.commit,
             machine={"platform": sys.platform, "cpus": os.cpu_count() or 0},
             dom_nodes=dom_nodes,
+            api_kb=api_kb,
         )
 
 
@@ -291,11 +294,13 @@ def _web_argv(suite: Suite) -> list[str]:
 
 
 def web_rows(suite: Suite) -> list[Row]:
-    """Start ``hub web``, register the hub, then the route and page rows; stop it."""
+    """Start ``hub web``, register the hub and wait for its first background check (so no
+    doctor run overlaps the rows), then the route and page rows; stop it."""
     print("perf: hub web routes and pages", flush=True)
     web = start_web(_web_argv(suite), suite.env)
     try:
         register_hub(web.base_url, suite.hub_dir)
+        wait_for_check(web.base_url, suite.hub_dir)
         rows = [
             suite.row(
                 probe.kind,
@@ -345,6 +350,7 @@ def _page_rows(suite: Suite, *, url: str, token: str) -> list[Row]:
             api_calls=page.api_calls,
             reason=page.reason,
             dom_nodes=page.dom_nodes,
+            api_kb=page.api_kb,
         )
         for page in found
     ]

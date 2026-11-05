@@ -37,6 +37,7 @@ def db_path(tmp_path: Path) -> Path:
     path = tmp_path / "events.db"
     store = open_event_store(path)
     store.append([an_event(session=f"s{n % 3}") for n in range(9)])
+    store.close()
     return path
 
 

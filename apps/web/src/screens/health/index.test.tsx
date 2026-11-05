@@ -1,10 +1,12 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { Icon, type IconName } from "../../components";
 import { GlobalStreamProvider } from "../../shell/GlobalStream";
 import { seriousViolations } from "../../testing/axe";
 import {
+  aDoctorFindings,
   aFinding,
   aHub,
   aPage,
@@ -50,7 +52,7 @@ const findings = [
 ];
 
 const routes: ApiRoutes = {
-  "/api/v1/doctor/findings": aPage(findings),
+  "/api/v1/doctor/findings": aDoctorFindings(findings),
   "/api/v1/hubs": aPage([aHub({ lock_version: "0.3.0", lock_state: "sync_pending" })]),
 };
 
@@ -123,7 +125,7 @@ describe("HealthScreen", () => {
 
   it("links a platform.version error to the sync in Settings", async () => {
     open({
-      "/api/v1/doctor/findings": aPage([
+      "/api/v1/doctor/findings": aDoctorFindings([
         aFinding({
           rule: "platform.version",
           severity: "error",
@@ -214,7 +216,7 @@ describe("HealthScreen", () => {
     });
 
     it("shows the no-findings copy and the re-run command when the hub is healthy", async () => {
-      open({ "/api/v1/doctor/findings": aPage([]) });
+      open({ "/api/v1/doctor/findings": aDoctorFindings([]) });
 
       expect(
         await screen.findByText("No findings. The hub passed every doctor check."),
@@ -228,6 +230,25 @@ describe("HealthScreen", () => {
         expect(command).toHaveClass("hljs");
       });
       expect(command.querySelector("span[class^='hljs-']")).not.toBeNull();
+    });
+
+    it("says the doctor has not run yet, not that the hub is healthy, when no check has ended", async () => {
+      const { container } = open({
+        "/api/v1/doctor/findings": aDoctorFindings([], { checked_at: null }),
+      });
+
+      await screen.findByRole("group", { name: "Findings by severity" });
+      await waitFor(() => {
+        expect(container).toHaveTextContent("The first check is running");
+      });
+      expect(screen.queryByText("No findings. The hub passed every doctor check.")).toBeNull();
+      // Spec 16's Never ran state, without its run-it-yourself step: hub web runs the doctor.
+      const title = screen.getByRole("heading", {
+        name: "The doctor has not run on this hub yet.",
+      });
+      const empty = title.parentElement;
+      expect(empty).toHaveTextContent("Results appear here within a few seconds.");
+      expect(empty).not.toHaveTextContent(/hub doctor|Run it/);
     });
 
     it("shows the problem in the findings region with Try again", async () => {
@@ -273,7 +294,7 @@ describe("HealthScreen", () => {
         fix: "reword or remove the line here, or reword the brain note if it quotes this file",
       }),
     );
-    open({ "/api/v1/doctor/findings": aPage([...leaks, ...findings]) });
+    open({ "/api/v1/doctor/findings": aDoctorFindings([...leaks, ...findings]) });
 
     const strip = await screen.findByRole("region", { name: "Automatic fixes" });
     expect(strip).toHaveTextContent("12 of 16 findings can be fixed automatically");
@@ -301,7 +322,7 @@ describe("HealthScreen", () => {
       fix: "reword or remove the line here, or reword the brain note if it quotes this file",
     });
     const { requests } = open({
-      "/api/v1/doctor/findings": aPage([leak, ...findings]),
+      "/api/v1/doctor/findings": aDoctorFindings([leak, ...findings]),
       "/api/v1/hubs": aPage([aHub({ id: "hub-1", project: "demo" })]),
       "POST /api/v1/hubs/hub-1/doctor-fix": {
         hub_id: "hub-1",
@@ -338,7 +359,7 @@ describe("HealthScreen", () => {
   it("AC-PG-26.3 says Nothing to fix when the fix changed no file", async () => {
     const user = userEvent.setup();
     open({
-      "/api/v1/doctor/findings": aPage([leakFinding, ...findings]),
+      "/api/v1/doctor/findings": aDoctorFindings([leakFinding, ...findings]),
       "/api/v1/hubs": aPage([aHub({ id: "hub-1", project: "demo" })]),
       "POST /api/v1/hubs/hub-1/doctor-fix": {
         hub_id: "hub-1",
@@ -367,7 +388,7 @@ describe("HealthScreen", () => {
 
   it("AC-PG-26.3 asks to pick a project when All projects are in scope", async () => {
     const { requests } = open({
-      "/api/v1/doctor/findings": aPage([leakFinding, ...findings]),
+      "/api/v1/doctor/findings": aDoctorFindings([leakFinding, ...findings]),
       "/api/v1/hubs": aPage([
         aHub({ id: "hub-1", project: "demo" }),
         aHub({ id: "hub-2", project: "loki-trader" }),
@@ -380,5 +401,459 @@ describe("HealthScreen", () => {
     });
     expect(within(strip).queryByRole("button", { name: /^Fix/ })).toBeNull();
     expect(requests.some((r) => r.method === "POST")).toBe(false);
+  });
+
+  // AGH-608: the doctor runs in the background of hub web; the summary says when its last
+  // check of the hub ended, and the screen reads again while no check has ended yet.
+  const NOW = "2026-10-11T14:05:00.000Z";
+
+  function findingsReads(requests: Request[]): number {
+    return requests.filter(
+      (r) => r.method === "GET" && new URL(r.url).pathname === "/api/v1/doctor/findings",
+    ).length;
+  }
+
+  async function advance(ms: number): Promise<void> {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  }
+
+  it("shows the check's age", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    try {
+      const twelveSecondsEarlier = "2026-10-11T14:04:48.000Z";
+      const { container } = open({
+        "/api/v1/doctor/findings": aDoctorFindings(findings, { checked_at: twelveSecondsEarlier }),
+      });
+
+      await screen.findByText("AGENTS.md: 132 lines, limit 100");
+      await waitFor(() => {
+        expect(container).toHaveTextContent("Checked 12 s ago");
+      });
+      expect(container).not.toHaveTextContent(/cached up to 15 min/);
+      // The age is a <time> with the exact time in its tooltip, which the visual suite masks.
+      const age = screen.getByText("12 s ago");
+      expect(age.tagName).toBe("TIME");
+      expect(age).toHaveAttribute("datetime", twelveSecondsEarlier);
+      expect(age).toHaveAttribute("title", expect.stringMatching(/\S/));
+      expect(age.parentElement).toHaveTextContent("Checked 12 s ago");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says the check is running when no check has ended", async () => {
+    const { container } = open({
+      "/api/v1/doctor/findings": aDoctorFindings(findings, { checked_at: null }),
+    });
+
+    await screen.findByText("AGENTS.md: 132 lines, limit 100");
+    await waitFor(() => {
+      expect(container).toHaveTextContent("The first check is running");
+    });
+    expect(container).not.toHaveTextContent(/Checked .* ago/);
+  });
+
+  it("polls until the check ends", async () => {
+    vi.useFakeTimers({ now: Date.parse(NOW) });
+    try {
+      const checked = "2026-10-11T14:05:01.000Z";
+      let answers = 0;
+      const { requests, container } = open({
+        "/api/v1/doctor/findings": () => {
+          answers += 1;
+          return aDoctorFindings(findings, { checked_at: answers === 1 ? null : checked });
+        },
+      });
+      await advance(0);
+      expect(screen.getByText("AGENTS.md: 132 lines, limit 100")).toBeInTheDocument();
+      expect(findingsReads(requests)).toBe(1);
+
+      await advance(2_000);
+
+      expect(findingsReads(requests)).toBe(2);
+      await advance(100);
+      const age = container.querySelector(`time[datetime="${checked}"]`);
+      expect(age?.parentElement).toHaveTextContent(/Checked/);
+      expect(container).not.toHaveTextContent("The first check is running");
+
+      // A checked answer starts no more reads.
+      await advance(20_000);
+      expect(findingsReads(requests)).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("polls after a fix until the check is newer than the fix", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, now: Date.parse(NOW) });
+    try {
+      const user = userEvent.setup();
+      const oldCheck = "2026-10-11T14:04:30.000Z";
+      const fix = { answeredAt: 0, readsAfter: 0 };
+      const { requests, container } = open({
+        "/api/v1/doctor/findings": () => {
+          if (fix.answeredAt === 0) {
+            return aDoctorFindings([leakFinding, ...findings], { checked_at: oldCheck });
+          }
+          fix.readsAfter += 1;
+          // The read right after the fix still has the check from before it; the next one not.
+          const checked =
+            fix.readsAfter === 1 ? oldCheck : new Date(fix.answeredAt + 1_000).toISOString();
+          return aDoctorFindings([leakFinding, ...findings], { checked_at: checked });
+        },
+        "/api/v1/hubs": aPage([aHub({ id: "hub-1", project: "demo" })]),
+        "POST /api/v1/hubs/hub-1/doctor-fix": () => {
+          fix.answeredAt = Date.now();
+          return {
+            hub_id: "hub-1",
+            ok: true,
+            exit_code: 1,
+            output: ["fixed brain/drafts/0001.md: 1 lines now point at the repo"],
+            changed_files: ["brain/drafts/0001.md"],
+            errors_left: 1,
+            warnings_left: 2,
+          };
+        },
+      });
+
+      await user.click(await screen.findByRole("button", { name: "Fix 1 finding" }));
+      await user.click(
+        within(screen.getByRole("alertdialog", { name: "Fix 1 finding in demo?" })).getByRole(
+          "button",
+          { name: "Fix" },
+        ),
+      );
+      await screen.findByRole("status", { name: "Fix result" });
+      expect(fix.answeredAt).toBeGreaterThan(0);
+      await waitFor(() => {
+        expect(findingsReads(requests)).toBe(2);
+      });
+      const newer = new Date(fix.answeredAt + 1_000).toISOString();
+
+      await advance(2_000);
+
+      await waitFor(() => {
+        expect(findingsReads(requests)).toBe(3);
+      });
+      await waitFor(() => {
+        expect(container.querySelector(`time[datetime="${newer}"]`)).not.toBeNull();
+      });
+      expect(container.querySelector(`time[datetime="${oldCheck}"]`)).toBeNull();
+
+      // The check is newer than the fix: no read follows.
+      await advance(10_000);
+      expect(findingsReads(requests)).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("polls slower when the check has run for a minute", async () => {
+    vi.useFakeTimers({ now: Date.parse(NOW) });
+    try {
+      const { requests } = open({
+        "/api/v1/doctor/findings": aDoctorFindings(findings, { checked_at: null }),
+      });
+      await advance(0);
+      expect(screen.getByText("AGENTS.md: 132 lines, limit 100")).toBeInTheDocument();
+      expect(findingsReads(requests)).toBe(1);
+
+      // Every 2 s in the first minute of unchecked answers: 2, 4, … 48 s.
+      await advance(49_000);
+      expect(findingsReads(requests)).toBe(25);
+
+      // Every 15 s after it: four reads in any later minute.
+      await advance(41_500);
+      const slow = findingsReads(requests);
+      await advance(60_000);
+      expect(findingsReads(requests) - slow).toBe(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /** The markup inside a design-system icon's <svg>, to tell one icon from another. */
+  function iconMarkup(name: IconName): string {
+    const { container, unmount } = render(<Icon name={name} />);
+    const markup = container.querySelector("svg")?.innerHTML ?? "";
+    unmount();
+    return markup;
+  }
+
+  it.each([
+    ["nothing is listed yet", []],
+    [
+      "other hubs' warnings are listed",
+      [aFinding({ rule: "lock.drift", severity: "warning", message: "Sync pending" })],
+    ],
+  ])("keeps the error icon and no exit code while no check has ended: %s", async (_, items) => {
+    // The Status table: done is circle-check (passed), failed / error is circle-x.
+    const errorIcon = iconMarkup("circle-x");
+    const doneIcon = iconMarkup("circle-check");
+    expect(errorIcon).not.toBe(doneIcon);
+    const { container } = open({
+      "/api/v1/doctor/findings": aDoctorFindings(items, { checked_at: null }),
+    });
+
+    const summary = await screen.findByRole("group", { name: "Findings by severity" });
+    await waitFor(() => {
+      expect(container).toHaveTextContent("The first check is running");
+    });
+
+    expect(container).not.toHaveTextContent(/exit 0/);
+    const errors = within(summary).getByRole("button", { name: /errors?$/ });
+    expect(errors.querySelector("svg")?.innerHTML).toBe(errorIcon);
+  });
+
+  const fixAnswer = {
+    hub_id: "hub-1",
+    ok: true,
+    exit_code: 1,
+    output: ["fixed brain/drafts/0001.md: 1 lines now point at the repo"],
+    changed_files: ["brain/drafts/0001.md"],
+    errors_left: 1,
+    warnings_left: 2,
+  };
+
+  /** Fix the one auto-fixable finding from the strip, confirmed, and wait for the result. */
+  async function fixFromStrip(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+    await user.click(await screen.findByRole("button", { name: "Fix 1 finding" }));
+    await user.click(
+      within(screen.getByRole("alertdialog", { name: "Fix 1 finding in demo?" })).getByRole(
+        "button",
+        { name: "Fix" },
+      ),
+    );
+    await screen.findByRole("status", { name: "Fix result" });
+  }
+
+  it.each([
+    ["a check newer than the fix arrives", true, 2_000],
+    ["a minute has passed since the fix", false, 62_000],
+  ])("keeps the fix pending until %s", async (_, newerComes, wait) => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, now: Date.parse(NOW) });
+    try {
+      const user = userEvent.setup();
+      const oldCheck = "2026-10-11T14:04:30.000Z";
+      const fix = { answeredAt: 0, readsAfter: 0 };
+      open({
+        "/api/v1/doctor/findings": () => {
+          if (fix.answeredAt > 0) fix.readsAfter += 1;
+          // The read right after the fix still has the check from before it.
+          const checked =
+            newerComes && fix.readsAfter > 1
+              ? new Date(fix.answeredAt + 1_000).toISOString()
+              : oldCheck;
+          return aDoctorFindings([leakFinding, ...findings], { checked_at: checked });
+        },
+        "/api/v1/hubs": aPage([aHub({ id: "hub-1", project: "demo" })]),
+        "POST /api/v1/hubs/hub-1/doctor-fix": () => {
+          fix.answeredAt = Date.now();
+          return fixAnswer;
+        },
+      });
+
+      await fixFromStrip(user);
+      expect(fix.readsAfter).toBeGreaterThanOrEqual(1);
+      const strip = screen.getByRole("region", { name: "Automatic fixes" });
+      const pending = within(strip).getByRole("button", { name: /^Fix/ });
+      expect(pending).toHaveTextContent("Fixing…");
+      expect(pending).toBeDisabled();
+      expect(group("brain.leak").closest('[aria-busy="true"]')).not.toBeNull();
+
+      await advance(wait);
+
+      await waitFor(() => {
+        expect(within(strip).getByRole("button", { name: /^Fix/ })).toHaveTextContent(
+          "Fix 1 finding",
+        );
+      });
+      expect(within(strip).getByRole("button", { name: /^Fix/ })).toBeEnabled();
+      expect(group("brain.leak").closest('[aria-busy="true"]')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops reading after a fix once a minute has passed with no newer check", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, now: Date.parse(NOW) });
+    try {
+      const user = userEvent.setup();
+      const { requests } = open({
+        // Every read keeps the check from before the fix: its follow-up run never ends.
+        "/api/v1/doctor/findings": aDoctorFindings([leakFinding, ...findings], {
+          checked_at: "2026-10-11T14:04:30.000Z",
+        }),
+        "/api/v1/hubs": aPage([aHub({ id: "hub-1", project: "demo" })]),
+        "POST /api/v1/hubs/hub-1/doctor-fix": fixAnswer,
+      });
+      await fixFromStrip(user);
+      const atFix = findingsReads(requests);
+
+      await advance(10_000);
+      const firstTenSeconds = findingsReads(requests) - atFix;
+      await advance(52_000);
+      const pastTheMinute = findingsReads(requests);
+      await advance(30_000);
+
+      // Reads every 2 s after the fix, at most for a minute.
+      expect(firstTenSeconds).toBeGreaterThanOrEqual(4);
+      expect(findingsReads(requests)).toBe(pastTheMinute);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reads every 2 s again when the scope moves to another unchecked hub", async () => {
+    vi.useFakeTimers({ now: Date.parse(NOW) });
+    try {
+      const { requests, router } = renderWithApi(<HealthScreen />, {
+        routes: {
+          ...routes,
+          "/api/v1/doctor/findings": aDoctorFindings(findings, { checked_at: null }),
+        },
+        path: "/health?scope=alpha",
+      });
+      const readsOf = (project: string) =>
+        requests.filter((r) => {
+          const url = new URL(r.url);
+          return (
+            r.method === "GET" &&
+            url.pathname === "/api/v1/doctor/findings" &&
+            url.searchParams.get("project") === project
+          );
+        }).length;
+      await advance(0);
+      expect(readsOf("alpha")).toBe(1);
+      // Past the first minute of unchecked answers, alpha is read once per 15 s.
+      await advance(75_000);
+      const slowed = readsOf("alpha");
+      await advance(15_000);
+      expect(readsOf("alpha") - slowed).toBe(1);
+
+      await act(async () => {
+        await router.navigate("/health?scope=beta");
+      });
+      await advance(0);
+      expect(readsOf("beta")).toBe(1);
+      await advance(9_000);
+
+      // A new hub's first minute: every 2 s (2, 4, 6 and 8 s), as on a first visit.
+      expect(readsOf("beta")).toBe(5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // A Fix's pending state belongs to the hub it fixed: another hub's scope, or All projects,
+  // shows no pending Fix, no busy list and no read every 2 s.
+  const otherLeak = aFinding({
+    rule: "brain.leak",
+    severity: "error",
+    path: "../other-api/README.md",
+    line: 2,
+    message: "line also in the brain at brain/drafts/0002.md:2",
+    fix: "reword or remove the line here, or reword the brain note if it quotes this file",
+  });
+  const otherSize = aFinding({
+    rule: "instructions.size",
+    severity: "error",
+    path: "AGENTS.md",
+    line: 1,
+    message: "AGENTS.md: 140 lines, limit 100",
+    fix: "Keep it a map: move detail into docs/ until it is 100 lines or fewer.",
+  });
+
+  function findingsReadsOf(requests: Request[], project: string | null): number {
+    return requests.filter((r) => {
+      const url = new URL(r.url);
+      return (
+        r.method === "GET" &&
+        url.pathname === "/api/v1/doctor/findings" &&
+        (url.searchParams.get("project") ?? "") === (project ?? "")
+      );
+    }).length;
+  }
+
+  /** Health scoped to demo, of two hubs whose checks all predate the Fix, fixed from the strip. */
+  async function fixDemoOfTwoHubs(user: ReturnType<typeof userEvent.setup>) {
+    const view = renderWithApi(<HealthScreen />, {
+      routes: {
+        ...routes,
+        "/api/v1/doctor/findings": (request: Request) => {
+          const project = new URL(request.url).searchParams.get("project");
+          const items =
+            project === "demo"
+              ? [leakFinding, ...findings]
+              : project === "other"
+                ? [otherLeak, otherSize]
+                : [leakFinding, otherLeak, otherSize, ...findings];
+          return aDoctorFindings(items, { checked_at: "2026-10-11T14:04:30.000Z" });
+        },
+        "/api/v1/hubs": aPage([
+          aHub({ id: "hub-1", project: "demo" }),
+          aHub({ id: "hub-2", project: "other" }),
+        ]),
+        "POST /api/v1/hubs/hub-1/doctor-fix": fixAnswer,
+      },
+      path: "/health?scope=demo",
+    });
+    await fixFromStrip(user);
+    // demo's check predates the Fix, so its Fix is pending.
+    const strip = screen.getByRole("region", { name: "Automatic fixes" });
+    expect(within(strip).getByRole("button", { name: /^Fix/ })).toHaveTextContent("Fixing…");
+    return view;
+  }
+
+  it("keeps another hub's Fix ready when the scope moves to it after a fix", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, now: Date.parse(NOW) });
+    try {
+      const user = userEvent.setup();
+      const { requests, router } = await fixDemoOfTwoHubs(user);
+
+      await act(async () => {
+        await router.navigate("/health?scope=other");
+      });
+      await screen.findByText("AGENTS.md: 140 lines, limit 100");
+      const readsOnArrival = findingsReadsOf(requests, "other");
+      await advance(10_000);
+
+      const strip = screen.getByRole("region", { name: "Automatic fixes" });
+      const button = within(strip).getByRole("button", { name: /^Fix/ });
+      expect(button).toHaveTextContent("Fix 1 finding");
+      expect(button).toBeEnabled();
+      expect(group("brain.leak").closest('[aria-busy="true"]')).toBeNull();
+      // other's check has ended and other was not fixed: nothing to read again.
+      expect(findingsReadsOf(requests, "other")).toBe(readsOnArrival);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows no pending fix when All projects are in scope after a fix", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, now: Date.parse(NOW) });
+    try {
+      const user = userEvent.setup();
+      const { requests, router } = await fixDemoOfTwoHubs(user);
+
+      await act(async () => {
+        await router.navigate("/health");
+      });
+      await screen.findByText("AGENTS.md: 140 lines, limit 100");
+      const strip = screen.getByRole("region", { name: "Automatic fixes" });
+      await waitFor(() => {
+        expect(strip).toHaveTextContent("Pick a project to fix");
+      });
+      const readsOnArrival = findingsReadsOf(requests, null);
+      await advance(10_000);
+
+      expect(group("brain.leak").closest('[aria-busy="true"]')).toBeNull();
+      expect(findingsReadsOf(requests, null)).toBe(readsOnArrival);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

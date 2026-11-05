@@ -67,6 +67,12 @@ BRAIN_NOTES = frozenset(
     f"tree-{folder}/note-{note:03d}.md" for folder in range(1, 7) for note in range(1, 101)
 )
 BRAIN_PAGE_NOTE = "tree-3/note-050.md"
+# The perf hub's features: ``search-index`` and 29 ``perf-feature-NN`` folders, each with its
+# records naming an ``AGH-`` issue, so the features list has thirty features with issues.
+FEATURE_COUNT = 30
+OTHER_FEATURE = re.compile(r"perf-feature-\d{2}")
+FEATURE_RECORDS = ("spec.md", "features.json")
+ISSUE_ID = re.compile(r"\bAGH-\d+\b")
 COMMIT_HEX = re.compile(r"[0-9a-f]{40}")
 ABSOLUTE_PATH = re.compile(r"(?<![\w.])/[\w.+-]+(?:/[\w.+-]+)*")
 
@@ -101,12 +107,13 @@ class Call:
     env: dict[str, str] | None
     feature_files: frozenset[str]
     brain_notes: frozenset[str]
+    feature_folders: Mapping[str, frozenset[str]]
 
 
 class RecordingRunner:
     """A stand-in for the process runner: records each call, makes the ``--dir`` folder for
     ``hub init`` with its ``hub.json`` and ``hub.lock`` (as the real init would), and notes which
-    feature files exist at each call."""
+    feature files, brain notes and feature folders exist at each call."""
 
     def __init__(self) -> None:
         self.calls: list[Call] = []
@@ -135,6 +142,7 @@ class RecordingRunner:
                 env=None if env is None else dict(env),
                 feature_files=self._feature_files(),
                 brain_notes=self._brain_notes(),
+                feature_folders=self._feature_folders(),
             )
         )
         return subprocess.CompletedProcess(args, 0, "", "")
@@ -164,6 +172,22 @@ class RecordingRunner:
         return frozenset(
             p.relative_to(brain).as_posix() for p in brain.glob("tree-*/*") if p.is_file()
         )
+
+    def _feature_folders(self) -> dict[str, frozenset[str]]:
+        """Each folder under ``brain/features/`` with the ``AGH-`` ids its records name."""
+        if self.hub_dir is None:
+            return {}
+        features = self.hub_dir / "brain" / "features"
+        return {
+            folder.name: frozenset(
+                issue
+                for name in FEATURE_RECORDS
+                if (folder / name).is_file()
+                for issue in ISSUE_ID.findall((folder / name).read_text("utf-8"))
+            )
+            for folder in features.glob("*")
+            if folder.is_dir()
+        }
 
 
 def _created_hub(tmp_path: Path) -> tuple[Path, dict[str, str], RecordingRunner]:
@@ -329,6 +353,25 @@ def test_writes_the_feature_folder_when_creating_the_hub(tmp_path: Path) -> None
     assert FEATURE_ISSUE_LINE in (folder / "spec.md").read_text("utf-8")
     record = json.loads((folder / "features.json").read_text("utf-8"))
     assert isinstance(record, dict)
+
+
+def test_writes_features_with_issues_when_creating_the_hub(tmp_path: Path) -> None:
+    _root_, _env_, runner = _created_hub(tmp_path)
+    assert runner.hub_dir is not None
+    features = runner.hub_dir / "brain" / "features"
+
+    adds = [c for c in runner.git_calls() if _git_subcommand(c.argv) == "add"]
+
+    # Present when ``git add -A`` runs, so the hub's one commit holds every feature.
+    assert len(adds) == 1
+    folders = adds[0].feature_folders
+    assert len(folders) == FEATURE_COUNT
+    assert FEATURE_SLUG in folders
+    others = [name for name in folders if name != FEATURE_SLUG]
+    assert [name for name in others if OTHER_FEATURE.fullmatch(name) is None] == []
+    assert sorted(name for name, issues in folders.items() if not issues) == []
+    files = {name: {p.name for p in (features / name).iterdir()} for name in folders}
+    assert sorted(name for name in folders if not set(FEATURE_RECORDS) <= files[name]) == []
 
 
 def test_writes_a_synthetic_transcript_under_the_root_when_creating_the_hub(

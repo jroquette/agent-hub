@@ -24,6 +24,7 @@ import type { DataTableColumn } from "../../components";
 import { useNow } from "../../lib/clock";
 import { fmtMoney } from "../../lib/format";
 import { useScope } from "../../lib/scope";
+import { ScreenReadProvider } from "../../lib/screenRead";
 import { readStored, writeStored } from "../../lib/storage";
 import {
   ACTIVITY_FILTERS,
@@ -43,6 +44,8 @@ import {
   totals,
 } from "./model";
 import {
+  ACTIVITY_PAGE,
+  portfolioSeeds,
   useActivity,
   useNeedsYou,
   useProjects,
@@ -53,7 +56,6 @@ import { StaleStamp } from "./StaleStamp";
 import { UsageRegion } from "./UsageRegion";
 
 const VIEW_KEY = "ah.portfolio.view";
-const ACTIVITY_PAGE = 20;
 const NOT_CONNECTED = (source: string) => `${source} is not connected in this version.`;
 const NOW_HINT = "Now, not affected by the period";
 const PERIOD_HINT = "The last 7 days. Phase 2 reports this period only.";
@@ -427,8 +429,22 @@ function readView(params: URLSearchParams): string {
   return readStored(VIEW_KEY) === "table" ? "table" : "cards";
 }
 
-/** Portfolio (spec 12): what needs me, how the projects are doing, what happened. */
+/** Portfolio (spec 12): what needs me, how the projects are doing, what happened. Its cards,
+ * Needs you and first activity page come from one screen read (ADR 0056). */
 export function PortfolioScreen() {
+  const [scope] = useScope();
+  return (
+    <ScreenReadProvider
+      path="/api/v1/screens/portfolio"
+      params={{ query: { project: scope } }}
+      seeds={(read) => portfolioSeeds(scope, read)}
+    >
+      <Portfolio />
+    </ScreenReadProvider>
+  );
+}
+
+function Portfolio() {
   const [scope] = useScope();
   const [params, setParams] = useSearchParams();
   const view = readView(params);
@@ -500,7 +516,10 @@ export function PortfolioScreen() {
             )}
           </div>
           {list.length > 1 && <TotalsRow projects={list} />}
-          <UsageRegion project={scope} single={list.length === 1} />
+          <UsageRegion
+            project={scope}
+            single={projects.isPending ? undefined : list.length === 1}
+          />
         </div>
         <ActivityRegion project={scope} single={list.length === 1} />
       </div>

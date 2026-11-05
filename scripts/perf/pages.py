@@ -6,7 +6,9 @@ downloaded. ``page_env`` adds node's folder, the browsers and the server's URL a
 suite's child environment, and turns off npm's update check and registry access: with a fresh
 ``HOME`` and no ``CI``, npm would otherwise ask the registry for its latest version on every run.
 ``page_rows`` runs the spec once through ``npm exec --no`` (never installs from the registry) and
-reads back the JSON lines it appended to ``PERF_PAGES_OUT`` (``dom_nodes`` is optional there).
+reads back the JSON lines it appended to ``PERF_PAGES_OUT`` (``dom_nodes`` and ``api_kb``, the
+run's ``/api/v1/`` response bytes in KB, are optional there). The last page is the Project
+overview, ``/projects/perf``.
 When Chromium, npm or the web dependencies are missing, every page row is skipped with the reason,
 and nothing is started: the other rows still run.
 """
@@ -29,6 +31,7 @@ PAGE_PATHS = (
     f"/sessions/{PAGE_SESSION}",
     "/sessions",
     f"/projects/{PROJECT}/brain/{BRAIN_PAGE_NOTE}",
+    f"/projects/{PROJECT}",
 )
 SPEC = "e2e/perf.spec.ts"
 
@@ -39,7 +42,8 @@ class PageRow:
 
     ``api_calls`` is the most calls seen in one run, ``None`` when skipped. ``dom_nodes`` is the
     most elements seen in one run (a reported field, no budget), ``None`` when skipped or when the
-    spec's lines carry none."""
+    spec's lines carry none. ``api_kb`` is the most ``/api/v1/`` response kilobytes (1,000 bytes)
+    read in one run, reported and ``None`` the same way."""
 
     kind: str
     path: str
@@ -47,6 +51,7 @@ class PageRow:
     api_calls: int | None = None
     reason: str | None = None
     dom_nodes: int | None = None
+    api_kb: float | None = None
 
 
 def chromium_executable(environ: Mapping[str, str], *, web_dir: Path) -> str | None:
@@ -162,6 +167,7 @@ def _read(results: Path, pages: Sequence[str]) -> list[PageRow]:
     samples: dict[str, list[tuple[int, float]]] = {path: [] for path in pages}
     calls: dict[str, int] = {}
     nodes: dict[str, int] = {}
+    kilobytes: dict[str, float] = {}
     for line in filter(None, (text.strip() for text in lines)):
         item = json.loads(line)
         path = item["path"]
@@ -171,6 +177,8 @@ def _read(results: Path, pages: Sequence[str]) -> list[PageRow]:
         calls[path] = max(calls.get(path, 0), int(item["api_calls"]))
         if item.get("dom_nodes") is not None:
             nodes[path] = max(nodes.get(path, 0), int(item["dom_nodes"]))
+        if item.get("api_kb") is not None:
+            kilobytes[path] = max(kilobytes.get(path, 0.0), float(item["api_kb"]))
     rows = []
     for path in pages:
         if not samples[path]:
@@ -178,7 +186,12 @@ def _read(results: Path, pages: Sequence[str]) -> list[PageRow]:
         ordered = [ready for _, ready in sorted(samples[path])]
         rows.append(
             PageRow(
-                PAGE, path, samples_ms=ordered, api_calls=calls[path], dom_nodes=nodes.get(path)
+                PAGE,
+                path,
+                samples_ms=ordered,
+                api_calls=calls[path],
+                dom_nodes=nodes.get(path),
+                api_kb=kilobytes.get(path),
             )
         )
     return rows

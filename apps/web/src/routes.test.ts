@@ -12,6 +12,7 @@ import {
   aPage,
   aProblem,
   aProjectSummary,
+  aShellView,
   stubApi,
   stubEventSource,
   testQueryClient,
@@ -179,9 +180,14 @@ async function settle() {
   }
 }
 
-/** With no hub registered: the hub list is empty. */
+/** With no hub registered: the shell read counts no hub, and the hub list is empty. */
 function stubNoHub(api: ApiRoutes = {}) {
-  stubApi({ "/api/v1/hubs": aPage([]), "/api/v1/projects": aPage([aProjectSummary()]), ...api });
+  stubApi({
+    "/api/v1/screens/shell": aShellView({ hub_count: 0 }),
+    "/api/v1/hubs": aPage([]),
+    "/api/v1/projects": aPage([aProjectSummary()]),
+    ...api,
+  });
   stubEventSource();
 }
 
@@ -260,6 +266,10 @@ function openAt(routes: RouteObject[], path: string, client = testQueryClient())
   return router;
 }
 
+// The shell read's key with no project in scope: the shell, the gate and the app's early
+// request all ask for it under this one key.
+const SHELL_READ = apiKey("/api/v1/screens/shell", { query: { project: null } });
+
 const main = () => screen.getByRole("main");
 const skeleton = () => main().querySelector(".ah-skel");
 
@@ -271,7 +281,7 @@ describe("HubGate", () => {
   it("keeps the page drawn while the hub list loads, and only redirects once it is empty", async () => {
     vi.useFakeTimers();
     stubNoHub();
-    const answerHubs = holdAnswers(["/api/v1/hubs"]);
+    const answerShell = holdAnswers(["/api/v1/screens/shell"]);
     const welcome = heldModule({ WelcomeScreen: standIn("Welcome stand-in") });
     const portfolio = { PortfolioScreen: standIn("Portfolio stand-in") };
     const router = openAt(
@@ -287,9 +297,9 @@ describe("HubGate", () => {
     ).toBeInTheDocument();
     expect(router.state.navigation.state).toBe("idle");
 
-    // The list comes back empty: the gate heads for /welcome, whose code has not arrived, and
-    // draws nothing of the page meanwhile.
-    await answerHubs();
+    // The shell read counts no hub: the gate heads for /welcome, whose code has not arrived,
+    // and draws nothing of the page meanwhile.
+    await answerShell();
     await settle();
     expect(router.state.navigation.location?.pathname).toBe("/welcome");
     expect(router.state.location.pathname).toBe("/");
@@ -304,7 +314,7 @@ describe("HubGate", () => {
 
   it("keeps the page drawn once the hub list cannot be read", async () => {
     vi.useFakeTimers();
-    stubNoHub({ "/api/v1/hubs": aProblem() });
+    stubNoHub({ "/api/v1/screens/shell": aProblem() });
     const client = testQueryClient();
     const welcome = heldModule({ WelcomeScreen: standIn("Welcome stand-in") });
     const portfolio = { PortfolioScreen: standIn("Portfolio stand-in") };
@@ -319,7 +329,7 @@ describe("HubGate", () => {
     await settle();
 
     // The failed answer is in, and the gate does not take it for an empty list.
-    expect(client.getQueryState(apiKey("/api/v1/hubs"))?.status).toBe("error");
+    expect(client.getQueryState(SHELL_READ)?.status).toBe("error");
     expect(router.state.navigation.state).toBe("idle");
     expect(router.state.location.pathname).toBe("/");
     expect(
@@ -338,9 +348,11 @@ describe("HubGate", () => {
       },
     });
     const welcome = heldModule({ WelcomeScreen: standIn("Welcome stand-in") });
-    // As the app does, the hub list is asked for before the router starts loading the page's code.
+    // As the app does, the shell read is asked for before the router starts loading the page's
+    // code, under the key the shell and the gate read.
     const client = testQueryClient();
     askForHubList(client);
+    expect(client.getQueryState(SHELL_READ)?.fetchStatus).toBe("fetching");
     const router = openAt(
       gatedRoutes(
         [{ index: true, ...lazyScreen(portfolio.load, "PortfolioScreen") }],

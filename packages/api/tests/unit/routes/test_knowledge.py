@@ -26,6 +26,7 @@ def _detail() -> ProjectDetail:
         platform_version="0.8.0",
         lock_version=None,
         lock_state=None,
+        checked_at=None,
         modules=(),
     )
 

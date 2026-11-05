@@ -1,5 +1,3 @@
-from datetime import UTC, datetime, timedelta
-
 from agent_hub.core.doctor.config_rules import config_state
 from agent_hub.core.doctor.registry import REGISTRY
 from agent_hub.core.doctor.run_rules import Selection, run_rules, select_rules
@@ -7,21 +5,12 @@ from agent_hub.core.doctor.snapshot import ConfigFailure
 from agent_hub.core.hub_config.doctor_rules import CONFIG_SCHEMA_RULE, PLATFORM_VERSION_RULE
 from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
-from agent_hub.core.hubs.doctor_cache import DOCTOR_TTL, DoctorCache, run_doctor
+from agent_hub.core.hubs.doctor_cache import run_doctor
 from agent_hub.core.hubs.hub_registry import UnreadHubFile
 from agent_hub.core.testing.hub_fakes import FakeHub, FakeHubFileReader, hub_json_bytes
 
 RUNNING = "4.5.6"
 HUB = "/hubs/demo-hub"
-START = datetime(2026, 10, 9, 14, 0, tzinfo=UTC)
-
-
-class Clock:
-    def __init__(self) -> None:
-        self.now = START
-
-    def __call__(self) -> datetime:
-        return self.now
 
 
 def a_reader(**changes: object) -> FakeHubFileReader:
@@ -74,42 +63,6 @@ def test_reports_schema_finding_when_hub_json_unreadable() -> None:
     assert isinstance(config_state((), running_version=RUNNING), ConfigFailure)
 
 
-def test_reuses_findings_when_nothing_changed_within_ttl() -> None:
-    reader = a_reader()
-    clock = Clock()
-    cache = DoctorCache(reader, running_version=RUNNING, clock=clock)
-
-    first = cache.findings(HUB)
-    clock.now += DOCTOR_TTL - timedelta(seconds=1)
-    second = cache.findings(HUB)
-
-    assert first == second
-    assert reader.snapshots == {HUB: 1}
-
-
-def test_runs_again_when_ttl_passed() -> None:
-    reader = a_reader()
-    clock = Clock()
-    cache = DoctorCache(reader, running_version=RUNNING, clock=clock)
-
-    cache.findings(HUB)
-    clock.now += DOCTOR_TTL
-    cache.findings(HUB)
-
-    assert reader.snapshots == {HUB: 2}
-
-
-def test_runs_again_when_watched_file_modified() -> None:
-    reader = a_reader()
-    cache = DoctorCache(reader, running_version=RUNNING, clock=Clock())
-
-    cache.findings(HUB)
-    reader.hubs[HUB].mtimes["AGENTS.md"] = 99
-    cache.findings(HUB)
-
-    assert reader.snapshots == {HUB: 2}
-
-
 def test_watches_workflow_folders_when_hub_has_workflows() -> None:
     # AGH-227: workflows.valid reads every file under workflows/, so a file added or removed
     # there (its folder's time) makes the run stale, as an edit (the file's own time) does.
@@ -123,20 +76,6 @@ def test_watches_workflow_folders_when_hub_has_workflows() -> None:
 
 def test_watches_workflows_folder_when_hub_has_no_workflow() -> None:
     assert "workflows" in run_doctor(a_reader(), HUB, running_version=RUNNING).watched
-
-
-def test_runs_again_when_workflow_added() -> None:
-    reader = a_reader(
-        files={"AGENTS.md": b"# Demo\n", "workflows/demo/lint.yaml": b"x\n"},
-        mtimes={"hub.json": 1, "workflows": 4, "workflows/demo": 5},
-    )
-    cache = DoctorCache(reader, running_version=RUNNING, clock=Clock())
-
-    cache.findings(HUB)
-    reader.hubs[HUB].mtimes["workflows/demo"] = 6
-    cache.findings(HUB)
-
-    assert reader.snapshots == {HUB: 2}
 
 
 def test_watches_empty_pack_folder_when_workflows_listed() -> None:
@@ -168,30 +107,3 @@ def test_watches_scenario_folders_when_hub_has_scenario_packs() -> None:
     watched = set(run_doctor(reader, HUB, running_version=RUNNING).watched)
 
     assert {"scenarios", "scenarios/shop"} <= watched
-
-
-def test_runs_again_when_scenario_pack_folder_changes() -> None:
-    reader = a_reader(
-        scenario_folders=("scenarios/shop",),
-        mtimes={"hub.json": 1, "scenarios": 4, "scenarios/shop": 5},
-    )
-    cache = DoctorCache(reader, running_version=RUNNING, clock=Clock())
-
-    cache.findings(HUB)
-    reader.hubs[HUB].mtimes["scenarios/shop"] = 6
-    cache.findings(HUB)
-
-    assert reader.snapshots == {HUB: 2}
-
-
-def test_runs_again_when_item_folder_changes() -> None:
-    # AGH-297: items.leftovers scans the item folders by name, so a temp entry appearing in one
-    # (the folder's time) makes the run stale.
-    reader = a_reader(item_folders=("plugin/demo/skills",), mtimes={"plugin/demo/skills": 1})
-    cache = DoctorCache(reader, running_version=RUNNING, clock=Clock())
-
-    cache.findings(HUB)
-    reader.hubs[HUB].mtimes["plugin/demo/skills"] = 2
-    cache.findings(HUB)
-
-    assert reader.snapshots == {HUB: 2}

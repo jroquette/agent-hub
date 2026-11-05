@@ -9,6 +9,7 @@ import { GlobalStreamProvider } from "../../shell/GlobalStream";
 import { seriousViolations } from "../../testing/axe";
 import {
   aFeature,
+  aFeatureTickets,
   aGoldenPath,
   aGoldenStep,
   aLiveTile,
@@ -17,6 +18,7 @@ import {
   aSessionLabel,
   renderWithApi,
   type ApiRoutes,
+  type FeatureView,
 } from "../../testing/builders";
 import { FeaturesScreen, issueId } from "./index";
 import { FEATURES_REFRESH_MS } from "./queries";
@@ -1037,5 +1039,101 @@ describe("FeaturesScreen (playground delivery)", () => {
         expect(saved).toEqual([{ project: "agent-hub", slug: "layered-memory", name: "" }]);
       });
     });
+  });
+});
+
+describe("FeaturesScreen requests", () => {
+  // 30 features with issues; a server that would answer each feature's tickets.
+  const thirty = (shape: Partial<FeatureView>): FeatureView[] =>
+    Array.from({ length: 30 }, (_, i) =>
+      aFeature({
+        slug: `feature-${String(i).padStart(2, "0")}`,
+        issues: [`AGH-${String(300 + i)}`],
+        ...shape,
+      }),
+    );
+  const notConnected = thirty({
+    tickets_source: "plan",
+    golden_path: aGoldenPath({
+      steps: aGoldenPath().steps.map((step) =>
+        step.name === "build"
+          ? aGoldenStep({
+              state: "unknown",
+              meta: null,
+              reason: "Linear not connected",
+              progress: null,
+            })
+          : step,
+      ),
+    }),
+  });
+  const shippedFromLinear = thirty({
+    tickets_source: "linear",
+    phase: "shipped",
+    golden_path: aGoldenPath({
+      phase: "shipped",
+      steps: aGoldenPath().steps.map((step) => ({ ...step, state: "done", reason: null })),
+    }),
+  });
+  const linearNotice = "This list doesn't load ticket status from Linear";
+  const REFRESHED = ["/api/v1/features", "/api/v1/live-sessions", "/api/v1/feature-names"];
+
+  function serving(list: FeatureView[]): ApiRoutes {
+    const served: ApiRoutes = {
+      "/api/v1/features": aPage(list),
+      "/api/v1/live-sessions": aPage([]),
+      "/api/v1/feature-names": { items: [] },
+    };
+    for (const f of list) {
+      served[`/api/v1/features/${f.project}/${f.slug}/tickets`] = aFeatureTickets({
+        project: f.project,
+        slug: f.slug,
+      });
+    }
+    return served;
+  }
+
+  const pathsOf = (requests: Request[]) => requests.map((r) => new URL(r.url).pathname);
+
+  it.each<[string, FeatureView[], RegExp, number]>([
+    ["not connected", notConnected, /^In progress · 30$/, 1],
+    ["connected", shippedFromLinear, /^Shipped · 30$/, 0],
+  ])(
+    "AC-30 requests /features once and never a feature's tickets, Linear %s",
+    async (_linear, list, group, notices) => {
+      const { requests, queryClient } = open(serving(list));
+
+      await screen.findByRole("button", { name: group });
+      await waitFor(() => {
+        expect(queryClient.isFetching()).toBe(0);
+      });
+      // The list is the case named: the screen says Linear is missing only when it is.
+      expect(
+        screen.queryAllByRole("note").filter((note) => note.textContent.includes(linearNotice)),
+      ).toHaveLength(notices);
+      const paths = pathsOf(requests);
+      expect(paths.filter((p) => p.endsWith("/tickets"))).toEqual([]);
+      expect(paths.filter((p) => p === "/api/v1/features")).toHaveLength(1);
+    },
+  );
+
+  it("AC-32 sends only its refresh requests while open for 60 s", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { requests } = open(serving(notConnected));
+      await screen.findByRole("button", { name: /^In progress · 30$/ });
+      expect(screen.getByRole("note")).toHaveTextContent(linearNotice);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+
+      const paths = pathsOf(requests);
+      expect(paths.filter((p) => !REFRESHED.includes(p))).toEqual([]);
+      // The first read, then one every 30 s.
+      expect(paths.filter((p) => p === "/api/v1/features")).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

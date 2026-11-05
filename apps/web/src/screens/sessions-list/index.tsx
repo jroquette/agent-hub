@@ -7,6 +7,7 @@ import { AsOfStamp, Button, EmptyState, SegmentedControl, Skeleton } from "../..
 import { fmtClock, fmtInt } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import { useScope } from "../../lib/scope";
+import { ScreenReadProvider, useScreenRead } from "../../lib/screenRead";
 import { readStored, writeStored } from "../../lib/storage";
 import { useCollectorState } from "../../shell/GlobalStream";
 import { typingIn } from "../../shell/goSequence";
@@ -22,11 +23,16 @@ import { FILTER_KEYS, STATUSES, periodOf, viewOf, withinOf, type View } from "./
 import { GridSection } from "./GridSection";
 import { LiveDigest } from "./LiveDigest";
 import {
+  SESSIONS_READ,
+  readCovers,
+  sessionsReadParams,
+  sessionsSeeds,
   useAgentSessions,
   useProjects,
   useSectionPages,
   useSectionRefresh,
   type Session,
+  type SessionQuery,
 } from "./queries";
 import { commonRepoOf, orderRows } from "./inbox";
 import { fold, searchText } from "./rows";
@@ -192,17 +198,40 @@ function plural(n: number, one: string, many: string): string {
   return `${fmtInt(n)} ${n === 1 ? one : many}`;
 }
 
-/** Sessions: "Does any session need me right now, and which one do I open?" */
+/**
+ * Sessions: "Does any session need me right now, and which one do I open?" With no filter but the
+ * period, the sort and the status tab, its sections' first pages and what the inbox reads beside
+ * them come from one screen read (ADR 0056). The read's provider stays mounted when a filter is
+ * set, so the screen keeps its state, the period's start included.
+ */
 export function SessionsListScreen() {
+  const [params] = useSearchParams();
+  const [scope] = useScope();
+  const [anchor] = useState(() => Date.now());
+  const queries = useMemo(() => sectionQueries(params, scope, anchor), [params, scope, anchor]);
+  return (
+    <ScreenReadProvider
+      path={SESSIONS_READ}
+      params={sessionsReadParams(queries, scope)}
+      seeds={(read) => sessionsSeeds(queries, scope, read)}
+      enabled={readCovers(queries)}
+    >
+      <SessionsList queries={queries} />
+    </ScreenReadProvider>
+  );
+}
+
+function SessionsList({ queries }: { queries: Record<SectionId, SessionQuery | null> }) {
   const [params, setParams] = useSearchParams();
   const [scope] = useScope();
   const navigate = useNavigate();
   const { tz } = usePreferences();
-  const [anchor] = useState(() => Date.now());
-  const queries = useMemo(() => sectionQueries(params, scope, anchor), [params, scope, anchor]);
   const sections = useSectionPages(queries);
   const [collapsed, toggleCollapsed] = useCollapsed();
   // The same query as the driven rows' list: its poll also refreshes the sections (AC-234.9).
+  // The screen read writes it with the sections' first pages: until that read has answered, the
+  // list counts as not read yet, so the read's agent list only arms the poll, as a first answer.
+  const reading = useScreenRead(SESSIONS_READ, sessionsReadParams(queries, scope)) === undefined;
   const agentsUpdatedAt = useAgentSessions(scope).dataUpdatedAt;
   const askedIds = SECTIONS.map((section) => section.id).filter((id) => queries[id] !== null);
   const screenRef = useRef<HTMLDivElement>(null);
@@ -224,7 +253,7 @@ export function SessionsListScreen() {
       fetching: sections[id].isFetching,
       refetch: sections[id].refetch,
     })),
-    agentsUpdatedAt,
+    reading ? 0 : agentsUpdatedAt,
     arm,
   );
   const projects = useProjects();

@@ -8,16 +8,14 @@ import { ConfirmDialog } from "../components/feedback";
 import { seriousViolations } from "../testing/axe";
 import {
   aCapabilities,
-  aPage,
-  aProjectSummary,
-  aRun,
+  aShellView,
   aStreamCounts,
   aWorkdir,
   renderWithApi,
 } from "../testing/builders";
 import { AppShell, useShell } from "./AppShell";
 
-const routes = { "/api/v1/projects": aPage([aProjectSummary()]) };
+const routes = { "/api/v1/screens/shell": aShellView() };
 
 /** A Dialog whose buttons open the shell's palette and shortcut sheet over it. */
 function ShellLayersOver({ onClose }: { onClose: () => void }) {
@@ -36,6 +34,35 @@ function ShellLayersOver({ onClose }: { onClose: () => void }) {
   );
 }
 
+const SHELL = "/api/v1/screens/shell";
+
+/** Holds the shell reads of `project` until the returned `release()`; `asked()` counts them. The
+ * other requests answer at once. */
+function holdShellRead(project: string): { release: () => void; asked: () => number } {
+  const answer = vi.mocked(globalThis.fetch).getMockImplementation();
+  if (!answer) throw new Error("holdShellRead: render first");
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let count = 0;
+  vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    const url = new URL(request.url);
+    if (url.pathname === SHELL && url.searchParams.get("project") === project) {
+      count += 1;
+      await held;
+    }
+    return answer(request);
+  });
+  return {
+    release: () => {
+      release();
+    },
+    asked: () => count,
+  };
+}
+
 describe("AppShell", () => {
   it("places the sidebar, top bar and page content", () => {
     renderWithApi(<AppShell />, { routes });
@@ -45,9 +72,143 @@ describe("AppShell", () => {
     expect(screen.getByRole("main")).toBeInTheDocument();
   });
 
+  it("AC-40 makes two requests when it mounts: the shell read and the stream", async () => {
+    window.localStorage.clear();
+    const { calls } = renderWithApi(<AppShell />, {
+      routes: { "/api/v1/screens/shell": aShellView({ has_workflow_runs: true }) },
+    });
+    const both = ["/api/v1/events/stream", "/api/v1/screens/shell"];
+
+    await waitFor(() => {
+      expect([...calls()].sort()).toEqual(both);
+    });
+    // Once the read's facts are drawn, the shell has asked for nothing more.
+    expect(await screen.findByRole("link", { name: "Workflow runs" })).toBeInTheDocument();
+    expect([...calls()].sort()).toEqual(both);
+  });
+
+  it.each([
+    ["/sessions?scope=storefront", "storefront"],
+    // On a project's Skills the switcher shows the route's project; the badge keeps the scope.
+    ["/projects/storefront/skills?scope=agent-hub", "agent-hub"],
+  ])("asks the shell read with the badge's scope on %s", async (path, project) => {
+    window.localStorage.clear();
+    const { requests } = renderWithApi(<AppShell />, { routes, path });
+    const asked = () =>
+      requests
+        .filter((request) => new URL(request.url).pathname === "/api/v1/screens/shell")
+        .map((request) => new URL(request.url).searchParams.get("project"));
+
+    await waitFor(() => {
+      expect(asked()).toEqual([project]);
+    });
+  });
+
+  it("badges Features with the shell read's count of the features that need you", async () => {
+    renderWithApi(<AppShell />, {
+      routes: { "/api/v1/screens/shell": aShellView({ features_needing_you: 2 }) },
+    });
+    const nav = screen.getByRole("navigation", { name: "Main" });
+
+    await waitFor(() => {
+      expect(within(nav).getByRole("link", { name: /^Features/ })).toHaveAccessibleName(
+        "Features, 2 need you",
+      );
+    });
+  });
+
+  it("reads the shell's facts again every 5 s and badges Features with the new count", async () => {
+    vi.useFakeTimers();
+    try {
+      let answers = 0;
+      const { calls } = renderWithApi(<AppShell />, {
+        routes: {
+          [SHELL]: () => {
+            answers += 1;
+            return aShellView({ features_needing_you: answers === 1 ? 2 : 3 });
+          },
+        },
+      });
+      const nav = screen.getByRole("navigation", { name: "Main" });
+      const features = () => within(nav).getByRole("link", { name: /^Features/ });
+      const shellReads = () => calls().filter((path) => path === SHELL).length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(features()).toHaveAccessibleName("Features, 2 need you");
+      expect(shellReads()).toBe(1);
+
+      // The shell's 5 s poll (ADR 0056): no read before it, a second one at it.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4_900);
+      });
+      expect(shellReads()).toBe(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      expect(shellReads()).toBe(2);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100); // the second answer commits
+      });
+      expect(features()).toHaveAccessibleName("Features, 3 need you");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the runs item and the switcher's projects while a new scope's read is on its way", async () => {
+    window.localStorage.clear();
+    renderWithApi(<AppShell />, {
+      routes: {
+        [SHELL]: (request: Request) =>
+          aShellView({
+            projects: [
+              { name: "agent-hub", live_sessions: 1 },
+              { name: "loki-trader", live_sessions: 2 },
+            ],
+            has_workflow_runs: true,
+            features_needing_you:
+              new URL(request.url).searchParams.get("project") === "loki-trader" ? 1 : 2,
+          }),
+      },
+      path: "/sessions",
+    });
+    const nav = screen.getByRole("navigation", { name: "Main" });
+    const features = () => within(nav).getByRole("link", { name: /^Features/ });
+    expect(await within(nav).findByRole("link", { name: "Workflow runs" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(features()).toHaveAccessibleName("Features, 2 need you");
+    });
+    const held = holdShellRead("loki-trader");
+
+    fireEvent.click(screen.getByRole("button", { name: /All projects/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^loki-trader · 2 live/ }));
+    await waitFor(() => {
+      expect(held.asked()).toBeGreaterThan(0);
+    });
+
+    // The hub count, the projects and the runs flag do not depend on the scope: they stay. The
+    // badge counts All projects' features, so it is hidden until loki-trader's read answers.
+    expect(within(nav).queryByRole("link", { name: "Workflow runs" })).toBeInTheDocument();
+    expect(features()).toHaveAccessibleName("Features");
+    fireEvent.click(
+      within(screen.getByRole("banner")).getByRole("button", {
+        expanded: false,
+        name: /loki-trader/,
+      }),
+    );
+    expect(screen.queryByRole("button", { name: /^agent-hub · 1 live/ })).toBeInTheDocument();
+
+    held.release();
+    await waitFor(() => {
+      expect(features()).toHaveAccessibleName("Features, 1 need you");
+    });
+    window.localStorage.clear();
+  });
+
   it("shows Workflow runs in the sidebar only once a workflow has run", async () => {
     const { unmount } = renderWithApi(<AppShell />, {
-      routes: { ...routes, "/api/v1/workflow-runs": aPage([]) },
+      routes: { "/api/v1/screens/shell": aShellView({ has_workflow_runs: false }) },
     });
     const nav = screen.getByRole("navigation", { name: "Main" });
     await waitFor(() => {
@@ -57,7 +218,7 @@ describe("AppShell", () => {
     unmount();
 
     renderWithApi(<AppShell />, {
-      routes: { ...routes, "/api/v1/workflow-runs": aPage([aRun()]) },
+      routes: { "/api/v1/screens/shell": aShellView({ has_workflow_runs: true }) },
     });
 
     expect(await screen.findByRole("link", { name: "Workflow runs" })).toHaveAttribute(
@@ -391,10 +552,12 @@ describe("AppShell", () => {
 
 describe("AppShell scope on a project's Brain or Skills", () => {
   const scoped = {
-    "/api/v1/projects": aPage([
-      aProjectSummary({ name: "storefront" }),
-      aProjectSummary({ name: "agent-hub" }),
-    ]),
+    "/api/v1/screens/shell": aShellView({
+      projects: [
+        { name: "storefront", live_sessions: 1 },
+        { name: "agent-hub", live_sessions: 1 },
+      ],
+    }),
   };
   const switcher = () =>
     within(screen.getByRole("banner")).getByRole("button", {

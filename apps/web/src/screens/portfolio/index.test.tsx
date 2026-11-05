@@ -1,10 +1,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createQueryClient } from "../../lib/api";
+import { AppShell } from "../../shell/AppShell";
 import { GlobalStreamProvider } from "../../shell/GlobalStream";
 import { seriousViolations } from "../../testing/axe";
 import {
@@ -13,6 +16,7 @@ import {
   aPage,
   aProblem,
   aProjectSummary,
+  aShellView,
   aStreamCounts,
   aUsageReport,
   at,
@@ -56,6 +60,41 @@ const routes: ApiRoutes = {
     anActivityItem({ kind: "learning", text: "Learning accepted", href: null }),
   ]),
 };
+
+const PORTFOLIO_READ = "/api/v1/screens/portfolio";
+
+/** Mounts Home once "Open Home" is pressed, so a hold set up before then holds its first read. */
+function OpenHome({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  if (open) return <>{children}</>;
+  return (
+    <button
+      onClick={() => {
+        setOpen(true);
+      }}
+    >
+      Open Home
+    </button>
+  );
+}
+
+/** Holds the portfolio read until the returned release is called; other requests answer at once. */
+function holdPortfolioRead(): () => void {
+  const answer = vi.mocked(globalThis.fetch).getMockImplementation();
+  if (!answer) throw new Error("holdPortfolioRead: render first");
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    if (new URL(request.url).pathname === PORTFOLIO_READ) await held;
+    return answer(request);
+  });
+  return () => {
+    release();
+  };
+}
 
 describe("PortfolioScreen", () => {
   beforeEach(() => {
@@ -207,6 +246,121 @@ describe("PortfolioScreen", () => {
     await waitFor(() => {
       expect(requests.filter((r) => r.url.includes("/needs-you")).length).toBeGreaterThan(before);
     });
+  });
+
+  it("reads the projects again until each hub's first check ends", async () => {
+    vi.useFakeTimers();
+    try {
+      // AGH-608: right after hub web starts, a hub's card says the doctor has not run yet.
+      let answers = 0;
+      const { requests } = renderWithApi(<PortfolioScreen />, {
+        routes: {
+          ...routes,
+          "/api/v1/projects": () => {
+            answers += 1;
+            const unchecked = answers === 1 ? { checked_at: null, hub_health: null } : {};
+            return aPage([
+              aProjectSummary({ name: "agent-hub" }),
+              aProjectSummary({ name: "loki-trader", hub_repo: "loki-trader-hub", ...unchecked }),
+            ]);
+          },
+        },
+      });
+      const projectReads = () =>
+        requests.filter((r) => new URL(r.url).pathname === "/api/v1/projects").length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByRole("article", { name: "Project loki-trader" })).toBeInTheDocument();
+      expect(projectReads()).toBe(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(projectReads()).toBe(2);
+
+      // Every hub has been checked: no more reads.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20_000);
+      });
+      expect(projectReads()).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("AC-36 loads in at most 5 API requests with the shell mounted", async () => {
+    // The app's own query client: under its 10 s staleTime a seeded query does not fetch.
+    const { calls } = renderWithApi(
+      <AppShell>
+        <PortfolioScreen />
+      </AppShell>,
+      {
+        routes: {
+          "/api/v1/screens/shell": aShellView(),
+          "/api/v1/screens/portfolio": {
+            projects: twoProjects,
+            needs_you: sixNeeds,
+            activity: aPage([anActivityItem({ text: "Run AGH-79 failed at Verifying" })]),
+          },
+          "/api/v1/skill-usage": aUsageReport(),
+        },
+        queryClient: createQueryClient(),
+      },
+    );
+    const homeResources = ["/api/v1/projects", "/api/v1/needs-you", "/api/v1/activity"];
+
+    // Skill usage stays its own call; Home's three regions ask nothing of their own.
+    expect(await screen.findByRole("table", { name: "Skills and agents" })).toBeInTheDocument();
+    expect(calls().filter((path) => homeResources.includes(path))).toEqual([]);
+    // The cards, what needs you and the activity come from the portfolio read.
+    expect(await screen.findByRole("article", { name: "Project agent-hub" })).toBeInTheDocument();
+    expect(screen.getByText("Allow edit under docs/adr/")).toBeInTheDocument();
+    expect(screen.getByText("Run AGH-79 failed at Verifying")).toBeInTheDocument();
+    const asked = calls();
+    expect(asked.filter((path) => homeResources.includes(path))).toEqual([]);
+    expect(asked.filter((path) => path === "/api/v1/screens/portfolio")).toHaveLength(1);
+    expect(asked.length).toBeLessThanOrEqual(5);
+  });
+
+  it("draws Skills and agents once the projects are in, with no Project column for one project", async () => {
+    const queryClient = createQueryClient();
+    renderWithApi(
+      <OpenHome>
+        <PortfolioScreen />
+      </OpenHome>,
+      {
+        routes: {
+          [PORTFOLIO_READ]: {
+            projects: aPage([aProjectSummary()]),
+            needs_you: aPage([]),
+            activity: aPage([]),
+          },
+          "/api/v1/skill-usage": aUsageReport(),
+        },
+        queryClient,
+      },
+    );
+    const release = holdPortfolioRead();
+    fireEvent.click(screen.getByRole("button", { name: "Open Home" }));
+
+    // Skill usage, its own call, has answered; the portfolio read, with the projects, is held.
+    await waitFor(() => {
+      const usage = queryClient
+        .getQueryCache()
+        .findAll({ queryKey: ["api", "/api/v1/skill-usage"] });
+      expect(usage.map((query) => query.state.status)).toEqual(["success"]);
+    });
+    expect(screen.queryByRole("article", { name: "Project agent-hub" })).toBeNull();
+    const region = screen.getByRole("region", { name: "Skills and agents" });
+    expect(within(region).queryByRole("columnheader", { name: "Project" })).toBeNull();
+    expect(within(region).queryByRole("table")).toBeNull();
+
+    release();
+    expect(await screen.findByRole("article", { name: "Project agent-hub" })).toBeInTheDocument();
+    const table = await within(region).findByRole("table");
+    expect(within(table).getByRole("columnheader", { name: "Name" })).toBeInTheDocument();
+    expect(within(table).queryByRole("columnheader", { name: "Project" })).toBeNull();
   });
 
   describe("states", () => {

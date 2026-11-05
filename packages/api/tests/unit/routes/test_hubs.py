@@ -1,9 +1,17 @@
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from agent_hub.api.doctor_fix import DoctorFixResult
+from agent_hub.api.platform_sync import PlatformSyncResult
+from agent_hub.api.routes import hubs as hub_routes
 from agent_hub.core.testing.read_model_builders import HUB_ID, a_hub_view
+
+# The path of ``a_hub_view()``, and this server's Origin, which the hub actions require.
+HUB_PATH = "/home/demo/demo-hub"
+OWN = {"Origin": "http://127.0.0.1:7420"}
 
 
 def test_maps_hubs_when_hubs_listed(wired: Any) -> None:
@@ -93,3 +101,79 @@ def test_answers_refusal_when_hub_json_cannot_be_pinned(
         assert not (tmp_path / "hub.json").exists()
     else:
         assert (tmp_path / "hub.json").read_text(encoding="utf-8") == text
+
+
+def _synced(hub_id: str) -> PlatformSyncResult:
+    return PlatformSyncResult(
+        hub_id=hub_id,
+        previous_version="0.8.0",
+        version="0.9.0",
+        ok=True,
+        exit_code=0,
+        output=(),
+        changed_files=("hub.json", "hub.lock"),
+    )
+
+
+def _sync_failed(hub_id: str) -> PlatformSyncResult:
+    return PlatformSyncResult(
+        hub_id=hub_id,
+        previous_version="0.8.0",
+        version="0.9.0",
+        ok=False,
+        exit_code=1,
+        output=("hub sync failed",),
+        changed_files=("hub.json",),
+    )
+
+
+def _fixed(hub_id: str) -> DoctorFixResult:
+    return DoctorFixResult(
+        hub_id=hub_id,
+        ok=True,
+        exit_code=0,
+        output=(),
+        changed_files=("AGENTS.md",),
+        errors_left=0,
+        warnings_left=0,
+    )
+
+
+# AGH-608 AC-26 (A7): a hub action marks its hub due at the next tick once it
+# is done, whatever its outcome; an unknown hub marks nothing.
+@pytest.mark.parametrize(
+    ("action", "route", "result"),
+    [
+        pytest.param("sync_platform", "platform-sync", _synced, id="platform-sync"),
+        pytest.param("fix_hub", "doctor-fix", _fixed, id="doctor-fix"),
+        pytest.param("sync_platform", "platform-sync", _sync_failed, id="platform-sync-failed"),
+    ],
+)
+def test_marks_written_hub_due_when_write_route_answers(
+    wired: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    action: str,
+    route: str,
+    result: Callable[[str], object],
+) -> None:
+    wired.hubs.hubs.append(a_hub_view())
+
+    def act(hub_id: str, hub_path: str, **_: object) -> object:
+        wired.hubs.calls.append((action, hub_path))
+        return result(hub_id)
+
+    monkeypatch.setattr(hub_routes, action, act)
+    unknown = wired.client.post(f"/api/v1/hubs/nope/{route}", json={}, headers=OWN)
+    assert unknown.status_code == 404, unknown.text
+    assert "reread_hubs" not in {name for name, _ in wired.hubs.calls}
+
+    response = wired.client.post(f"/api/v1/hubs/{HUB_ID}/{route}", json={}, headers=OWN)
+
+    assert response.status_code == 200, response.text
+    calls = wired.hubs.calls
+    assert (action, HUB_PATH) in calls
+    assert calls[calls.index((action, HUB_PATH)) :] == [
+        (action, HUB_PATH),
+        ("reread_hubs", HUB_PATH),
+    ]

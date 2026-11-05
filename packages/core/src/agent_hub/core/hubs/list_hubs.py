@@ -3,11 +3,13 @@
 The lock state is ``not_adopted`` without ``hub.lock``, ``sync_pending`` when the lock records
 another release than the pin, ``drift`` when the doctor's ``lock.drift`` rule finds a managed
 file changed (asked through ``has_drift``, only for a lock that matches the pin), else
-``in_sync``; unknown (None) when the lock cannot be read or is no lock.
+``in_sync``; unknown (None) when the lock cannot be read or is no lock, or when it matches the
+pin and the doctor has not checked the hub yet (``has_drift`` answers None).
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 
 from agent_hub.core.doctor.snapshot import LockAbsent, LockState
 from agent_hub.core.hub_config.model import HubConfig
@@ -17,8 +19,9 @@ from agent_hub.core.hubs.hub_registry import HubFileReader, HubRegistry
 from agent_hub.core.hubs.registered_hub import HubView, RegisteredHub
 from agent_hub.core.projects.project_views import LockState as LockStateName
 
-# Whether the hub's managed files drifted from its lock (the doctor's ``lock.drift``).
-type DriftCheck = Callable[[str, HubDocument], bool]
+# Whether the hub's managed files drifted from its lock (the doctor's ``lock.drift``); None
+# while the doctor has not checked the hub.
+type DriftCheck = Callable[[str, HubDocument], bool | None]
 
 
 def no_drift(_hub_path: str, _document: HubDocument) -> bool:
@@ -55,11 +58,6 @@ class ListHubs:
         """Every registered hub as read now."""
         return tuple(self.read(entry) for entry in self._registry.entries())
 
-    def documents(self) -> tuple[tuple[RegisteredHub, HubDocument], ...]:
-        """Every registered hub's entry and ``hub.json`` document, in registration order; its
-        lock is not read, so no drift check runs (the item writes' lookups, AGH-298)."""
-        return tuple((entry, self._document(entry)) for entry in self._registry.entries())
-
     def _document(self, entry: RegisteredHub) -> HubDocument:
         """One registered hub's ``hub.json`` document, its lock not read."""
         return read_hub_document(
@@ -69,32 +67,56 @@ class ListHubs:
     def read(self, entry: RegisteredHub) -> HubRead:
         """One registered hub as read now."""
         document = self._document(entry)
-        state: LockStateName | None = None
-        version: str | None = None
-        if document.config is not None:
-            state, version = lock_view(
-                self._reader.read_lock(entry.path),
-                pin=document.pin,
-                has_drift=lambda: self._has_drift(entry.path, document),
-            )
-        return HubRead(
-            entry=entry,
-            document=document,
-            view=_view(entry, document, running=self._running, lock=(state, version)),
+        lock = None if document.config is None else self._reader.read_lock(entry.path)
+        return hub_read(
+            entry,
+            document,
+            lock,
+            running_version=self._running,
+            has_drift=lambda: self._has_drift(entry.path, document),
+            checked_at=None,
         )
 
 
+def hub_read(
+    entry: RegisteredHub,
+    document: HubDocument,
+    lock: LockState | None,
+    *,
+    running_version: str,
+    has_drift: Callable[[], bool | None],
+    checked_at: datetime | None,
+) -> HubRead:
+    """A registered hub's read from its document and lock as already read (the lock counts
+    only for a valid ``hub.json``), and when its last doctor check ended."""
+    state: LockStateName | None = None
+    version: str | None = None
+    if document.config is not None:
+        state, version = lock_view(lock, pin=document.pin, has_drift=has_drift)
+    return HubRead(
+        entry=entry,
+        document=document,
+        view=_view(
+            entry, document, running=running_version, lock=(state, version), checked_at=checked_at
+        ),
+    )
+
+
 def lock_view(
-    lock: LockState | None, *, pin: str | None, has_drift: Callable[[], bool]
+    lock: LockState | None, *, pin: str | None, has_drift: Callable[[], bool | None]
 ) -> tuple[LockStateName | None, str | None]:
-    """The lock state's name and the lock's release; ``has_drift`` runs only when it matters."""
+    """The lock state's name and the lock's release; ``has_drift`` runs only when it matters,
+    and its None (not checked yet) leaves a lock that matches the pin unnamed."""
     if isinstance(lock, LockAbsent):
         return "not_adopted", None
     if not isinstance(lock, HubLock):
         return None, None
     if lock.platform_version != pin:
         return "sync_pending", lock.platform_version
-    return ("drift" if has_drift() else "in_sync"), lock.platform_version
+    drift = has_drift()
+    if drift is None:
+        return None, lock.platform_version
+    return ("drift" if drift else "in_sync"), lock.platform_version
 
 
 def _view(
@@ -103,6 +125,7 @@ def _view(
     *,
     running: str,
     lock: tuple[LockStateName | None, str | None],
+    checked_at: datetime | None,
 ) -> HubView:
     config = document.config
     state, version = lock
@@ -115,6 +138,7 @@ def _view(
         running_version=running,
         lock_version=version,
         lock_state=state,
+        checked_at=checked_at,
         modules=() if config is None else module_ids(config),
         guard_ask_before_edit=() if config is None else config.guard.ask_before_edit,
         repos=() if config is None else tuple(repo.dir for repo in config.repos),

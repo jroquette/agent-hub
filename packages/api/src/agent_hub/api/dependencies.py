@@ -13,11 +13,13 @@ from pydantic import BaseModel, ValidationError
 
 from agent_hub.api.ac_check import AcCheckRunner
 from agent_hub.api.change_feed import ChangeFeed
+from agent_hub.api.connected_browsers import ConnectedBrowsers
 from agent_hub.api.feature_names import FeatureNames
 from agent_hub.api.linear_connection import LinearConnection
 from agent_hub.api.rfc9457 import InvalidParameterError, NotImplementedInBuildError
 from agent_hub.api.scenario_catalog import ScenarioCatalog, ScenarioCommands
 from agent_hub.api.scenario_investigation import ScenarioInvestigations
+from agent_hub.api.session_access import AGENT_SESSION_READS
 from agent_hub.api.settings import ApiSettings
 from agent_hub.core.agent_sessions.cloud import CloudSessionCommands
 from agent_hub.core.agent_sessions.control import AgentSessionCommands
@@ -36,6 +38,7 @@ from agent_hub.core.learnings.learning_ports import LearningDecisions, LearningR
 from agent_hub.core.readmodels.filters import LearningFilter
 from agent_hub.core.readmodels.page import Page
 from agent_hub.core.readmodels.read_ports import EventReadModels, HubReadModels
+from agent_hub.core.screens.screen_reads import ScreenReads
 from agent_hub.core.workflows.gate_decisions import DecideWorkflowGate, WorkflowGates
 from agent_hub.core.workflows.launch import ControlWorkflowRun, StartWorkflowRun
 from agent_hub.core.workflows.workflow_reads import WorkflowReads
@@ -73,6 +76,10 @@ class ApiPorts:
     knowledge_reads: KnowledgeReads | None = None
     scenario_reads: ScenarioCatalog | None = None
     scenario_commands: ScenarioCommands | None = None
+    # The tabs holding the global stream open (AGH-613): the ticket warmer reads Linear only then.
+    browsers: ConnectedBrowsers | None = None
+    # One read per screen (ADR 0056), composed of the read models above.
+    screen_reads: ScreenReads | None = None
 
 
 def _ports(request: Request) -> ApiPorts:
@@ -99,6 +106,25 @@ def hub_read_models(request: Request) -> HubReadModels:
     if port is None:
         raise _unwired(request)
     return port
+
+
+def screen_reads(request: Request) -> ScreenReads:
+    """The screen reads, or 501 when not wired."""
+    port = _ports(request).screen_reads
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+def optional_screen_reads(request: Request) -> ScreenReads | None:
+    """The screen reads, or None when this build does not wire them."""
+    return _ports(request).screen_reads
+
+
+def agent_session_reads(request: Request) -> bool:
+    """Whether the request may read agent-session data: the mark ``SessionAccessMiddleware``
+    writes; an app without that middleware reads none."""
+    return request.scope.get(AGENT_SESSION_READS) is True
 
 
 def knowledge_reads(request: Request) -> KnowledgeReads:
@@ -281,12 +307,14 @@ def ingest_hook(request: Request) -> IngestHook:
 
 @dataclass(frozen=True)
 class StreamPorts:
-    """What a stream needs: the reader it replays from, the feed it waits on, the read models."""
+    """What a stream needs: the reader it replays from, the feed it waits on, the read models;
+    ``browsers`` counts the global streams open (None: not counted)."""
 
     reader: EventReader
     feed: ChangeFeed
     models: EventReadModels
     counters: IngestionCounters | None
+    browsers: ConnectedBrowsers | None = None
 
 
 def stream_ports(request: Request) -> StreamPorts:
@@ -299,6 +327,7 @@ def stream_ports(request: Request) -> StreamPorts:
         feed=ports.change_feed,
         models=ports.event_read_models,
         counters=ports.counters,
+        browsers=ports.browsers,
     )
 
 
@@ -376,6 +405,9 @@ def parse_filter[M: BaseModel](model: type[M], **fields: object) -> M:
 EventReadModelsDep = Annotated[EventReadModels, Depends(event_read_models)]
 HubReadModelsDep = Annotated[HubReadModels, Depends(hub_read_models)]
 KnowledgeReadsDep = Annotated[KnowledgeReads, Depends(knowledge_reads)]
+ScreenReadsDep = Annotated[ScreenReads, Depends(screen_reads)]
+OptionalScreenReadsDep = Annotated[ScreenReads | None, Depends(optional_screen_reads)]
+AgentSessionReadsDep = Annotated[bool, Depends(agent_session_reads)]
 OwnerSignOffDep = Annotated[SignOffOwnerSteps, Depends(owner_signoff)]
 ChangeRequestDecisionsDep = Annotated[DecideChangeRequest, Depends(change_request_decisions)]
 OptionalChangeRequestDecisionsDep = Annotated[

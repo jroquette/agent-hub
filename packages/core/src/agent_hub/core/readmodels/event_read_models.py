@@ -24,9 +24,9 @@ issue at read time from the hub's ``LabelRules`` (``label_rules_of``), outside e
 
 import bisect
 import threading
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
 from urllib.parse import quote
@@ -103,7 +103,7 @@ from agent_hub.core.sessions.session_files import fold_session_files
 from agent_hub.core.sessions.session_label import LabelRules, with_issue, with_prompt_issue
 from agent_hub.core.sessions.session_status import clock_phase
 from agent_hub.core.sessions.session_summary import summarize_session
-from agent_hub.core.skills.skill_usage import fold_skill_usage
+from agent_hub.core.skills.skill_usage import LONGEST_WINDOW, SkillUses, fold_skill_uses, usage_at
 from agent_hub.core.skills.skill_view import SkillUsage
 
 type SortKey = tuple[CursorKeyPart, ...]
@@ -221,10 +221,13 @@ class _FoldMemos:
     # Tile fields per (session, waits on a permission request), derived at read time for the
     # rows asked; valid while the group, ``now`` and the folded problems are the same.
     tiles: dict[tuple[str, bool], tuple[_Group, datetime, SessionProblems, TileFields]]
+    # The paths each session touched, folded at read time for the file matches (the feature
+    # cost, the file filter); valid while the group is the same.
+    files: dict[str, tuple[_Group, frozenset[str]]]
 
     @classmethod
     def empty(cls) -> _FoldMemos:
-        return cls(sessions={}, runs={}, approvals={}, learnings=((), {}), tiles={})
+        return cls(sessions={}, runs={}, approvals={}, learnings=((), {}), tiles={}, files={})
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -241,6 +244,7 @@ class _Snapshot:
     approvals: Mapping[str, Approval]
     learnings: Mapping[str, Learning]
     tiles: dict[tuple[str, bool], tuple[_Group, datetime, SessionProblems, TileFields]]
+    files: dict[str, tuple[_Group, frozenset[str]]]
 
 
 def _microseconds(moment: datetime | None) -> int:
@@ -372,10 +376,10 @@ class FoldedEventReadModels:
     ``now`` is the clock (folds never read one themselves); ``hub_path_of`` names a project's
     hub path for "How to decide", when the caller knows it; ``label_rules_of`` gives a
     project's ``LabelRules`` (tracker teams, branch prefix), or None when its hub is unknown,
-    and is asked on every read that returns a session or a tile. ``agent_session_link_of``
-    finds the agent session ``hub web`` drives a session from (P13), asked on the same reads:
-    it fills ``Session.agent_session_id``, and a tile whose agent session waits on a
-    permission request shows ``waiting`` (AC-165.25).
+    and is asked on every read that returns a session or a tile. ``agent_session_links_of``
+    finds the agent sessions ``hub web`` drives sessions from (P13), asked once per project on
+    the same reads: it fills ``Session.agent_session_id``, and a tile whose agent session
+    waits on a permission request shows ``waiting`` (AC-165.25).
     """
 
     def __init__(
@@ -386,13 +390,14 @@ class FoldedEventReadModels:
         hub_path_of: Callable[[str], str | None] | None = None,
         prices: Mapping[str, PerMillion] = PRICES,
         label_rules_of: Callable[[str], LabelRules | None] | None = None,
-        agent_session_link_of: Callable[[str, str], AgentSessionLink | None] | None = None,
+        agent_session_links_of: Callable[[str, Collection[str]], Mapping[str, AgentSessionLink]]
+        | None = None,
     ) -> None:
         self._reader = reader
         self._now = now
         self._hub_path_of = hub_path_of
         self._label_rules_of = label_rules_of
-        self._agent_session_link_of = agent_session_link_of
+        self._agent_session_links_of = agent_session_links_of
         self._prices = prices
         # The events read so far, grouped, and the mark they were read up to: the store only
         # grows, so a later read takes only what was appended since.
@@ -403,8 +408,13 @@ class FoldedEventReadModels:
         # A session's timeline depends only on its events, so it lives as long as the mark: the
         # pages of one long session (a 5,000-event one is 25 pages) build it once.
         self._timelines: FoldMemo[str, _SortedTimeline] = FoldMemo(max_entries=32)
-        # Skill usage per (mark, second of ``now``, project), folded from that snapshot (P2).
-        self._usage: FoldMemo[tuple[int, datetime, str], SkillUsage] = FoldMemo(max_entries=8)
+        # Skill and agent uses per (project, UTC date of ``now``) at the store's mark, folded from
+        # that date's midnight minus 90 days; each read counts them at its own ``now`` (P2).
+        # 64 entries, so every registered hub keeps one: Home's usage table reads each project
+        # on every request, and with fewer entries than hubs the LRU would fold them all each
+        # time. An entry is one project's 90-day use times; past days' entries stay until 64 are
+        # kept, so the memo holds at most 64 such entries, and past 64 hubs each read refolds.
+        self._usage: FoldMemo[tuple[str, date], SkillUses] = FoldMemo(max_entries=64)
 
     # Loading and folding
 
@@ -452,6 +462,7 @@ class FoldedEventReadModels:
                 approvals=_fold_approvals(index, hub_paths, memos),
                 learnings=_fold_learnings(index, memos),
                 tiles=memos.tiles,
+                files=memos.files,
             )
 
     def _fold_sessions(
@@ -500,30 +511,65 @@ class FoldedEventReadModels:
             raise EntityNotFoundError(entity="session", entity_id=session_id)
         return session
 
-    def _decorated(self, sessions: Iterable[Session]) -> list[tuple[Session, bool]]:
+    def _links(self, sessions: Iterable[Session]) -> dict[tuple[str, str], AgentSessionLink]:
+        """The agent-session link of each of ``sessions`` that has one, by ``(project,
+        session_id)``: one lookup per project."""
+        links_of = self._agent_session_links_of
+        if links_of is None:
+            return {}
+        by_project: dict[str, list[str]] = {}
+        for session in sessions:
+            by_project.setdefault(session.project, []).append(session.id)
+        return {
+            (project, session_id): link
+            for project, session_ids in by_project.items()
+            for session_id, link in links_of(project, session_ids).items()
+        }
+
+    def _decorated(
+        self,
+        sessions: Sequence[Session],
+        *,
+        links: Mapping[tuple[str, str], AgentSessionLink] | None = None,
+    ) -> list[tuple[Session, bool]]:
         """Each session with its issue and agent-session link, and whether that agent session
-        waits on a permission request."""
+        waits on a permission request; ``links`` when the caller already read them (``_links``),
+        else they are read here."""
+        if links is None:
+            links = self._links(sessions)
         rules: dict[str, LabelRules | None] = {}
         decorated: list[tuple[Session, bool]] = []
         for session in sessions:
             if session.project not in rules:
                 found = self._label_rules_of
                 rules[session.project] = None if found is None else found(session.project)
-            link_of = self._agent_session_link_of
-            link = None if link_of is None else link_of(session.project, session.id)
+            link = links.get((session.project, session.id))
             labelled = _with_issue(session, rules[session.project], link)
             if link is not None:
                 labelled = labelled.model_copy(update={"agent_session_id": link.agent_session_id})
             decorated.append((labelled, link is not None and link.waiting))
         return decorated
 
-    def _of_issue(self, sessions: Iterable[Session], issue: str) -> list[Session]:
+    def _of_issue(
+        self,
+        sessions: Iterable[Session],
+        issue: str,
+        *,
+        links: Mapping[tuple[str, str], AgentSessionLink],
+    ) -> list[Session]:
         """The sessions about ``issue`` (any case): the issue their first prompt
         (``/feature AGH-305``) names, else their branch or worktree, for the hub's tracker
-        teams, else the one their run names."""
-        return self._of_issues(sessions, frozenset({issue.casefold()}))
+        teams, else the one their run names. ``links`` are their agent-session links
+        (``_links``)."""
+        return self._of_issues(sessions, frozenset({issue.casefold()}), links=links)
 
-    def _of_issues(self, sessions: Iterable[Session], wanted: frozenset[str]) -> list[Session]:
+    def _of_issues(
+        self,
+        sessions: Iterable[Session],
+        wanted: frozenset[str],
+        *,
+        links: Mapping[tuple[str, str], AgentSessionLink],
+    ) -> list[Session]:
         """The sessions about one of the ``wanted`` issues (casefolded), as ``_of_issue``."""
         rules: dict[str, LabelRules | None] = {}
         found: list[Session] = []
@@ -531,8 +577,7 @@ class FoldedEventReadModels:
             if session.project not in rules:
                 rules_of = self._label_rules_of
                 rules[session.project] = None if rules_of is None else rules_of(session.project)
-            link_of = self._agent_session_link_of
-            link = None if link_of is None else link_of(session.project, session.id)
+            link = links.get((session.project, session.id))
             label = _with_issue(session, rules[session.project], link).label
             of = (label.issue if label is not None else None) or session.issue
             if of is not None and of.casefold() in wanted:
@@ -549,8 +594,11 @@ class FoldedEventReadModels:
             for session in snapshot.sessions.values()
             if _session_matches(session, session_filter, snapshot)
         ]
+        links: dict[tuple[str, str], AgentSessionLink] | None = None
         if session_filter.issue is not None:
-            matching = self._of_issue(matching, session_filter.issue)
+            # The page is a subset of these sessions, so the links read here decorate it too.
+            links = self._links(matching)
+            matching = self._of_issue(matching, session_filter.issue, links=links)
         sort = session_filter.sort
         descending = sort.startswith("-")
         page = _paginate(
@@ -561,7 +609,7 @@ class FoldedEventReadModels:
             request=session_filter,
             hwm=snapshot.hwm,
         )
-        items = _with_tile_fields(snapshot, self._decorated(page.items))
+        items = _with_tile_fields(snapshot, self._decorated(page.items, links=links))
         return page.model_copy(update={"items": tuple(items)})
 
     def get_session(self, session_id: str) -> Session:
@@ -642,12 +690,13 @@ class FoldedEventReadModels:
         found = {
             session.id: session
             for session in scoped
-            if _file_matches(snapshot.by_session[session.id], folder)
+            if _file_matches(_touched(snapshot, session.id), folder)
         }
         if issues:
             rest = [session for session in scoped if session.id not in found]
             wanted = frozenset(issue.casefold() for issue in issues)
-            found |= {session.id: session for session in self._of_issues(rest, wanted)}
+            of_issues = self._of_issues(rest, wanted, links=self._links(rest))
+            found |= {session.id: session for session in of_issues}
         priced = [session.cost_usd for session in found.values() if session.cost_usd is not None]
         return FeatureCost(
             total_usd=sum(priced, Decimal(0)) if priced else None,
@@ -855,17 +904,34 @@ class FoldedEventReadModels:
 
     def skill_usage(self, project: str) -> SkillUsage:
         """How often each skill and agent of ``project`` was used over the last ``USAGE_DAYS``
-        of the snapshot's ``now``, and its 7/30/90-day windows: names, counts and times only
-        (L7 dedupe in the fold, AGH-482)."""
-        snapshot = self._snapshot()
-        key = (snapshot.hwm, snapshot.now.replace(microsecond=0), project)
-        return self._usage.get(
-            key,
-            hwm=snapshot.hwm,
-            compute=lambda: fold_skill_usage(
-                snapshot.by_session, project=project, now=snapshot.now
-            ),
+        before ``now``, and its 7/30/90-day windows: names, counts and times only (L7 dedupe
+        in the fold, AGH-482). The uses are folded once per UTC date and store mark, without
+        the snapshot, and counted at each read (AGH-611)."""
+        hwm = self._reader.high_water_mark()
+        now = self._now()
+        day = now.astimezone(UTC).date()
+        uses = self._usage.get(
+            (project, day), hwm=hwm, compute=lambda: self._skill_uses(project, day=day, hwm=hwm)
         )
+        return usage_at(uses, now=now)
+
+    def _skill_uses(self, project: str, *, day: date, hwm: int) -> SkillUses:
+        """``project``'s uses from ``day``'s UTC midnight minus 90 days, in the events up to
+        ``hwm`` or later. Only the copy of the session groups holds ``_folding``, so the session
+        routes' ``_fold`` never waits for the skill fold."""
+        with self._folding:
+            if self._index.hwm > hwm:
+                # Another read loaded past this mark: fold at the store's mark rather than copy
+                # the index up to this one (``up_to``). The memo keeps these uses under the older
+                # mark, so a read at the newer one folds again.
+                hwm = self._reader.high_water_mark()
+            index, _ = self._index_at(hwm)
+            # Copied: ``apply`` replaces groups and adds sessions while the fold runs.
+            sessions = {
+                session_id: index.by_session[session_id] for session_id in index.live_sessions
+            }
+        midnight = datetime(day.year, day.month, day.day, tzinfo=UTC)
+        return fold_skill_uses(sessions, project=project, start=midnight - LONGEST_WINDOW)
 
 
 # Labels and tile fields at read time
@@ -1058,7 +1124,7 @@ def _session_matches(session: Session, wanted: SessionFilter, snapshot: _Snapsho
         all(checks)
         and _cost_in_range(session.cost_usd, wanted)
         and _workflow_matches(snapshot.by_session[session.id], wanted.workflow)
-        and _file_matches(snapshot.by_session[session.id], wanted.file)
+        and (wanted.file is None or _file_matches(_touched(snapshot, session.id), wanted.file))
     )
 
 
@@ -1075,8 +1141,21 @@ def _workflow_matches(events: Sequence[StoredEvent], workflow: str | None) -> bo
     return workflow is None or any(stored.event.workflow == workflow for stored in events)
 
 
-def _file_matches(events: Sequence[StoredEvent], file: str | None) -> bool:
-    return file is None or any(file in change.path for change in fold_session_files(events))
+def _touched(snapshot: _Snapshot, session_id: str) -> frozenset[str]:
+    """The paths the session touched (read or changed), folded again only when its events
+    changed: they are kept while its group is the same object. Written outside the fold lock,
+    as the tile fields are: an equal group gives equal paths."""
+    group = snapshot.by_session[session_id]
+    found = snapshot.files.get(session_id)
+    if found is not None and found[0] is group:
+        return found[1]
+    paths = frozenset(change.path for change in fold_session_files(group))
+    snapshot.files[session_id] = (group, paths)
+    return paths
+
+
+def _file_matches(paths: Iterable[str], file: str) -> bool:
+    return any(file in path for path in paths)
 
 
 def _session_sort_key(field: str, *, descending: bool) -> Callable[[Session], SortKey]:

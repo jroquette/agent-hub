@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
@@ -44,6 +45,7 @@ from scripts.seed_demo import (
     main,
     scenario_files,
     scenario_runs,
+    seed,
     store_chat,
 )
 
@@ -51,13 +53,24 @@ NOW = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
 URL = "http://127.0.0.1:7420"
 HUB = PurePosixPath("/data/demo/demo-hub")
 FOLDER = HUB / "brain" / "features" / FEATURE
+# When the demo hub's first background doctor run ended (AGH-608).
+CHECKED_AT = "2026-10-11T12:00:05.000Z"
+
+# What the seed did, in order, across the target and the server: ("write", path) or
+# (method, url path).
+type CallLog = list[tuple[str, str]]
 
 
 class FakeTarget:
     """Records what the seed writes and the hub commands it runs; answers each command 0."""
 
     def __init__(
-        self, workdir: str = "/data/demo", *, init_stderr: str = "", git_stderr: str = ""
+        self,
+        workdir: str = "/data/demo",
+        *,
+        init_stderr: str = "",
+        git_stderr: str = "",
+        log: CallLog | None = None,
     ) -> None:
         self.workdir = PurePosixPath(workdir)
         self.files: dict[str, str] = {}
@@ -66,9 +79,11 @@ class FakeTarget:
         self.git_runs: list[list[str]] = []
         self._init_stderr = init_stderr
         self._git_stderr = git_stderr
+        self._log = [] if log is None else log
 
     def write(self, path: PurePosixPath, text: str) -> None:
         self.files[str(path)] = text
+        self._log.append(("write", str(path)))
 
     def hub(self, arguments: Sequence[str]) -> subprocess.CompletedProcess[str]:
         self.commands.append(list(arguments))
@@ -87,18 +102,42 @@ class FakeTarget:
 
 
 class FakeServer:
-    """The control plane's routes the seed calls, recording the posted bodies."""
+    """The control plane's routes the seed calls, recording the posted bodies.
 
-    def __init__(self, *, hubs_status: int = 201) -> None:
+    ``GET /api/v1/hubs`` lists each posted hub with the next of ``checks`` as its
+    ``checked_at`` (the last one repeats): by default the demo hub is checked.
+    """
+
+    def __init__(
+        self,
+        *,
+        hubs_status: int = 201,
+        checks: Sequence[str | None] = (CHECKED_AT,),
+        log: CallLog | None = None,
+    ) -> None:
         self.hubs: list[dict[str, Any]] = []
         self.hub_origins: list[str | None] = []
         self.envelopes: list[dict[str, Any]] = []
         self._hubs_status = hubs_status
+        self._checks = list(checks)
+        self._log = [] if log is None else log
+
+    def _listed_hubs(self) -> dict[str, Any]:
+        checked_at = self._checks.pop(0) if len(self._checks) > 1 else self._checks[0]
+        items = [
+            {"id": f"hub-{index}", "path": hub["path"], "project": DEMO_PROJECT}
+            | {"checked_at": checked_at}
+            for index, hub in enumerate(self.hubs)
+        ]
+        return {"items": items, "next_cursor": None, "total_estimate": len(items)}
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
+        self._log.append((request.method, path))
         if request.method == "GET" and path == "/api/v1/collector/status":
             return httpx.Response(200, json={"db_path": "/data/agent-hub.db"})
+        if request.method == "GET" and path == "/api/v1/hubs":
+            return httpx.Response(200, json=self._listed_hubs())
         if request.method == "POST" and path == "/api/v1/hubs":
             self.hubs.append(json.loads(request.content))
             self.hub_origins.append(request.headers.get("origin"))
@@ -473,6 +512,67 @@ def test_loads_scenarios_actions_and_environment_when_scenario_files_written(
     assert isinstance(local, LocalConfig)
     for run in hub.glob(".agent-runs/workflows/*/records.jsonl"):
         assert record_lines(run.read_bytes())
+
+
+class FakeClock:
+    """Monotonic seconds that move only when the seed sleeps."""
+
+    def __init__(self) -> None:
+        self.now = 100.0
+        self.slept: list[float] = []
+
+    def __call__(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        assert len(self.slept) < 1000, "the seed never stopped waiting"
+        self.slept.append(seconds)
+        self.now += seconds
+
+
+def test_waits_for_check_after_last_hub_write_when_seeding() -> None:
+    """AGH-608: every demo hub file is written before the hub is registered, so its first
+    background check reads them all; the seed ends once that check is seen."""
+    log: CallLog = []
+    target = FakeTarget(log=log)
+    server = FakeServer(checks=(None, CHECKED_AT), log=log)
+    clock = FakeClock()
+
+    with httpx.Client(base_url=URL, transport=httpx.MockTransport(server)) as client:
+        seed(client, target, db_path="/data/agent-hub.db", now=NOW, clock=clock, sleep=clock.sleep)
+
+    hub_paths = {str(path) for path in hub_files(HUB) | scenario_files(HUB)}
+    registered = log.index(("POST", "/api/v1/hubs"))
+    written = [
+        index for index, (kind, path) in enumerate(log) if kind == "write" and path in hub_paths
+    ]
+    polls = [index for index, call in enumerate(log) if call == ("GET", "/api/v1/hubs")]
+    assert {log[index][1] for index in written} == hub_paths
+    assert max(written) < registered
+    assert polls == [len(log) - 2, len(log) - 1]
+    assert polls[0] > registered
+    assert clock.slept != []
+
+
+def test_fails_naming_hub_when_no_check_follows_last_write() -> None:
+    server = FakeServer(checks=(None,))
+    clock = FakeClock()
+
+    with (
+        httpx.Client(base_url=URL, transport=httpx.MockTransport(server)) as client,
+        pytest.raises(SeedError, match=re.escape(str(HUB))),
+    ):
+        seed(
+            client,
+            FakeTarget(),
+            db_path="/data/agent-hub.db",
+            now=NOW,
+            clock=clock,
+            sleep=clock.sleep,
+            wait_seconds=60,
+        )
+
+    assert 60 <= clock.now - 100.0 <= 61
 
 
 def test_gives_same_scenario_events_when_seeded_again() -> None:

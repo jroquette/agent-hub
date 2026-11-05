@@ -13,6 +13,7 @@ from agent_hub.api.dependencies import (
     FeatureNamesDep,
     HubReadModelsDep,
     OptionalChangeRequestDecisionsDep,
+    OptionalScreenReadsDep,
     OwnerSignOffDep,
 )
 from agent_hub.api.feature_names import FeatureName, FeatureNameBody, FeatureNamesView
@@ -33,6 +34,7 @@ from agent_hub.core.features.ticket_view import FeatureTickets, TicketRecords
 from agent_hub.core.readmodels.filters import Scope
 from agent_hub.core.readmodels.page import Page
 from agent_hub.core.readmodels.read_ports import EventReadModels
+from agent_hub.core.screens.screen_reads import ScreenReads
 
 router = APIRouter(tags=["features"], responses=PROBLEM_RESPONSES)
 
@@ -98,13 +100,23 @@ def decide_change_request(
     *,
     body: ChangeRequestDecisionBody,
     decide: ChangeRequestDecisionsDep,
+    screens: OptionalScreenReadsDep,
 ) -> ChangeRequestView:
     """The owner decides a plan change request whose run is gone (lost, or ended, and held by no
     child): creates ``change-requests/<n>.decision.md`` once with the hub's person as
     ``decided_by``, never editing the request; the next ``/implement`` of its ticket reads it.
     409 while the run's gate is open (answer it through ``approval_id``), while the run lives,
     once decided, or with no person to record; 422 for a decline without a note."""
-    return decide(project, slug, n, decision=body.decision, note=body.note)
+    decided = decide(project, slug, n, decision=body.decision, note=body.note)
+    _forget_feature_lists(screens)
+    return decided
+
+
+def _forget_feature_lists(screens: ScreenReads | None) -> None:
+    """After a write of a feature record: the shell read lists the features again at its next
+    poll, so its badge counts the write (ADR 0056)."""
+    if screens is not None:
+        screens.forget_features()
 
 
 def _with_runs(
@@ -128,6 +140,7 @@ def sign_off_owner_steps(
     slug: NamePath,
     *,
     sign_off: OwnerSignOffDep,
+    screens: OptionalScreenReadsDep,
     body: OwnerSignOffBody | None = None,
 ) -> EvalRecord:
     """The owner settles the owner steps. Without a body: writes an ``owner-signoff`` SHIP eval
@@ -144,15 +157,18 @@ def sign_off_owner_steps(
     them: an unknown AC, a NO-SHIP as the latest eval of one (``done``), an eval naming one that
     the note would not rank newer than, evals left unread."""
     if body is None:
-        return sign_off(project, slug)
-    return sign_off(
-        project,
-        slug,
-        delivery=body.delivery,
-        decision=body.decision,
-        note=body.note,
-        acs=body.acs,
-    )
+        record = sign_off(project, slug)
+    else:
+        record = sign_off(
+            project,
+            slug,
+            delivery=body.delivery,
+            decision=body.decision,
+            note=body.note,
+            acs=body.acs,
+        )
+    _forget_feature_lists(screens)
+    return record
 
 
 @router.post("/features/{project}/{slug}/acs/{ac}/check-runs")

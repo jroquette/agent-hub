@@ -2,6 +2,8 @@
 
 import json
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -11,11 +13,14 @@ from agent_hub.core.doctor.run_rules import Selection, select_rules
 from agent_hub.core.doctor.snapshot import LockAbsent
 from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
-from agent_hub.core.hubs.hub_registry import HubFileReader, UnreadHubFile
+from agent_hub.core.hubs.hub_registry import BrainListing, HubFileReader, UnreadHubFile
 from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.generator import registered_hub_files
+from agent_hub.generator.brain_files import list_brain
 from agent_hub.generator.registered_hub_files import MAX_HUB_JSON_BYTES, HubFileSystem
 
 RUNNING = "4.5.6"
+READERS = 6
 
 
 @pytest.fixture
@@ -104,6 +109,22 @@ def test_gives_times_of_present_paths_when_asked(hub: Path) -> None:
     assert times == (os.stat(hub / "hub.json").st_mtime_ns, None)
 
 
+def test_gives_link_target_time_when_followed(hub: Path, tmp_path: Path) -> None:
+    target = tmp_path / "shared" / "hub.json"
+    target.parent.mkdir()
+    target.write_bytes((hub / "hub.json").read_bytes())
+    os.utime(target, ns=(10_000_000_000, 10_000_000_000))
+    (hub / "hub.json").unlink()
+    (hub / "hub.json").symlink_to(target)
+    reader = HubFileSystem()
+
+    followed = reader.followed_times(str(hub), ["hub.json", "nope.md"])
+    unfollowed = reader.modified_times(str(hub), ["hub.json"])
+
+    assert followed == (10_000_000_000, None)
+    assert unfollowed == ((hub / "hub.json").lstat().st_mtime_ns,)
+
+
 def test_builds_snapshot_with_file_prefix_when_git_not_injected(hub: Path) -> None:
     config = HubConfig.model_validate(json.loads((hub / "hub.json").read_bytes()))
     selection = select_rules(REGISTRY, config=config, only=())
@@ -139,6 +160,58 @@ def test_reads_brain_note_when_hub_registered(hub: Path) -> None:
     assert personal.is_missing
     assert reader.brain_file_size(hub_path, "auto/me.md") is None
     assert reader.brain_folders(hub_path) == ("features",)
+
+
+def test_walks_one_brain_at_a_time_when_threads_list_at_once(
+    hub: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-20 (A6, Q26 A; AGH-608): six brain reads at once walk the brain one after another,
+    since six walks at once collapse under the GIL; each read answers what a walk alone gives."""
+    reader = HubFileSystem()
+    hub_path = reader.resolve(str(hub))
+    alone = list_brain(Path(hub_path))
+    assert [entry.path for entry in alone.entries] == ["features/demo-feature/spec.md", "now.md"]
+    assert (alone.truncated, alone.skipped) == (False, 0)
+    counts = threading.Lock()
+    in_progress = 0
+    most_at_once = 0
+    first_started = threading.Event()
+    second_started = threading.Event()
+    release_first = threading.Event()
+
+    def counting_walk(hub_root: Path) -> BrainListing:
+        nonlocal in_progress, most_at_once
+        with counts:
+            in_progress += 1
+            most_at_once = max(most_at_once, in_progress)
+            is_first = not first_started.is_set()
+            first_started.set()
+            if in_progress > 1:
+                second_started.set()
+        if is_first:
+            release_first.wait(timeout=5)
+        listing = list_brain(hub_root)
+        with counts:
+            in_progress -= 1
+        return listing
+
+    monkeypatch.setattr(registered_hub_files, "list_brain", counting_walk)
+    start = threading.Barrier(READERS)
+
+    def list_at_once() -> BrainListing:
+        start.wait(timeout=5)
+        return reader.brain_tree(hub_path)
+
+    with ThreadPoolExecutor(max_workers=READERS) as pool:
+        reads = [pool.submit(list_at_once) for _ in range(READERS)]
+        assert first_started.wait(timeout=5)
+        # Bounded: while the first walk is held, a reader that is not kept out starts its own.
+        second_started.wait(timeout=0.2)
+        release_first.set()
+        answers = [read.result(timeout=5) for read in reads]
+
+    assert most_at_once == 1
+    assert answers == [alone] * READERS
 
 
 def test_probes_no_release_when_api_builds_doctor_snapshot(

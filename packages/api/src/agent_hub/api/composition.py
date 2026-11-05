@@ -11,7 +11,8 @@ branch prefix and author match ``hub doctor``.
 The feature tickets read Linear through ``CachedTicketSnapshots`` (ADR 0025): ``TicketReaders``
 gives its reader per request, None (not connected) when ``LINEAR_API_KEY`` is unset in
 ``environ`` or the hub's ``tracker.transport`` is ``mcp``; the key is read at call time and never
-logged or shown.
+logged or shown. ``TicketWarmer`` keeps that cache warm while a tab is open (AGH-613), so the
+Features list, which reads only the cache, shows Linear's tickets.
 
 The agent sessions (AGH-165, ADR 0031) run over the Claude driver and cloud launcher of
 ``agent_hub.claude_sessions``, imported in ``claude_adapters`` alone: without the ``sessions``
@@ -31,6 +32,7 @@ and the write step; a Restore writes through ``FileSystemHubItemWriter`` (or the
 decisions' ``hub_of`` (a hub without one refuses with ``no_author``, O2).
 """
 
+import hashlib
 import ipaddress
 import os
 import shutil
@@ -54,8 +56,10 @@ from agent_hub.api.agent_session_runtime import (
 from agent_hub.api.app import AppLifecycle, CombinedLifecycle, create_app
 from agent_hub.api.change_feed import ChangeFeed, SystemTimer
 from agent_hub.api.change_request_files import HubDecisionWriter
+from agent_hub.api.connected_browsers import ConnectedBrowsers
 from agent_hub.api.dependencies import ApiPorts
 from agent_hub.api.discovery_files import HubDiscoveryFiles
+from agent_hub.api.doctor_refresher import POLL_SECONDS, DaemonTicker, DoctorRefresher, Ticker
 from agent_hub.api.feature_names import FILE_NAME as FEATURE_NAMES_FILE
 from agent_hub.api.feature_names import FeatureNames
 from agent_hub.api.linear_connection import (
@@ -92,6 +96,7 @@ from agent_hub.api.ticket_snapshots import (
     REQUEST_TIMEOUT_SECONDS,
     CachedTicketSnapshots,
 )
+from agent_hub.api.ticket_warmer import WARM_SECONDS, TicketWarmer
 from agent_hub.api.workdir_listing import RegisteredWorkdirs
 from agent_hub.collector.claude_hooks import ClaudeHookMapper
 from agent_hub.collector.transcript_tail import TranscriptTail
@@ -155,6 +160,7 @@ from agent_hub.core.readmodels.read_ports import HubReadModels
 from agent_hub.core.readmodels.settings_view import SettingsView
 from agent_hub.core.redaction.redact import KINDS as REDACTION_KINDS
 from agent_hub.core.schedules.scheduled_starts import EventSource, StartScheduledRuns
+from agent_hub.core.screens.screen_reads import ScreenReads
 from agent_hub.core.sessions.pricing import PRICES, PRICES_AS_OF
 from agent_hub.core.sessions.session_label import LabelRules
 from agent_hub.core.skills.skill_reads import SkillUsageSource
@@ -180,7 +186,7 @@ from agent_hub.storage.errors import Fts5UnavailableError, MigrationError
 from agent_hub.storage.event_store import DatabaseBusyError, SqliteEventStore, open_event_store
 from agent_hub.storage.hub_registry import JsonHubRegistry
 from agent_hub.storage.item_version_store import open_item_version_store
-from agent_hub.storage.knowledge_index import open_knowledge_index
+from agent_hub.storage.knowledge_index import SqliteKnowledgeIndex, open_knowledge_index
 from agent_hub.tracker_linear.graphql import LinearGraphqlTrackerClient
 from agent_hub.tracker_linear.graphql_reader import LinearGraphqlTrackerReader
 from agent_hub.tracker_linear.graphql_transport import LINEAR_API_KEY_VARIABLE, Post
@@ -527,6 +533,21 @@ def tracker_client_of(environ: Mapping[str, str], linear_environ: Mapping[str, s
     return of
 
 
+def key_digest(linear_environ: Mapping[str, str]) -> Callable[[], str | None]:
+    """The ticket warmer's ``key_digest``: the SHA-256 of the key the reader would send now
+    (``LINEAR_API_KEY`` in ``linear_environ``, the environment, then Settings' key file), None
+    without one. A key saved in Settings changes it, which ``LinearEnviron.source()`` would not;
+    the digest is only compared, never logged."""
+
+    def digest() -> str | None:
+        key = linear_environ.get(LINEAR_API_KEY_VARIABLE)
+        if not key:
+            return None
+        return hashlib.sha256(key.encode("utf-8", "surrogatepass")).hexdigest()
+
+    return digest
+
+
 def workflow_source_of(hub_path: str) -> ListedWorkflowSource:
     """The workflows of the hub at ``hub_path``: its ``workflows/``, then the built-ins."""
     return DiscoveredWorkflowSource(Path(hub_path))
@@ -650,7 +671,7 @@ def _event_read_models(
         hub_path_of=hub_paths,
         prices=PRICES,
         label_rules_of=label_rules_of,
-        agent_session_link_of=None if sessions is None else sessions.links.link_of,
+        agent_session_links_of=None if sessions is None else sessions.links.links_of,
     )
 
 
@@ -703,6 +724,9 @@ def build_app(
     cloud_launcher: CloudLauncher | None = None,
     item_writer: HubItemWriter | None = None,
     event_source: EventSource | None = None,
+    hub_reader: HubFileReader | None = None,
+    refresh_ticker: Ticker | None = None,
+    warm_ticker: Ticker | None = None,
 ) -> FastAPI:
     """The app of ``hub web``: every route wired to the real adapters.
 
@@ -717,6 +741,18 @@ def build_app(
     The scheduled and event starts (ADR 0048) poll GitHub through ``event_source`` (default
     ``GhEventSource`` over ``environ``); like the run launcher, none is built when
     ``settings.sessions_off``.
+    The hubs' files are read through ``hub_reader`` (default ``HubFileSystem``). The doctor runs
+    only in the background part (``DoctorRefresher``, AGH-608), with the sessions on and off,
+    ticked by ``refresh_ticker`` (default a ``DaemonTicker`` every ``POLL_SECONDS``). The ticket
+    warmer (``TicketWarmer``, AGH-613), also with the sessions on and off, keeps the tickets'
+    cache warm while a tab holds the global stream open (``ConnectedBrowsers``, whose first
+    open wakes it), ticked by ``warm_ticker`` (default a ``DaemonTicker`` every
+    ``WARM_SECONDS``).
+    The lifespan starts the parts in order and stops them last started first: the ticket
+    warmer, the background doctor, the scheduled starts, the agent sessions' shutdown, then the
+    stores close. Neither background part's stop waits for a read in progress, so the stores can
+    close under it: they read hub files (registry, ``hub.json``, ``hub.lock``, the doctor's
+    reads, feature folders, git) and Linear only, never a store.
     ``DatabaseAccessError`` when the store cannot be opened.
     """
     store = open_event_store(settings.db_path)
@@ -724,7 +760,9 @@ def build_app(
     tail = TranscriptTail(projects_root or default_projects_root())
     ingest = IngestHook(store, ClaudeHookMapper(), tail, status=counters)
     hub_paths = _HubPaths()
-    reader = HubFileSystem() if read_git is None else HubFileSystem(read_git=read_git)
+    reader = hub_reader or (
+        HubFileSystem() if read_git is None else HubFileSystem(read_git=read_git)
+    )
     versions = open_item_version_store(settings.db_path)
     capture = CaptureItemVersions(versions, reader, settings.clock)
     registry = JsonHubRegistry(settings.registry_path)
@@ -735,8 +773,10 @@ def build_app(
         read_git=_files_only if read_git is None else read_git,
     )
     observed = _ObservedSessions()
+    agent_store = None if settings.sessions_off else open_agent_session_store(settings.db_path)
     sessions = _agent_sessions(
         settings,
+        store=agent_store,
         registry=registry,
         reader=reader,
         environ=environ,
@@ -812,6 +852,12 @@ def build_app(
             tracker_of=tracker_client_of(env, linear_environ),
             today=lambda: settings.clock().astimezone().date(),
         )
+    knowledge = _LazyKnowledgeIndex(settings.db_path)
+    warm = (
+        DaemonTicker(WARM_SECONDS, name="hub-ticket-warmer") if warm_ticker is None else warm_ticker
+    )
+    # The first tab to open gets the warmer's tick at once, not up to 30 s later.
+    browsers = ConnectedBrowsers(on_first_open=warm.wake)
     ports = ApiPorts(
         event_read_models=events,
         hub_read_models=hubs,
@@ -869,7 +915,7 @@ def build_app(
             sessions.control, hubs, HubDiscoveryFiles(), clock=settings.clock
         ),
         scenario_investigations=None if sessions is None else sessions.investigations,
-        knowledge_reads=_knowledge_reads(settings, hubs, environ=environ),
+        knowledge_reads=_knowledge_reads(hubs, environ=environ, index=knowledge),
         scenario_reads=scenario_reads,
         scenario_commands=scenario_commands,
         linear=LinearConnection(
@@ -878,13 +924,45 @@ def build_app(
             clock=settings.clock,
             post=linear_post,
         ),
+        browsers=browsers,
+        screen_reads=ScreenReads(
+            events,
+            hubs,
+            None if sessions is None else sessions.control,
+            clock=settings.clock,
+        ),
+    )
+    closers = [store.close, versions.close, knowledge.close]
+    if agent_store is not None:
+        closers.append(agent_store.close)
+    refresher = DoctorRefresher(
+        hubs,
+        ticker=DaemonTicker(POLL_SECONDS, name="hub-doctor-refresh")
+        if refresh_ticker is None
+        else refresh_ticker,
+    )
+    warmer = TicketWarmer(
+        hubs.ticket_requests,
+        snapshots,
+        browsers,
+        ticker=warm,
+        key_digest=key_digest(linear_environ),
+        clock=settings.clock,
     )
     return create_app(
         settings,
         ports=ports,
         problems=COMPOSED_PROBLEMS,
         web_dist=web_dist,
-        lifecycle=_lifecycle(None if sessions is None else sessions.runtime, scheduler),
+        # First, so it stops last: the stores close after the sessions' shutdown writes and the
+        # scheduler have ended. The background parts stop first, without waiting for a read.
+        lifecycle=_lifecycle(
+            _CloseOnStop(*closers),
+            None if sessions is None else sessions.runtime,
+            scheduler,
+            refresher,
+            warmer,
+        ),
     )
 
 
@@ -894,6 +972,24 @@ def _lifecycle(*parts: AppLifecycle | None) -> AppLifecycle | None:
     return CombinedLifecycle(*present) if present else None
 
 
+class _CloseOnStop:
+    """An ``AppLifecycle`` part that only stops: it calls each closer, in order."""
+
+    def __init__(self, *closers: Callable[[], None]) -> None:
+        self._closers = closers
+
+    async def start(self) -> None:
+        """Nothing to start."""
+
+    def begin_exit(self) -> None:
+        """Nothing to begin; the closers run at ``stop``."""
+
+    async def stop(self) -> None:
+        """Call each closer, in order."""
+        for close in self._closers:
+            close()
+
+
 # Why a knowledge read fails when the server's PATH has no git (AGH-391's line, no prefix).
 NO_GIT: Final = "git is not on PATH; install git"
 
@@ -901,12 +997,12 @@ NO_GIT: Final = "git is not on PATH; install git"
 class _LazyKnowledgeIndex:
     """The knowledge index in the web's database, opened by the first knowledge read and kept
     (P-10): ``build_app`` starts on a Python without FTS5, and an open that fails (no FTS5, the
-    database busy) is tried again by the next read."""
+    database busy) is tried again by the next read. ``close`` closes it and forgets it."""
 
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
         self._lock = threading.Lock()
-        self._index: KnowledgeIndex | None = None
+        self._index: SqliteKnowledgeIndex | None = None
 
     def __call__(self) -> KnowledgeIndex:
         with self._lock:
@@ -914,13 +1010,20 @@ class _LazyKnowledgeIndex:
                 self._index = open_knowledge_index(self._db_path)
             return self._index
 
+    def close(self) -> None:
+        """Close the index when it was opened, and forget it: a later read opens it again."""
+        with self._lock:
+            if self._index is not None:
+                self._index.close()
+                self._index = None
+
 
 def _knowledge_reads(
-    settings: ApiSettings, hubs: HubReadModels, *, environ: Mapping[str, str] | None
+    hubs: HubReadModels, *, environ: Mapping[str, str] | None, index: _LazyKnowledgeIndex
 ) -> ReadKnowledge:
     """The knowledge search and backlinks over the registered hubs (AGH-393): each read lists the
     hub with ``git`` found on ``environ``'s ``PATH`` at that call, keyed by the registered hub's
-    path (AM-6), in the lazily opened index."""
+    path (AM-6), in the lazily opened ``index``."""
 
     def sources(hub_path: str, repo_dirs: tuple[str, ...]) -> KnowledgeSources:
         env: Mapping[str, str] = os.environ if environ is None else environ
@@ -931,12 +1034,13 @@ def _knowledge_reads(
             Path(hub_path), repo_dirs, git=os.path.abspath(found), environ=env
         )
 
-    return ReadKnowledge(hubs, sources=sources, index=_LazyKnowledgeIndex(settings.db_path))
+    return ReadKnowledge(hubs, sources=sources, index=index)
 
 
 def _agent_sessions(  # noqa: PLR0913 -- build_app's session options, passed on
     settings: ApiSettings,
     *,
+    store: AgentSessionStore | None,
     registry: HubRegistry,
     reader: HubFileReader,
     environ: Mapping[str, str] | None,
@@ -944,7 +1048,8 @@ def _agent_sessions(  # noqa: PLR0913 -- build_app's session options, passed on
     cloud_launcher: CloudLauncher | None,
     observed_sessions: ObservedSessionLookup,
 ) -> AgentSessionWiring | None:
-    if settings.sessions_off:
+    # build_app opens no store when the sessions are off (settings.sessions_off).
+    if store is None:
         return None
     env: Mapping[str, str] = os.environ if environ is None else environ
     # The title is read from the CLI's own files, so only with the CLI's own driver.
@@ -955,7 +1060,7 @@ def _agent_sessions(  # noqa: PLR0913 -- build_app's session options, passed on
         cloud_launcher = cloud_launcher or launcher
     return wire_agent_sessions(
         settings,
-        store=open_agent_session_store(settings.db_path),
+        store=store,
         workdirs=RegisteredWorkdirs(
             registry=registry, reader=reader, running_version=settings.running_version
         ),

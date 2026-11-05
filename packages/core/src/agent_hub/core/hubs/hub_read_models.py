@@ -1,7 +1,11 @@
 """``HubReadModels`` over the hub registry and the registered hubs' files (D18, D22, D23).
 
-Each read lists the registry and reads the hubs it needs now, so a file edited in a hub shows on
-the next request; only the doctor is cached (``DoctorCache``). A project is a registered hub
+The registry, each hub's ``hub.json`` and ``hub.lock`` and its last doctor check come from the
+hub snapshot (``HubSnapshot``, AGH-608): ``refresh``, the background part's tick, reads what
+changed and runs the doctor of each due hub, and a write through the app calls ``reread_hubs``;
+no read runs the doctor or opens those files, and health is None before a hub's first check.
+The other files a read needs (features, brain, ``now.md``, skills, ``hub.local.json``) are read
+on each request, so an edit there shows on the next one. A project is a registered hub
 whose ``hub.json`` is valid (any pin, Q4), named by ``project.name``; when two hubs name the same
 project the first registered wins. A project's event-derived numbers come from ``activity``
 (``EventReadModels.project_activity``). An unknown project or feature raises
@@ -37,7 +41,6 @@ from agent_hub.core.brain.brain_path import (
 )
 from agent_hub.core.brain.frontmatter import split_frontmatter
 from agent_hub.core.doctor.finding import Finding
-from agent_hub.core.doctor.lock_rules import NOT_ADOPTED
 from agent_hub.core.events.event import EventSource
 from agent_hub.core.features.feature_status import (
     FeatureFolder,
@@ -58,14 +61,13 @@ from agent_hub.core.features.ticket_snapshots import (
 )
 from agent_hub.core.features.ticket_view import FeatureTickets, TicketRecords
 from agent_hub.core.hub_config.config_view import HubConfigView, hub_config_view
-from agent_hub.core.hub_config.doctor_rules import LOCK_DRIFT_RULE, Severity
+from agent_hub.core.hub_config.doctor_rules import Severity
 from agent_hub.core.hub_config.effective_identity import GitReader
 from agent_hub.core.hub_config.model import HubConfig
-from agent_hub.core.hubs.doctor_cache import DoctorCache
-from agent_hub.core.hubs.finding_view import FindingView
-from agent_hub.core.hubs.hub_document import HubDocument
+from agent_hub.core.hubs.finding_view import DoctorFindings, FindingView
 from agent_hub.core.hubs.hub_registry import HubFileReader, HubRegistry, UnreadHubFile
-from agent_hub.core.hubs.list_hubs import HubRead, ListHubs, module_ids
+from agent_hub.core.hubs.hub_snapshot import HubCheck, HubSnapshot, HubState, RefreshReport
+from agent_hub.core.hubs.list_hubs import module_ids
 from agent_hub.core.hubs.now_note import now_sections
 from agent_hub.core.hubs.register_hub import RegisterHub
 from agent_hub.core.hubs.registered_hub import HubView
@@ -112,10 +114,11 @@ class ProjectActivitySource(Protocol):
 
 
 class _Project:
-    """A valid registered hub: its read and its config."""
+    """A valid registered hub: its read, its last check and its config."""
 
-    def __init__(self, read: HubRead, config: HubConfig) -> None:
-        self.read = read
+    def __init__(self, state: HubState, config: HubConfig) -> None:
+        self.read = state.read
+        self.check = state.check
         self.config = config
 
     @property
@@ -151,26 +154,36 @@ class HubFilesReadModels:
         self._snapshots = ticket_snapshots
         self._activity = activity
         self._settings = settings
-        self._doctor = DoctorCache(reader, running_version=running_version, clock=clock)
-        self._hubs = ListHubs(
-            registry, reader, running_version=running_version, has_drift=self._has_drift
-        )
+        self._snapshot = HubSnapshot(registry, reader, running_version=running_version, clock=clock)
         self._register = RegisterHub(
-            registry, reader, running_version=running_version, has_drift=self._has_drift
+            registry, reader, running_version=running_version, has_drift=self._snapshot.drift_of
         )
         self._remove = RemoveHub(registry)
 
+    def refresh(self) -> RefreshReport:
+        """One tick of the hub snapshot (``HubSnapshot.refresh``): the facts that changed, then
+        the doctor of each due hub."""
+        return self._snapshot.refresh()
+
+    def reread_hubs(self, written: str | None = None) -> None:
+        """Read the registry and each hub's ``hub.json`` and ``hub.lock`` again after a write
+        through the app; ``written``, the hub that write changed, is checked at the next tick."""
+        self._snapshot.reread(written)
+
     def list_hubs(self) -> Page[HubView]:
         """Every registered hub, valid or not."""
-        return _page(tuple(read.view for read in self._hubs()))
+        return _page(tuple(state.read.view for state in self._snapshot.hubs()))
 
     def register_hub(self, path: str) -> HubView:
-        """Register the hub at ``path``."""
-        return self._register(path)
+        """Register the hub at ``path``; it shows at once, unchecked until the next tick."""
+        view = self._register(path)
+        self._snapshot.reread()
+        return view
 
     def remove_hub(self, hub_id: str) -> None:
         """Forget a hub; its events stay in the store."""
         self._remove(hub_id)
+        self._snapshot.reread()
 
     def list_projects(self) -> Page[ProjectSummary]:
         """A Portfolio card per project."""
@@ -196,6 +209,7 @@ class HubFilesReadModels:
             platform_version=config.platform.version,
             lock_version=view.lock_version,
             lock_state=view.lock_state,
+            checked_at=view.checked_at,
             modules=module_ids(config),
             warnings=view.warnings,
         )
@@ -261,6 +275,20 @@ class HubFilesReadModels:
             folder, read, project=found.name, tracker=tracker, now=self._clock(), repos=repos
         )
 
+    def ticket_requests(self) -> tuple[SnapshotRequest, ...]:
+        """The snapshot request of each valid project's feature that names tickets, as
+        ``feature_tickets`` builds it (the ticket warmer's list, AGH-613); reads the feature
+        folders, never the tracker. A project whose ``tracker.transport`` is ``mcp`` is left out
+        before its folders are listed: its tickets are never read through the snapshots
+        (``feature_tickets`` serves them as not connected)."""
+        return tuple(
+            request
+            for found in self._projects()
+            if found.config.tracker.transport != "mcp"
+            for folder in self._reader.feature_folders(found.path)
+            if (request := _ticket_request(found, folder)).ids
+        )
+
     def ticket_records(self, project: str, slug: str, ticket: str) -> TicketRecords:
         """One ticket's records (two-level-flows A7); never reads the tracker."""
         found, folder = self._feature(project, slug, tickets=True)
@@ -269,8 +297,11 @@ class HubFilesReadModels:
             raise EntityNotFoundError(entity="ticket", entity_id=f"{project}/{slug}/{ticket}")
         return records
 
-    def doctor_findings(self, scope: Scope) -> Page[FindingView]:
-        """Doctor findings of every scoped hub that names its project, in ``hub doctor`` order.
+    def doctor_findings(self, scope: Scope) -> DoctorFindings:
+        """Doctor findings of every scoped hub that names its project, in ``hub doctor`` order,
+        from each hub's last check, with when the oldest of those checks ended (None while a
+        scoped hub has none). With no hub that names a project, the unscoped answer is dated by
+        the end of the snapshot's last tick (None before the first one ends): no check is coming.
 
         A scope whose project no readable hub names (its ``hub.json`` became unreadable, or no
         hub has it) is ``EntityNotFoundError``: an empty list would read as a clean doctor run.
@@ -278,12 +309,21 @@ class HubFilesReadModels:
         hubs = tuple(self._doctor_hubs(scope))
         if scope.project is not None and not hubs:
             raise EntityNotFoundError(entity="project", entity_id=scope.project)
-        return _page(
-            tuple(
-                _finding_view(project, finding)
-                for project, hub_path in hubs
-                for finding in self._doctor.findings(hub_path)
-            )
+        items = tuple(
+            _finding_view(project, finding)
+            for project, check in hubs
+            if check is not None
+            for finding in check.findings
+        )
+        return DoctorFindings(
+            items=items,
+            next_cursor=None,
+            total_estimate=len(items),
+            checked_at=(
+                _oldest(tuple(check for _, check in hubs))
+                if hubs
+                else self._snapshot.refreshed_at()
+            ),
         )
 
     def settings(self) -> SettingsView:
@@ -395,24 +435,16 @@ class HubFilesReadModels:
 
     def project_hubs(self) -> Iterator[tuple[str, str]]:
         """Each project and its hub folder (``ProjectHubs``: the workflow reads, the item
-        writes), from the registry and each ``hub.json`` alone: no lock view, so no doctor drift
-        check runs and no process is spawned (AC-295.6, A11)."""
-        seen: set[str] = set()
-        for entry, document in self._hubs.documents():
-            config = document.config
-            if config is not None and config.project.name not in seen:
-                seen.add(config.project.name)
-                yield config.project.name, entry.path
+        writes), from the snapshot's registry and ``hub.json`` documents: no file is read, no
+        doctor runs and no process is spawned (AC-295.6, A11)."""
+        for found in self._projects():
+            yield found.name, found.path
 
     def scheduled_hubs(self) -> Iterator[ScheduledHub]:
         """Each project with its hub folder and config (``ScheduledHubs``: hub web's scheduled
         and event starts), the first registered of a name, as ``project_hubs`` reads them."""
-        seen: set[str] = set()
-        for entry, document in self._hubs.documents():
-            config = document.config
-            if config is not None and config.project.name not in seen:
-                seen.add(config.project.name)
-                yield ScheduledHub(project=config.project.name, hub_path=entry.path, config=config)
+        for found in self._projects():
+            yield ScheduledHub(project=found.name, hub_path=found.path, config=found.config)
 
     def _hub_path(self, project: str) -> str:
         """The project's hub folder, as ``project_hubs`` names it; raises ``EntityNotFoundError``
@@ -441,20 +473,13 @@ class HubFilesReadModels:
             return None
         return self._snapshots.cached(_ticket_request(found, folder))
 
-    def _has_drift(self, hub_path: str, document: HubDocument) -> bool:
-        del document
-        return any(
-            finding.rule == LOCK_DRIFT_RULE and finding.message != NOT_ADOPTED
-            for finding in self._doctor.findings(hub_path)
-        )
-
     def _projects(self) -> Iterator[_Project]:
         seen: set[str] = set()
-        for read in self._hubs():
-            config = read.document.config
+        for state in self._snapshot.hubs():
+            config = state.read.document.config
             if config is not None and config.project.name not in seen:
                 seen.add(config.project.name)
-                yield _Project(read, config)
+                yield _Project(state, config)
 
     def _project(self, name: str) -> _Project:
         for found in self._projects():
@@ -465,14 +490,14 @@ class HubFilesReadModels:
     def _scoped(self, scope: Scope) -> Iterator[_Project]:
         return (found for found in self._projects() if scope.project in {None, found.name})
 
-    def _doctor_hubs(self, scope: Scope) -> Iterator[tuple[str, str]]:
+    def _doctor_hubs(self, scope: Scope) -> Iterator[tuple[str, HubCheck | None]]:
         seen: set[str] = set()
-        for read in self._hubs():
-            project = read.document.project
+        for state in self._snapshot.hubs():
+            project = state.read.document.project
             if project is None or project in seen or scope.project not in {None, project}:
                 continue
             seen.add(project)
-            yield project, read.entry.path
+            yield project, state.check
 
     def _card(self, found: _Project) -> ProjectSummary:
         activity = self._activity.project_activity(found.name)
@@ -486,7 +511,8 @@ class HubFilesReadModels:
             lock_version=view.lock_version,
             lock_state=view.lock_state,
             repos=view.repos,
-            hub_health=_health(self._doctor.findings(found.path)),
+            hub_health=None if found.check is None else _health(found.check.findings),
+            checked_at=view.checked_at,
             live_sessions=activity.live_sessions,
             runs_in_flight_by_stage=activity.runs_in_flight_by_stage,
             failed_runs_7d=activity.failed_runs_7d,
@@ -535,6 +561,12 @@ def _health(findings: tuple[Finding, ...]) -> HubHealth:
     if Severity.ERROR in severities:
         return "error"
     return "warning" if Severity.WARNING in severities else "ok"
+
+
+def _oldest(checks: tuple[HubCheck | None, ...]) -> datetime | None:
+    """When the oldest of ``checks`` ended; None when there is none or one is missing."""
+    ended = tuple(check.checked_at for check in checks if check is not None)
+    return min(ended) if ended and len(ended) == len(checks) else None
 
 
 def _finding_view(project: str, finding: Finding) -> FindingView:

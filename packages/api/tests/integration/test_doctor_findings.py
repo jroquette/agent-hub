@@ -43,6 +43,7 @@ def test_equals_doctor_json_when_registered_hub_has_findings(
         ).status_code
         == 201
     )
+    composed.refresh()
 
     from_api = _api_findings(composed, "demo")
     from_cli = _doctor_json(hub, monkeypatch)
@@ -63,6 +64,7 @@ def test_lists_only_scoped_project_when_two_hubs_registered(
             == 201
         )
     (other / "AGENTS.md").write_text("# edited by hand\n", encoding="utf-8")
+    composed.refresh()
 
     assert _api_findings(composed, "other") == _doctor_json(other, monkeypatch)
     assert _api_findings(composed, "demo") == _doctor_json(demo, monkeypatch)
@@ -79,6 +81,7 @@ def test_answers_not_found_problem_when_registered_hub_becomes_unreadable(
         == 201
     )
     (hub / "hub.json").write_text("{not json", encoding="utf-8")
+    composed.refresh()
 
     response = composed.client.get("/api/v1/doctor/findings", params={"project": "demo"})
 

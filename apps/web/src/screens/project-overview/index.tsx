@@ -24,6 +24,7 @@ import type { DataTableColumn, IconName, Provenance } from "../../components";
 import { STAGES } from "../../components";
 import { useNow } from "../../lib/clock";
 import { fmtAgo, fmtDuration, fmtMoney, toNumber } from "../../lib/format";
+import { ScreenReadProvider } from "../../lib/screenRead";
 import { useRowKeys } from "../../lib/useRowKeys";
 import { useShell } from "../../shell/AppShell";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
@@ -32,7 +33,13 @@ import { issueId, reasonOf, type Reason } from "../features/groups";
 import { useFeatureNames } from "../features/names";
 import { useFeatures } from "../features/queries";
 import { ConfigSource } from "../hub-config";
-import { NEEDS_MAX, costDelta, needsEntry, orderNeeds } from "../portfolio/model";
+import {
+  NEEDS_MAX,
+  UNCHECKED_HEALTH_LABEL,
+  costDelta,
+  needsEntry,
+  orderNeeds,
+} from "../portfolio/model";
 import { useNeedsYou, useRefreshOnCounts } from "../portfolio/queries";
 import { StaleStamp } from "../portfolio/StaleStamp";
 import { budgetOf, durationSeconds, finishedCosts, median } from "../runs-list/model";
@@ -56,14 +63,17 @@ import {
   type RecentFeature,
 } from "./model";
 import {
+  OVERVIEW_READ,
+  overviewSeeds,
   useFindings,
   useProject,
   useProjectNow,
   useProjectRepos,
   useProjectRuns,
   useProjectConfig,
-  useProjectSessions,
   useProjectSummary,
+  useRecentSessions,
+  type DoctorFindings,
   type NowItem,
   type ProjectDetail,
   type RepoView,
@@ -161,21 +171,37 @@ function plural(n: number, one: string, many = `${one}s`): string {
   return `${String(n)} ${n === 1 ? one : many}`;
 }
 
+/** The header's health: null while the findings load, "unchecked" until the hub's first check
+ * ends (AGH-608), then the findings' counts. */
+function headerHealth(
+  findings: DoctorFindings | undefined,
+): ReturnType<typeof healthSummary> | "unchecked" | null {
+  if (!findings) return null;
+  return findings.checked_at === null ? "unchecked" : healthSummary(findings.items);
+}
+
 function Header({
   project,
   health,
 }: {
   project: ProjectDetail;
-  health: ReturnType<typeof healthSummary> | null;
+  health: ReturnType<typeof healthSummary> | "unchecked" | null;
 }) {
-  const badge = health ? healthBadge(health) : null;
+  const badge = health && health !== "unchecked" ? healthBadge(health) : null;
   const team = project.tracker.teams.join(", ");
   return (
     <header className="ah-stack" style={{ gap: 8 }}>
       <Breadcrumbs items={[{ label: "Portfolio", href: "/" }, { label: project.name }]} />
       <div className="ah-row ah-wrap" style={{ gap: 12 }}>
         <h1 className="ah-h1">{project.name}</h1>
-        {badge && health && (health.error || health.warning) ? (
+        {health === "unchecked" ? (
+          // Portfolio's badge for a hub the doctor has not checked yet (AGH-608), named as there.
+          <Tooltip label={UNCHECKED_HEALTH_LABEL}>
+            <span role="img" aria-label={UNCHECKED_HEALTH_LABEL}>
+              <StatusBadge status="idle" label="Not checked" quiet />
+            </span>
+          </Tooltip>
+        ) : badge && health && (health.error || health.warning) ? (
           <Tooltip label="Setup problems an engineer should look at. They do not stop the agents.">
             <a
               href="#po-setup"
@@ -699,7 +725,7 @@ function RecentSkeleton() {
 /** The features and tickets the team worked on this week; sessions stay on Sessions. */
 function RecentWorkSection({ project, hubPath }: { project: string; hubPath: string }) {
   const features = useFeatures(project);
-  const sessions = useProjectSessions(project);
+  const sessions = useRecentSessions(project);
   const runs = useProjectRuns(project);
   const nameOf = useFeatureNames();
   const navigate = useNavigate();
@@ -709,7 +735,7 @@ function RecentWorkSection({ project, hubPath }: { project: string; hubPath: str
   const open = (href: string) => void navigate(href);
   const scope = encodeURIComponent(project);
 
-  const sessionItems = sessions.data?.items ?? [];
+  const sessionItems = sessions.items;
   const featureItems = features.data?.items ?? [];
   const featureIssues = new Map(
     featureItems.flatMap((f) =>
@@ -731,7 +757,7 @@ function RecentWorkSection({ project, hubPath }: { project: string; hubPath: str
     RECENT_VISIBLE,
   );
 
-  if (sessions.isSuccess && sessionItems.length === 0) {
+  if (sessions.none) {
     return (
       <Section id="recent" title="Recent work" sub={RECENT_SUB}>
         <div className="ah-card">
@@ -765,13 +791,13 @@ function RecentWorkSection({ project, hubPath }: { project: string; hubPath: str
               status={features.error.status}
               onRetry={() => void features.refetch()}
             />
-          ) : sessions.isError ? (
+          ) : sessions.error ? (
             // Which feature was worked on is read from the sessions; without them it is unknown.
             <ProblemError
               title="Could not tell which features were worked on"
               detail={sessions.error.detail}
               status={sessions.error.status}
-              onRetry={() => void sessions.refetch()}
+              onRetry={sessions.refetch}
             />
           ) : featureRows.length === 0 ? (
             <div className="ah-card po-empty">No feature was worked on in the last 7 days.</div>
@@ -799,12 +825,12 @@ function RecentWorkSection({ project, hubPath }: { project: string; hubPath: str
         >
           {sessions.isPending ? (
             <RecentSkeleton />
-          ) : sessions.isError ? (
+          ) : sessions.error ? (
             <ProblemError
               title="Could not load tickets"
               detail={sessions.error.detail}
               status={sessions.error.status}
-              onRetry={() => void sessions.refetch()}
+              onRetry={sessions.refetch}
             />
           ) : ticketRows.length === 0 ? (
             <div className="ah-card po-empty">No ticket was worked on in the last 7 days.</div>
@@ -854,6 +880,10 @@ function HealthBlock({
       <Region query={findings} title="health">
         {() => {
           const items = findings.data?.items ?? [];
+          if (findings.data?.checked_at === null) {
+            // Spec 12's "Health: never run", without its run-it-yourself step (AGH-608).
+            return <div className="ah-small">Doctor has not run for this hub.</div>;
+          }
           if (items.length === 0) return <div className="ah-small">No findings.</div>;
           return (
             <>
@@ -1408,9 +1438,27 @@ function ProjectNotFound({ name }: { name: string }) {
 /**
  * Project overview (spec 12), written for anyone on the team: what needs you, this week in numbers,
  * the team's focus, the agents' tickets and recent work; engineering detail folds away at the end.
+ * Its regions' first answers and the sessions of this week's issues come from one screen read
+ * (ADR 0056), made again for each project opened in place. The read's answer is kept, so a return
+ * draws Recent work at once from the cache (the last answer, or the sessions route's when newer)
+ * while its own read is on its way.
  */
 export function ProjectOverviewScreen() {
   const { project: name = "" } = useParams();
+  return (
+    <ScreenReadProvider
+      key={name}
+      path={OVERVIEW_READ}
+      params={{ path: { project: name } }}
+      seeds={(read) => overviewSeeds(name, read)}
+      keep
+    >
+      <ProjectOverview name={name} />
+    </ScreenReadProvider>
+  );
+}
+
+function ProjectOverview({ name }: { name: string }) {
   const project = useProject(name);
   const findings = useFindings(name);
   const summary = useProjectSummary(name);
@@ -1454,10 +1502,7 @@ export function ProjectOverviewScreen() {
   const live = summary.data?.items.find((p) => p.name === name)?.live_sessions ?? 0;
   return (
     <div className="ah-stack po-page" style={{ gap: 28 }}>
-      <Header
-        project={project.data}
-        health={findings.data ? healthSummary(findings.data.items) : null}
-      />
+      <Header project={project.data} health={headerHealth(findings.data)} />
       <NeedsSection project={name} live={live} />
       <KpiSection project={name} />
       <FocusSection project={name} />

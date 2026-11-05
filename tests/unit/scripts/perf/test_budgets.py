@@ -31,14 +31,20 @@ RESTART_API = "hub web start → /api/v1/sessions"
 # The shim row on the one-call commit path: ADR 0053's `hub` row plus 300 ms.
 SHIM_PATH = "./hub --version (local uvx stand-in)"
 # The page rows added after the seed, at ADR 0053's `every` page ceiling.
-ADR_PAGES = ("/sessions", "/projects/perf/brain/tree-3/note-050.md")
+ADR_PAGES = ("/sessions", "/projects/perf/brain/tree-3/note-050.md", "/projects/perf")
+# The route rows added after the seed, at ADR 0053's `every` route ceiling.
+ADR_ROUTES = (
+    "/api/v1/projects/perf/brain",
+    "/api/v1/projects/perf/brain (6 parallel)",
+    "/api/v1/screens/shell",
+)
 # AGH-621 (Q15): the one PreToolUse hook on three tools, each at ADR 0053's ceiling for a hook.
 PRE_TOOL_USE_PATHS = (
     "pre_tool_use (PreToolUse Bash)",
     "pre_tool_use (PreToolUse Read)",
     "pre_tool_use (PreToolUse Edit)",
 )
-ADR_PATHS = (*LIST_COMMAND_PATHS, SHIM_PATH, *ADR_PAGES, *PRE_TOOL_USE_PATHS)
+ADR_PATHS = (*LIST_COMMAND_PATHS, SHIM_PATH, *ADR_PAGES, *ADR_ROUTES, *PRE_TOOL_USE_PATHS)
 
 
 def _write(path: Path, rows: list[dict[str, object]], **top: object) -> Path:
@@ -232,7 +238,7 @@ def test_raises_budget_file_error_when_enforced_is_not_a_boolean(
 
 def test_enforces_nothing_with_the_default_margin_when_shipped() -> None:
     budgets = load_budgets(SHIPPED)
-    assert len(budgets) == 34
+    assert len(budgets) == 38
 
     assert [key for key, budget in budgets.items() if budget.enforced] == []
     assert budgets_module.load_margin(SHIPPED) == pytest.approx(0.2)
@@ -269,10 +275,11 @@ ROUTES = (
     "/api/v1/sessions?issue=AGH-7",
     "/api/v1/features",
     f"/api/v1/features/perf/{FEATURE_SLUG}",
-    "/api/v1/projects/perf/skills",
     "/api/v1/search?q=make",
     "/api/v1/live-sessions",
 )
+# The skills route, at 50 ms once skill usage is kept across seconds (AGH-611).
+SKILLS_ROUTE = "/api/v1/projects/perf/skills"
 SEEDED_PAGES = ("/", "/features", f"/features/perf/{FEATURE_SLUG}", f"/sessions/{PAGE_SESSION}")
 PAGES = (*SEEDED_PAGES, *ADR_PAGES)
 # The seeded budgets, one (kind, path, budget) per suite row; None where a row has no budget.
@@ -305,6 +312,11 @@ OWNER_TABLE: list[tuple[str, str, Budget | None]] = [
         ("route", route, Budget(p95_ms=150, api_calls=None, rss_mb=None, source=PROPOSED))
         for route in ROUTES
     ],
+    ("route", SKILLS_ROUTE, Budget(p95_ms=50, api_calls=None, rss_mb=None, source=PROPOSED)),
+    *[
+        ("route", route, Budget(p95_ms=150, api_calls=None, rss_mb=None, source=ADR_SOURCE))
+        for route in ADR_ROUTES
+    ],
     *[
         ("page", page, Budget(p95_ms=800, api_calls=5, rss_mb=None, source=PROPOSED))
         for page in SEEDED_PAGES
@@ -322,7 +334,7 @@ OWNER_TABLE: list[tuple[str, str, Budget | None]] = [
 
 @pytest.mark.parametrize(("kind", "path", "expected"), OWNER_TABLE)
 def test_seeds_the_owner_budget_when_shipped(kind: str, path: str, expected: Budget | None) -> None:
-    assert len(OWNER_TABLE) == 34
+    assert len(OWNER_TABLE) == 38
 
     assert load_budgets(SHIPPED).get((kind, path)) == expected
 
@@ -341,7 +353,7 @@ def test_names_only_probed_paths_when_the_shipped_budgets_are_read() -> None:
     }
     keys = [(row["kind"], row["path"]) for row in json.loads(SHIPPED.read_text("utf-8"))["rows"]]
     assert len(keys) > 0
-    assert len(probed) == 34
+    assert len(probed) == 38
 
     assert sorted(set(keys) - probed) == []
 
@@ -440,7 +452,7 @@ def test_keeps_every_budget_under_the_adr_ceiling_when_shipped() -> None:
 def test_names_only_probed_paths_when_the_adr_table_is_read() -> None:
     ceilings = _ceilings(ADR.read_text("utf-8"))
     probed = _probed()
-    assert len(probed) == 34
+    assert len(probed) == 38
 
     assert [c for c in ceilings if c.paths != EVERY and (c.kind, c.paths) not in probed] == []
     assert sorted({c.kind for c in ceilings}) == sorted({kind for kind, _path in probed})

@@ -2,16 +2,22 @@
 
 ``hub web`` prints its URL line before uvicorn serves, so ``start_web`` takes the token from that
 line and then polls ``GET /`` until it answers 200. ``register_hub`` posts the temp hub with the
-server's own ``Origin``, as the registry write requires. ``measure_route`` sends one warm-up
+server's own ``Origin``, as the registry write requires, and ``wait_for_check`` polls
+``GET /api/v1/hubs`` until that hub's first background doctor run has ended (its ``checked_at``
+set, AGH-608), so no run overlaps the measured rows. ``measure_route`` sends one warm-up
 request, then times ``runs`` more; any answer but 200, an empty ``/api/v1/sessions`` page (the
 fixture always lists sessions, so an empty one means the server read the wrong database) or a
-request that fails raises ``SuiteError`` naming the path. ``restart_rows`` starts ``hub web`` once
+request that fails raises ``SuiteError`` naming the path. A row named ``<path> (6 parallel)``
+requests ``<path>`` six at once (ADR 0053: no slower than six in sequence): six threads, made
+once, are released together by a barrier for a warm-up round and then for each sample, which runs
+from the release to the last answer. ``restart_rows`` starts ``hub web`` once
 per run and gives two rows from each start (start to ``GET /``, start to the first
 ``/api/v1/sessions`` 200), each with the peak RSS from ``/proc/<pid>/status`` (``VmHWM``) read
 right after that row's answer, then stops it with SIGINT.
 Processes, requests, the clock and sleeps are injected, so the unit tests start nothing.
 """
 
+import os
 import queue
 import re
 import signal
@@ -19,6 +25,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any, Protocol
@@ -31,6 +38,10 @@ from scripts.perf.process_probes import SuiteError as SuiteError
 ROUTE = "route"
 RESTART = "restart"
 SESSIONS = "/api/v1/sessions"
+BRAIN = "/api/v1/projects/perf/brain"
+# A row's path with this suffix requests the path without it, ``PARALLEL_WIDTH`` at once.
+PARALLEL_WIDTH = 6
+PARALLEL_SUFFIX = f" ({PARALLEL_WIDTH} parallel)"
 ROUTE_PATHS = (
     SESSIONS,
     f"{SESSIONS}?issue=AGH-7",
@@ -39,6 +50,11 @@ ROUTE_PATHS = (
     "/api/v1/projects/perf/skills",
     "/api/v1/search?q=make",
     "/api/v1/live-sessions",
+    BRAIN,
+    f"{BRAIN}{PARALLEL_SUFFIX}",
+    # The app shell's one read (ADR 0056): the warm-up keeps the feature list, so the samples
+    # read what the shell's polls read in its 30 s.
+    "/api/v1/screens/shell",
 )
 START_TO_PAGE = "hub web start → GET /"
 START_TO_SESSIONS = "hub web start → /api/v1/sessions"
@@ -49,6 +65,8 @@ START_SECONDS = 120.0
 STOP_SECONDS = 15.0
 REQUEST_SECONDS = 120.0
 POLL_SECONDS = 0.05
+# How often ``wait_for_check`` asks whether the hub's first background check has ended.
+CHECK_POLL_SECONDS = 0.5
 _URL_LINE = re.compile(r"(http://[^/\s]+)/\?token=(\S+)")
 
 Get = Callable[..., httpx.Response]
@@ -88,8 +106,13 @@ class RunningWeb:
 
 @dataclass(frozen=True)
 class RouteProbe:
+    """One route row: ``path`` names it, ``url_path`` is what is requested (``path`` without the
+    parallel suffix) and ``width`` how many requests each sample sends at once (1 or 6)."""
+
     kind: str
     path: str
+    url_path: str
+    width: int
 
 
 @dataclass(frozen=True)
@@ -186,9 +209,44 @@ def register_hub(base_url: str, hub_dir: Path, *, post: Get = httpx.post) -> Non
         raise SuiteError(f"POST /api/v1/hubs: answered {response.status_code}")
 
 
+def wait_for_check(
+    base_url: str,
+    hub_dir: Path,
+    *,
+    get: Get = httpx.get,
+    sleep: Sleep = time.sleep,
+    limit_seconds: float = 60,
+) -> None:
+    """Poll ``GET /api/v1/hubs`` every ``CHECK_POLL_SECONDS`` until the hub's ``checked_at``
+    is set, its first background doctor run ended (AGH-608), so no run overlaps the measured
+    rows; ``SuiteError`` naming the hub after ``limit_seconds`` of sleeps or on a failed read."""
+    paths = {str(hub_dir), os.path.realpath(hub_dir)}
+    waited = 0.0
+    while True:
+        try:
+            response = get(f"{base_url}/api/v1/hubs", timeout=REQUEST_SECONDS)
+        except httpx.HTTPError as error:
+            raise SuiteError(f"GET /api/v1/hubs: {type(error).__name__}: {error}") from error
+        if response.status_code != 200:
+            raise SuiteError(f"GET /api/v1/hubs: answered {response.status_code}")
+        items: list[dict[str, Any]] = response.json()["items"]
+        if any(item.get("path") in paths and item.get("checked_at") for item in items):
+            return
+        if waited >= limit_seconds:
+            raise SuiteError(f"no background check of {hub_dir} within {limit_seconds:.0f} s")
+        sleep(CHECK_POLL_SECONDS)
+        waited += CHECK_POLL_SECONDS
+
+
 def route_probes() -> list[RouteProbe]:
     """The route rows, in table order."""
-    return [RouteProbe(ROUTE, path) for path in ROUTE_PATHS]
+    return [_route_probe(path) for path in ROUTE_PATHS]
+
+
+def _route_probe(path: str) -> RouteProbe:
+    if path.endswith(PARALLEL_SUFFIX):
+        return RouteProbe(ROUTE, path, path.removesuffix(PARALLEL_SUFFIX), PARALLEL_WIDTH)
+    return RouteProbe(ROUTE, path, path, 1)
 
 
 def measure_route(
@@ -199,33 +257,69 @@ def measure_route(
     get: Get = httpx.get,
     clock: Clock = time.perf_counter,
 ) -> list[float]:
-    """One warm-up ``GET``, then ``runs`` timed ones; each duration in ms."""
-    _check(probe.path, _get(get, base_url, probe.path))
+    """One warm-up ``GET``, then ``runs`` timed ones; each duration in ms. A wider probe sends
+    ``width`` at once per round (``_measure_at_once``)."""
+    if probe.width > 1:
+        return _measure_at_once(base_url, probe, runs=runs, get=get, clock=clock)
+    _check(probe, _get(get, base_url, probe))
     samples = []
     for _ in range(runs):
         start = clock()
-        response = _get(get, base_url, probe.path)
+        response = _get(get, base_url, probe)
         elapsed = clock() - start
-        _check(probe.path, response)
+        _check(probe, response)
         samples.append(elapsed * 1000)
     return samples
 
 
-def _get(get: Get, base_url: str, path: str) -> httpx.Response:
-    """``GET path``; a timeout or a refused connection is a ``SuiteError`` naming the path."""
+def _measure_at_once(
+    base_url: str, probe: RouteProbe, *, runs: int, get: Get, clock: Clock
+) -> list[float]:
+    """A warm-up round, then ``runs`` timed ones, each ``probe.width`` ``GET``s on as many
+    threads, made once (the pool's) and released together by a barrier; a sample runs from the
+    release to the last answer, in ms."""
+    released: list[float] = []
+    barrier = threading.Barrier(probe.width, action=lambda: released.append(clock()))
+
+    def one() -> tuple[httpx.Response, float]:
+        barrier.wait()
+        response = _get(get, base_url, probe)
+        return response, clock()
+
+    samples = []
+    with ThreadPoolExecutor(max_workers=probe.width) as pool:
+        try:
+            for round_number in range(runs + 1):
+                futures = [pool.submit(one) for _ in range(probe.width)]
+                answers = [future.result() for future in futures]
+                for response, _answered in answers:
+                    _check(probe, response)
+                if round_number > 0:
+                    last = max(answered for _response, answered in answers)
+                    samples.append((last - released[-1]) * 1000)
+        finally:
+            # Threads still waiting for the others (after a failed submit) are let go, so the
+            # pool's exit cannot hang.
+            barrier.abort()
+    return samples
+
+
+def _get(get: Get, base_url: str, probe: RouteProbe) -> httpx.Response:
+    """``GET`` the probe's URL path; a timeout or a refused connection is a ``SuiteError`` naming
+    the row's path."""
     try:
-        return get(f"{base_url}{path}", timeout=REQUEST_SECONDS)
+        return get(f"{base_url}{probe.url_path}", timeout=REQUEST_SECONDS)
     except httpx.HTTPError as error:
-        raise SuiteError(f"{path}: {type(error).__name__}: {error}") from error
+        raise SuiteError(f"{probe.path}: {type(error).__name__}: {error}") from error
 
 
-def _check(path: str, response: httpx.Response) -> None:
+def _check(probe: RouteProbe, response: httpx.Response) -> None:
     if response.status_code != 200:
-        raise SuiteError(f"{path}: answered {response.status_code}")
-    if path == SESSIONS:
+        raise SuiteError(f"{probe.path}: answered {response.status_code}")
+    if probe.url_path == SESSIONS:
         body: Any = response.json()
         if not (isinstance(body, dict) and isinstance(body.get("items"), list) and body["items"]):
-            raise SuiteError(f"{path}: listed no session")
+            raise SuiteError(f"{probe.path}: listed no session")
 
 
 def restart_rows(

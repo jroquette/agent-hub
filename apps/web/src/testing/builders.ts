@@ -24,7 +24,11 @@ export type Learning = Schemas["Learning"];
 export type ProjectSummary = Schemas["ProjectSummary"];
 export type FeatureView = Schemas["FeatureView"];
 export type FindingView = Schemas["FindingView"];
+export type DoctorFindings = Schemas["DoctorFindings"];
 export type HubView = Schemas["HubView"];
+export type ShellView = Schemas["ShellView"];
+export type SessionsView = Schemas["SessionsView"];
+export type SessionDetailView = Schemas["SessionDetailView"];
 export type CollectorStatus = Schemas["CollectorStatus"];
 export type ProblemDetails = Schemas["ProblemDetails"];
 export type SessionLabel = Schemas["SessionLabel"];
@@ -558,6 +562,7 @@ export function aNoteBacklinks(overrides: Partial<NoteBacklinks> = {}): NoteBack
 
 export function aProjectSummary(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
   return {
+    checked_at: T0,
     cost_daily: ["1.0000", "2.0000", "0.5000", "3.0000", "1.5000", "0.0000", "2.5000"],
     cost_period: "10.5000",
     cost_previous_period: "8.0000",
@@ -586,6 +591,7 @@ export function aProjectDetail(
 ): Schemas["ProjectDetail"] {
   return {
     branch_prefix: "dev/",
+    checked_at: T0,
     default_branch: "main",
     hub_id: anId(20, "0192dddd"),
     hub_path: "/home/dev/agent-hub-hub",
@@ -953,9 +959,19 @@ export function aFinding(overrides: Partial<FindingView> = {}): FindingView {
   };
 }
 
+/** A `GET /doctor/findings` answer: `items` as one page, from a check that ended at `checked_at`
+ * (T0 unless given; null while a hub's first background check has not ended). */
+export function aDoctorFindings(
+  items: FindingView[],
+  { checked_at = T0 }: { checked_at?: string | null } = {},
+): DoctorFindings {
+  return { ...aPage(items), checked_at };
+}
+
 export function aHub(overrides: Partial<HubView> = {}): HubView {
   return {
     added_at: T0,
+    checked_at: T0,
     guard_ask_before_edit: ["docs/adr"],
     id: anId(20, "0192dddd"),
     lock_state: "in_sync",
@@ -969,6 +985,49 @@ export function aHub(overrides: Partial<HubView> = {}): HubView {
     valid: true,
     validation_errors: [],
     warnings: [],
+    ...overrides,
+  };
+}
+
+/** A `GET /screens/shell` answer: one registered hub, one project with a live session, no
+ * feature needing you and no workflow run, unless overridden. */
+export function aShellView(overrides: Partial<ShellView> = {}): ShellView {
+  return {
+    hub_count: 1,
+    projects: [{ name: "agent-hub", live_sessions: 1 }],
+    features_needing_you: 0,
+    has_workflow_runs: false,
+    ...overrides,
+  };
+}
+
+/** A `GET /screens/sessions` answer: no session in any section, one project, no feature, no agent
+ * session and a machine that can drive sessions, unless overridden. */
+export function aSessionsView(overrides: Partial<SessionsView> = {}): SessionsView {
+  return {
+    waiting: aPage<Session>([]),
+    live: aPage<Session>([]),
+    idle: aPage<Session>([]),
+    ended: aPage<Session>([]),
+    projects: aPage([aProjectSummary()]),
+    agent_sessions: { items: [] },
+    capabilities: aCapabilities(),
+    features: aPage<FeatureView>([]),
+    ...overrides,
+  };
+}
+
+/** A `GET /screens/session-detail/{session_id}` answer: session `anId(1, "5091b986")` ended with
+ * no event, its summary, no problem, no feature and a machine that can drive sessions, unless
+ * overridden. */
+export function aSessionDetailView(overrides: Partial<SessionDetailView> = {}): SessionDetailView {
+  return {
+    session: aSession({ status: "ended", outcome: "done", ended_at: at(900) }),
+    events: aPage<TimelineEventBody>([]),
+    summary: aSessionSummary(),
+    problems: null,
+    features: aPage<FeatureView>([]),
+    capabilities: aCapabilities(),
     ...overrides,
   };
 }
@@ -1859,13 +1918,24 @@ function jsonResponse(body: unknown, status: number, type = "application/json"):
   });
 }
 
+/** The `/api/v1/` paths fetched or streamed since the last `stubApi`, in the order the stubs
+ * saw them. */
+let apiCalls: string[] = [];
+
+function noteApiCall(url: string): void {
+  const path = new URL(url, window.location.origin).pathname;
+  if (path.startsWith("/api/v1/")) apiCalls.push(path);
+}
+
 /** Answers fetches from `routes`; an unknown route is a 404 problem naming it. */
 export function stubApi(routes: ApiRoutes): Request[] {
   const requests: Request[] = [];
+  apiCalls = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(
     (input: RequestInfo | URL, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
       requests.push(request);
+      noteApiCall(request.url);
       const path = new URL(request.url).pathname;
       const reply =
         routes[`${request.method} ${path}`] ??
@@ -1941,6 +2011,7 @@ export class FakeEventSource {
   constructor(url: string | URL) {
     this.url = String(url);
     FakeEventSource.instances.push(this);
+    noteApiCall(this.url);
   }
 
   addEventListener(type: string, listener: Listener): void {
@@ -2002,10 +2073,15 @@ export interface RenderWithApiOptions {
   path?: string;
   /** The route pattern `ui` is mounted at (default "*"), for screens reading params. */
   route?: string;
+  /** The query client (default `testQueryClient()`). A test of seeded queries passes the app's
+   * own, `createQueryClient()`: under its 10 s `staleTime` a seeded query does not fetch. */
+  queryClient?: QueryClient;
 }
 
 export interface RenderWithApiResult extends RenderResult {
   requests: Request[];
+  /** Every `/api/v1/` path the render has asked, fetches and `EventSource`s, in order. */
+  calls: () => string[];
   queryClient: QueryClient;
   router: ReturnType<typeof createMemoryRouter>;
   stream: (urlPrefix: string) => FakeEventSource;
@@ -2035,11 +2111,15 @@ export function TestProviders({
 /** Renders `ui` in a memory router with the API stubbed by `routes` (fetch and EventSource). */
 export function renderWithApi(
   ui: ReactElement,
-  { routes = {}, path = "/", route = "*" }: RenderWithApiOptions = {},
+  {
+    routes = {},
+    path = "/",
+    route = "*",
+    queryClient = testQueryClient(),
+  }: RenderWithApiOptions = {},
 ): RenderWithApiResult {
   const requests = stubApi(routes);
   const stream = stubEventSource();
-  const queryClient = testQueryClient();
   const router = createMemoryRouter([{ path: route, element: ui }], { initialEntries: [path] });
   const result = render(
     createElement(TestProviders, {
@@ -2047,7 +2127,7 @@ export function renderWithApi(
       children: createElement(RouterProvider, { router }),
     }),
   );
-  return { ...result, requests, queryClient, router, stream };
+  return { ...result, requests, calls: () => [...apiCalls], queryClient, router, stream };
 }
 
 /* ---------- Scenarios (AGH-350 T13) ---------- */

@@ -1,8 +1,11 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
+import { createQueryClient } from "../../lib/api";
+import { AppShell } from "../../shell/AppShell";
 import { seriousViolations } from "../../testing/axe";
 import {
+  aCapabilities,
   aFeature,
   aFeatureTickets,
   aPage,
@@ -11,16 +14,19 @@ import {
   aSessionLabel,
   aTicketRow,
   aSessionCost,
+  aSessionDetailView,
   aSessionFile,
   aSessionProblem,
   aSessionProblems,
   aSessionSummary,
+  aShellView,
   aTimelineEvent,
   anId,
   at,
   manyEvents,
   renderWithApi,
   type ApiRoutes,
+  type SessionDetailView,
   type TimelineEventBody,
 } from "../../testing/builders";
 import { SessionDetailScreen } from "./index";
@@ -408,5 +414,242 @@ describe("SessionDetailScreen (session-name)", () => {
     );
     const tickets = view.requests.filter((r) => r.url.endsWith("/control-plane/tickets"));
     expect(tickets).toHaveLength(1);
+  });
+});
+
+const READ = `/api/v1/screens/session-detail/${ID}`;
+const TICKETS = "/api/v1/features/agent-hub/control-plane/tickets";
+const CAPABILITIES = "/api/v1/agent-sessions/capabilities";
+
+/** The routes whose answers the detail read (ADR 0056) carries. */
+const readResources = [
+  BASE,
+  `${BASE}/events`,
+  `${BASE}/summary`,
+  `${BASE}/problems`,
+  "/api/v1/features",
+  CAPABILITIES,
+];
+
+/** What the session is about: AGH-202, an issue of feature `control-plane`. */
+const onTicket = aSessionLabel({ issue: "AGH-202", branch: "dev/agh-202-summaries" });
+
+/** The detail read of an ended session on AGH-202: its events, its summary, its project's feature
+ * that lists the issue, and a machine that can drive sessions. */
+function aDetailRead(overrides: Partial<SessionDetailView> = {}): SessionDetailView {
+  return aSessionDetailView({
+    session: aSession({ status: "ended", outcome: "done", ended_at: at(900), label: onTicket }),
+    events: aPage(defaultEvents()),
+    summary: aSessionSummary({
+      lines: [{ event_id: anId(2, "0192aaaa"), text: "Ran make check-fast: passed" }],
+    }),
+    features: aPage([aFeature({ issues: ["AGH-202"] })]),
+    capabilities: aCapabilities(),
+    ...overrides,
+  });
+}
+
+/** Renders the screen inside the shell on the app's own query client (under its 10 s staleTime a
+ * seeded query does not fetch), with the shell read and the feature's tickets answered. */
+function renderFromRead(apiRoutes: ApiRoutes, queryClient = createQueryClient()) {
+  return renderWithApi(
+    <AppShell>
+      <SessionDetailScreen />
+    </AppShell>,
+    {
+      routes: {
+        "/api/v1/screens/shell": aShellView(),
+        [TICKETS]: aFeatureTickets({ tickets: [aTicketRow()] }),
+        ...apiRoutes,
+      },
+      path: `/sessions/${ID}`,
+      route: "/sessions/:sessionId",
+      queryClient,
+    },
+  );
+}
+
+describe("SessionDetailScreen screen read", () => {
+  it.each([
+    {
+      session: "ended, with a problem",
+      read: aDetailRead({
+        session: aSession({
+          status: "ended",
+          outcome: "done",
+          ended_at: at(900),
+          label: onTicket,
+          problems: { needs_you: 1, open: 0, handled: 0, by_you: 0 },
+        }),
+        problems: aSessionProblems({
+          summary: [{ event_id: anId(4, "0192aaaa"), text: "Needs you: make check-fast failed" }],
+        }),
+      }),
+      // Its summary, its problems and the chat it can go on in come from the read.
+      shows: [
+        "Ran make check-fast: passed",
+        "Needs you: make check-fast failed",
+        "Continue in chat",
+      ],
+      live: false,
+    },
+    {
+      // No summary and no problem yet; the session's own stream is the fifth request.
+      session: "live",
+      read: aDetailRead({ session: aSession({ status: "live", label: onTicket }), summary: null }),
+      shows: ["Summary appears when the session ends"],
+      live: true,
+    },
+  ])(
+    "AC-36 loads in at most 5 API requests with the shell mounted ($session)",
+    async ({ read, shows, live }) => {
+      const { calls } = renderFromRead({ [READ]: read });
+
+      // The header names the session by its ticket: the feature comes from the read, the title
+      // from that feature's own tickets read.
+      expect(
+        await screen.findByRole("heading", { name: "AGH-202: Serve the ticket summaries" }),
+      ).toBeInTheDocument();
+      expect(await screen.findByText("Started the session in")).toBeInTheDocument();
+      for (const text of shows) {
+        expect(await screen.findByText(text)).toBeInTheDocument();
+      }
+      const asked = calls();
+      expect(asked.filter((p) => readResources.includes(p))).toEqual([]);
+      expect(asked.filter((p) => p === READ)).toHaveLength(1);
+      expect(asked.filter((p) => p === TICKETS)).toHaveLength(1);
+      expect(asked.includes(`${BASE}/events/stream`)).toBe(live);
+      expect(asked.length).toBeLessThanOrEqual(5);
+    },
+  );
+
+  it("reads the capabilities itself when the detail read carries none", async () => {
+    const { calls } = renderFromRead({
+      [READ]: aDetailRead({ capabilities: null }),
+      [CAPABILITIES]: aCapabilities(),
+    });
+
+    // A null part is not seeded: its route answers, so the ended session can go on in a chat.
+    expect(await screen.findByRole("button", { name: "Continue in chat" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "AGH-202: Serve the ticket summaries" }),
+    ).toBeInTheDocument();
+    const asked = calls();
+    expect(asked.filter((p) => p === READ)).toHaveLength(1);
+    expect(asked.filter((p) => readResources.includes(p))).toEqual([CAPABILITIES]);
+    expect(asked.length).toBeLessThanOrEqual(5);
+  });
+
+  it("reads the further event pages from the events route", async () => {
+    const next = aTimelineEvent({
+      seq: 6,
+      type: "tool.call",
+      payload: { tool: "Bash", command: "npm test", tool_use_id: "t6" },
+    });
+    const { calls, requests } = renderFromRead({
+      [READ]: aDetailRead({ events: aPage(defaultEvents(), { next_cursor: "page-2" }) }),
+      // Only the second page holds this event: a first page read again answers none.
+      [`${BASE}/events`]: (request: Request) =>
+        aPage(new URL(request.url).searchParams.get("cursor") === "page-2" ? [next] : []),
+    });
+
+    expect(await screen.findByText("npm test")).toBeInTheDocument();
+    expect(screen.getByText("Started the session in")).toBeInTheDocument();
+    const pages = requests
+      .map((r) => new URL(r.url))
+      .filter((url) => url.pathname === `${BASE}/events`);
+    expect(pages).toHaveLength(1);
+    expect(Object.fromEntries(pages[0]?.searchParams ?? [])).toEqual({
+      cursor: "page-2",
+      limit: "1000",
+    });
+    expect(calls().filter((p) => p === READ)).toHaveLength(1);
+  });
+
+  it("keeps the loaded event pages when the session is opened again", async () => {
+    const next = aTimelineEvent({
+      seq: 6,
+      type: "tool.call",
+      payload: { tool: "Bash", command: "npm test", tool_use_id: "t6" },
+    });
+    const apiRoutes: ApiRoutes = {
+      [READ]: aDetailRead({ events: aPage(defaultEvents(), { next_cursor: "page-2" }) }),
+      [`${BASE}/events`]: (request: Request) =>
+        aPage(new URL(request.url).searchParams.get("cursor") === "page-2" ? [next] : []),
+    };
+    const queryClient = createQueryClient();
+    const first = renderFromRead(apiRoutes, queryClient);
+    // Both pages loaded: the read's first, then the second from the events route.
+    expect(await screen.findByText("npm test")).toBeInTheDocument();
+    first.unmount();
+
+    // Opened again: its read answers the first page only, as on the first visit.
+    const { calls } = renderFromRead(apiRoutes, queryClient);
+    await waitFor(() => {
+      expect(calls()).toContain(READ);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+
+    // The second page is kept, not dropped and read again.
+    expect(calls().filter((p) => p === `${BASE}/events`)).toEqual([]);
+    expect(screen.queryByText("npm test")).toBeInTheDocument();
+  });
+
+  it("opens the parent session from its own read when its crumb is followed", async () => {
+    const PARENT = anId(2, "9c4e12aa");
+    const PARENT_BASE = `/api/v1/sessions/${PARENT}`;
+    const PARENT_READ = `/api/v1/screens/session-detail/${PARENT}`;
+    const parent = aSession({
+      id: PARENT,
+      status: "ended",
+      outcome: "done",
+      ended_at: at(900),
+      label: onTicket,
+    });
+    const parentSummary = aSessionSummary({
+      session_id: PARENT,
+      lines: [{ event_id: anId(3, "0192aaaa"), text: "Planned the ticket summaries" }],
+    });
+    const { calls } = renderFromRead({
+      // A subagent's session, whose header links the session that started it.
+      [READ]: aDetailRead({
+        session: aSession({
+          status: "ended",
+          outcome: "done",
+          ended_at: at(900),
+          label: onTicket,
+          parent_session_id: PARENT,
+        }),
+      }),
+      [PARENT_READ]: aDetailRead({ session: parent, summary: parentSummary }),
+      // The parent's own routes answer as its read does: only the calls tell them apart.
+      [PARENT_BASE]: parent,
+      [`${PARENT_BASE}/events`]: aPage(defaultEvents()),
+      [`${PARENT_BASE}/summary`]: parentSummary,
+    });
+    expect(await screen.findByText("Ran make check-fast: passed")).toBeInTheDocument();
+    const before = calls().length;
+
+    // The crumb moves to the parent in place: the screen stays mounted.
+    fireEvent.click(screen.getByRole("link", { name: "Session 9c4e12aa" }));
+    expect(await screen.findByText("Planned the ticket summaries")).toBeInTheDocument();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+
+    const asked = calls().slice(before);
+    const parentResources = [
+      PARENT_BASE,
+      `${PARENT_BASE}/events`,
+      `${PARENT_BASE}/summary`,
+      `${PARENT_BASE}/problems`,
+      "/api/v1/features",
+      CAPABILITIES,
+    ];
+    expect(asked.filter((p) => p === PARENT_READ)).toHaveLength(1);
+    expect(asked.filter((p) => parentResources.includes(p))).toEqual([]);
+    expect(asked.length).toBeLessThanOrEqual(5);
   });
 });

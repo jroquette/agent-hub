@@ -11,16 +11,19 @@ never hold the write lock and, with WAL, never block writers.
 import random
 import sqlite3
 import time
+import weakref
 from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
 from sqlalchemy import URL, Connection, Engine, create_engine, event
-from sqlalchemy.pool import ConnectionPoolEntry, NullPool
+from sqlalchemy.pool import ConnectionPoolEntry, QueuePool
 
 BUSY_TIMEOUT_MS = 5000
 BACKOFF_MIN_SECONDS = 0.001
 BACKOFF_MAX_SECONDS = 0.02
+# The idle connections each engine keeps; more open while reads overlap, and close on return.
+POOL_SIZE = 5
 
 
 def create_sqlite_engine(path: Path, *, busy_timeout_ms: int = BUSY_TIMEOUT_MS) -> Engine:
@@ -28,13 +31,18 @@ def create_sqlite_engine(path: Path, *, busy_timeout_ms: int = BUSY_TIMEOUT_MS) 
 
     A connection waits up to ``busy_timeout_ms`` for a lock another connection holds.
     """
-    # No pool: each use opens and closes its own SQLite connection, so a store needs no close()
-    # and no connection outlives the transaction that used it.
+    # Pooled: the connect listener's settings stay per DB-API connection, the pool rolls back
+    # each returned connection so an idle one holds no snapshot, and write_lock is per Connection.
+    # No overflow cap, so a read never waits: a capped pool fails as "cannot read", not "busy".
     # URL.create, not a "sqlite:///..." string: "?" and "%XX" in a path are file name characters,
     # which URL parsing would read as a query string and escapes.
     # hide_parameters: an error must never carry event payloads into messages or logs.
     engine = create_engine(
-        URL.create("sqlite", database=str(path)), poolclass=NullPool, hide_parameters=True
+        URL.create("sqlite", database=str(path)),
+        poolclass=QueuePool,
+        pool_size=POOL_SIZE,
+        max_overflow=-1,
+        hide_parameters=True,
     )
 
     def configure_connection(
@@ -53,6 +61,17 @@ def create_sqlite_engine(path: Path, *, busy_timeout_ms: int = BUSY_TIMEOUT_MS) 
     event.listen(engine, "connect", configure_connection)
     event.listen(engine, "begin", _begin_transaction)
     return engine
+
+
+def dispose_when_dropped(owner: object, engine: Engine) -> None:
+    """Close the idle connections ``engine`` keeps as soon as ``owner`` is freed.
+
+    An owner dropped without ``close()`` would leave them to the garbage collector, which
+    finalizes each one unclosed. A connection checked out at that moment is not closed.
+
+    ``owner`` owns ``engine``: freeing it disposes the engine for every user of it.
+    """
+    weakref.finalize(owner, engine.dispose)
 
 
 class _StatementCursor(Protocol):

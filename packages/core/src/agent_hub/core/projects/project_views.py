@@ -41,7 +41,8 @@ class ProjectActivity(DerivedView):
 
 class ProjectSummary(DerivedView):
     """A Portfolio card: hub config plus the project's activity; PRs and issues need sources
-    not connected in Phase 2 (``null``)."""
+    not connected in Phase 2 (``null``). ``hub_health`` comes from the hub's last doctor check,
+    which ended at ``checked_at``; both are None before its first one."""
 
     name: str
     hub_id: str
@@ -52,6 +53,7 @@ class ProjectSummary(DerivedView):
     lock_state: LockState | None
     repos: tuple[str, ...]
     hub_health: HubHealth | None
+    checked_at: ApiTimestamp | None
     live_sessions: int = Field(ge=0)
     runs_in_flight_by_stage: dict[Stage, int]
     failed_runs_7d: int = Field(ge=0)
@@ -72,7 +74,8 @@ class TrackerView(ViewModel):
 
 
 class ProjectDetail(ViewModel):
-    """The Project overview header."""
+    """The Project overview header; ``checked_at`` is when the hub's last doctor check ended,
+    None before its first one."""
 
     name: str
     hub_id: str
@@ -84,6 +87,7 @@ class ProjectDetail(ViewModel):
     platform_version: str
     lock_version: str | None
     lock_state: LockState | None
+    checked_at: ApiTimestamp | None
     modules: tuple[str, ...]
     warnings: tuple[str, ...] = ()
 

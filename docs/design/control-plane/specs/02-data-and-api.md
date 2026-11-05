@@ -206,7 +206,7 @@ All paths under `/api/v1`. Shapes are trimmed sketches; lists are paginated.
 
 | Endpoint | Params | Response sketch | Used by |
 |---|---|---|---|
-| `GET /projects` | `period` | `{"items":[{"name":"agent-hub","hub_health":"warning","repos":1,"live_sessions":3,"runs_in_flight_by_stage":{"IMPLEMENTING":1},"open_prs":2,"failed_runs_7d":1,"cost_period":"84.2000","cost_previous_period":"71.3600","ready_issues":4,"platform_version":"0.8.0","lock_state":"sync_pending"}]}` | Portfolio, ProjectSwitcher |
+| `GET /projects` | `period` | `{"items":[{"name":"agent-hub","hub_health":"warning","checked_at":"2026-10-11T12:00:05.000Z","repos":1,"live_sessions":3,"runs_in_flight_by_stage":{"IMPLEMENTING":1},"open_prs":2,"failed_runs_7d":1,"cost_period":"84.2000","cost_previous_period":"71.3600","ready_issues":4,"platform_version":"0.8.0","lock_state":"sync_pending"}]}` | Portfolio, ProjectSwitcher |
 | `GET /projects/{project}` | | `{"name":"agent-hub","hub_repo":"jroquette/agent-hub-hub","tracker":{"kind":"linear","teams":["AGH"]},"platform_version":"0.8.0","lock_state":"sync_pending","modules":["bench","cloud","marketplace"]}` | Project overview header |
 | `GET /projects/{project}/now` | | `{"focus":[{"text":"…","last_verified":"2026-10-01","provenance":"human"}],"next":[],"watch":[]}` | Project overview Now |
 | `GET /projects/{project}/repos` | | `{"items":[{"name":"agent-hub","default_branch":"main","last_ci_default":{"status":"passed"},"open_prs":2,"check_fast":"make check-fast","agents_md_present":true}]}` | Project overview Repos |
@@ -251,6 +251,7 @@ All paths under `/api/v1`. Shapes are trimmed sketches; lists are paginated.
 | `GET /collector/status` | | `{"state":"running","db_path":"~/.agent-hub/events.db","events_today":1284,"sources":[{"source":"claude_code","last_event_at":"…","lag_ms":400,"state":"fresh"}]}` | CollectorPill, Settings |
 | `GET /settings`, `PATCH /settings` | | `{"transcript_retention_days":30,"redaction_rules":["github_token","aws_key"]}` | Settings |
 | `GET /events/stream` | `scope`, `Last-Event-ID` | SSE global | Shell badges, pill |
+| As built (AGH-623): `GET /screens/shell` | `project` | `{"hub_count":1,"projects":[{"name":"agent-hub","live_sessions":3}],"features_needing_you":2,"has_workflow_runs":true}`: composed of `GET /hubs` (the count), `GET /projects` (each name and its live sessions), `GET /features` with `GET /live-sessions` (the features the Features list flags, its list kept 30 s) and `GET /workflow-runs?kind=workflow&limit=1` ([ADR 0056](../../../adr/0056-screen-shaped-reads.md), [API.md](../../../API.md) "Screen reads") | App shell: first-run redirect, ProjectSwitcher, the Features badge, the Workflow runs item |
 
 ## SSE contract
 

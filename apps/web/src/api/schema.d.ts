@@ -508,7 +508,8 @@ export interface paths {
     };
     /**
      * List Doctor Findings
-     * @description Findings of every (or one) project, as ``hub doctor --json`` reports them.
+     * @description Findings of every (or one) project, as ``hub doctor --json`` reports them, from the last
+     *     background check, with when the oldest of those checks ended.
      */
     get: operations["list_doctor_findings_api_v1_doctor_findings_get"];
     put?: never;
@@ -1830,6 +1831,127 @@ export interface paths {
      *     steps, no run created); its events tell the rest.
      */
     post: operations["start_scenario_api_v1_scenarios__project___name__runs_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/screens/portfolio": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read Portfolio
+     * @description Home's first view in one read: every project's card (as ``GET /projects``), what needs
+     *     you in the scope (as ``GET /needs-you``) and the scope's first activity page of 20 items (as
+     *     ``GET /activity?limit=20``).
+     */
+    get: operations["read_portfolio_api_v1_screens_portfolio_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/screens/project-overview/{project}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read Project Overview
+     * @description The Project overview's first view in one read: the project's header, findings, every
+     *     card, what needs you, its first 200 runs, ``now.md``, features, repos and config, each as its
+     *     route answers it, and ``recent_sessions``: of its 200 sessions newest by last activity, those
+     *     of the issues with a session active in the last 7 days. An unknown project answers 404, as
+     *     ``GET /projects/{project}`` does.
+     */
+    get: operations["read_project_overview_api_v1_screens_project_overview__project__get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/screens/session-detail/{session_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read Session Detail
+     * @description Session detail's first view in one read: the session (as ``GET /sessions/{session_id}``),
+     *     its first 1,000 events of every type (as ``GET /sessions/{session_id}/events?limit=1000``),
+     *     its summary once it has ended (as ``GET /sessions/{session_id}/summary``, else null), its
+     *     problems when it counts one (as ``GET /sessions/{session_id}/problems``, else null) and its
+     *     project's features (as ``GET /features?project=``). ``capabilities`` answers as ``GET
+     *     /agent-sessions/capabilities`` only for a request that route would answer (the launch cookie,
+     *     this server's pages, the sessions on), else null; it is also null while the driver is still
+     *     checking ``claude``. An unknown session answers 404, as ``GET /sessions/{session_id}`` does.
+     */
+    get: operations["read_session_detail_api_v1_screens_session_detail__session_id__get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/screens/sessions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read Sessions
+     * @description The Sessions inbox's first view in one read: each status section's first page of 50 (as
+     *     ``GET /sessions?status=&project=&sort=&limit=50``, ``from`` on Finished only), every
+     *     project's card (as ``GET /projects``) and every project's features (as ``GET /features``).
+     *     ``agent_sessions`` and ``capabilities`` answer as ``GET /agent-sessions?project=`` and ``GET
+     *     /agent-sessions/capabilities`` only for a request those routes would answer (the launch
+     *     cookie, this server's pages, the sessions on), else null; ``capabilities`` is also null while
+     *     the driver is still checking ``claude``.
+     */
+    get: operations["read_sessions_api_v1_screens_sessions_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/screens/shell": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read Shell
+     * @description The app shell's facts in one read: how many hubs are registered, every project with its
+     *     live sessions, how many features of the scope need you, and whether any project has a
+     *     workflow run. The feature list behind the count is kept 30 s.
+     */
+    get: operations["read_shell_api_v1_screens_shell_get"];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -3421,6 +3543,21 @@ export interface components {
     /** @enum {string} */
     DiscoveryState: "running" | "finished" | "failed" | "stopped";
     /**
+     * DoctorFindings
+     * @description The findings of the scoped hubs' last checks; ``checked_at`` is when the oldest of those
+     *     checks ended, None while one of the hubs has not been checked yet. With no hub that names a
+     *     project, it is when the server's last background tick ended (None before the first one).
+     */
+    DoctorFindings: {
+      checked_at: components["schemas"]["ApiTimestamp"] | null;
+      /** Items */
+      items: components["schemas"]["FindingView"][];
+      /** Next Cursor */
+      next_cursor?: string | null;
+      /** Total Estimate */
+      total_estimate: number;
+    };
+    /**
      * DoctorFixRequest
      * @description The empty JSON body of the fix: a cross-site form cannot send one (S7).
      */
@@ -4282,10 +4419,12 @@ export interface components {
      *
      *     ``valid`` is false when ``hub.json`` is unreadable or does not match the schema
      *     (``validation_errors``). A pin other than the running version is read anyway and shows as
-     *     a warning ("pinned X, running Y").
+     *     a warning ("pinned X, running Y"). ``checked_at`` is when the hub's last doctor check
+     *     ended, None before its first one.
      */
     HubView: {
       added_at: components["schemas"]["ApiTimestamp"];
+      checked_at: components["schemas"]["ApiTimestamp"] | null;
       /** Guard Ask Before Edit */
       guard_ask_before_edit: string[];
       /** Id */
@@ -5318,15 +5457,6 @@ export interface components {
       /** Total Estimate */
       total_estimate: number;
     };
-    /** Page[FindingView] */
-    Page_FindingView_: {
-      /** Items */
-      items: components["schemas"]["FindingView"][];
-      /** Next Cursor */
-      next_cursor?: string | null;
-      /** Total Estimate */
-      total_estimate: number;
-    };
     /** Page[HubView] */
     Page_HubView_: {
       /** Items */
@@ -5559,6 +5689,16 @@ export interface components {
       poll: number | null;
     };
     /**
+     * PortfolioView
+     * @description Home's first view: every project's card, what needs you in the scope and the scope's
+     *     newest activity page, each as its resource route answers it.
+     */
+    PortfolioView: {
+      activity: components["schemas"]["Page_ActivityItem_"];
+      needs_you: components["schemas"]["Page_NeedsYouItem_"];
+      projects: components["schemas"]["Page_ProjectSummary_"];
+    };
+    /**
      * PreflightRun
      * @description One preflight run of a ticket: when it ran, the plan version and commit it checked, the
      *     blocker outcomes it read, the input it was given (a discovery or a declined change's note,
@@ -5700,11 +5840,13 @@ export interface components {
       | "hook_failed";
     /**
      * ProjectDetail
-     * @description The Project overview header.
+     * @description The Project overview header; ``checked_at`` is when the hub's last doctor check ended,
+     *     None before its first one.
      */
     ProjectDetail: {
       /** Branch Prefix */
       branch_prefix: string | null;
+      checked_at: components["schemas"]["ApiTimestamp"] | null;
       /** Default Branch */
       default_branch: string | null;
       /** Hub Id */
@@ -5748,11 +5890,34 @@ export interface components {
       watch: components["schemas"]["NowItem"][];
     };
     /**
+     * ProjectOverviewView
+     * @description The Project overview's first view: each resource part as its route answers it for the
+     *     project (``runs`` its first 200, ``projects`` every card), and ``recent_sessions``, the
+     *     project's 200 newest sessions narrowed to those of issues with a session active in the last
+     *     7 days, newest first; ``has_sessions`` says whether those 200 held any session.
+     */
+    ProjectOverviewView: {
+      config: components["schemas"]["HubConfigView"];
+      features: components["schemas"]["Page_FeatureView_"];
+      findings: components["schemas"]["DoctorFindings"];
+      /** Has Sessions */
+      has_sessions: boolean;
+      needs_you: components["schemas"]["Page_NeedsYouItem_"];
+      now: components["schemas"]["ProjectNow"];
+      project: components["schemas"]["ProjectDetail"];
+      projects: components["schemas"]["Page_ProjectSummary_"];
+      recent_sessions: components["schemas"]["Page_Session_"];
+      repos: components["schemas"]["Page_RepoView_"];
+      runs: components["schemas"]["Page_WorkflowRun_"];
+    };
+    /**
      * ProjectSummary
      * @description A Portfolio card: hub config plus the project's activity; PRs and issues need sources
-     *     not connected in Phase 2 (``null``).
+     *     not connected in Phase 2 (``null``). ``hub_health`` comes from the hub's last doctor check,
+     *     which ended at ``checked_at``; both are None before its first one.
      */
     ProjectSummary: {
+      checked_at: components["schemas"]["ApiTimestamp"] | null;
       /**
        * Cost Daily
        * @default []
@@ -7092,6 +7257,22 @@ export interface components {
       unknown_reason?: string | null;
     };
     /**
+     * SessionDetailView
+     * @description Session detail's first view: the session, its first page of 1,000 events, its summary
+     *     once it has ended, its problems when it counts one and its project's features, each as
+     *     its route answers it, and the driver's capabilities as their route answers them, or
+     *     ``None`` when the request may not read them, the sessions are off, or the driver does not
+     *     answer within the read's wait.
+     */
+    SessionDetailView: {
+      capabilities: components["schemas"]["DriverCapabilities"] | null;
+      events: components["schemas"]["Page_TimelineEvent_"];
+      features: components["schemas"]["Page_FeatureView_"];
+      problems: components["schemas"]["SessionProblems"] | null;
+      session: components["schemas"]["Session"];
+      summary: components["schemas"]["SessionSummary"] | null;
+    };
+    /**
      * SessionFileChange
      * @description A path a session touched, its operations and line counts (no content is stored).
      */
@@ -7242,6 +7423,24 @@ export interface components {
       stored: boolean;
     };
     /**
+     * SessionsView
+     * @description The Sessions inbox's first view: each status section's first page of 50 as ``GET /sessions``
+     *     answers it for the scope and sort (``from`` bounds Finished only), every project's card, every
+     *     project's features, and the agent sessions and the driver's capabilities as their routes
+     *     answer them, or ``None`` when the request may not read them, the sessions are off, or (the
+     *     capabilities only) the driver does not answer within the read's wait.
+     */
+    SessionsView: {
+      agent_sessions: components["schemas"]["AgentSessionList"] | null;
+      capabilities: components["schemas"]["DriverCapabilities"] | null;
+      ended: components["schemas"]["Page_Session_"];
+      features: components["schemas"]["Page_FeatureView_"];
+      idle: components["schemas"]["Page_Session_"];
+      live: components["schemas"]["Page_Session_"];
+      projects: components["schemas"]["Page_ProjectSummary_"];
+      waiting: components["schemas"]["Page_Session_"];
+    };
+    /**
      * SetEnvironment
      * @description A change to an environment: a field left out stays; an empty text removes the key.
      *
@@ -7361,6 +7560,31 @@ export interface components {
      * @enum {string}
      */
     Severity: "error" | "warning" | "info";
+    /**
+     * ShellProject
+     * @description A project in the shell's switcher: its name and how many of its sessions are live.
+     */
+    ShellProject: {
+      /** Live Sessions */
+      live_sessions: number;
+      /** Name */
+      name: string;
+    };
+    /**
+     * ShellView
+     * @description The app shell's facts: how many hubs are registered, every project, the features that
+     *     need you in the scope, and whether any project has a workflow run.
+     */
+    ShellView: {
+      /** Features Needing You */
+      features_needing_you: number;
+      /** Has Workflow Runs */
+      has_workflow_runs: boolean;
+      /** Hub Count */
+      hub_count: number;
+      /** Projects */
+      projects: components["schemas"]["ShellProject"][];
+    };
     SingleEdit:
       | components["schemas"]["AddEnvironment"]
       | components["schemas"]["SetEnvironment"]
@@ -9752,7 +9976,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["Page_FindingView_"];
+          "application/json": components["schemas"]["DoctorFindings"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */
@@ -12863,6 +13087,214 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["RunAccepted"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  read_portfolio_api_v1_screens_portfolio_get: {
+    parameters: {
+      query?: {
+        project?: string | null;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PortfolioView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  read_project_overview_api_v1_screens_project_overview__project__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProjectOverviewView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  read_session_detail_api_v1_screens_session_detail__session_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionDetailView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  read_sessions_api_v1_screens_sessions_get: {
+    parameters: {
+      query?: {
+        project?: string | null;
+        sort?:
+          | "started_at"
+          | "-started_at"
+          | "last_activity_at"
+          | "-last_activity_at"
+          | "cost"
+          | "-cost";
+        from?: string | null;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionsView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  read_shell_api_v1_screens_shell_get: {
+    parameters: {
+      query?: {
+        project?: string | null;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ShellView"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

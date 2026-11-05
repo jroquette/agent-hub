@@ -3020,6 +3020,53 @@
         ],
         "type": "string"
       },
+      "DoctorFindings": {
+        "additionalProperties": false,
+        "description": "The findings of the scoped hubs' last checks; ``checked_at`` is when the oldest of those\nchecks ended, None while one of the hubs has not been checked yet. With no hub that names a\nproject, it is when the server's last background tick ended (None before the first one).",
+        "properties": {
+          "checked_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FindingView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total_estimate": {
+            "minimum": 0.0,
+            "title": "Total Estimate",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_estimate",
+          "checked_at"
+        ],
+        "title": "DoctorFindings",
+        "type": "object"
+      },
       "DoctorFixRequest": {
         "additionalProperties": false,
         "description": "The empty JSON body of the fix: a cross-site form cannot send one (S7).",
@@ -5350,10 +5397,20 @@
       },
       "HubView": {
         "additionalProperties": false,
-        "description": "A registered hub as read now.\n\n``valid`` is false when ``hub.json`` is unreadable or does not match the schema\n(``validation_errors``). A pin other than the running version is read anyway and shows as\na warning (\"pinned X, running Y\").",
+        "description": "A registered hub as read now.\n\n``valid`` is false when ``hub.json`` is unreadable or does not match the schema\n(``validation_errors``). A pin other than the running version is read anyway and shows as\na warning (\"pinned X, running Y\"). ``checked_at`` is when the hub's last doctor check\nended, None before its first one.",
         "properties": {
           "added_at": {
             "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "guard_ask_before_edit": {
             "items": {
@@ -5461,6 +5518,7 @@
           "running_version",
           "lock_version",
           "lock_state",
+          "checked_at",
           "modules",
           "guard_ask_before_edit",
           "repos",
@@ -8358,41 +8416,6 @@
         "title": "Page[FeatureView]",
         "type": "object"
       },
-      "Page_FindingView_": {
-        "additionalProperties": false,
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/FindingView"
-            },
-            "title": "Items",
-            "type": "array"
-          },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "maxLength": 512,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
-          },
-          "total_estimate": {
-            "minimum": 0.0,
-            "title": "Total Estimate",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "items",
-          "total_estimate"
-        ],
-        "title": "Page[FindingView]",
-        "type": "object"
-      },
       "Page_HubView_": {
         "additionalProperties": false,
         "properties": {
@@ -9179,6 +9202,28 @@
         "title": "PollEntry",
         "type": "object"
       },
+      "PortfolioView": {
+        "additionalProperties": false,
+        "description": "Home's first view: every project's card, what needs you in the scope and the scope's\nnewest activity page, each as its resource route answers it.",
+        "properties": {
+          "activity": {
+            "$ref": "#/components/schemas/Page_ActivityItem_"
+          },
+          "needs_you": {
+            "$ref": "#/components/schemas/Page_NeedsYouItem_"
+          },
+          "projects": {
+            "$ref": "#/components/schemas/Page_ProjectSummary_"
+          }
+        },
+        "required": [
+          "projects",
+          "needs_you",
+          "activity"
+        ],
+        "title": "PortfolioView",
+        "type": "object"
+      },
       "PreflightRun": {
         "additionalProperties": false,
         "description": "One preflight run of a ticket: when it ran, the plan version and commit it checked, the\nblocker outcomes it read, the input it was given (a discovery or a declined change's note,\n``input_text``; for ``none``, null or a note such as an approval another one superseded,\ntwo-level-flows A23), the drift it found with its local notes (at least one for\n``local``), the change request it opened (required for ``plan``, unless a plain check with a\nnote: a superseded approval's re-check, A24) and the workflow\nrun it belongs to.",
@@ -9488,7 +9533,7 @@
       },
       "ProjectDetail": {
         "additionalProperties": false,
-        "description": "The Project overview header.",
+        "description": "The Project overview header; ``checked_at`` is when the hub's last doctor check ended,\nNone before its first one.",
         "properties": {
           "branch_prefix": {
             "anyOf": [
@@ -9500,6 +9545,16 @@
               }
             ],
             "title": "Branch Prefix"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "default_branch": {
             "anyOf": [
@@ -9583,6 +9638,7 @@
           "platform_version",
           "lock_version",
           "lock_state",
+          "checked_at",
           "modules"
         ],
         "title": "ProjectDetail",
@@ -9650,10 +9706,75 @@
         "title": "ProjectNow",
         "type": "object"
       },
+      "ProjectOverviewView": {
+        "additionalProperties": false,
+        "description": "The Project overview's first view: each resource part as its route answers it for the\nproject (``runs`` its first 200, ``projects`` every card), and ``recent_sessions``, the\nproject's 200 newest sessions narrowed to those of issues with a session active in the last\n7 days, newest first; ``has_sessions`` says whether those 200 held any session.",
+        "properties": {
+          "config": {
+            "$ref": "#/components/schemas/HubConfigView"
+          },
+          "features": {
+            "$ref": "#/components/schemas/Page_FeatureView_"
+          },
+          "findings": {
+            "$ref": "#/components/schemas/DoctorFindings"
+          },
+          "has_sessions": {
+            "title": "Has Sessions",
+            "type": "boolean"
+          },
+          "needs_you": {
+            "$ref": "#/components/schemas/Page_NeedsYouItem_"
+          },
+          "now": {
+            "$ref": "#/components/schemas/ProjectNow"
+          },
+          "project": {
+            "$ref": "#/components/schemas/ProjectDetail"
+          },
+          "projects": {
+            "$ref": "#/components/schemas/Page_ProjectSummary_"
+          },
+          "recent_sessions": {
+            "$ref": "#/components/schemas/Page_Session_"
+          },
+          "repos": {
+            "$ref": "#/components/schemas/Page_RepoView_"
+          },
+          "runs": {
+            "$ref": "#/components/schemas/Page_WorkflowRun_"
+          }
+        },
+        "required": [
+          "project",
+          "findings",
+          "projects",
+          "needs_you",
+          "runs",
+          "now",
+          "features",
+          "repos",
+          "config",
+          "recent_sessions",
+          "has_sessions"
+        ],
+        "title": "ProjectOverviewView",
+        "type": "object"
+      },
       "ProjectSummary": {
         "additionalProperties": false,
-        "description": "A Portfolio card: hub config plus the project's activity; PRs and issues need sources\nnot connected in Phase 2 (``null``).",
+        "description": "A Portfolio card: hub config plus the project's activity; PRs and issues need sources\nnot connected in Phase 2 (``null``). ``hub_health`` comes from the hub's last doctor check,\nwhich ended at ``checked_at``; both are None before its first one.",
         "properties": {
+          "checked_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "cost_daily": {
             "default": [],
             "items": {
@@ -9809,6 +9930,7 @@
           "lock_state",
           "repos",
           "hub_health",
+          "checked_at",
           "live_sessions",
           "runs_in_flight_by_stage",
           "failed_runs_7d",
@@ -13388,6 +13510,61 @@
         "title": "SessionCost",
         "type": "object"
       },
+      "SessionDetailView": {
+        "additionalProperties": false,
+        "description": "Session detail's first view: the session, its first page of 1,000 events, its summary\nonce it has ended, its problems when it counts one and its project's features, each as\nits route answers it, and the driver's capabilities as their route answers them, or\n``None`` when the request may not read them, the sessions are off, or the driver does not\nanswer within the read's wait.",
+        "properties": {
+          "capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DriverCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "events": {
+            "$ref": "#/components/schemas/Page_TimelineEvent_"
+          },
+          "features": {
+            "$ref": "#/components/schemas/Page_FeatureView_"
+          },
+          "problems": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionProblems"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "session",
+          "events",
+          "summary",
+          "problems",
+          "features",
+          "capabilities"
+        ],
+        "title": "SessionDetailView",
+        "type": "object"
+      },
       "SessionFileChange": {
         "additionalProperties": false,
         "description": "A path a session touched, its operations and line counts (no content is stored).",
@@ -13759,6 +13936,62 @@
         "title": "SessionSummary",
         "type": "object"
       },
+      "SessionsView": {
+        "additionalProperties": false,
+        "description": "The Sessions inbox's first view: each status section's first page of 50 as ``GET /sessions``\nanswers it for the scope and sort (``from`` bounds Finished only), every project's card, every\nproject's features, and the agent sessions and the driver's capabilities as their routes\nanswer them, or ``None`` when the request may not read them, the sessions are off, or (the\ncapabilities only) the driver does not answer within the read's wait.",
+        "properties": {
+          "agent_sessions": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentSessionList"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DriverCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ended": {
+            "$ref": "#/components/schemas/Page_Session_"
+          },
+          "features": {
+            "$ref": "#/components/schemas/Page_FeatureView_"
+          },
+          "idle": {
+            "$ref": "#/components/schemas/Page_Session_"
+          },
+          "live": {
+            "$ref": "#/components/schemas/Page_Session_"
+          },
+          "projects": {
+            "$ref": "#/components/schemas/Page_ProjectSummary_"
+          },
+          "waiting": {
+            "$ref": "#/components/schemas/Page_Session_"
+          }
+        },
+        "required": [
+          "waiting",
+          "live",
+          "idle",
+          "ended",
+          "projects",
+          "agent_sessions",
+          "capabilities",
+          "features"
+        ],
+        "title": "SessionsView",
+        "type": "object"
+      },
       "SetEnvironment": {
         "additionalProperties": false,
         "description": "A change to an environment: a field left out stays; an empty text removes the key.\n\nOn a ``hub.json`` environment, the ``local`` scope may change only ``access`` (stricter)\nand ``values`` (the developer's, which win per key over the team's).",
@@ -14123,6 +14356,62 @@
         ],
         "title": "Severity",
         "type": "string"
+      },
+      "ShellProject": {
+        "additionalProperties": false,
+        "description": "A project in the shell's switcher: its name and how many of its sessions are live.",
+        "properties": {
+          "live_sessions": {
+            "minimum": 0.0,
+            "title": "Live Sessions",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "live_sessions"
+        ],
+        "title": "ShellProject",
+        "type": "object"
+      },
+      "ShellView": {
+        "additionalProperties": false,
+        "description": "The app shell's facts: how many hubs are registered, every project, the features that\nneed you in the scope, and whether any project has a workflow run.",
+        "properties": {
+          "features_needing_you": {
+            "minimum": 0.0,
+            "title": "Features Needing You",
+            "type": "integer"
+          },
+          "has_workflow_runs": {
+            "title": "Has Workflow Runs",
+            "type": "boolean"
+          },
+          "hub_count": {
+            "minimum": 0.0,
+            "title": "Hub Count",
+            "type": "integer"
+          },
+          "projects": {
+            "items": {
+              "$ref": "#/components/schemas/ShellProject"
+            },
+            "title": "Projects",
+            "type": "array"
+          }
+        },
+        "required": [
+          "hub_count",
+          "projects",
+          "features_needing_you",
+          "has_workflow_runs"
+        ],
+        "title": "ShellView",
+        "type": "object"
       },
       "SingleEdit": {
         "discriminator": {
@@ -19216,7 +19505,7 @@
     },
     "/api/v1/doctor/findings": {
       "get": {
-        "description": "Findings of every (or one) project, as ``hub doctor --json`` reports them.",
+        "description": "Findings of every (or one) project, as ``hub doctor --json`` reports them, from the last\nbackground check, with when the oldest of those checks ended.",
         "operationId": "list_doctor_findings_api_v1_doctor_findings_get",
         "parameters": [
           {
@@ -19243,7 +19532,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_FindingView_"
+                  "$ref": "#/components/schemas/DoctorFindings"
                 }
               }
             },
@@ -24106,6 +24395,337 @@
         "summary": "Start Scenario",
         "tags": [
           "scenarios"
+        ]
+      }
+    },
+    "/api/v1/screens/portfolio": {
+      "get": {
+        "description": "Home's first view in one read: every project's card (as ``GET /projects``), what needs\nyou in the scope (as ``GET /needs-you``) and the scope's first activity page of 20 items (as\n``GET /activity?limit=20``).",
+        "operationId": "read_portfolio_api_v1_screens_portfolio_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortfolioView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Read Portfolio",
+        "tags": [
+          "screens"
+        ]
+      }
+    },
+    "/api/v1/screens/project-overview/{project}": {
+      "get": {
+        "description": "The Project overview's first view in one read: the project's header, findings, every\ncard, what needs you, its first 200 runs, ``now.md``, features, repos and config, each as its\nroute answers it, and ``recent_sessions``: of its 200 sessions newest by last activity, those\nof the issues with a session active in the last 7 days. An unknown project answers 404, as\n``GET /projects/{project}`` does.",
+        "operationId": "read_project_overview_api_v1_screens_project_overview__project__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectOverviewView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Read Project Overview",
+        "tags": [
+          "screens"
+        ]
+      }
+    },
+    "/api/v1/screens/session-detail/{session_id}": {
+      "get": {
+        "description": "Session detail's first view in one read: the session (as ``GET /sessions/{session_id}``),\nits first 1,000 events of every type (as ``GET /sessions/{session_id}/events?limit=1000``),\nits summary once it has ended (as ``GET /sessions/{session_id}/summary``, else null), its\nproblems when it counts one (as ``GET /sessions/{session_id}/problems``, else null) and its\nproject's features (as ``GET /features?project=``). ``capabilities`` answers as ``GET\n/agent-sessions/capabilities`` only for a request that route would answer (the launch cookie,\nthis server's pages, the sessions on), else null; it is also null while the driver is still\nchecking ``claude``. An unknown session answers 404, as ``GET /sessions/{session_id}`` does.",
+        "operationId": "read_session_detail_api_v1_screens_session_detail__session_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionDetailView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Read Session Detail",
+        "tags": [
+          "screens"
+        ]
+      }
+    },
+    "/api/v1/screens/sessions": {
+      "get": {
+        "description": "The Sessions inbox's first view in one read: each status section's first page of 50 (as\n``GET /sessions?status=&project=&sort=&limit=50``, ``from`` on Finished only), every\nproject's card (as ``GET /projects``) and every project's features (as ``GET /features``).\n``agent_sessions`` and ``capabilities`` answer as ``GET /agent-sessions?project=`` and ``GET\n/agent-sessions/capabilities`` only for a request those routes would answer (the launch\ncookie, this server's pages, the sessions on), else null; ``capabilities`` is also null while\nthe driver is still checking ``claude``.",
+        "operationId": "read_sessions_api_v1_screens_sessions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "-started_at",
+              "enum": [
+                "started_at",
+                "-started_at",
+                "last_activity_at",
+                "-last_activity_at",
+                "cost",
+                "-cost"
+              ],
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Read Sessions",
+        "tags": [
+          "screens"
+        ]
+      }
+    },
+    "/api/v1/screens/shell": {
+      "get": {
+        "description": "The app shell's facts in one read: how many hubs are registered, every project with its\nlive sessions, how many features of the scope need you, and whether any project has a\nworkflow run. The feature list behind the count is kept 30 s.",
+        "operationId": "read_shell_api_v1_screens_shell_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShellView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Read Shell",
+        "tags": [
+          "screens"
         ]
       }
     },

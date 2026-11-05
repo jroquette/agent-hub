@@ -121,6 +121,8 @@ const HEALTH_LABEL = {
   warning: "Health: doctor warnings",
   error: "Health: doctor errors",
 } as const;
+/** The health of a hub the doctor has not checked yet, here and in the overview's header. */
+export const UNCHECKED_HEALTH_LABEL = "Health: doctor has not run for this hub";
 
 export function projectCard(project: ProjectSummary): ProjectCardData {
   const delta = costDelta(project.cost_period, project.cost_previous_period);
@@ -133,9 +135,7 @@ export function projectCard(project: ProjectSummary): ProjectCardData {
     syncPending: project.lock_state === "sync_pending" || project.lock_state === "drift",
     repos: project.repos,
     health: project.hub_health,
-    healthLabel: project.hub_health
-      ? HEALTH_LABEL[project.hub_health]
-      : "Health: doctor has not run for this hub",
+    healthLabel: project.hub_health ? HEALTH_LABEL[project.hub_health] : UNCHECKED_HEALTH_LABEL,
     live: project.live_sessions,
     runsInProgress: inFlight(project),
     stages: stageCounts(project.runs_in_flight_by_stage),

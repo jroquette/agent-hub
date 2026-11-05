@@ -10,8 +10,9 @@ Seam: ``chromium_executable(environ, *, web_dir)`` returns a path string or ``No
 ``page_rows(env, *, npm, node, chromium, web_dir, pages, runs, results, runner)`` returns one item
 per page with ``kind``, ``path``, ``samples_ms``, ``api_calls`` and ``reason`` (set only when
 skipped). ``runner`` is called like ``environment.Runner`` (``argv``, ``cwd``, ``env``); the spec
-appends one JSON object per line, ``{path, run, ready_ms, api_calls, dom_nodes}``, to
-``PERF_PAGES_OUT``; ``dom_nodes`` is a reported field only, and an older line has none."""
+appends one JSON object per line, ``{path, run, ready_ms, api_calls, dom_nodes, api_kb}``, to
+``PERF_PAGES_OUT``; ``dom_nodes`` and ``api_kb`` (the run's ``/api/v1/`` response bytes, in KB)
+are reported fields only, and an older line has neither."""
 
 import json
 import os
@@ -26,10 +27,11 @@ from scripts.perf.environment import child_env
 from scripts.perf.fixture import FEATURE_SLUG, PAGE_SESSION
 from scripts.perf.pages import chromium_executable, page_env, page_rows, web_deps_missing
 
-# The page rows, written out by hand: the sessions list and a note in a 100-note Brain folder
-# come last.
+# The page rows, written out by hand: the sessions list, a note in a 100-note Brain folder and
+# the Project overview come last.
 SESSIONS_PAGE = "/sessions"
 BRAIN_PAGE = "/projects/perf/brain/tree-3/note-050.md"
+OVERVIEW_PAGE = "/projects/perf"
 PAGES = (
     "/",
     "/features",
@@ -37,6 +39,7 @@ PAGES = (
     f"/sessions/{PAGE_SESSION}",
     SESSIONS_PAGE,
     BRAIN_PAGE,
+    OVERVIEW_PAGE,
 )
 NPM = "/usr/local/bin/npm"
 NODE = "/usr/local/bin/node"
@@ -318,6 +321,7 @@ def test_reads_page_rows_when_the_spec_wrote_results(tmp_path: Path) -> None:
         ("page", f"/sessions/{PAGE_SESSION}", [400.0, 401.0], 5, None),
         ("page", SESSIONS_PAGE, [500.0, 501.0], 6, None),
         ("page", BRAIN_PAGE, [600.0, 601.0], 7, None),
+        ("page", OVERVIEW_PAGE, [700.0, 701.0], 8, None),
     ]
     assert [
         (row.kind, row.path, list(row.samples_ms), row.api_calls, row.reason) for row in rows
@@ -372,3 +376,37 @@ def test_leaves_dom_nodes_empty_when_lines_have_none(tmp_path: Path) -> None:
 
     assert len(rows) == len(PAGES)
     assert [row.dom_nodes for row in rows] == [None] * len(PAGES)
+
+
+@pytest.mark.parametrize(
+    "sizes",
+    [pytest.param((798.6, 812.4), id="rising"), pytest.param((812.4, 798.6), id="falling")],
+)
+def test_reads_api_kb_when_the_spec_wrote_results(
+    tmp_path: Path, sizes: tuple[float, float]
+) -> None:
+    lines: list[dict[str, object]] = []
+    for line in _results_lines():
+        run = line["run"]
+        assert isinstance(run, int)
+        lines.append({**line, "api_kb": sizes[run] if line["path"] == OVERVIEW_PAGE else 12.5})
+    assert [line["api_kb"] for line in lines if line["path"] == OVERVIEW_PAGE] == list(sizes)
+
+    rows = _measured(tmp_path, lines)
+
+    # By hand: the most kilobytes one run of the page read, whichever run read them.
+    assert {row.path: row.api_kb for row in rows} == {
+        **dict.fromkeys(PAGES, 12.5),
+        OVERVIEW_PAGE: 812.4,
+    }
+
+
+def test_leaves_api_kb_empty_when_lines_have_none(tmp_path: Path) -> None:
+    lines = _results_lines()
+    assert len(lines) == 2 * len(PAGES)
+    assert [line for line in lines if "api_kb" in line] == []
+
+    rows = _measured(tmp_path, lines)
+
+    assert len(rows) == len(PAGES)
+    assert [row.api_kb for row in rows] == [None] * len(PAGES)

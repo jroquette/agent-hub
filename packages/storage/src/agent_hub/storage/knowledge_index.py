@@ -45,7 +45,7 @@ from agent_hub.core.knowledge.knowledge_index import (
 )
 from agent_hub.core.knowledge.search_query import fts5_match, snippet_line
 from agent_hub.storage.db import knowledge_documents, knowledge_links
-from agent_hub.storage.engine import BUSY_TIMEOUT_MS, create_sqlite_engine
+from agent_hub.storage.engine import BUSY_TIMEOUT_MS, create_sqlite_engine, dispose_when_dropped
 from agent_hub.storage.errors import (
     DatabaseAccessError,
     Fts5UnavailableError,
@@ -123,6 +123,7 @@ class SqliteKnowledgeIndex:
 
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
+        dispose_when_dropped(self, engine)
 
     def stored(self, hub: str) -> StoredIndex:
         """What the hub's rows remember, by path; ``version`` only when every row shares it."""
@@ -233,6 +234,14 @@ class SqliteKnowledgeIndex:
             Backlink(path=row["path"], kind=row["kind"], title=row["title"]) for row in rows
         )
         return Backlinks(items=items, total=total)
+
+    def close(self) -> None:
+        """Close the idle connections the index's engine keeps; a later use opens new ones.
+
+        One checked out at that moment is not closed here: it goes back to the old pool when it
+        returns, and closes when that pool is garbage collected.
+        """
+        self._engine.dispose()
 
     @contextmanager
     def _writing(self) -> Iterator[Connection]:

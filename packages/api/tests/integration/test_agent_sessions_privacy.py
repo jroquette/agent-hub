@@ -17,7 +17,7 @@ import sqlite3
 import sys
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -114,9 +114,16 @@ def opened_files() -> Iterator[list[str]]:
 
 @contextmanager
 def _composed(
-    settings: ApiSettings, *, projects_root: Path, web_dist: Path, driver: InMemorySessionDriver
+    settings: ApiSettings,
+    *,
+    projects_root: Path,
+    web_dist: Path,
+    driver: InMemorySessionDriver,
+    tickers: Mapping[str, Any],
 ) -> Iterator[TestClient]:
-    app = build_app(settings, projects_root=projects_root, web_dist=web_dist, session_driver=driver)
+    app = build_app(
+        settings, projects_root=projects_root, web_dist=web_dist, session_driver=driver, **tickers
+    )
     origin = f"http://127.0.0.1:{settings.port}"
     with TestClient(
         app, base_url=origin, headers={"Origin": origin}, raise_server_exceptions=False
@@ -159,6 +166,7 @@ def test_leaks_no_sentinel_when_session_runs_one_turn_credentials(  # noqa: PLR0
     projects_root: Path,
     web_dist: Path,
     make_hub: Any,
+    manual_tickers: dict[str, Any],
 ) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", API_KEY)
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_TOKEN)
@@ -169,7 +177,11 @@ def test_leaks_no_sentinel_when_session_runs_one_turn_credentials(  # noqa: PLR0
     )
     answers: list[str] = []
     with _composed(
-        settings, projects_root=projects_root, web_dist=web_dist, driver=driver
+        settings,
+        projects_root=projects_root,
+        web_dist=web_dist,
+        driver=driver,
+        tickers=manual_tickers,
     ) as client:
         assert (
             client.post(

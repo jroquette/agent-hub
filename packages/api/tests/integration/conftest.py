@@ -13,9 +13,14 @@ for the knowledge routes (AGH-393); ``offline`` fails every non-loopback ``socke
 
 ``counted_sql`` counts the SQL statements and the new database connections of every SQLAlchemy
 engine in the process while its block runs, so a test can pin a route's queries.
+
+``request_reads`` records the paths read inside the HTTP requests of an app it armed, on the
+request's own thread only, so the background parts' reads never count.
 """
 
 import asyncio
+import builtins
+import io
 import json
 import os
 import re
@@ -27,6 +32,7 @@ import threading
 import time
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, closing, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from importlib.metadata import version
@@ -42,6 +48,7 @@ from typer.testing import CliRunner
 
 from agent_hub.api.app import create_app
 from agent_hub.api.composition import build_app
+from agent_hub.api.connected_browsers import ConnectedBrowsers
 from agent_hub.api.dependencies import ApiPorts
 from agent_hub.api.session_token import cookie_name
 from agent_hub.api.settings import ApiSettings
@@ -103,10 +110,21 @@ class Composed:
     settings: ApiSettings
     projects: Path
     store: SqliteEventStore
+    tickers: Mapping[str, Any] = field(default_factory=dict)
+    # The app's count of open global streams (``ApiPorts.browsers``).
+    browsers: ConnectedBrowsers | None = None
 
     def rows(self) -> list[Event]:
         """Every stored event, in append order."""
         return self.store.read_all()
+
+    def refresh(self) -> None:
+        """One tick of the background doctor (its ``refresh_ticker``), on the caller's thread."""
+        self.tickers["refresh_ticker"].tick()
+
+    def warm(self) -> None:
+        """One tick of the ticket warmer (its ``warm_ticker``), on the caller's thread."""
+        self.tickers["warm_ticker"].tick()
 
 
 @pytest.fixture
@@ -133,29 +151,44 @@ type ComposedOpener = Callable[..., Any]
 
 @pytest.fixture
 def open_composed(
-    composed_settings: ApiSettings, projects_root: Path, web_dist: Path
+    composed_settings: ApiSettings,
+    projects_root: Path,
+    web_dist: Path,
+    *,
+    manual_tickers: dict[str, Any],
 ) -> Iterator[Callable[..., Composed]]:
-    """Opens ``build_app`` on the temp paths; ``build_app`` keywords may be overridden."""
+    """Opens ``build_app`` on the temp paths; ``build_app`` keywords may be overridden.
+
+    The app's background tickers are ``manual_tickers``, which ``Composed.refresh()`` and
+    ``Composed.warm()`` drive.
+    """
     clients: list[TestClient] = []
+    stores: list[SqliteEventStore] = []
 
     def opened(settings: ApiSettings = composed_settings, **options: Any) -> Composed:
         app = build_app(
             settings,
-            **({"projects_root": projects_root, "web_dist": web_dist} | options),
+            **({"projects_root": projects_root, "web_dist": web_dist} | manual_tickers | options),
         )
         client = TestClient(app, base_url=COMPOSED_URL, raise_server_exceptions=False)
         client.__enter__()
         clients.append(client)
+        store = open_event_store(settings.db_path)
+        stores.append(store)
         return Composed(
             client=client,
             settings=settings,
             projects=projects_root,
-            store=open_event_store(settings.db_path),
+            store=store,
+            tickers=manual_tickers,
+            browsers=app.state.ports.browsers,
         )
 
     yield opened
     for client in clients:
         client.__exit__(None, None, None)
+    for store in stores:
+        store.close()
 
 
 @pytest.fixture
@@ -167,7 +200,7 @@ def composed(open_composed: Callable[..., Composed]) -> Composed:
 @dataclass
 class SqlCounts:
     """What ``counted_sql`` saw: statements sent through a cursor (``BEGIN`` included) and new
-    DB-API connections opened (with ``NullPool``, one per connection checkout)."""
+    DB-API connections a pool opened (none on a warm route, served by idle pooled ones)."""
 
     statements: int = 0
     connections: int = 0
@@ -210,6 +243,125 @@ def counted_sql() -> Iterator[SqlCounts]:
 def count_sql() -> Callable[[], AbstractContextManager[SqlCounts]]:
     """``counted_sql``, for a test module (helpers reach tests as fixtures)."""
     return counted_sql
+
+
+# True for the length of each HTTP request of an app ``RequestReads.wrap`` armed; anyio runs a
+# route's worker thread in a copy of the request's context, and the background parts' threads
+# never see it.
+_IN_REQUEST: ContextVar[bool] = ContextVar("in_request", default=False)
+
+
+def _read_name(path: Any, dir_fd: int | None) -> str:
+    if isinstance(path, int):
+        return f"<fd {path}>"
+    name = os.fsdecode(path)
+    if dir_fd is not None:
+        return f"<fd {dir_fd}>/{name}"
+    return os.path.join(os.getcwd(), name)
+
+
+@dataclass
+class RequestReads:
+    """The paths read on a request's thread, once ``wrap`` armed the app.
+
+    Each read is ``(call, path)``: ``path`` is absolute when named from the current folder,
+    ``<fd N>/<name>`` when relative to an open folder and ``<fd N>`` for a descriptor.
+    """
+
+    reads: list[tuple[str, str]] = field(default_factory=list)
+    _guard: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+
+    def wrap(self, app: Any) -> None:
+        """Record the reads of each HTTP request ``app`` serves from now on."""
+        inner = app.middleware_stack or app.build_middleware_stack()
+
+        async def marked(scope: Any, receive: Any, send: Any) -> None:
+            token = _IN_REQUEST.set(scope["type"] == "http")
+            try:
+                await inner(scope, receive, send)
+            finally:
+                _IN_REQUEST.reset(token)
+
+        app.middleware_stack = marked
+
+    def record(self, call: str, path: Any, dir_fd: int | None = None) -> None:
+        if _IN_REQUEST.get():
+            name = _read_name(path, dir_fd)
+            with self._guard:
+                self.reads.append((call, name))
+
+    def clear(self) -> None:
+        with self._guard:
+            self.reads.clear()
+
+    def paths(self) -> set[str]:
+        """Every path recorded."""
+        with self._guard:
+            return {path for _, path in self.reads}
+
+    def under(self, folder: Path) -> set[str]:
+        """The recorded paths at or below ``folder`` (by their normalized form)."""
+        real = os.path.realpath(folder)
+        return {
+            path
+            for path in self.paths()
+            if (normal := os.path.normpath(path)) == real or normal.startswith(real + os.sep)
+        }
+
+    def relative(self) -> set[str]:
+        """The recorded reads of a descriptor or relative to an open folder."""
+        return {path for path in self.paths() if path.startswith("<fd")}
+
+
+def _recorded_call(reads: RequestReads, call: str, real: Callable[..., Any]) -> Callable[..., Any]:
+    """``real`` (``os.open``, ``os.stat`` or ``os.lstat``), each call recorded in ``reads``."""
+
+    def recorded(path: Any, *args: Any, dir_fd: int | None = None, **kwargs: Any) -> Any:
+        reads.record(call, path, dir_fd)
+        return real(path, *args, dir_fd=dir_fd, **kwargs)
+
+    return recorded
+
+
+def _recorded_listing(
+    reads: RequestReads, call: str, real: Callable[..., Any]
+) -> Callable[..., Any]:
+    """``real`` (``os.scandir`` or ``os.listdir``), each call recorded in ``reads``."""
+
+    def recorded(path: Any = os.curdir) -> Any:
+        # ``os.listdir(None)`` lists the current folder.
+        reads.record(call, os.curdir if path is None else path)
+        return real(path)
+
+    return recorded
+
+
+def _recorded_open(reads: RequestReads, real: Callable[..., Any]) -> Callable[..., Any]:
+    """The builtin ``open``, each call given a path (not a descriptor) recorded in ``reads``."""
+
+    def recorded(file: Any, *args: Any, **kwargs: Any) -> Any:
+        if not isinstance(file, int):
+            reads.record("builtin-open", file)
+        return real(file, *args, **kwargs)
+
+    return recorded
+
+
+@pytest.fixture
+def request_reads(monkeypatch: pytest.MonkeyPatch) -> RequestReads:
+    """Every path given to ``os.open``, ``os.stat``, ``os.lstat``, ``os.scandir``,
+    ``os.listdir`` and the builtin (and ``io``) ``open``, as the cli's ``path_reads`` names them,
+    but only inside an HTTP request of an app ``request_reads.wrap(app)`` armed: a read on the
+    test's thread or a background part's is not recorded. Each call goes through."""
+    reads = RequestReads()
+    for call in ("open", "stat", "lstat"):
+        monkeypatch.setattr(os, call, _recorded_call(reads, call, getattr(os, call)))
+    for call in ("scandir", "listdir"):
+        monkeypatch.setattr(os, call, _recorded_listing(reads, call, getattr(os, call)))
+    recorded_open = _recorded_open(reads, builtins.open)
+    monkeypatch.setattr(builtins, "open", recorded_open)
+    monkeypatch.setattr(io, "open", recorded_open)
+    return reads
 
 
 type HubFactory = Callable[..., Path]

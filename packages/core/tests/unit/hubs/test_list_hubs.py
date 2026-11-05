@@ -105,6 +105,11 @@ def test_names_lock_state_when_lock_read(
     assert lock_view(lock, pin=pin, has_drift=lambda: drift) == expected  # type: ignore[arg-type]
 
 
+def test_leaves_lock_state_unknown_when_drift_not_checked_yet() -> None:
+    # A lock that matches the pin is "drift" or "in_sync" only once the doctor has checked it.
+    assert lock_view(a_lock(RUNNING), pin=RUNNING, has_drift=lambda: None) == (None, RUNNING)
+
+
 def test_reads_not_missing_problem_when_hub_json_folder() -> None:
     registry = InMemoryHubRegistry()
     registry.add("/hubs/odd")

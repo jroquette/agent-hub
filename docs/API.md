@@ -53,8 +53,10 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   /scenario-runs/{run_id}/values` and `POST /scenarios/{project}/{name}/migrate`, the one AGH-596
   added to them: `DELETE /scenarios/{project}/{name}` ([Scenarios](#scenarios)), and the two AGH-393 added
   (`KNOWLEDGE_PATHS`, both GET):
-  `/projects/{project}/knowledge/search` and `/projects/{project}/brain/backlinks` ([Knowledge](#knowledge)). A test
-  fails on any other path.
+  `/projects/{project}/knowledge/search` and `/projects/{project}/brain/backlinks` ([Knowledge](#knowledge)), and the
+  screen reads AGH-623 added (`SCREEN_PATHS`, all GET): `/screens/shell`, `/screens/portfolio`,
+  `/screens/project-overview/{project}`, `/screens/sessions` and `/screens/session-detail/{session_id}`
+  ([Screen reads](#screen-reads)). A test fails on any other path.
 - A field kept only for compatibility is marked `deprecated` in the document and stays until `/api/v2`: a session's
   and a live tile's `agent` (read `label` and `actors`) and a learning's `target` (read `note_path`).
 
@@ -207,6 +209,118 @@ the same operation behaves the same from every entry point ([ARCHITECTURE.md](AR
   Toolkit and Workflows `GET`s also record item versions in agent-hub's database (never in the hub, see Skills), and
   since AGH-393 the knowledge `GET`s sync the knowledge index's derived rows first (see Knowledge).
 
+## Screen reads
+
+A screen read answers a screen's first view in one call, beside the resource routes, so a page stays within
+[ADR 0053](adr/0053-interactive-path-latency-budgets.md)'s 5 calls ([ADR 0056](adr/0056-screen-shaped-reads.md)).
+The rules:
+
+- One family, `GET /api/v1/screens/<screen>`, named after the screen in the sitemap, listed in `SCREEN_PATHS`; query
+  parameters are the resource routes' own, validated the same way. A screen read is added only when the page would
+  make more than 5 calls without it.
+- Each is one core use case (`agent_hub.core.screens.ScreenReads`) composed of the existing read ports: no new data
+  source, no write, no tracker call. A value the browser already derives stays in the browser, unless the server must
+  derive it to bound the payload.
+- Each part keeps its resource's access rule: a part that comes from a guarded route is filled only for a request
+  that route would answer, else it is `null`. For the agent-session parts, `SessionAccessMiddleware` marks a `GET` or
+  `HEAD` that passes the agent-session read checks (the sessions on, the launch cookie, this server's `Origin` and a
+  `Sec-Fetch-Site` of `same-origin` or `none` when sent); every other request is marked false and gets those parts as
+  `null`, with no agent-session read made.
+- A part the web writes under a resource's key is that resource's own model with its own bounds, equal to what the
+  resource route answers for the same parameters. A derived part is never written under a resource's key.
+- The resource routes stay unchanged for the CLI, the MCP server and the other screens. When a screen read fails, the
+  web reads each region from its resource route, so a failure stays in its region.
+- The web makes a screen read once per visit. Moving in place to another project's overview or to another session
+  starts a new visit, with its own read. On Home and Sessions, a change of scope, sort, period or filter keeps the
+  visit and makes no new read: the regions then read their own routes.
+
+`GET /api/v1/screens/shell?project=` → `ShellView`, the app shell's facts:
+
+| Field | Value |
+| --- | --- |
+| `hub_count` | how many hubs are registered, valid or not (`GET /hubs`); 0 sends the app to Welcome |
+| `projects` | every project of `GET /projects`, in its order, whatever the scope, each with its `name` and `live_sessions` (the project switcher) |
+| `features_needing_you` | how many features of the scope the Features list flags as needing you (the sidebar badge): a session waiting on you or idle on one of the feature's issues, a broken record, a NO-SHIP, or an owner decision |
+| `has_workflow_runs` | whether any project has a workflow run (scenario runs aside): the sidebar shows Workflow runs only then |
+
+The feature list behind `features_needing_you` is kept 30 s per scope (the Features list's own refresh), so the
+shell's polls read the live sessions again but not every feature folder; a scope with no feature reads no live
+session. These writes through the app forget the kept lists, so the next read counts them: a change-request
+decision, an owner sign-off, and registering or removing a hub (`POST /hubs`, `DELETE /hubs/{hub_id}`). A feature
+folder changed outside the app shows within 30 s.
+
+When the event database cannot be read or is busy, the shell read answers the same 503 as `GET /live-sessions`
+("Collector database unavailable" or "Collector database busy"). When that is the shell's first read (a page load or
+a new scope), the switcher, the Workflow runs item and the badge hide together; a later poll's failure keeps the last
+facts. When only the live sessions cannot be read, `features_needing_you` still counts.
+
+`GET /api/v1/screens/portfolio?project=` → `PortfolioView`, Home's first view. Each part is its resource's answer
+for the same scope, and the web writes it under that resource's query key:
+
+| Field | Value |
+| --- | --- |
+| `projects` | every project's card, as `GET /projects` answers, whatever the scope |
+| `needs_you` | what waits for a person in the scope, as `GET /needs-you?project=` answers |
+| `activity` | the scope's first activity page of 20 items, as `GET /activity?project=&limit=20` answers; Home's "Load more" reads `GET /activity` |
+
+Skill usage stays its own call (`GET /skill-usage`), so Home loads in 4 calls with the shell's two.
+
+`GET /api/v1/screens/project-overview/{project}` → `ProjectOverviewView`, the Project overview's first view. An
+unknown project answers the same 404 problem as `GET /projects/{project}`. Each resource part is its route's answer,
+and the web writes it under that route's query key:
+
+| Field | Value |
+| --- | --- |
+| `project` | the header, as `GET /projects/{project}` answers |
+| `findings` | the project's doctor findings, as `GET /doctor/findings?project=` answers |
+| `projects` | every project's card, as `GET /projects` answers |
+| `needs_you` | what waits for a person in the project, as `GET /needs-you?project=` answers |
+| `runs` | the project's first 200 runs, as `GET /workflow-runs?project=&limit=200` answers |
+| `now` | the project's `brain/now.md`, as `GET /projects/{project}/now` answers |
+| `features` | the project's features, as `GET /features?project=` answers |
+| `repos` | the project's repos, as `GET /projects/{project}/repos` answers |
+| `config` | the project's hub config, as `GET /projects/{project}/config` answers |
+| `recent_sessions` | derived, never written under a resource's key: of the project's 200 sessions newest by last activity (`GET /sessions?project=&limit=200&sort=-last_activity_at`), those whose issue (the label's, else the session's own, upper case) has a session active in the last 7 days by the server's clock, newest first |
+| `has_sessions` | derived: whether those 200 held any session (Recent work's "No sessions yet.") |
+
+The browser still derives Recent work's rows, the week's numbers and the agents' tickets from these parts. The
+recent sessions are not written under the 200-session key, which the Tickets screen shares and reads whole. The
+feature names stay their own call (`GET /feature-names`), so the overview loads in 4 calls with the shell's two.
+
+`GET /api/v1/screens/sessions?project=&sort=&from=` → `SessionsView`, the Sessions inbox's first view. The parameters
+are `GET /sessions`' own, validated the same way. Each part is its route's answer, and the web writes it under that
+route's query key:
+
+| Field | Value |
+| --- | --- |
+| `waiting` · `live` · `idle` · `ended` | each status section's first page of 50, as `GET /sessions?status=<section>&project=&sort=&limit=50` answers; `from` bounds `ended` only. "Load more" reads `GET /sessions` |
+| `projects` | every project's card, as `GET /projects` answers, whatever the scope (the Repo facet and the cost tile read it) |
+| `features` | every project's features, as `GET /features` answers |
+| `agent_sessions` | the scope's agent sessions, as `GET /agent-sessions?project=` answers; `null` for a request those routes would not answer, or with the sessions off |
+| `capabilities` | whether this machine can drive sessions, as `GET /agent-sessions/capabilities` answers, under the same rule; also `null` when the driver does not answer within 50 ms (it keeps its answer 60 s, then checks `claude` for up to 5 s): the check goes on, and a later read or that route gets its answer |
+
+A `null` agent part is not written under its route's key, so the web reads that route and shows its 401 or 404 as
+before. The inbox loads in 4 calls with the shell's two and its live-tile stream where this machine cannot drive
+sessions; where it can, the workdirs and the cloud starts follow, as before.
+
+`GET /api/v1/screens/session-detail/{session_id}` → `SessionDetailView`, Session detail's first view. An unknown
+session answers the same 404 problem as `GET /sessions/{session_id}`. Each part is its route's answer, and the web
+writes it under that route's query key:
+
+| Field | Value |
+| --- | --- |
+| `session` | the session, as `GET /sessions/{session_id}` answers |
+| `events` | its first page of 1,000 events of every type, as `GET /sessions/{session_id}/events?limit=1000` answers; the next pages read that route |
+| `summary` | its summary lines, as `GET /sessions/{session_id}/summary` answers, once it has ended; `null` before |
+| `problems` | its problems, as `GET /sessions/{session_id}/problems` answers, when it counts one (whoever handled it); `null` otherwise |
+| `features` | its project's features, as `GET /features?project=` answers |
+| `capabilities` | whether this machine can drive sessions, as `GET /agent-sessions/capabilities` answers, under the agent-session rule above; also `null` when the driver does not answer within 50 ms, as on the inbox |
+
+A `null` part is not written under its route's key. The ticket titles stay their own call, so the only read that may
+reach Linear stays where it was. Session detail loads in 3 calls with the shell's two, 4 when its issue names a
+feature (the tickets read); a live session adds its event stream, and the capabilities read follows without the
+cookie or while the driver is checking `claude`.
+
 ## Sessions
 
 `GET /api/v1/sessions` and `GET /api/v1/sessions/{session_id}` carry, besides the folded counts, the fields a Live tile
@@ -220,6 +334,36 @@ filled for the rows of the page only; every one is optional and `null` when ther
 | `needs_you_problem` | the "what went wrong" line of the first problem that needs the owner |
 | `failing_notice` | the same gate or command failed 2 times in a row, or 3 tool errors in the last 5 minutes |
 | `sparkline_60s` | an empty list while the session has not ended (the web fills it from the event stream); `null` once it has ended |
+
+## Hub health
+
+The doctor rules run in a background part of `hub web` (AGH-608), never on a request: the hub, project and findings
+reads answer from each hub's last check.
+
+- `GET /api/v1/doctor/findings?project=` → `DoctorFindings`: a page of findings (`items`, `next_cursor`,
+  `total_estimate`) plus `checked_at`, the end of the oldest last check of the scoped hubs, `null` while one of them
+  has none. With no project scoped and no registered hub that names a project (none registered, or each one's
+  `hub.json` unreadable, for example after its folder moved), `checked_at` is when the last background tick ended,
+  `null` only before the first one ends: no check is coming, so the answer is final.
+- `checked_at` on `ProjectSummary` (`GET /projects`), `ProjectDetail` (`GET /projects/{project}`) and `HubView`
+  (`GET /hubs`, `POST /hubs`) is when the doctor run whose findings the hub's health shows ended (UTC, ISO 8601). It is
+  `null` before the hub's first check, and so are `hub_health` and a `lock_state` that needs the doctor (a lock
+  matching the pin, whose drift only the doctor sees).
+- Every 2 s a tick reads the registry, reads a hub's `hub.json` and `hub.lock` again when the path's own modification
+  time changed (a link pointed at another file) or the time through a link did (an edit to its target), and runs the
+  doctor of each due hub, one at a time. A hub is due when it has no check yet; when a file the doctor watched changed,
+  at least 10 s after its last run ended; when its check is 15 min old; and when the clock was set back before its last
+  run ended. A run that raises keeps the previous findings and `checked_at`, runs again at the next tick, then 10 s
+  doubling up to 15 min; the server logs the hub path and the error's type only.
+- A write through the app reads the registry and the hub's files again before it answers, so the next read shows it:
+  registering or removing a hub, the three config writes (`PUT /projects/{project}/config/local`,
+  `POST /projects/{project}/config/environments|repos`) and the hub actions
+  (`POST /hubs/{hub_id}/platform-sync|doctor-fix`, whatever their outcome). The hub a config write or a hub action
+  wrote is checked at the next tick, the 10 s spacing and any backoff skipped; a new hub is checked then too. An
+  answer of 4xx marks nothing.
+- A hub registry that cannot be read answers 503 "Hub registry unreadable", at start as later, until a tick reads it
+  again; `hub web` still starts. The server logs one warning (the error's type) when the registry stops being
+  readable and one info line when a tick reads it again, not one per tick.
 
 ## Learning decisions
 
@@ -393,6 +537,17 @@ served without a call, concurrent reads of one key share one call (a read waits 
 the app refetches the route; the cache still applies (`as_of` shows its age). `GET /features` and
 `GET /features/{project}/{slug}` never call Linear: they use a warm cache entry, else the plan, and say so in their
 `golden_path` and `tickets_source`.
+
+While a tab of the app is open (each holds `GET /api/v1/events/stream` open) and a key is set, `hub web` keeps that
+cache warm in the background (AGH-613): every 30 s, and at once when the first tab opens, it reads a feature's tickets
+when its snapshot is missing or 14 minutes old (one minute before the 15 minute stale limit, so the list keeps showing
+Linear's data), and a failed one again once its 60 s hold ends; at most 224 features a tick, leaving the rest of the
+cache's 256 entries to the feature pages (how many it leaves out is logged once). It pauses a minute after a
+rate-limit answer, and after a refused key for 15 minutes or until a minute after a new key is set (the cache holds a
+refusal that long). With no key or no tab open it reads nothing and lists no feature folder, and it never reads or
+lists the features of a `"mcp"` hub. While the hub registry cannot be read it warms nothing and logs nothing (the
+server already logs that outage once, above), and it warms again at the first tick that reads the registry. The list
+routes still never call Linear.
 
 ## Plan change requests
 

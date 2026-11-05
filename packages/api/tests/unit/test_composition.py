@@ -2,7 +2,8 @@ import asyncio
 import json
 import sys
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import closing, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -28,10 +29,12 @@ from agent_hub.api.composition import (
     decider_of,
     default_brain_changes,
     hub_read_models,
+    key_digest,
     ticket_snapshots,
     web_url,
     workflow_source_of,
 )
+from agent_hub.api.linear_connection import LinearEnviron, LinearKeyFile
 from agent_hub.api.settings import ApiSettings
 from agent_hub.api.ticket_snapshots import REQUEST_TIMEOUT_SECONDS
 from agent_hub.claude_sessions.cloud_launcher import ClaudeCloudLauncher
@@ -397,6 +400,28 @@ def test_reads_key_at_call_time_when_set_after_app_built() -> None:
     assert KEY not in f"{before.detail} {after.detail}"
 
 
+def test_digests_saved_key_without_holding_it_when_key_saved_from_settings(tmp_path: Path) -> None:
+    """The ticket warmer's ``key_digest``: None without a key; a value for a key saved only in
+    Settings' key file (no ``LINEAR_API_KEY`` in the environment), and another one once a new
+    key is saved there, so a new key ends a refused key's pause; never the key itself."""
+    first_key, second_key = "lin_api_synthetic_first_key", "lin_api_synthetic_second_key"
+    key_file = LinearKeyFile(tmp_path / "linear-api-key")
+    digest = key_digest(LinearEnviron({}, key_file))
+
+    without_key = digest()
+    key_file.write(first_key)
+    first = digest()
+    key_file.write(second_key)
+    second = digest()
+
+    assert without_key is None
+    assert first is not None
+    assert second is not None
+    assert first != second
+    assert first_key not in first
+    assert second_key not in second
+
+
 def test_names_tracker_transport_when_hub_registered() -> None:
     facts = _registered("mcp")
 
@@ -418,13 +443,16 @@ def _session_settings(tmp_path: Path, **fields: Any) -> ApiSettings:
     )
 
 
-def _build(settings: ApiSettings, tmp_path: Path, **options: Any) -> Any:
+def _build(
+    settings: ApiSettings, tmp_path: Path, *, tickers: Mapping[str, Any], **options: Any
+) -> Any:
     return build_app(
         settings,
         projects_root=tmp_path / "projects",
         web_dist=tmp_path / "web_dist",
         brain_changes=InMemoryBrainChangeRequests(FakeBrainOrigin()),
         environ={},
+        **tickers,
         **options,
     )
 
@@ -448,7 +476,7 @@ def test_wires_claude_driver_when_extra_installed() -> None:
 
 
 def test_builds_no_control_when_in_container(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manual_tickers: dict[str, Any]
 ) -> None:
     def no_driver(_environ: Mapping[str, str]) -> Any:
         msg = "no driver is built in the container"
@@ -456,26 +484,37 @@ def test_builds_no_control_when_in_container(
 
     monkeypatch.setattr(composition, "claude_adapters", no_driver)
 
-    app = _build(_session_settings(tmp_path, sessions_off=True), tmp_path)
+    app = _build(_session_settings(tmp_path, sessions_off=True), tmp_path, tickers=manual_tickers)
 
-    ports = app.state.ports
-    assert (ports.agent_sessions, ports.cloud_sessions, ports.agent_session_links) == (
-        None,
-        None,
-        None,
+    with TestClient(app):
+        ports = app.state.ports
+        assert (ports.agent_sessions, ports.cloud_sessions, ports.agent_session_links) == (
+            None,
+            None,
+            None,
+        )
+
+
+def test_wires_control_cloud_and_links_when_sessions_on(
+    tmp_path: Path, manual_tickers: dict[str, Any]
+) -> None:
+    app = _build(
+        _session_settings(tmp_path),
+        tmp_path,
+        tickers=manual_tickers,
+        session_driver=InMemorySessionDriver(),
     )
 
-
-def test_wires_control_cloud_and_links_when_sessions_on(tmp_path: Path) -> None:
-    app = _build(_session_settings(tmp_path), tmp_path, session_driver=InMemorySessionDriver())
-
-    ports = app.state.ports
-    assert isinstance(ports.agent_sessions, AgentSessionControl)
-    assert isinstance(ports.cloud_sessions, CloudSessions)
-    assert isinstance(ports.agent_session_links, AgentSessionLinks)
+    with TestClient(app):
+        ports = app.state.ports
+        assert isinstance(ports.agent_sessions, AgentSessionControl)
+        assert isinstance(ports.cloud_sessions, CloudSessions)
+        assert isinstance(ports.agent_session_links, AgentSessionLinks)
 
 
-def test_wires_capture_when_app_built(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_wires_capture_when_app_built(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manual_tickers: dict[str, Any]
+) -> None:
     passed: dict[str, Any] = {}
     real = composition.hub_read_models
 
@@ -485,20 +524,34 @@ def test_wires_capture_when_app_built(tmp_path: Path, monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(composition, "hub_read_models", spy)
 
-    _build(_session_settings(tmp_path), tmp_path, session_driver=InMemorySessionDriver())
+    app = _build(
+        _session_settings(tmp_path),
+        tmp_path,
+        tickers=manual_tickers,
+        session_driver=InMemorySessionDriver(),
+    )
 
-    capture = passed["capture"]
-    assert isinstance(capture, CaptureItemVersions)
-    # One store on the app's database, behind the same file reader the hub reads use.
-    assert isinstance(capture._store, SqliteItemVersionStore)  # noqa: SLF001 - the wiring
-    assert capture._store._engine.url.database == str(tmp_path / "agent-hub.db")  # noqa: SLF001
-    assert capture._reader is passed["reader"]  # noqa: SLF001 - one reader for both
+    with TestClient(app):
+        capture = passed["capture"]
+        assert isinstance(capture, CaptureItemVersions)
+        # One store on the app's database, behind the same file reader the hub reads use.
+        assert isinstance(capture._store, SqliteItemVersionStore)  # noqa: SLF001 - the wiring
+        assert capture._store._engine.url.database == str(tmp_path / "agent-hub.db")  # noqa: SLF001
+        assert capture._reader is passed["reader"]  # noqa: SLF001 - one reader for both
 
 
-def test_wires_workflow_reads_when_app_built(tmp_path: Path) -> None:
-    app = _build(_session_settings(tmp_path), tmp_path, session_driver=InMemorySessionDriver())
+def test_wires_workflow_reads_when_app_built(
+    tmp_path: Path, manual_tickers: dict[str, Any]
+) -> None:
+    app = _build(
+        _session_settings(tmp_path),
+        tmp_path,
+        tickers=manual_tickers,
+        session_driver=InMemorySessionDriver(),
+    )
 
-    assert isinstance(app.state.ports.workflow_reads, ReadWorkflows)
+    with TestClient(app):
+        assert isinstance(app.state.ports.workflow_reads, ReadWorkflows)
 
 
 def test_reads_hub_workflows_when_hub_has_a_pack(tmp_path: Path) -> None:
@@ -565,16 +618,20 @@ def test_names_no_absolute_path_when_hub_workflows_have_problems(tmp_path: Path)
     assert all(not p.file.startswith("/") for p in problems)
 
 
-def test_ends_unfinished_sessions_when_app_starts(tmp_path: Path) -> None:
+def test_ends_unfinished_sessions_when_app_starts(
+    tmp_path: Path, manual_tickers: dict[str, Any]
+) -> None:
     settings = _session_settings(tmp_path)
-    open_event_store(settings.db_path)
-    store = open_agent_session_store(settings.db_path)
-    store.create(an_agent_session(status=AgentSessionStatus.RUNNING, last_seq=0))
-    app = _build(settings, tmp_path, session_driver=InMemorySessionDriver())
+    open_event_store(settings.db_path).close()
+    with closing(open_agent_session_store(settings.db_path)) as store:
+        store.create(an_agent_session(status=AgentSessionStatus.RUNNING, last_seq=0))
+        app = _build(
+            settings, tmp_path, tickers=manual_tickers, session_driver=InMemorySessionDriver()
+        )
 
-    before = store.get(AGENT_SESSION_ID)
-    with TestClient(app):
-        after = store.get(AGENT_SESSION_ID)
+        before = store.get(AGENT_SESSION_ID)
+        with TestClient(app):
+            after = store.get(AGENT_SESSION_ID)
 
     assert before.status == AgentSessionStatus.RUNNING
     assert after.status == AgentSessionStatus.ENDED
@@ -662,7 +719,7 @@ class CountingStarts:
 
 
 def test_wires_scheduler_when_sessions_on_and_none_when_off(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manual_tickers: dict[str, Any]
 ) -> None:
     built: list[CountingStarts] = []
     real = composition.ScheduledStartsRuntime
@@ -675,12 +732,20 @@ def test_wires_scheduler_when_sessions_on_and_none_when_off(
     monkeypatch.setattr(composition, "ScheduledStartsRuntime", record)
     events = ScriptedEventSource()
 
-    _build(_session_settings(tmp_path, sessions_off=True), tmp_path, event_source=events)
-    assert built == []
+    with TestClient(
+        _build(
+            _session_settings(tmp_path, sessions_off=True),
+            tmp_path,
+            tickers=manual_tickers,
+            event_source=events,
+        )
+    ):
+        assert built == []
 
     app = _build(
         _session_settings(tmp_path),
         tmp_path,
+        tickers=manual_tickers,
         session_driver=InMemorySessionDriver(),
         event_source=events,
     )
@@ -696,10 +761,16 @@ def test_wires_scheduler_when_sessions_on_and_none_when_off(
 # Knowledge reads (AGH-393, P-10)
 
 
+@contextmanager
 def _knowledge_app(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, environ: dict[str, str]
-) -> tuple[TestClient, FakeKnowledgeCheckout]:
-    """``build_app`` with a registered hub ``demo`` whose checkout is a fake: git never runs."""
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    environ: dict[str, str],
+    *,
+    tickers: Mapping[str, Any],
+) -> Iterator[tuple[TestClient, FakeKnowledgeCheckout]]:
+    """``build_app`` with a registered hub ``demo`` whose checkout is a fake: git never runs.
+    The app's lifespan runs while the block does, so its stores close when the block ends."""
     hub = tmp_path / "demo-hub"
     hub.mkdir()
     (hub / "hub.json").write_bytes(_without())
@@ -712,13 +783,14 @@ def _knowledge_app(
         web_dist=tmp_path / "web_dist",
         brain_changes=InMemoryBrainChangeRequests(FakeBrainOrigin()),
         environ=environ,
+        **tickers,
     )
-    client = TestClient(app, base_url="http://127.0.0.1:7420", raise_server_exceptions=False)
-    registered = client.post(
-        "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
-    )
-    assert registered.status_code == 201
-    return client, checkout
+    with TestClient(app, base_url="http://127.0.0.1:7420", raise_server_exceptions=False) as client:
+        registered = client.post(
+            "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+        )
+        assert registered.status_code == 201
+        yield client, checkout
 
 
 def _git_folder(tmp_path: Path) -> str:
@@ -733,7 +805,7 @@ def _git_folder(tmp_path: Path) -> str:
 
 
 def test_opens_knowledge_index_lazily_when_first_search_runs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manual_tickers: dict[str, Any]
 ) -> None:
     opened: list[Path] = []
     real_open = composition.open_knowledge_index
@@ -745,14 +817,16 @@ def test_opens_knowledge_index_lazily_when_first_search_runs(
         return real_open(path)
 
     monkeypatch.setattr(composition, "open_knowledge_index", counting_open)
-    client, _ = _knowledge_app(tmp_path, monkeypatch, {"PATH": _git_folder(tmp_path)})
-    built = len(opened)
-    search = "/api/v1/projects/demo/knowledge/search?q=marker"
+    with _knowledge_app(
+        tmp_path, monkeypatch, {"PATH": _git_folder(tmp_path)}, tickers=manual_tickers
+    ) as (client, _):
+        built = len(opened)
+        search = "/api/v1/projects/demo/knowledge/search?q=marker"
 
-    failed = client.get(search)
-    first = client.get(search)
-    second = client.get(search)
-    backlinks = client.get("/api/v1/projects/demo/brain/backlinks?path=now.md")
+        failed = client.get(search)
+        first = client.get(search)
+        second = client.get(search)
+        backlinks = client.get("/api/v1/projects/demo/brain/backlinks?path=now.md")
 
     assert built == 0
     assert (failed.status_code, failed.json()["title"]) == (503, "Search unavailable")
@@ -764,15 +838,14 @@ def test_opens_knowledge_index_lazily_when_first_search_runs(
 
 
 def test_finds_git_per_call_when_path_changes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manual_tickers: dict[str, Any]
 ) -> None:
     environ: dict[str, str] = {"PATH": str(tmp_path / "empty")}
-    client, _ = _knowledge_app(tmp_path, monkeypatch, environ)
-
-    missing = client.get("/api/v1/projects/demo/knowledge/search?q=marker")
-    no_backlinks = client.get("/api/v1/projects/demo/brain/backlinks?path=now.md")
-    environ["PATH"] = _git_folder(tmp_path)
-    found = client.get("/api/v1/projects/demo/knowledge/search?q=marker")
+    with _knowledge_app(tmp_path, monkeypatch, environ, tickers=manual_tickers) as (client, _):
+        missing = client.get("/api/v1/projects/demo/knowledge/search?q=marker")
+        no_backlinks = client.get("/api/v1/projects/demo/brain/backlinks?path=now.md")
+        environ["PATH"] = _git_folder(tmp_path)
+        found = client.get("/api/v1/projects/demo/knowledge/search?q=marker")
 
     assert (missing.status_code, missing.json()["title"]) == (502, "Could not read the hub's files")
     assert missing.json()["detail"] == "git is not on PATH; install git"
@@ -781,7 +854,7 @@ def test_finds_git_per_call_when_path_changes(
 
 
 def test_answers_problem_when_lazy_index_open_fails_migration(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manual_tickers: dict[str, Any]
 ) -> None:
     adapter_line = "cannot upgrade /private/path/agent-hub.db: disk image is malformed"
 
@@ -789,12 +862,13 @@ def test_answers_problem_when_lazy_index_open_fails_migration(
         raise MigrationError(adapter_line)
 
     monkeypatch.setattr(composition, "open_knowledge_index", failing_open)
-    client, _ = _knowledge_app(tmp_path, monkeypatch, {"PATH": _git_folder(tmp_path)})
-
-    responses = [
-        client.get("/api/v1/projects/demo/knowledge/search?q=marker"),
-        client.get("/api/v1/projects/demo/brain/backlinks?path=now.md"),
-    ]
+    with _knowledge_app(
+        tmp_path, monkeypatch, {"PATH": _git_folder(tmp_path)}, tickers=manual_tickers
+    ) as (client, _):
+        responses = [
+            client.get("/api/v1/projects/demo/knowledge/search?q=marker"),
+            client.get("/api/v1/projects/demo/brain/backlinks?path=now.md"),
+        ]
 
     for response in responses:
         assert response.status_code == 503

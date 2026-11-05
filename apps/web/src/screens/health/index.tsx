@@ -16,6 +16,7 @@ import {
   ProblemError,
   Skeleton,
   StatusBadge,
+  Time,
   Tooltip,
   copyText,
   useCopied,
@@ -23,11 +24,12 @@ import {
   type IconName,
   type Status,
 } from "../../components";
+import { useNow } from "../../lib/clock";
 import { fmtClock } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import { useScope } from "../../lib/scope";
 import { useCollectorState } from "../../shell/GlobalStream";
-import { useFindings, useFixHub, useHubs, useLiveFindings } from "./queries";
+import { useAwaitingFixCheck, useFindings, useFixHub, useHubs, useLiveFindings } from "./queries";
 
 type Finding = components["schemas"]["FindingView"];
 type Severity = components["schemas"]["Severity"];
@@ -232,12 +234,15 @@ function FixOutcome({ result }: { result: FixResult }) {
   );
 }
 
-/** Under the summary: how many findings are fixed without a person, the button and the command. */
-function FixStrip({ all, hubs }: { all: Finding[]; hubs: HubView[] }) {
+/** Under the summary: how many findings are fixed without a person, the button and the command.
+ * `checking`: the list still shows this hub's check from before its last Fix, so the Fix stays
+ * pending. */
+function FixStrip({ all, hubs, checking }: { all: Finding[]; hubs: HubView[]; checking: boolean }) {
   const fix = useFixHub();
   const [asking, setAsking] = useState(false);
   const hub = hubs.length === 1 ? hubs[0] : undefined;
   const result = hub && fix.data?.hub_id === hub.id ? fix.data : undefined;
+  const fixing = fix.isPending || checking;
   const auto = all.filter((f) => fixKind(f) === "auto");
   if (all.length === 0 && !result) return null;
   const person = all.length - auto.length;
@@ -272,13 +277,13 @@ function FixStrip({ all, hubs }: { all: Finding[]; hubs: HubView[] }) {
           <Button
             variant="primary"
             icon="file-pen"
-            disabled={fix.isPending}
+            disabled={fixing}
             onClick={() => {
               fix.reset();
               setAsking(true);
             }}
           >
-            {fix.isPending ? "Fixing…" : `Fix ${plural(auto.length, "finding")}`}
+            {fixing ? "Fixing…" : `Fix ${plural(auto.length, "finding")}`}
           </Button>
         ) : (
           <Tooltip label="Pick one project in the top bar to fix its hub from here.">
@@ -515,21 +520,46 @@ function PlatformLine({ hub, named }: { hub: HubView; named: boolean }) {
   );
 }
 
+/** The check's age, kept current while the screen is open; the `<time>` holds the exact time in
+ * its tooltip. */
+function CheckAge({ iso }: { iso: string }) {
+  const now = useNow(1_000);
+  return <Time iso={iso} ago={Math.max(0, (now - Date.parse(iso)) / 1000)} />;
+}
+
+/** When the last check of the scoped hubs ended (the oldest one's, from the doctor hub web runs
+ * in the background, AGH-608), or that a hub's first check has not ended yet. */
+function CheckedAt({ checkedAt }: { checkedAt: string | null | undefined }) {
+  if (checkedAt === undefined) return null;
+  if (checkedAt === null) return <>The first check is running · </>;
+  return (
+    <>
+      Checked <CheckAge iso={checkedAt} />
+      {" · "}
+    </>
+  );
+}
+
 function Summary({
   counts,
   sev,
   onSev,
   hubs,
+  checkedAt,
   loading,
 }: {
   counts: Record<Severity, number>;
   sev: Record<Severity, boolean>;
   onSev: (s: Severity) => void;
   hubs: HubView[];
+  checkedAt: string | null | undefined;
   loading: boolean;
 }) {
   const command =
     hubs.length === 1 && hubs[0] ? `cd ${hubs[0].path} && ./hub doctor` : "./hub doctor";
+  // Until every scoped hub has a check, nothing passed: no done icon and no "exit 0".
+  const unchecked = checkedAt === null;
+  const exit = counts.error ? 1 : unchecked ? null : 0;
   if (loading) {
     return (
       <div className="ah-card ah-pad ah-stack" aria-busy="true">
@@ -561,7 +591,7 @@ function Summary({
                   cursor: "pointer",
                 }}
               >
-                {s === "error" && counts.error === 0 ? (
+                {s === "error" && counts.error === 0 && !unchecked ? (
                   <Icon name="circle-check" style={{ color: "var(--done)" }} />
                 ) : (
                   <Icon name={SEV[s].icon} style={{ color: `var(--${SEV[s].tone})` }} />
@@ -579,8 +609,11 @@ function Summary({
         </div>
         <span style={{ width: 1, alignSelf: "stretch", background: "var(--border)" }} />
         <span className="ah-small">
-          <span className="ah-subtle">Checked on request, cached up to 15 min · </span>
-          <span className="ah-mono">./hub doctor</span> · exit {counts.error ? 1 : 0}
+          <span className="ah-subtle">
+            <CheckedAt checkedAt={checkedAt} />
+          </span>
+          <span className="ah-mono">./hub doctor</span>
+          {exit !== null && <> · exit {exit}</>}
         </span>
         <span className="ah-grow" />
         <CopyButton label="Copy re-run command" text={command} quiet={false} />
@@ -605,9 +638,15 @@ function Summary({
 /** Health (spec 16, D22): doctor findings grouped by rule, "How to fix" first. */
 export function HealthScreen() {
   const [scope] = useScope();
-  const findings = useFindings(scope);
   const hubs = useHubs();
+  const scopedHubs = (hubs.data?.items ?? []).filter(
+    (hub) => scope === null || hub.project === scope,
+  );
+  // The hub the Fix strip fixes: a Fix keeps the screen waiting only while it is in scope.
+  const fixableHubId = scopedHubs.length === 1 ? scopedHubs[0]?.id : undefined;
+  const findings = useFindings(scope, fixableHubId);
   useLiveFindings();
+  const awaitingFixCheck = useAwaitingFixCheck(findings.data?.checked_at, fixableHubId);
   const { state, asOf } = useCollectorState();
   const { tz } = usePreferences();
   const [sev, setSev] = useState<Record<Severity, boolean>>({
@@ -620,9 +659,6 @@ export function HealthScreen() {
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
 
   const all = findings.data?.items ?? [];
-  const scopedHubs = (hubs.data?.items ?? []).filter(
-    (hub) => scope === null || hub.project === scope,
-  );
   const counts: Record<Severity, number> = { error: 0, warning: 0, info: 0 };
   for (const f of all) counts[f.severity] += 1;
   const anySev = SEVERITIES.some((s) => sev[s]);
@@ -705,6 +741,15 @@ export function HealthScreen() {
         <Skeleton height={40} radius={6} />
       </div>
     ));
+  } else if (all.length === 0 && findings.data.checked_at === null) {
+    // Spec 16's Never ran, without its run-it-yourself step: hub web runs the doctor (AGH-608).
+    body = (
+      <div className="ah-card">
+        <EmptyState title="The doctor has not run on this hub yet.">
+          Results appear here within a few seconds.
+        </EmptyState>
+      </div>
+    );
   } else if (all.length === 0) {
     body = (
       <div className="ah-card">
@@ -768,9 +813,12 @@ export function HealthScreen() {
           toggle("severity", s);
         }}
         hubs={scopedHubs}
+        checkedAt={findings.data?.checked_at}
         loading={findings.isPending}
       />
-      {findings.isSuccess && hubs.isSuccess && <FixStrip all={all} hubs={scopedHubs} />}
+      {findings.isSuccess && hubs.isSuccess && (
+        <FixStrip all={all} hubs={scopedHubs} checking={awaitingFixCheck} />
+      )}
       <div
         style={{
           display: "grid",
@@ -796,7 +844,13 @@ export function HealthScreen() {
             />
           )}
         </div>
-        <div className="ah-stack" style={{ gap: 16, minWidth: 0 }}>
+        {/* Busy after a Fix of the hub in scope until a check newer than it arrives: the list
+            still has what it fixed. */}
+        <div
+          className="ah-stack"
+          style={{ gap: 16, minWidth: 0 }}
+          aria-busy={awaitingFixCheck || undefined}
+        >
           <div className="ah-row">
             <h2 className="ah-h3">Findings, grouped by rule</h2>
             {findings.isSuccess && (

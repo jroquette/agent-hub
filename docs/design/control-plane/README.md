@@ -127,6 +127,51 @@ changes one rule of spec 22:
 - **Route loading.** Route changes keep the previous screen until the new screen's code loads and show the page
   skeleton after 300 ms; the 2 px progress bar of spec 22 is not built.
 
+AGH-608 (`hub web` runs the doctor in the background, [specs/16-health.md](specs/16-health.md)) changes these items of
+specs 16 and 12:
+
+- **Check age.** Health's summary strip says "Checked <age> ago", the end of the last background run, where spec 16
+  shows `AsOfStamp` "Last run … (2 h ago)" (`16-health.md:21,68`); no stale variant, the age says it. The age is a
+  `<time>` with the exact time in its tooltip; before a hub's first background run ends, the strip says "The first
+  check is running". Spec 16's Stale banners (`16-health.md:174-175`) do not show: Health draws no banner, and the
+  age says how old the check is.
+- **Never ran.** Until a hub's first background run ends (a few seconds after `hub web` starts or the hub is
+  registered), nothing has passed:
+  - Health's findings area shows spec 16's Never ran `EmptyState`: "The doctor has not run on this hub yet." /
+    "Results appear here within a few seconds." It has no run-it-yourself step, since `hub web` runs the doctor. The
+    summary strip keeps the error icon, never the `done` icon, and shows no "exit 0", also when other hubs' findings
+    are listed in All projects.
+  - The Project overview header shows Portfolio's idle "Not checked" badge, not a Setup badge, with Portfolio's
+    tooltip and name, "Health: doctor has not run for this hub". Its Health checks
+    block shows spec 12's "Doctor has not run for this hub." (`12-portfolio.md:483`), without the step to run
+    `hub doctor`.
+
+AGH-613 (the Features list in one call, [specs/17-features.md](specs/17-features.md)) changes one item of spec 17:
+
+- **Shipped features leave In progress.** The Features list reads no feature's tickets: it reads only the list, where
+  AC-521.8.5 (`17-features.md:606-608`) has it read a waiting feature's tickets once to warm the Linear snapshot,
+  then read the list again. While a tab is open, `hub web`'s ticket warmer keeps each feature's Linear snapshot warm
+  (it reads a feature's tickets again when its snapshot is 14 min old), and the list's 30 s reread shows a feature
+  moving to Shipped once its tickets are all done.
+
+AGH-623 (each screen's first view in one call, [ADR 0056](../../adr/0056-screen-shaped-reads.md)) changes one rule
+of spec 22 and how the shell's facts arrive:
+
+- **Regions arrive together.** On Portfolio, Project overview, Sessions and Session detail, the regions a screen read
+  covers arrive together, from that one read. Spec 22's "Region independence" (each region loads on its own, the
+  fastest first, `22-first-run-and-errors.md:278`) holds only when the read fails or takes over 5 s: then each region
+  reads its own route, as before, and loads and fails on its own. On Project overview, Recent work draws at once what
+  the cache holds (the last overview read or the sessions route, whichever is newer) until the visit's read answers;
+  after a failed or timed-out read, those rows stay until the sessions route answers. On a visit whose project is not
+  cached (most first visits, and most returns more than 5 min after leaving: the Learnings screen and a session's chat
+  also keep the project cached), the whole page waits for the read. Otherwise Recent work waits only when the cache
+  holds neither the last overview read nor the sessions route's answer.
+- **Shell facts.** The switcher's projects, the Workflow runs item and the Features badge come from one shell read,
+  and they hide together only when its first read fails. When the scope changes, the projects and the runs item stay,
+  and the badge hides until the new scope's count arrives. When the event database cannot be read or is busy, the
+  shell read fails and the three hide together, the badge with them; the badge still counts when only the live
+  sessions cannot be read (AC-374.7, `17-features.md:213-216`).
+
 ## Design system
 
 The control plane of agent-hub is an observability and governance console for teams of AI coding agents. It answers five questions: how are my projects doing (Portfolio), what are the agents doing right now (Live sessions), why did the agent do that (Session timeline), what does it know and what did it learn (Knowledge), and how should work flow and where does it get stuck (Workflows). A busy engineering lead should understand any screen in five seconds and be able to trust it.

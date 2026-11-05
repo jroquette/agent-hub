@@ -27,8 +27,27 @@ export function watch(page: Page, baseURL: string): string[] {
   return problems;
 }
 
-/** AC-200.57: no axe violation of impact serious or critical. */
+/**
+ * Waits until no transition or finite animation runs, so axe reads each colour at rest. Axe reads
+ * a colour once, from the last frame drawn: a button whose background is still fading
+ * (`.ah-btn`'s transition), or the message box's hint fading in for 120 ms once the box takes
+ * focus, would be judged part way. Endless animations (a pulse) are not waited for.
+ */
+async function settle(page: Page): Promise<void> {
+  await page.waitForFunction(() =>
+    document
+      .getAnimations()
+      .every(
+        (animation) =>
+          animation.playState !== "running" ||
+          animation.effect?.getComputedTiming().endTime === Infinity,
+      ),
+  );
+}
+
+/** AC-200.57: no axe violation of impact serious or critical, read once the page's motion ends. */
 export async function expectAccessible(page: Page): Promise<void> {
+  await settle(page);
   // @axe-core/playwright types a slightly older Page; the runtime object is the same.
   const options = { page } as unknown as ConstructorParameters<typeof AxeBuilder>[0];
   const results = await new AxeBuilder(options).analyze();

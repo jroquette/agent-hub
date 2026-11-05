@@ -30,7 +30,7 @@ from agent_hub.core.item_versions.item_version import (
 )
 from agent_hub.core.item_versions.version_store import ItemVersionSequenceError
 from agent_hub.storage.db import item_versions
-from agent_hub.storage.engine import create_sqlite_engine
+from agent_hub.storage.engine import create_sqlite_engine, dispose_when_dropped
 from agent_hub.storage.errors import DatabaseAccessError, describe_database_error
 from agent_hub.storage.event_store import DatabaseBusyError
 from agent_hub.storage.migration import upgrade_to_head
@@ -43,6 +43,7 @@ class SqliteItemVersionStore:
 
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
+        dispose_when_dropped(self, engine)
 
     def append(self, version: NewItemVersion) -> ItemVersion:
         """Store ``version`` when its ``seq`` is the unit's next one, minting a UUIDv7 id."""
@@ -110,6 +111,14 @@ class SqliteItemVersionStore:
         )
         with self._reading() as connection:
             return connection.execute(statement).first() is not None
+
+    def close(self) -> None:
+        """Close the idle connections the store's engine keeps; a later use opens new ones.
+
+        One checked out at that moment is not closed here: it goes back to the old pool when it
+        returns, and closes when that pool is garbage collected.
+        """
+        self._engine.dispose()
 
     @contextmanager
     def _writing(self) -> Iterator[Connection]:

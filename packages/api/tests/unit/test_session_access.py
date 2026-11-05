@@ -2,9 +2,10 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
-from starlette.types import Receive, Scope, Send
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from agent_hub.api.session_access import (
+    AGENT_SESSION_READS,
     SessionAccessMiddleware,
     exchange_location,
     is_agent_session_path,
@@ -191,3 +192,77 @@ def test_turns_values_read_off_when_in_container(*, signed_in: bool) -> None:
 
     assert response.status_code == 404
     assert response.json()["type"] == "urn:agent-hub:problem:run-control-off"
+
+
+# The agent-session read mark (ADR 0056 "Access"): written on every request passed on, True only
+# for a GET or HEAD that the agent-session read checks pass.
+SCREEN = "/api/v1/screens/sessions"
+OWN_PAGE = {"origin": f"http://{HOST}"}
+
+
+class MarkRecorder:
+    """An inner app that answers every request and records the mark each one carried."""
+
+    def __init__(self) -> None:
+        self.marks: list[object] = []
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        self.marks.append(scope.get(AGENT_SESSION_READS, "absent"))
+        await _served(scope, receive, send)
+
+
+def _marked_before(app: ASGIApp) -> ASGIApp:
+    """``app`` behind an outer app that sets the mark to True first."""
+
+    async def marked(scope: Scope, receive: Receive, send: Send) -> None:
+        scope[AGENT_SESSION_READS] = True
+        await app(scope, receive, send)
+
+    return marked
+
+
+@pytest.mark.parametrize(
+    ("method", "headers", "signed_in", "sessions_off", "marked_before", "expected"),
+    [
+        ("GET", OWN_PAGE, True, False, False, True),
+        ("HEAD", OWN_PAGE, True, False, False, True),
+        ("POST", OWN_PAGE, True, False, False, False),
+        ("GET", OWN_PAGE, False, False, False, False),
+        ("GET", {"sec-fetch-site": "same-site"}, True, False, False, False),
+        ("GET", OWN_PAGE, True, True, False, False),
+        ("GET", OWN_PAGE, False, False, True, False),
+    ],
+    ids=[
+        "get-own-page",
+        "head-own-page",
+        "post-own-page",
+        "get-without-cookie",
+        "get-same-site",
+        "get-sessions-off",
+        "marked-earlier-without-cookie",
+    ],
+)
+def test_marks_agent_session_reads_only_when_get_passes_read_checks(
+    method: str,
+    headers: dict[str, str],
+    *,
+    signed_in: bool,
+    sessions_off: bool,
+    marked_before: bool,
+    expected: bool,
+) -> None:
+    recorder = MarkRecorder()
+    middleware = SessionAccessMiddleware(
+        recorder, port=7420, token=TOKEN, sessions_off=sessions_off
+    )
+    client = TestClient(
+        _marked_before(middleware) if marked_before else middleware, base_url=f"http://{HOST}"
+    )
+    if signed_in:
+        client.cookies.set("agent_hub_7420", TOKEN)
+
+    response = client.request(method, SCREEN, headers=headers)
+
+    assert response.status_code == 200
+    (mark,) = recorder.marks
+    assert mark is expected

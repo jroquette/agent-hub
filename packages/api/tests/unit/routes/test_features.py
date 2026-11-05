@@ -6,8 +6,10 @@ from typing import Any
 
 import pytest
 
+from agent_hub.api.change_request_files import HubDecisionWriter
 from agent_hub.api.owner_signoff_files import HubEvalWriter, ProjectHubPaths
 from agent_hub.api.rfc9457 import owner_signoff_problem
+from agent_hub.core.features.change_request_decision import DecideChangeRequest
 from agent_hub.core.features.feature_status import FeatureFolder
 from agent_hub.core.features.feature_view import AcRow, FeatureCost, FeatureDetail
 from agent_hub.core.features.owner_signoff import OwnerSignOffError, SignOffOwnerSteps
@@ -20,6 +22,7 @@ from agent_hub.core.testing.read_model_builders import (
     a_plan_view,
     an_acceptance_eval,
 )
+from agent_hub.core.workflows.launch import RunGuard
 from agent_hub.generator.feature_files import read_feature_folder
 
 SIGNED_AT = datetime(2026, 10, 17, 12, 0, tzinfo=UTC)
@@ -153,6 +156,7 @@ def _signoff_hub(tmp_path: Path, wired: Any, verdict: str) -> Path:
         platform_version="0.8.0",
         lock_version="0.8.0",
         lock_state="in_sync",
+        checked_at=None,
         modules=(),
     )
     sign_off = SignOffOwnerSteps(
@@ -279,3 +283,71 @@ def test_answers_not_found_when_signoff_feature_unknown(tmp_path: Path, wired: A
     response = wired.client.post("/api/v1/features/demo/nope/owner-signoff")
 
     assert response.status_code == 404
+
+
+# The Origin of the app's own pages, which the decision route's callers send.
+OWN = {"Origin": "http://127.0.0.1:7420"}
+SIGNOFF = "/api/v1/features/demo/demo-feature/owner-signoff"
+DECISION = "/api/v1/features/demo/demo-feature/change-requests/2/decision"
+REQUEST = (
+    "---\ntype: change-request\nticket: DEM-8\nstatus: open\nplan_from: 2\nplan_to: 3\n"
+    "affected: [DEM-9]\nopened_at: 2026-10-21T09:30:00Z\nrun_id: implement-8\n---\n# Req\n"
+)
+
+
+class _NoLiveRuns:
+    """The launcher's live children: none, so only a run's gates could hold a decision."""
+
+    def live_runs(self, hub_path: str) -> dict[str, str | None]:
+        return {}
+
+
+def _decision_hub(tmp_path: Path, wired: Any) -> None:
+    """The sign-off hub with change request 2 open, wired behind the decision route."""
+    requests = _signoff_hub(tmp_path, wired, "SHIP").parent / "change-requests"
+    requests.mkdir()
+    (requests / "2.md").write_text(REQUEST, encoding="utf-8")
+    decide = DecideChangeRequest(
+        ProjectHubPaths(wired.hubs),
+        _DiskFolders(),
+        writer=HubDecisionWriter(),
+        guard=RunGuard(wired.events, _NoLiveRuns()),
+        decider=lambda project: "Dana Owner",
+        clock=lambda: SIGNED_AT,
+    )
+    wired.wire(change_request_decisions=decide)
+
+
+def _signoff_waiting_hub(tmp_path: Path, wired: Any) -> None:
+    _signoff_hub(tmp_path, wired, "SHIP-WITH-OWNER-STEPS")
+
+
+# ADR 0056: the shell read keeps each scope's feature list 30 s; a write of a feature record
+# through the app forgets those lists once the write succeeds, so the badge counts it at the next
+# poll. The same write again is refused (decided once; nothing waits on owner steps any more).
+@pytest.mark.parametrize(
+    ("arrange", "path", "body"),
+    [
+        (_decision_hub, DECISION, {"decision": "approved"}),
+        (_signoff_waiting_hub, SIGNOFF, None),
+    ],
+    ids=["decision", "signoff"],
+)
+def test_forgets_shell_feature_lists_when_feature_record_written(
+    tmp_path: Path, wired: Any, open_client: Any, *, arrange: Any, path: str, body: Any
+) -> None:
+    arrange(tmp_path, wired)
+    assert wired.screen_reads.calls == []
+    ports = wired.client.app.state.ports
+    problems = {OwnerSignOffError: owner_signoff_problem}
+
+    with open_client(ports=ports, problems=problems) as client:
+        client.cookies.update(wired.client.cookies)
+        written = client.post(path, json=body, headers=OWN)
+        forgotten = list(wired.screen_reads.calls)
+        refused = client.post(path, json=body, headers=OWN)
+
+    assert written.status_code == 201, written.text
+    assert refused.status_code == 409, refused.text
+    assert forgotten == ["forget_features"]
+    assert wired.screen_reads.calls == ["forget_features"]

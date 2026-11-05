@@ -10,6 +10,7 @@ given: git stays with the composition root, which may pass a reader of ``git con
 """
 
 import os
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Final
@@ -67,6 +68,9 @@ class HubFileSystem:
 
     def __init__(self, *, read_git: GitReaderFactory = _files_only) -> None:
         self._read_git = read_git
+        # A brain walk makes about 700 short syscalls, each hands the GIL over: six at once took
+        # 58x one, so walks run one at a time.
+        self._walking = threading.Lock()
 
     def resolve(self, path: str) -> str:
         """The absolute real path of ``path`` (``~`` expanded)."""
@@ -119,6 +123,11 @@ class HubFileSystem:
         """Each path's modification time in ns, looked at without following a link."""
         return tuple(_modified(Path(hub_path, path)) for path in paths)
 
+    def followed_times(self, hub_path: str, paths: Sequence[str]) -> tuple[int | None, ...]:
+        """Each path's modification time in ns, a link's target's for a link (``hub.json`` is
+        read through a link)."""
+        return tuple(_modified(Path(hub_path, path), follow=True) for path in paths)
+
     def read_now(self, hub_path: str) -> bytes | UnreadHubFile:
         """The bytes of ``brain/now.md``, or why not."""
         return _unread_or_bytes(
@@ -145,7 +154,8 @@ class HubFileSystem:
 
     def brain_tree(self, hub_path: str) -> BrainListing:
         """The ``.md`` notes under the hub's ``brain/``, bounded, no link followed."""
-        return list_brain(Path(hub_path))
+        with self._walking:
+            return list_brain(Path(hub_path))
 
     def brain_folders(self, hub_path: str) -> tuple[str, ...]:
         """The top-level folders of the hub's ``brain/``, bounded, no link followed."""
@@ -180,8 +190,8 @@ def _unread_or_bytes(read: bytes | UnreadFile) -> bytes | UnreadHubFile:
     return read
 
 
-def _modified(path: Path) -> int | None:
+def _modified(path: Path, *, follow: bool = False) -> int | None:
     try:
-        return os.stat(path, follow_symlinks=False).st_mtime_ns
+        return os.stat(path, follow_symlinks=follow).st_mtime_ns
     except OSError:
         return None

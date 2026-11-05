@@ -20,7 +20,7 @@ from agent_hub.core.readmodels.view_types import ApiTimestamp, ViewModel
 ITEM_NAME: Final = r"^[A-Za-z0-9_-]{1,128}$"
 # A bundled file's id: the first 16 hex digits of the sha256 of its hub-relative path (S7).
 FILE_ID: Final = r"^[0-9a-f]{16}$"
-# The usage window, in days back from the snapshot's ``now`` (S8, P2).
+# The usage window, in days back from each read's ``now`` (S8, P2).
 USAGE_DAYS: Final = 30
 # The usage report's windows, in days back from ``now`` (AGH-482); the fold reads the longest.
 USAGE_WINDOWS: Final = (7, 30, 90)
