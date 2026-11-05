@@ -375,7 +375,7 @@
   grid-template-areas:
     "files files files files files"
     "text text text text text"
-    "plus set . stop send"
+    "plus set note stop send"
     "err err err err err";
   align-items: center;
   column-gap: var(--space-1);
@@ -401,7 +401,7 @@
   grid-area: plus;
 }
 .ft-new-drop-note {
-  grid-area: set;
+  grid-area: note;
   padding-left: var(--space-2);
   white-space: nowrap;
   overflow: hidden;
@@ -597,14 +597,27 @@
   }
 }
 /* The box's bar keeps Attach and Start; the notes go first when the box narrows. */
-@container ft-new-brief (max-width: 640px) {
+@container ft-new-brief (max-width: 860px) {
   .ft-new-drop-note {
     display: none;
   }
 }
-@container ft-new-brief (max-width: 480px) {
+@container ft-new-brief (max-width: 800px) {
   .ft-new-brief .ft-new-kbd {
     display: none;
+  }
+}
+/* No room for the pickers and Start on one row: Start goes under them. */
+@container ft-new-brief (max-width: 640px) {
+  .ft-new-brief .as-composer-settings {
+    grid-column: 2 / -1;
+  }
+  .ft-new-brief .ft-new-start {
+    grid-area: auto;
+    grid-column: 1 / -1;
+    grid-row: 5;
+    justify-self: end;
+    margin-top: var(--space-1);
   }
 }
 

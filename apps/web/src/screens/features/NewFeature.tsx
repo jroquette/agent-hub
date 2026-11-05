@@ -29,7 +29,12 @@ import {
   type DiscussTarget,
 } from "../../shell/discuss";
 import { rememberDiscussSession, useStartDiscussion } from "../../shell/discussSession";
+import { offeredModes } from "../agent-session/Composer";
+import { rememberEffort, rememberedEffort } from "../agent-session/effort";
+import { modeLabel, type PermissionMode } from "../agent-session/model";
+import { ModelMenu } from "../agent-session/ModelMenu";
 import { useDraft } from "../agent-session/useDraft";
+import { useAgentCapabilities } from "../sessions-list/queries";
 import { featureHref } from "./FeatureChip";
 import { useFeatures } from "./queries";
 
@@ -239,6 +244,13 @@ function BriefForm({
   const slugField = useRef<HTMLInputElement | null>(null);
   const focusBox = () => box.current?.focus({ preventScroll: true });
   const discussion = useStartDiscussion(project || null);
+  const capabilities = useAgentCapabilities();
+  const modes = offeredModes();
+  const [mode, setMode] = useState<PermissionMode>("default");
+  const [model, setModel] = useState("default");
+  const [effort, setEffort] = useState(rememberedEffort);
+  // Not remembered as the effort is: it may cost far more, so each feature asks for it.
+  const [ultracode, setUltracode] = useState(false);
   const attachments = useMessageAttachments({
     acceptsImages: true,
     acceptsFiles: true,
@@ -253,6 +265,7 @@ function BriefForm({
   const items = (features.data?.items ?? []).filter((f) => f.project === project);
   const ids = {
     idea: useId(),
+    mode: useId(),
     issue: useId(),
     issueHint: useId(),
     slug: useId(),
@@ -321,6 +334,10 @@ function BriefForm({
         prompt: discussPrompt(target, message),
         images: images.map((image) => image.url),
         files: files.map((attached) => attached.file),
+        mode,
+        model,
+        effort,
+        ultracode,
       })
       .then((sessionId) => {
         if (!sessionId) return;
@@ -430,6 +447,50 @@ function BriefForm({
           {/* The chat composer's bottom bar: Attach on the left, Start on the right. */}
           <div className="as-composer-bar">
             <AttachButton attachments={attachments} onAdded={focusBox} className="ft-new-attach" />
+            <div className="as-composer-settings">
+              <label
+                htmlFor={ids.mode}
+                className="as-pill"
+                data-mode={mode}
+                title="Permission mode"
+              >
+                <Icon name="shield" size="sm" />
+                <span className="ah-sr">Mode</span>
+                <select
+                  id={ids.mode}
+                  className="as-pill-select"
+                  value={mode}
+                  onChange={(event) => {
+                    const next = modes.find((m) => m === event.target.value);
+                    if (next) setMode(next);
+                  }}
+                >
+                  {modes.map((m) => (
+                    <option key={m} value={m}>
+                      {modeLabel(m)}
+                    </option>
+                  ))}
+                </select>
+                <span className="as-pill-value" aria-hidden="true">
+                  {modeLabel(mode)}
+                </span>
+                <Icon name="chevron-down" size="sm" className="as-pill-caret" />
+              </label>
+              <ModelMenu
+                model={model}
+                models={
+                  capabilities.data?.models ?? ["default", "opus", "fable", "sonnet", "haiku"]
+                }
+                effort={effort}
+                onModel={setModel}
+                onEffort={(next) => {
+                  rememberEffort(next);
+                  setEffort(next);
+                }}
+                ultracode={ultracode}
+                onUltracode={setUltracode}
+              />
+            </div>
             <span className="ah-small ah-subtle ft-new-drop-note">
               Paste or drop images, PDFs and text files
             </span>

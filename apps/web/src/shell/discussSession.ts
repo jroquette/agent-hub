@@ -2,6 +2,7 @@ import { fileBody, type MessageFile } from "../lib/messageFile";
 import { screenshotBody } from "../lib/pastedImage";
 import { rememberMessageScreenshots, rememberScreenshot } from "../lib/screenshotCopy";
 import type { PermissionMode } from "../screens/agent-session/model";
+import type { EffortLevel } from "../screens/agent-session/effort";
 import { sessionControlUnavailable } from "../screens/sessions-list/control";
 import {
   useAgentCapabilities,
@@ -47,6 +48,8 @@ export interface StartDiscussionRequest {
   capture?: ScreenCapture | null | undefined;
   mode?: PermissionMode | undefined;
   model?: string | null | undefined;
+  effort?: EffortLevel | null | undefined;
+  ultracode?: boolean | undefined;
 }
 
 export interface StartDiscussion {
@@ -89,6 +92,8 @@ export function useStartDiscussion(project: string | null): StartDiscussion {
     capture = null,
     mode = "default",
     model = null,
+    effort = null,
+    ultracode = false,
   }: StartDiscussionRequest): Promise<string | null> => {
     if (!hub) return null;
     const session = await create.mutateAsync({
@@ -97,6 +102,8 @@ export function useStartDiscussion(project: string | null): StartDiscussion {
       mode,
       fork: false,
       ...(model && model !== "default" ? { model } : {}),
+      ...(effort ? { effort } : {}),
+      ...(ultracode ? { ultracode } : {}),
       ...(capture ? { screenshot: capture.body } : {}),
       ...(images.length > 0 ? { screenshots: images.map(screenshotBody) } : {}),
       ...(files.length > 0 ? { files: files.map(fileBody) } : {}),

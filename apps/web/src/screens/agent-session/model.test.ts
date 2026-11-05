@@ -297,6 +297,35 @@ describe("reduceTranscript (transcript)", () => {
     ]);
   });
 
+  it("AC-681.2 shows an effort change as a notice and keeps the level", () => {
+    const state = run([record("settings", { seq: 1, body: { effort: "high" } })]);
+
+    expect(state.effort).toBe("high");
+    expect(
+      state.entries.map((entry) => (entry.kind === "notice" ? entry.text : entry.kind)),
+    ).toEqual(["Effort set to High"]);
+  });
+
+  it("AC-681.9 shows Ultracode turned on and off as notices", () => {
+    const state = run([
+      record("settings", { seq: 1, body: { ultracode: true } }),
+      record("settings", { seq: 2, body: { model: "opus", effort: "xhigh", ultracode: false } }),
+    ]);
+
+    expect(state.ultracode).toBe(false);
+    expect(state.effort).toBe("xhigh");
+    expect(
+      state.entries.map((entry) => (entry.kind === "notice" ? entry.text : entry.kind)),
+    ).toEqual(["Ultracode on", "Model set to opus, effort set to Extra, Ultracode off"]);
+  });
+
+  it("ignores an effort that is not a level", () => {
+    const state = run([record("settings", { seq: 1, body: { effort: "ultra" } })]);
+
+    expect(state.effort).toBeNull();
+    expect(state.entries).toMatchObject([{ kind: "notice", text: "Settings changed" }]);
+  });
+
   it("follows the status frames and starts over when the stream resets", () => {
     const running = run([
       record("user.message", { seq: 1 }),
@@ -340,6 +369,18 @@ describe("applySnapshot (transcript)", () => {
     });
     expect(state.entries.filter((entry) => entry.kind === "permission")).toHaveLength(1);
     expect(pendingPermissions(state)).toEqual(["req-1"]);
+  });
+
+  it("AC-681.3 takes the session's effort and Ultracode, keeping a known effort when it has none", () => {
+    const set = applySnapshot(
+      initialTranscript(),
+      anAgentSession({ effort: "max", ultracode: true }),
+    );
+    expect(set).toMatchObject({ effort: "max", ultracode: true });
+
+    const unset = applySnapshot(set, anAgentSession({ effort: null, ultracode: false }));
+
+    expect(unset).toMatchObject({ effort: "max", ultracode: false });
   });
 
   it("adds the open request when the log page has not reached it yet", () => {
