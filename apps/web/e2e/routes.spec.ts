@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { expect, test, type Page, type Request } from "@playwright/test";
+import { expect, test, type Request } from "@playwright/test";
 import type { Manifest } from "vite";
 
 import { env, expectAccessible, watch } from "./pageChecks";
@@ -73,22 +73,6 @@ function staticFiles(manifest: Manifest, key: string): Set<string> {
     pending.push(...(chunk.imports ?? []));
   }
   return files;
-}
-
-/**
- * Waits until no transition or finite animation runs, so axe reads each colour at rest: a button
- * whose background is still fading (`.ah-btn`'s transition) has no stable contrast.
- */
-async function settle(page: Page): Promise<void> {
-  await page.waitForFunction(() =>
-    document
-      .getAnimations()
-      .every(
-        (animation) =>
-          animation.playState !== "running" ||
-          animation.effect?.getComputedTiming().endTime === Infinity,
-      ),
-  );
 }
 
 /** A request's file under the build's root (`assets/<name>`), as the manifest names it. */
@@ -169,7 +153,6 @@ test("Route chunks: every nav destination opens by in-app navigation, with its h
   for (const { link, heading } of [...NAV_DESTINATIONS.slice(1), ...NAV_DESTINATIONS.slice(0, 1)]) {
     await nav.getByRole("link", { name: link }).click();
     await expect(page.getByRole("heading", { level: 1, name: heading, exact: true })).toBeVisible();
-    await settle(page);
     await expectAccessible(page);
   }
 
@@ -190,7 +173,6 @@ test("Route chunks: a Brain note, a session and a settings section open from a f
     await expect(page.getByRole("heading", { level: 1, name: heading, exact: true })).toBeVisible();
     await expect(page.getByText(shows).first()).toBeVisible();
     await expect(page).toHaveURL((url) => url.pathname === path);
-    await settle(page);
     await expectAccessible(page);
   }
 
@@ -227,7 +209,6 @@ test("Route chunks: a failed chunk shows This page could not load in the shell, 
   await expect(main.getByRole("button", { name: "Reload page" })).toBeVisible();
   await expect(main.getByRole("link", { name: "Go to Portfolio" })).toBeVisible();
   await expect(main.getByText(`Requested: /sessions · file ${sessionsFile}`)).toBeVisible();
-  await settle(page);
   await expectAccessible(page);
   await expect(nav).toBeVisible();
   await nav.getByRole("link", { name: /^Features/ }).click();
