@@ -11,6 +11,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-11-05
+
 ### Added
 
 - For contributors, `make perf` measures more of `hub web` (AGH-608, AGH-623):
@@ -1579,7 +1581,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.30.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.31.0...HEAD
+[0.31.0]: https://github.com/jroquette/agent-hub/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/jroquette/agent-hub/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/jroquette/agent-hub/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/jroquette/agent-hub/compare/v0.27.1...v0.28.0
