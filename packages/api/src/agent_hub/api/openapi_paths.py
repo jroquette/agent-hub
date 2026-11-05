@@ -190,6 +190,11 @@ AC_CHECK_PATHS: frozenset[tuple[str, str]] = frozenset(
     {("post", f"{API_PREFIX}/features/{{project}}/{{slug}}/acs/{{ac}}/check-runs")}
 )
 
+# A UX design's HTML mockup, read beside its design on the feature page (playground).
+UX_MOCKUP_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {("get", f"{API_PREFIX}/features/{{project}}/{{slug}}/mockups/{{name}}")}
+)
+
 # The scenarios (AGH-350 plan T12, AC-350.30): the list, a scenario, its plan and its start, a
 # scenario run's record, its investigation's session (P-7, AM-2) and answer, and a finding's
 # issue and inbox note. Every POST is a strict write that needs the launch cookie.
@@ -278,6 +283,7 @@ SERVED_PATHS: frozenset[tuple[str, str]] = (
     | DISCOVERY_PATHS
     | SCENARIO_PATHS
     | SCREEN_PATHS
+    | UX_MOCKUP_PATHS
 )
 
 
