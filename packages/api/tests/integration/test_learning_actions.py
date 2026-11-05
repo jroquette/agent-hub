@@ -358,7 +358,7 @@ def test_opens_one_pull_request_for_every_decision_when_batched(
     assert hub_world.snapshot() == checkout_before
 
 
-def test_refuses_batch_without_origin_header(world_app: Any, propose: Any) -> None:
+def test_refuses_batch_when_origin_header_missing(world_app: Any, propose: Any) -> None:
     learning_id = propose(world_app, "gate-first.md", NOTE)
 
     response = world_app.client.post(
