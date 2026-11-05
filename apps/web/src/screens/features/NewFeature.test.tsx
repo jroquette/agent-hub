@@ -201,6 +201,40 @@ describe("NewFeatureScreen", () => {
     expect(window.localStorage.getItem(kept ?? "")).toBe(ID);
   });
 
+  it("AC-681.7 starts the conversation with the mode, model, effort and Ultracode picked", async () => {
+    window.localStorage.removeItem("ah.session.effort");
+    const user = userEvent.setup();
+    const view = renderNew();
+    await user.type(await screen.findByLabelText("What do you want to build?"), IDEA);
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Mode" }), "plan");
+    await user.click(screen.getByRole("button", { name: /^Model and effort/ }));
+    await user.click(screen.getByRole("menuitemradio", { name: "Opus" }));
+    await user.click(screen.getByRole("button", { name: /^Model and effort/ }));
+    await user.click(screen.getByRole("menuitem", { name: /Effort/ }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Ultracode" }));
+    await user.click(screen.getByRole("menuitemradio", { name: /^High/ }));
+    await waitFor(async () => {
+      expect(await ready()).not.toHaveAttribute("aria-disabled");
+    });
+    await user.click(screen.getByRole("button", { name: "Start with Claude" }));
+
+    const created = await waitFor(() => {
+      const found = view.requests.find(
+        (r) => r.method === "POST" && new URL(r.url).pathname === "/api/v1/agent-sessions",
+      );
+      expect(found).toBeDefined();
+      return found;
+    });
+    expect(JSON.parse((await created?.clone().text()) ?? "{}")).toMatchObject({
+      mode: "plan",
+      model: "opus",
+      effort: "high",
+      ultracode: true,
+    });
+    window.localStorage.removeItem("ah.session.effort");
+  });
+
   it("starts on Ctrl+Enter from the brief (AC-420.6)", async () => {
     const user = userEvent.setup();
     const view = renderNew();
