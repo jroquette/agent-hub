@@ -311,6 +311,7 @@ below asks where the owner has a legitimate use for the call, and denies where t
   (`'…'`, `"…"`, `$'…'`, backslashes, a `#` comment, redirections left out), in one linear pass. A word holding `$` or
   a backtick outside single quotes is an expansion the guard cannot read. The folder of each call starts at the
   event's `cwd` and follows `cd`, `pushd` and `git -C`; after `popd` or an expanded `cd`, a read that needs it asks.
+  A command with over 64 `git` and `gh` calls asks (`change_flow_unchecked`), so a hostile command stays linear.
 - **Message files** (rule `ai_attribution`, deny): `git commit|tag|merge -F/--file` and `gh pr
   create|edit|comment|review -F/--body-file` read the file they name (at most 1 MiB, regular files only, at most 8
   files per command) when the call runs, so a body file written earlier is checked when it is used; a file the same command writes (a redirect target)

@@ -58,7 +58,8 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         a mutating hub env (add, set, remove, service add|remove; list and show pass) or hub repo
         (add, set, remove; list passes), git hooks skipped (--no-verify on commit, push or merge, commit's
         -n, core.hooksPath set by -c, --config-env, an assignment or git config), a message file that cannot
-        be read (stdin, an expansion, unreadable, not regular, over 1 MiB, past 8 in one command), a bare push whose branch cannot
+        be read (stdin, an expansion, unreadable, not regular, over 1 MiB, past 8 in one command), a command
+        with over 64 git and gh calls (past them, unread), a bare push whose branch cannot
         be told, a commit identity that cannot be (git config unreadable, an expansion, a folder that
         cannot be told, an --author with no email), a git push whose remote or refspec is a shell expansion
         or that deletes a remote branch (--delete, -d, a :<branch> refspec), git push or commit or gh pr in
@@ -1280,6 +1281,10 @@ ENV_VALUE_OPTIONS = INFRA_ENV_VALUE | {"-u", "--unset"}
 GIT_READ_TIMEOUT = 2  # seconds for one git read: the branch a bare push sends, a commit's identities
 GIT_READS_CAP = 4  # git reads one command makes; past it a read asks, so all fit the hook's 10 s
 MESSAGE_READS_CAP = 8  # message files one command reads (each at most BLOCKED_FILE_CAP); past it a file asks
+# git and gh calls of one command the rules read (each reads the variables exported before it); past
+# it the command asks, so thousands of exports and calls stay linear.
+CHANGE_FLOW_CALLS_CAP = 64
+CALLS_UNCHECKED_REASON = "change flow not checked: over {} git and gh calls in one command; confirm"
 # git's own options that take the next word as their value, and those that move where it runs.
 GIT_VALUE_OPTIONS = frozenset(("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--super-prefix"))
 GIT_LOCATION_OPTIONS = ("--git-dir", "--work-tree")
@@ -1819,6 +1824,7 @@ def check_change_flow(cmd: str, cfg: Config, cwd: str | None = None) -> Verdict:
     exported: dict[str, str | None] = {}
     reads = _Reads(targets)
     verdict: Verdict = None
+    read_calls = 0
     for words in calls:
         at, env = _program(words)
         if at >= len(words):
@@ -1828,6 +1834,9 @@ def check_change_flow(cmd: str, cfg: Config, cwd: str | None = None) -> Verdict:
             continue
         program = words[at][0].rsplit("/", 1)[-1]
         found: Verdict = None
+        read_calls += program in ("git", "gh")
+        if read_calls > CHANGE_FLOW_CALLS_CAP:  # a deny before it was already returned
+            return "ask", CALLS_UNCHECKED_REASON.format(CHANGE_FLOW_CALLS_CAP)
         if program in ("cd", "pushd"):
             here = _moved(here, words[at + 1:])
         elif program == "popd":
@@ -3012,6 +3021,7 @@ RULE_IDS = (
     ("push_hidden", LazyPattern(r"^a `git push` remote or refspec is a shell expansion")),
     ("push_delete", LazyPattern(r"^`git push [^`]*` deletes a remote branch")),
     ("interpreter_git", LazyPattern(r"^`[^`]*` runs git push or commit, or gh pr, out of the guard's sight")),
+    ("change_flow_unchecked", LazyPattern(r"^change flow not checked: ")),
     ("agent_branch", LazyPattern(r"^branches are \S*, never claude/")),
     ("git_internals", LazyPattern(r"^\.git is git's own state")),
     ("test_bash_edit", LazyPattern(r"^deleting or sed-editing tests")),
