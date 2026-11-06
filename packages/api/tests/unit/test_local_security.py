@@ -14,6 +14,7 @@ from agent_hub.api.local_security import (
     AGENT_SESSION_CREATE_BODY_BYTES,
     AGENT_SESSION_MESSAGE_BODY_BYTES,
     CONTENT_SECURITY_POLICY,
+    UX_MOCKUP_PAGE_POLICY,
     WEBSOCKET_POLICY_VIOLATION,
     LocalSecurityMiddleware,
     allowed_hosts,
@@ -129,7 +130,12 @@ def test_serves_request_when_host_added_by_settings(tmp_path: Path, web_dist: Pa
 
 
 @pytest.mark.parametrize(
-    "path", ["/api/v1/learnings/learning-1/accept", "/api/v1/learnings/a.b-c/reject"]
+    "path",
+    [
+        "/api/v1/learnings/learning-1/accept",
+        "/api/v1/learnings/a.b-c/reject",
+        "/api/v1/learnings/decisions",
+    ],
 )
 def test_marks_strict_write_when_post_to_learning_action(path: str) -> None:
     assert is_strict_write("POST", path)
@@ -433,6 +439,55 @@ def test_keeps_builder_reads_and_check_open_when_not_item_write(method: str, pat
 def test_keeps_other_checks_when_not_item_write(method: str, path: str) -> None:
     assert not is_item_write(method, path)
     assert not is_strict_write(method, path)
+
+
+async def _own_policy_app(scope: Scope, receive: Receive, send: Send) -> None:
+    # Every answer asks for the mockup page's policy: only that page's path may keep it.
+    response = JSONResponse({}, headers={"Content-Security-Policy": UX_MOCKUP_PAGE_POLICY})
+    await response(scope, receive, send)
+
+
+def _own_policy_client() -> TestClient:
+    return TestClient(
+        LocalSecurityMiddleware(_own_policy_app, port=7420), base_url="http://127.0.0.1:7420"
+    )
+
+
+def test_keeps_mockup_page_policy_when_path_is_mockup_page() -> None:
+    response = _own_policy_client().get(
+        "/api/v1/features/demo/demo-feature/mockups/ux-new-a.html/page"
+    )
+
+    assert response.headers["content-security-policy"] == UX_MOCKUP_PAGE_POLICY
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/features/demo/demo-feature/mockups/ux-new-a.html",
+        "/api/v1/features/demo/demo-feature/mockups/ux-new-a.html/page/more",
+        "/api/v1/features/demo/demo-feature/page",
+        "/api/v1/sessions",
+        "/features/demo/demo-feature",
+    ],
+)
+def test_sends_global_policy_when_path_not_mockup_page(path: str) -> None:
+    response = _own_policy_client().get(path)
+
+    assert response.headers["content-security-policy"] == CONTENT_SECURITY_POLICY
+
+
+def test_frames_only_from_hub_web_when_mockup_page_policy_built() -> None:
+    directives = UX_MOCKUP_PAGE_POLICY.split("; ")
+
+    assert "frame-ancestors 'self'" in directives
+    assert "default-src 'none'" in directives
+    assert not any(directive.startswith("script-src") for directive in directives)
+    assert "frame-ancestors 'none'" in CONTENT_SECURITY_POLICY.split("; ")
+    assert "style-src 'self'" in CONTENT_SECURITY_POLICY.split("; ")
 
 
 async def _body_length_app(scope: Scope, receive: Receive, send: Send) -> None:

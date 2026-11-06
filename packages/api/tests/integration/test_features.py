@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from agent_hub.api.local_security import CONTENT_SECURITY_POLICY, UX_MOCKUP_PAGE_POLICY
 from agent_hub.core.testing.tracker_reader_fakes import (
     CountingTrackerReader,
     InMemoryTrackerReader,
@@ -270,3 +271,39 @@ def test_serves_ux_mockup_beside_its_design_when_html_present(
     assert mockup.json()["html"] == "<main data-ux='table'>Orders</main>"
     assert refused.status_code == 400
     assert missing.status_code == 404
+
+
+def test_serves_ux_mockup_page_with_own_policy_when_html_present(
+    composed: Any, make_hub: Callable[..., Path]
+) -> None:
+    hub = make_hub()
+    page = "<style>main{color:red}</style><main data-ux='table'>Orders \u00e9</main>"
+    _feature(
+        hub,
+        "designed",
+        {
+            "spec.md": SPEC,
+            "ux-new-orders.md": "---\nstatus: approved\nscreen: orders\n---\n# Orders\n",
+            "ux-new-orders.html": page,
+        },
+    )
+    composed.client.post(
+        "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+    )
+    base = "/api/v1/features/demo/designed/mockups"
+
+    served = composed.client.get(f"{base}/ux-new-orders.html/page")
+    refused = composed.client.get(f"{base}/spec.md/page")
+    missing = composed.client.get(f"{base}/ux-new-gone.html/page")
+    other = composed.client.get("/api/v1/features/demo/designed")
+
+    assert served.status_code == 200, served.text
+    assert served.text == page
+    assert served.headers["content-type"] == "text/html; charset=utf-8"
+    assert served.headers["content-security-policy"] == UX_MOCKUP_PAGE_POLICY
+    assert served.headers["x-content-type-options"] == "nosniff"
+    assert served.headers["cache-control"] == "no-store"
+    assert refused.status_code == 400
+    assert missing.status_code == 404
+    assert missing.headers["content-security-policy"] == CONTENT_SECURITY_POLICY
+    assert other.headers["content-security-policy"] == CONTENT_SECURITY_POLICY

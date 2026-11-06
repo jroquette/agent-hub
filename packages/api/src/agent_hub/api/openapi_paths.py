@@ -190,9 +190,13 @@ AC_CHECK_PATHS: frozenset[tuple[str, str]] = frozenset(
     {("post", f"{API_PREFIX}/features/{{project}}/{{slug}}/acs/{{ac}}/check-runs")}
 )
 
-# A UX design's HTML mockup, read beside its design on the feature page (playground).
+# A UX design's HTML mockup, read beside its design on the feature page (playground), and the
+# same mockup as its own page, which the feature page frames (with a policy of its own).
 UX_MOCKUP_PATHS: frozenset[tuple[str, str]] = frozenset(
-    {("get", f"{API_PREFIX}/features/{{project}}/{{slug}}/mockups/{{name}}")}
+    {
+        ("get", f"{API_PREFIX}/features/{{project}}/{{slug}}/mockups/{{name}}"),
+        ("get", f"{API_PREFIX}/features/{{project}}/{{slug}}/mockups/{{name}}/page"),
+    }
 )
 
 # The scenarios (AGH-350 plan T12, AC-350.30): the list, a scenario, its plan and its start, a

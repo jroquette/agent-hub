@@ -127,6 +127,24 @@ CONTENT_SECURITY_POLICY = "; ".join(
         "frame-ancestors 'none'",
     )
 )
+# A UX mockup's own page (``GET .../mockups/{name}/page``), framed by hub web: its inline styles
+# and ``data:`` images, fonts and media load, nothing else does (no script, no request, no form),
+# and only hub web may frame it. ``_with_headers`` keeps this policy on that path alone.
+UX_MOCKUP_PAGE_POLICY = "; ".join(
+    (
+        "default-src 'none'",
+        "style-src 'unsafe-inline'",
+        "img-src data:",
+        "font-src data:",
+        "media-src data:",
+        "base-uri 'none'",
+        "form-action 'none'",
+        "frame-ancestors 'self'",
+    )
+)
+UX_MOCKUP_PAGE_PATH: Final = re.compile(
+    rf"^{re.escape(API_PREFIX)}/features/[^/]+/[^/]+/mockups/[^/]+/page$"
+)
 SECURITY_HEADERS = {
     "Content-Security-Policy": CONTENT_SECURITY_POLICY,
     "X-Content-Type-Options": "nosniff",
@@ -353,13 +371,17 @@ def _too_large_detail(cap: int) -> str:
 
 def _with_headers(send: Send, scope: Scope) -> Send:
     is_api = str(scope["path"]).startswith(f"{API_PREFIX}/") or scope["path"] == API_PREFIX
+    is_mockup_page = UX_MOCKUP_PAGE_PATH.match(str(scope["path"])) is not None
 
     async def send_with_headers(message: Message) -> None:
         if message["type"] == "http.response.start":
             headers = MutableHeaders(scope=message)
             _drop_cors(headers, list(headers.keys()))
+            own_policy = headers.get("Content-Security-Policy")
             for name, value in SECURITY_HEADERS.items():
                 headers[name] = value
+            if is_mockup_page and own_policy == UX_MOCKUP_PAGE_POLICY:
+                headers["Content-Security-Policy"] = own_policy
             if is_api:
                 headers["Cache-Control"] = "no-store"
         await send(message)

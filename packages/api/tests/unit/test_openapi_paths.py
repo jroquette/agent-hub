@@ -415,7 +415,10 @@ def test_lists_screen_paths_when_document_built(api_settings: ApiSettings) -> No
 
 
 def test_lists_ux_mockup_path_when_document_built(api_settings: ApiSettings) -> None:
-    assert {("get", "/api/v1/features/{project}/{slug}/mockups/{name}")} == UX_MOCKUP_PATHS
+    assert {
+        ("get", "/api/v1/features/{project}/{slug}/mockups/{name}"),
+        ("get", "/api/v1/features/{project}/{slug}/mockups/{name}/page"),
+    } == UX_MOCKUP_PATHS
     assert UX_MOCKUP_PATHS <= SERVED_PATHS
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 

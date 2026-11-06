@@ -1,8 +1,9 @@
 """``/features``: the feature folders of the registered hubs."""
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Path
+from fastapi.responses import HTMLResponse
 
 from agent_hub.api.ac_check import AcCheckRun
 from agent_hub.api.change_request_files import ChangeRequestDecisionBody
@@ -17,6 +18,7 @@ from agent_hub.api.dependencies import (
     OwnerSignOffDep,
 )
 from agent_hub.api.feature_names import FeatureName, FeatureNameBody, FeatureNamesView
+from agent_hub.api.local_security import UX_MOCKUP_PAGE_POLICY
 from agent_hub.api.owner_signoff_files import OwnerSignOffBody
 from agent_hub.api.schemas import MAX_QUERY_TEXT, PROBLEM_RESPONSES, ProjectParam
 from agent_hub.core.features.change_request_decision import (
@@ -43,6 +45,17 @@ NamePath = Annotated[str, Path(min_length=1, max_length=MAX_QUERY_TEXT)]
 MockupNamePath = Annotated[
     str, Path(pattern=r"^ux-[A-Za-z0-9][A-Za-z0-9._-]*\.html$", max_length=200)
 ]
+
+# Problems are JSON even on the mockup's page route, so their media type is spelled out here.
+_PROBLEM_JSON = {"application/json": {"schema": {"$ref": "#/components/schemas/ProblemDetails"}}}
+MOCKUP_PAGE_RESPONSES: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": "The mockup's own page",
+        "content": {"text/html": {"schema": {"type": "string"}}},
+    },
+    "4XX": {"description": "A client error, as an RFC 9457 problem", "content": _PROBLEM_JSON},
+    "5XX": {"description": "A server error, as an RFC 9457 problem", "content": _PROBLEM_JSON},
+}
 
 
 @router.get("/features")
@@ -73,9 +86,28 @@ def get_feature(
 def get_ux_mockup(
     project: NamePath, slug: NamePath, name: MockupNamePath, *, models: HubReadModelsDep
 ) -> UxMockup:
-    """One UX design's visual mockup (``ux-*.html`` of the feature folder) as text; 404 for any
-    other name, a missing file, a link or one over 1 MiB."""
+    """One UX design's visual mockup (``ux-*.html`` of the feature folder) as text; 400 for any
+    other name, 404 for a missing file, a link or one over 1 MiB."""
     return models.ux_mockup(project, slug, name)
+
+
+@router.get(
+    "/features/{project}/{slug}/mockups/{name}/page",
+    response_class=HTMLResponse,
+    responses=MOCKUP_PAGE_RESPONSES,
+)
+def get_ux_mockup_page(
+    project: NamePath, slug: NamePath, name: MockupNamePath, *, models: HubReadModelsDep
+) -> HTMLResponse:
+    """The same mockup served as its own page, which hub web frames: ``text/html`` with a policy
+    of its own that allows its inline styles and ``data:`` images, fonts and media, and nothing
+    else (no script, no request, framed only by hub web); the same 400 and 404 as the JSON
+    read."""
+    mockup = models.ux_mockup(project, slug, name)
+    return HTMLResponse(
+        mockup.html,
+        headers={"Content-Security-Policy": UX_MOCKUP_PAGE_POLICY},
+    )
 
 
 @router.get("/features/{project}/{slug}/tickets")

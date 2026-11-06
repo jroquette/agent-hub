@@ -257,8 +257,9 @@ def test_details_project_when_known() -> None:
         lambda models: models.project_repos("nope"),
         lambda models: models.get_feature("nope", "demo-feature"),
         lambda models: models.get_feature("demo", "nope"),
+        lambda models: models.ux_mockup("nope", "demo-feature", "ux-new-a.html"),
     ],
-    ids=["project", "now", "repos", "feature-project", "feature-slug"],
+    ids=["project", "now", "repos", "feature-project", "feature-slug", "mockup-project"],
 )
 def test_raises_not_found_when_project_or_feature_unknown(read: object) -> None:
     models, _, _ = read_models({DEMO: a_demo_hub()}, DEMO)
@@ -275,6 +276,62 @@ def test_names_feature_id_when_feature_project_unknown() -> None:
         models.get_feature("nope", "demo-feature")
 
     assert (raised.value.entity, raised.value.entity_id) == ("feature", "nope/demo-feature")
+
+
+MOCKUP = b"<style>p{color:red}</style><p>Sidebar \xc3\xa9</p>"
+
+
+def test_serves_ux_mockup_when_html_beside_design() -> None:
+    hub = a_demo_hub()
+    hub.brain["features/demo-feature/ux-new-a.html"] = MOCKUP
+    models, _, _ = read_models({DEMO: hub}, DEMO)
+
+    mockup = models.ux_mockup("demo", "demo-feature", "ux-new-a.html")
+
+    assert (mockup.project, mockup.slug, mockup.name) == ("demo", "demo-feature", "ux-new-a.html")
+    assert mockup.html == MOCKUP.decode("utf-8")
+    assert mockup.size == len(MOCKUP)
+    assert mockup.sha256 == hashlib.sha256(MOCKUP).hexdigest()
+
+
+@pytest.mark.parametrize("name", ["spec.md", "../x.html", "ux-a.md", "x.html"])
+def test_refuses_ux_mockup_name_before_any_read_when_not_a_mockup(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    models, reader, _ = read_models({DEMO: a_demo_hub()}, DEMO)
+    reads: list[str] = []
+    monkeypatch.setattr(
+        reader, "read_feature_mockup", lambda *args, **kwargs: reads.append(str(args))
+    )
+
+    with pytest.raises(EntityNotFoundError):
+        models.ux_mockup("demo", "demo-feature", name)
+
+    assert reads == []
+
+
+@pytest.mark.parametrize(
+    "unread",
+    [
+        None,
+        UnreadHubFile(message="cannot read: over 1048576 bytes", is_missing=False),
+    ],
+    ids=["missing", "unreadable"],
+)
+def test_names_mockup_id_when_mockup_unread(
+    unread: UnreadHubFile | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    models, reader, _ = read_models({DEMO: a_demo_hub()}, DEMO)
+    if unread is not None:
+        monkeypatch.setattr(reader, "read_feature_mockup", lambda *args, **kwargs: unread)
+
+    with pytest.raises(EntityNotFoundError) as raised:
+        models.ux_mockup("demo", "demo-feature", "ux-new-a.html")
+
+    assert (raised.value.entity, raised.value.entity_id) == (
+        "ux mockup",
+        "demo/demo-feature/ux-new-a.html",
+    )
 
 
 def test_reads_now_note_when_present() -> None:

@@ -149,12 +149,17 @@ def read_feature_folder(
     """The feature folder ``slug`` names, read as ``read_feature_folders`` reads it, with its
     ``tickets/`` records when ``tickets`` (the tickets route); None when there is no such folder
     (absent, hidden, a link, not a folder, or not a single name)."""
-    if not slug or slug.startswith(".") or "/" in slug or "\0" in slug:
+    if not _is_slug_name(slug):
         return None
     with _features_folder(hub_root) as folder:
         if folder is None or not _is_folder(folder, slug):
             return None
         return _read_folder(folder, slug, _Meter(), one=True, tickets=tickets)
+
+
+def _is_slug_name(slug: str) -> bool:
+    """Whether ``slug`` can name a feature folder: one name, not hidden, without a NUL."""
+    return bool(slug) and not slug.startswith(".") and "/" not in slug and "\0" not in slug
 
 
 @contextlib.contextmanager
@@ -300,7 +305,7 @@ def read_feature_mockup(
     """The bytes of the feature folder's mockup ``name``, a regular file of at most
     ``max_bytes`` reached without following a link, or why not."""
     missing = UnreadHubFile(message="cannot read: missing", is_missing=True, kind="missing")
-    if not is_ux_mockup_name(name) or not slug or slug.startswith(".") or "/" in slug:
+    if not is_ux_mockup_name(name) or not _is_slug_name(slug):
         return missing
     with _features_folder(hub_root) as features:
         if features is None:
@@ -466,9 +471,9 @@ def _is_utf8(name: str) -> bool:
 def _record_names(
     folder: int, cap: int, *, prefix: str = "", suffix: str = NOTE_SUFFIX
 ) -> tuple[list[str], int]:
-    """The first ``cap`` ``.md`` names of ``folder`` not hidden (and starting with ``prefix``),
-    sorted, and how many others were left out (over the cap, or not UTF-8). At most ``cap``
-    names are held while listing."""
+    """The first ``cap`` names of ``folder`` ending with ``suffix`` (``.md`` by default), not
+    hidden (and starting with ``prefix``), sorted, and how many others were left out (over the
+    cap, or not UTF-8). At most ``cap`` names are held while listing."""
     left_out = [0]
     with os.scandir(folder) as found:
         kept = heapq.nsmallest(cap, _notes(found, left_out, prefix=prefix, suffix=suffix))
@@ -479,8 +484,8 @@ def _record_names(
 def _notes(
     entries: Iterable[os.DirEntry[str]], counted: list[int], *, prefix: str, suffix: str
 ) -> Iterator[str]:
-    """The UTF-8 ``.md`` names not hidden of ``entries`` that start with ``prefix``;
-    ``counted[0]`` counts every such name, UTF-8 or not."""
+    """The UTF-8 names ending with ``suffix``, not hidden, of ``entries`` that start with
+    ``prefix``; ``counted[0]`` counts every such name, UTF-8 or not."""
     for entry in entries:
         note = entry.name
         if note.startswith(".") or not note.startswith(prefix) or not note.endswith(suffix):

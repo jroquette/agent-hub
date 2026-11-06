@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button, ProblemError, Skeleton } from "../../components";
+import { useViewportSize } from "../../components/Canvas";
 import { useApi } from "../../lib/api";
 import { useDiscuss, type DiscussReference } from "../../shell/discuss";
 
@@ -8,17 +9,16 @@ import { useDiscuss, type DiscussReference } from "../../shell/discuss";
 export const MOCKUP_WIDTH = 1280;
 
 /**
- * What the frame may do: no script runs (no `allow-scripts`), and the policy below blocks every
- * request, so a mockup only shows what its own file holds. `allow-same-origin` lets this page
- * read the drawn page (its height, the element under a pin); without scripts nothing in it can
- * reach back.
+ * The mockup served as its own page, which the frame loads. What the frame may do: no script
+ * runs (no `allow-scripts`), and the page's own policy, sent by hub web with it, blocks every
+ * request but its inline styles and `data:` images, fonts and media, so a mockup only shows what
+ * its own file holds. (A `srcdoc` frame would inherit hub web's policy, which blocks inline
+ * styles.) `allow-same-origin` lets this page read the drawn page (its height, the element under
+ * a pin); without scripts nothing in it can reach back.
  */
-const POLICY =
-  "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:";
-
-/** The mockup's page with the policy set first, before anything in it could load. */
-export function framedDocument(html: string): string {
-  return `<meta http-equiv="Content-Security-Policy" content="${POLICY}">${html}`;
+export function mockupPageUrl(project: string, slug: string, name: string): string {
+  const part = encodeURIComponent;
+  return `/api/v1/features/${part(project)}/${part(slug)}/mockups/${part(name)}/page`;
 }
 
 interface Pin {
@@ -80,26 +80,54 @@ export function MockupView({
   const mockup = useApi("/api/v1/features/{project}/{slug}/mockups/{name}", {
     path: { project, slug, name },
   });
+  if (mockup.isPending) return <Skeleton height={480} />;
+  if (mockup.isError) {
+    return (
+      <ProblemError
+        title={mockup.error.title}
+        detail={mockup.error.detail}
+        status={mockup.error.status}
+        onRetry={() => void mockup.refetch()}
+      />
+    );
+  }
+  return (
+    <MockupStage
+      src={mockupPageUrl(project, slug, name)}
+      version={mockup.data.sha256}
+      source={source}
+      screen={screen}
+    />
+  );
+}
+
+/**
+ * The loaded mockup: mounted only once the file is read, so the column it measures for "fit to
+ * width" is there on its first render.
+ */
+function MockupStage({
+  src,
+  version,
+  source,
+  screen,
+}: {
+  src: string;
+  /** The file's sha256: a new read of a changed file loads the frame afresh. */
+  version: string;
+  source: string;
+  screen: string;
+}) {
   const { references, addReference } = useDiscuss();
   const pins = pinsOf(references, source);
   const [fit, setFit] = useState(true);
   const [pinning, setPinning] = useState(false);
   const [height, setHeight] = useState(800);
-  const [width, setWidth] = useState(MOCKUP_WIDTH);
   const box = useRef<HTMLDivElement | null>(null);
   const frame = useRef<HTMLIFrameElement | null>(null);
+  // Before the first measure, or with no ResizeObserver, the width reads 0: drawn at its own size.
+  const measured = useViewportSize(box).width;
+  const width = measured > 0 ? measured : MOCKUP_WIDTH;
 
-  useLayoutEffect(() => {
-    const element = box.current;
-    if (!element) return undefined;
-    const observer = new ResizeObserver(([entry]) => {
-      if (entry) setWidth(entry.contentRect.width);
-    });
-    observer.observe(element);
-    return () => {
-      observer.disconnect();
-    };
-  }, []);
   useEffect(() => {
     if (!pinning) return undefined;
     const onKey = (event: KeyboardEvent) => {
@@ -137,17 +165,6 @@ export function MockupView({
     });
   };
 
-  if (mockup.isPending) return <Skeleton height={480} />;
-  if (mockup.isError) {
-    return (
-      <ProblemError
-        title={mockup.error.title}
-        detail={mockup.error.detail}
-        status={mockup.error.status}
-        onRetry={() => void mockup.refetch()}
-      />
-    );
-  }
   return (
     <div className="ah-stack" style={{ gap: 8 }}>
       <div className="ah-row ah-wrap" style={{ gap: 8 }}>
@@ -188,10 +205,11 @@ export function MockupView({
           }}
         >
           <iframe
+            key={version}
             ref={frame}
             title={`Mockup of ${screen}`}
             sandbox="allow-same-origin"
-            srcDoc={framedDocument(mockup.data.html)}
+            src={src}
             onLoad={measure}
             style={{
               width: MOCKUP_WIDTH,

@@ -29,7 +29,12 @@ from agent_hub.core.brain.brain_note import BrainNote, BrainTree
 from agent_hub.core.events.event import Event, EventType
 from agent_hub.core.events.event_query import EventPage, EventQuery
 from agent_hub.core.events.stored_event import StoredEvent
-from agent_hub.core.features.feature_view import FeatureCost, FeatureDetail, FeatureView
+from agent_hub.core.features.feature_view import (
+    FeatureCost,
+    FeatureDetail,
+    FeatureView,
+    UxMockup,
+)
 from agent_hub.core.features.ticket_view import FeatureTickets, TicketRecords
 from agent_hub.core.hub_config.config_view import HubConfigView
 from agent_hub.core.hubs.finding_view import DoctorFindings, FindingView
@@ -279,6 +284,7 @@ class FakeHubReadModels:
     repos: dict[str, list[RepoView]] = field(default_factory=dict)
     configs: dict[str, HubConfigView] = field(default_factory=dict)
     features: list[FeatureDetail] = field(default_factory=list)
+    mockups: dict[tuple[str, str, str], UxMockup] = field(default_factory=dict)
     tickets: dict[str, FeatureTickets] = field(default_factory=dict)
     ticket_views: dict[str, TicketRecords] = field(default_factory=dict)
     findings: list[FindingView] = field(default_factory=list)
@@ -343,6 +349,11 @@ class FakeHubReadModels:
         self._call("get_feature", (project, slug))
         by_key = {f"{item.project}/{item.slug}": item for item in self.features}
         return _found(by_key, "feature", f"{project}/{slug}")
+
+    def ux_mockup(self, project: str, slug: str, name: str) -> UxMockup:
+        self._call("ux_mockup", (project, slug, name))
+        by_key = {"/".join(key): mockup for key, mockup in self.mockups.items()}
+        return _found(by_key, "ux mockup", f"{project}/{slug}/{name}")
 
     def feature_tickets(self, project: str, slug: str) -> FeatureTickets:
         self._call("feature_tickets", (project, slug))

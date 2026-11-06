@@ -9,9 +9,22 @@ import "./designs.css";
 
 type UxDesign = components["schemas"]["UxDesignView"];
 
-/** The design `?design=` names (its screen), else the first one. */
-export function pickDesign(designs: readonly UxDesign[], screen: string | null): UxDesign | null {
-  return designs.find((d) => d.screen === screen) ?? designs[0] ?? null;
+/** A design's own name, unique in its feature: its file name without `.md` (`ux-new-orders`). */
+export function designStem(design: UxDesign): string {
+  return design.path.slice(design.path.lastIndexOf("/") + 1).replace(/\.md$/, "");
+}
+
+/**
+ * The design `?design=` names: by its file (two designs may draw the same screen), else by its
+ * screen (the older links), else the first one.
+ */
+export function pickDesign(designs: readonly UxDesign[], name: string | null): UxDesign | null {
+  return (
+    designs.find((d) => designStem(d) === name) ??
+    designs.find((d) => d.screen === name) ??
+    designs[0] ??
+    null
+  );
 }
 
 /** "Brand services (list)" stays whole; a long title is cut at its first colon or parenthesis. */
@@ -38,7 +51,8 @@ export function DesignsTab({
   slug: string;
   designs: readonly UxDesign[];
   selected: UxDesign | null;
-  onSelect: (screen: string) => void;
+  /** Gets the chosen design's `designStem`. */
+  onSelect: (design: string) => void;
 }) {
   const [params, setParams] = useSearchParams();
   const view = params.get("view");
@@ -85,7 +99,7 @@ export function DesignsTab({
               aria-current={design.path === selected.path ? "true" : undefined}
               title={`brain/${design.path}`}
               onClick={() => {
-                onSelect(design.screen);
+                onSelect(designStem(design));
               }}
             >
               <span className="ah-designs-item-title">{shortTitle(design)}</span>

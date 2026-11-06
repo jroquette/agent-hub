@@ -823,11 +823,11 @@ export function FeatureDetailScreen() {
         slug={detail.slug}
         designs={detail.ux_designs}
         selected={selectedDesign}
-        onSelect={(screen) => {
+        onSelect={(design) => {
           setParams(
             (current) => {
               const next = new URLSearchParams(current);
-              next.set("design", screen);
+              next.set("design", design);
               return next;
             },
             { replace: true },

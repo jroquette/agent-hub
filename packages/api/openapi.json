@@ -20295,7 +20295,7 @@
     },
     "/api/v1/features/{project}/{slug}/mockups/{name}": {
       "get": {
-        "description": "One UX design's visual mockup (``ux-*.html`` of the feature folder) as text; 404 for any\nother name, a missing file, a link or one over 1 MiB.",
+        "description": "One UX design's visual mockup (``ux-*.html`` of the feature folder) as text; 400 for any\nother name, 404 for a missing file, a link or one over 1 MiB.",
         "operationId": "get_ux_mockup_api_v1_features__project___slug__mockups__name__get",
         "parameters": [
           {
@@ -20365,6 +20365,83 @@
           }
         },
         "summary": "Get Ux Mockup",
+        "tags": [
+          "features"
+        ]
+      }
+    },
+    "/api/v1/features/{project}/{slug}/mockups/{name}/page": {
+      "get": {
+        "description": "The same mockup served as its own page, which hub web frames: ``text/html`` with a policy\nof its own that allows its inline styles and ``data:`` images, fonts and media, and nothing\nelse (no script, no request, framed only by hub web); the same 400 and 404 as the JSON\nread.",
+        "operationId": "get_ux_mockup_page_api_v1_features__project___slug__mockups__name__page_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "pattern": "^ux-[A-Za-z0-9][A-Za-z0-9._-]*\\.html$",
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The mockup's own page"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Ux Mockup Page",
         "tags": [
           "features"
         ]

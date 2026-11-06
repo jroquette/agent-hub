@@ -464,6 +464,7 @@ def test_reads_ux_mockup_when_regular_and_under_cap(tmp_path: Path) -> None:
         ("demo-feature", "../ux-new-a.html"),
         ("..", "ux-new-a.html"),
         ("other", "ux-new-a.html"),
+        ("a\0b", "ux-new-a.html"),
     ],
 )
 def test_refuses_ux_mockup_when_name_or_place_wrong(tmp_path: Path, slug: str, name: str) -> None:

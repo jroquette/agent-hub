@@ -680,10 +680,33 @@ export interface paths {
     };
     /**
      * Get Ux Mockup
-     * @description One UX design's visual mockup (``ux-*.html`` of the feature folder) as text; 404 for any
-     *     other name, a missing file, a link or one over 1 MiB.
+     * @description One UX design's visual mockup (``ux-*.html`` of the feature folder) as text; 400 for any
+     *     other name, 404 for a missing file, a link or one over 1 MiB.
      */
     get: operations["get_ux_mockup_api_v1_features__project___slug__mockups__name__get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/features/{project}/{slug}/mockups/{name}/page": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Ux Mockup Page
+     * @description The same mockup served as its own page, which hub web frames: ``text/html`` with a policy
+     *     of its own that allows its inline styles and ``data:`` images, fonts and media, and nothing
+     *     else (no script, no request, framed only by hub web); the same 400 and 404 as the JSON
+     *     read.
+     */
+    get: operations["get_ux_mockup_page_api_v1_features__project___slug__mockups__name__page_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -10496,6 +10519,48 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["UxMockup"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_ux_mockup_page_api_v1_features__project___slug__mockups__name__page_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        slug: string;
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The mockup's own page */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "text/html": string;
         };
       };
       /** @description A client error, as an RFC 9457 problem */
