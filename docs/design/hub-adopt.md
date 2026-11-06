@@ -102,8 +102,18 @@ keeps the old `hub.lock` (absent or its prior bytes); a plain `--adopt` then end
 ### In the hub's CI
 
 Every hub's rendered `.github/workflows/ci.yml` (`init` and sync render the same file) has one job, `check`, run on
-pull requests to and pushes on the default branch with read-only `contents`; each action is pinned by commit SHA, its
-release in a comment (`# vX.Y.Z`). Steps: checkout (credentials not kept), setup-uv, credential, golden, `make check`.
+pull requests to (opened, synchronize, reopened, and edited, so a changed title or body is checked again) and pushes on
+the default branch with read-only `contents`; each action is pinned by commit SHA, its release in a comment
+(`# vX.Y.Z`). Steps: checkout (the whole history, credentials not kept), authorship (pull requests only), setup-uv,
+credential, golden, `make check`.
+
+- **Authorship step** (`Authorship`, AGENTS.md rule 1, AGH-4): fails when the pull request's title, body or one of its
+  commit messages (`base..head` of the event) carries AI attribution (the guard's `AI_ATTRIBUTION`), or, when an author
+  email is known (`AUTHOR_EMAIL` in the step's env, else `hub.json`'s `project.author_email`), when one of its commits
+  is authored or committed with another email; GitHub's own committer (`noreply@github.com`, a web edit or "Update
+  branch") is let through. The title and body are read from the event file (`$GITHUB_EVENT_PATH`), never through an
+  expression in the run block, and only commit SHAs and emails are printed. The platform's own `ci.yml` runs the same
+  step, byte for byte, in its `authorship` job.
 
 - **Credential step** (`Platform read credential`): reads `AGENT_HUB_READ_TOKEN`, a secret of the hub repository
   (Settings → Secrets and variables → Actions): a fine-grained personal access token or a GitHub App token with

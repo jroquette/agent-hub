@@ -1,11 +1,13 @@
-# The hub's gate on pull requests and on the default branch: the golden step (the pinned
-# `hub sync --check`: the managed files are the release's render), then `make check`, the same
-# commands as locally. Managed by hub sync.
+# The hub's gate on pull requests and on the default branch: on a pull request, the authorship
+# step (AGENTS.md rule 1); then the golden step (the pinned `hub sync --check`: the managed files
+# are the release's render), then `make check`, the same commands as locally. Managed by hub sync.
 name: CI
 
 on:
   pull_request:
     branches: ["@@{project_default_branch}"]
+    # edited: a changed title or body is checked again.
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: ["@@{project_default_branch}"]
 
@@ -18,9 +20,70 @@ jobs:
     timeout-minutes: 15
     steps:
       # Each action is pinned by its commit SHA; the comment names the release.
+      # The whole history: the authorship step reads the pull request's commits.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      # AGENTS.md rule 1 on a pull request: no AI attribution (the hub guard's AI_ATTRIBUTION) in
+      # its title, body or commit messages and, when an author email is known (AUTHOR_EMAIL, else
+      # hub.json's project.author_email), each of its commits authored and committed with it;
+      # GitHub's own committer (a web edit, "Update branch") is let through. The title and body
+      # are read from the event file, never through an expression (script injection). Nothing
+      # from the pull request is echoed but commit SHAs and emails.
+      - name: Authorship
+        if: github.event_name == 'pull_request'
+        run: |
+          python3 -I -S -c '
+          import json, os, re, subprocess, sys
+          ATTRIBUTION = re.compile(r"co-authored-by:\s*[^\n]*(claude|anthropic|openai|copilot|\bai\b)|generated with \[?claude|\U0001f916", re.I)
+          WEB_FLOW = "noreply@github.com"
+          SHA = re.compile(r"[0-9a-f]{40}")
+          def fail(reason):
+              sys.exit("Authorship: " + reason)
+          try:
+              with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as stream:
+                  pull = json.load(stream)["pull_request"]
+              title, body = pull["title"], pull["body"] or ""
+              base, head = pull["base"]["sha"], pull["head"]["sha"]
+          except (KeyError, TypeError, OSError, ValueError, RecursionError):
+              fail("cannot read the pull request from the event file")
+          texts = (title, body, base, head)
+          if not all(isinstance(text, str) for text in texts) or not (SHA.fullmatch(base) and SHA.fullmatch(head)):
+              fail("cannot read the pull request from the event file")
+          expected = os.environ.get("AUTHOR_EMAIL", "")
+          if not expected and os.path.exists("hub.json"):
+              try:
+                  with open("hub.json", encoding="utf-8") as stream:
+                      document = json.load(stream)
+              except (OSError, ValueError, RecursionError):  # RecursionError: nesting too deep
+                  fail("cannot read hub.json as JSON")
+              project = document.get("project") if isinstance(document, dict) else None
+              value = project.get("author_email") if isinstance(project, dict) else None
+              expected = value if isinstance(value, str) else ""
+          log = subprocess.run(["git", "log", "--format=%H%x1f%ae%x1f%ce%x1f%B%x1e", base + ".." + head], capture_output=True)
+          if log.returncode != 0:
+              fail("cannot list the pull request commits (git log " + base[:12] + ".." + head[:12] + ")")
+          records = log.stdout.decode("utf-8", "replace").split("\x1e")
+          commits = [record.lstrip("\n").split("\x1f", 3) for record in records if record.strip()]
+          allowed = {"author": {expected.lower()}, "committer": {expected.lower(), WEB_FLOW}}
+          problems = []
+          if ATTRIBUTION.search(title):
+              problems.append("the pull request title carries AI attribution")
+          if ATTRIBUTION.search(body):
+              problems.append("the pull request body carries AI attribution")
+          for sha, author, committer, message in commits:
+              if ATTRIBUTION.search(message):
+                  problems.append("commit " + sha[:12] + ": the message carries AI attribution")
+              for role, email in (("author", author), ("committer", committer)):
+                  if expected and email.lower() not in allowed[role]:
+                      problems.append("commit " + sha[:12] + ": the " + role + " email " + email + " is not " + expected)
+          for problem in problems:
+              print("Authorship: " + problem, file=sys.stderr)
+          if problems:
+              sys.exit(1)
+          print("Authorship: the title, the body and " + str(len(commits)) + " commit(s) are clean")
+          '
       # uv runs the release of agent-hub that hub.json pins (platform.version).
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
         with:
