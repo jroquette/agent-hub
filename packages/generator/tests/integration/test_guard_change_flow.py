@@ -714,3 +714,49 @@ def test_passes_when_push_target_literal_or_interpreter_harmless(ws: Path, decid
     ]
 
     assert decide([bash_at(command, app) for command in commands]) == [None] * len(commands)
+
+
+# The attribution rule reads message files of up to 1 MiB and every GitHub text field, so it finds
+# the marks in time linear in the text, as core's carries_ai_attribution: each co-author tag's line
+# is searched once (the pattern's `\s*[^\n]*` rescanned a line from each tag: 120 KB of tags took
+# 18 s). The child counts the line searches on a line of 8000 tags, and checks the verdicts against
+# the pattern on samples. argv: none. Prints [verdict, line searches, [same verdict per sample]].
+ATTRIBUTION_SEARCHES = r"""
+import json, re
+import guard
+calls = [0]
+class Counted:
+    def __init__(self, pattern):
+        self.pattern = pattern
+    def search(self, *args):
+        calls[0] += 1
+        return self.pattern.search(*args)
+guard.AI_CO_AUTHOR = Counted(guard.AI_CO_AUTHOR)
+hostile = guard.ai_attributed("co-authored-by:" * 8000)
+searches = calls[0]
+pattern = re.compile(
+    r"co-authored-by:\s*[^\n]*(claude|anthropic|openai|copilot|\bai\b)"
+    r"|generated with \[?claude|\U0001f916",
+    re.I,
+)
+samples = [
+    "Co-Authored-By: Claude <noreply@anthropic.com>",
+    "co-authored-by:\n\n  AI bot",
+    "Co-Authored-By: Jane\nclaude",
+    "x co-authored-by: a co-authored-by:\nopenai",
+    "Generated with [Claude Code]",
+    "\U0001f916",
+    "co-authored-by: maid",
+    "Co-Authored-By: Jane <j@x.io>\n",
+]
+same = [bool(pattern.search(sample)) == guard.ai_attributed(sample) for sample in samples]
+print(json.dumps([hostile, searches, same]))
+"""
+
+
+def test_finds_attribution_in_linear_time_when_text_hostile(
+    ws: Path, *, hook_python: str, run_python: Callable[..., Any]
+) -> None:
+    found = run_python(hook_python, ATTRIBUTION_SEARCHES, path=ws / "demo-hub" / HOOKS)
+
+    assert found == [False, 1, [True] * 8]
