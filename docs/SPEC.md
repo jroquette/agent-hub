@@ -1211,9 +1211,12 @@ Continuity between sessions comes from the brain and the summaries, not from rer
   on `<prefix>learning-propose-<slug>`, never the default branch). The app repos get no MCP configuration, so direction 2 holds.
 - `hub mcp` sends server instructions on connect: search the brain for the task's topic in 2 to 4 key words before planning,
   `read` what matters, weigh `kind` and `status`, file learnings with `propose`, and fall back to `./hub search`
-  without the tools. The hub's `AGENTS.md` and `/kickoff`, `/implement` and `/feature` say the same. The managed
-  settings enable the `hub` server (`enabledMcpjsonServers`), which takes effect once the folder is trusted
-  ([ADR 0057](adr/0057-managed-settings-enable-hub-mcp.md)).
+  without the tools. The hub's `AGENTS.md` and `/kickoff`, `/implement` and `/feature` say the same. Every agent of
+  the base plugin lists `search` and `read` (`mcp__hub__search`, `mcp__hub__read`) in its `tools:` and searches before
+  it concludes; `/recall` searches through them before `./hub search` and `rg`; `/learn` files a team learning with
+  `propose` and writes the inbox note by hand only when the call is refused (AGH-697). The managed settings pre-allow
+  `search` and `read`, never `propose`, and enable the `hub` server (`enabledMcpjsonServers`), which takes effect once
+  the folder is trusted ([ADR 0057](adr/0057-managed-settings-enable-hub-mcp.md)).
 - Out of scope: hosting, Postgres, accounts, sharing transcripts, embeddings. A move to hosted later replaces only where
   the index is stored.
 
