@@ -388,10 +388,25 @@ function HowProven({
           The evidence says a manual check is still an owner step.
         </div>
       )}
-      <details className="ah-ac-raw">
-        <summary>Full evidence as recorded in features.json</summary>
-        <p>{ac.evidence}</p>
-      </details>
+      {ac.passes ? (
+        <details className="ah-ac-raw">
+          <summary>Full evidence as recorded in features.json</summary>
+          <p>{ac.evidence}</p>
+        </details>
+      ) : (
+        <div className="ah-ac-why" role="note" aria-label="Why it is not passing">
+          <div className="ah-ac-why-h">
+            <Icon name="circle-alert" size="sm" />
+            Why it is not passing, in the evaluator's words
+          </div>
+          <p>{ac.evidence}</p>
+          <div className="ah-ac-why-next ah-small ah-muted">
+            What you can do: read the eval record above for the full story; fix the code or the
+            verification command and run /evaluate again; or, if you checked it yourself, use{" "}
+            <strong>I checked it, mark as passing</strong> below.
+          </div>
+        </div>
+      )}
     </div>
   );
 }

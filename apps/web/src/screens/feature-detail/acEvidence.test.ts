@@ -58,6 +58,16 @@ describe("parseEvidence", () => {
     );
   });
 
+  it("says the command failed when its tests passed but it exited non-zero", () => {
+    const facts = parseEvidence(
+      "exit 1: secrets tests 10 passed, but git diff --quiet origin/master exits 1",
+    );
+
+    expect(resultPassed(facts.result)).toBe(false);
+    expect(resultHeadline(facts.result)).toBe("Command failed (exit code 1)");
+    expect(resultExplanation(facts.result).at(-1)).toContain("another step of the command failed");
+  });
+
   it("marks superseded evidence and a repo-qualified PR", () => {
     const facts = parseEvidence(
       "superseded 2026-10-12 by owner decision; demo-api#68 closed without merging",
