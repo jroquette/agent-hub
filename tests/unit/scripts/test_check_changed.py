@@ -7,8 +7,11 @@ too. git and every step are fakes: no process starts.
 """
 
 import itertools
+import os
 import re
 import shlex
+import signal
+import subprocess
 import sys
 import threading
 import time
@@ -876,6 +879,36 @@ def test_kills_step_and_what_it_started_when_run_stops(tmp_path: Path) -> None:
     time.sleep(0.5)
     assert beats.stat().st_size == seen
     assert [code != 0 for code, _ in ended] == [True]
+
+
+# A run of one step, as the Stop gate starts a check: in a session of its own, whose process
+# group it kills with SIGKILL when the check takes too long.
+RUN = """
+import sys, threading
+from scripts.check_changed import start_step
+start_step([sys.executable, "-c", sys.argv[1], sys.argv[2], sys.argv[3]], threading.Event())
+"""
+
+
+def test_ends_step_group_when_run_group_killed(tmp_path: Path) -> None:
+    beats = tmp_path / "beats"
+    run = subprocess.Popen(  # noqa: S603 -- the test's own Python, a fixed program
+        [sys.executable, "-c", RUN, PARENT, GRANDCHILD, str(beats)],
+        cwd=REPO_ROOT,
+        start_new_session=True,
+    )
+    try:
+        _until(lambda: beats.exists() and beats.stat().st_size > 0)
+    finally:
+        os.killpg(run.pid, signal.SIGKILL)
+        run.wait()
+
+    deadline = time.monotonic() + STOP_WAIT_S
+    seen = -1
+    while seen != beats.stat().st_size:
+        assert time.monotonic() < deadline, "the step's grandchild outlived the killed run"
+        seen = beats.stat().st_size
+        time.sleep(0.5)
 
 
 @dataclass

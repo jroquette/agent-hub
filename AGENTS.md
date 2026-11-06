@@ -49,7 +49,9 @@ Set up once per clone or worktree with `uv sync --all-packages` (the `make` targ
 `check-fast`, `check-changed` and `check` run two lanes at once (the checks, and the test runners in turn) and print
 each lane when it ends; `check-fast` skips the web app's steps unless something under `apps/web/` differs from
 `origin/main` (`WEB_FAST=1` forces them), and `check-changed` runs them only for a changed path under `apps/web/` or
-when it cannot tell what changed.
+when it cannot tell what changed; for `.ts` and `.tsx` files under `apps/web/src/` alone, it narrows them to the
+typecheck, ESLint and Prettier on those files, and the Vitest files that import them. In `check-changed`, a failed
+step stops the other lane.
 
 Redirect the output to a file and check the exit code: `make check > check.log 2>&1; echo $?`. Never run them with `-j`.
 

@@ -475,8 +475,17 @@ run in `test-suite` and `test-suite-serial`, and the web smoke in `test-e2e-seri
   `export_openapi --check` when the plan reaches `api` or `packages/api/openapi.json` changed. That is the Python half
   of `openapi-check` only: its TypeScript half (`gen:api:check`) runs in `make check-fast` and `make check`.
 - Tests: `pytest -m "unit or contract"` on the planned folders and files alone, without coverage, so the data that
-  `make coverage` reads stays the gates'. The web steps (`web-install` first, then `web-static` and `web-test` in
-  their lanes) run only for a path under `apps/web/`, or when the changed paths are unknown.
+  `make coverage` reads stays the gates'. The web steps (`web-install` first) run only for a path under `apps/web/`,
+  or when the changed paths are unknown. They are narrowed when every changed web path is a `.ts` or `.tsx` file
+  under `apps/web/src/`: the checks lane runs the web typecheck (the whole app, so a deleted source still fails
+  where it is imported) and `npm run lint:changed` (ESLint with no warning allowed, and the Prettier check, on
+  those files), the tests lane `npm run test:related` (the Vitest files that import them, directly or not, without
+  coverage; Vitest itself runs every file for a change to its config, `package.json` or setup file). Both scripts
+  are `apps/web/scripts/check-changed.mjs`, which reads the files from a list file the run writes, so no path
+  becomes an argument; its tests (`src/build/checkChanged.test.ts`) run it on a scratch project. Any other web
+  path (a config, `package.json`, a stylesheet, a Playwright spec, the design tokens), with a reason line, or an
+  unknown change set runs the full `web-static` and `web-test`. `make check-fast` and `make check` keep the full
+  web steps.
 - What a path runs: a package's `src/` or `tests/data/` runs the fast tests of that package and of every package that
   imports it, directly or not (read from the import statements of each `src/` and of `scripts/`, which root
   `tests/unit` tests). A change under `src/` also runs core's `hub_config/test_model.py` and `test_conventions.py`,
@@ -491,9 +500,15 @@ run in `test-suite` and `test-suite-serial`, and the web smoke in `test-e2e-seri
   `mypy.ini`, `Makefile` or `.python-version` in any folder, and `scripts/pytest_levels.py`), a path it cannot place
   (absolute, with a `..` part, in a pack that does not exist, or matching no rule), or no merge base with
   `origin/main`.
-- Output: the plan (at most 20 reason lines, then one that counts the rest), then each lane when it ends, a failed
-  lane last, and a final line naming the failed step; exit 0, or 1 when a step failed. CI and the PR gate keep
-  `make check`.
+- Lanes: when a step fails, the other lane is stopped at once: its running step is ended with everything it
+  started, and its next steps never start (both lanes' first steps always start). Each step runs under
+  `scripts/step_guard.py`, the leader of a process group of its own, which ends that group when the run stops the
+  step or when the run itself ends, even killed (the Stop gate kills its check's process group with SIGKILL), as
+  it then reads the end of a pipe only the run held open.
+- Output: the plan (at most 20 reason lines, then one that counts the rest; the web steps: `no`, `full` or
+  `narrowed`, then at most 20 `web file:` lines), then each lane when it ends (a stopped one with a line naming its
+  stopped step), a failed lane last, and a final line naming the failed step; exit 0, or 1 when a step failed. CI
+  and the PR gate keep `make check`.
 
 Never run the gate targets with `-j`: they set it themselves, and the tests are already parallel inside each target
 (pytest-xdist).

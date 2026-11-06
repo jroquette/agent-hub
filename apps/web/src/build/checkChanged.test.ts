@@ -94,7 +94,8 @@ describe("related", () => {
     async () => {
       const { status, output } = await run("related", ["src/alone.mjs"]);
 
-      expect(output).not.toContain(".test.mjs");
+      expect(output).not.toContain("sum.test.mjs");
+      expect(output).not.toContain("half.test.mjs");
       expect(status).toBe(0);
     },
     RUN_TIMEOUT_MS,
