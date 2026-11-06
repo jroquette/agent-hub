@@ -330,3 +330,123 @@ def test_denies_message_file_write_when_it_holds_attribution(ws: Path, decide: D
         None,
         None,
     ]
+
+
+# C-7: who a commit, an annotated tag or a merge is by. When the hub sets the author's email
+# (hub.local.json, else hub.json), each identity git would record (from --author, GIT_AUTHOR_* and
+# GIT_COMMITTER_* variables, git -c, else git config where the call runs) must be that email.
+IDENTITY_REASON = (
+    "commit identity: this `git {}` would record {} as its {}, not Me <me@example.com>"
+    " (project.author_email of hub.json or hub.local.json); set user.email in git config,"
+    " or drop the override"
+)
+IDENTITY_UNCHECKED_REASON = (
+    "commit identity not checked: {}; confirm this `git {}` is by Me <me@example.com>"
+)
+OTHER = "noreply@anthropic.com"
+
+
+def test_denies_commit_when_git_config_names_other_author(ws: Path, decide: Decide) -> None:
+    app = git_repo(ws / "app", "me/dem-1-x", OTHER)
+    cases = [
+        ("git commit -m x", IDENTITY_REASON.format("commit", OTHER, "author")),
+        ("git tag -a v1 -m x", IDENTITY_REASON.format("tag", OTHER, "tagger")),
+        ("git merge me/dem-2-y", IDENTITY_REASON.format("merge", OTHER, "author")),
+    ]
+
+    verdicts = decide([bash_at(command, app) for command, _ in cases])
+
+    assert verdicts == [("deny", reason) for _, reason in cases]
+
+
+def test_denies_commit_when_override_names_other_author(ws: Path, decide: Decide) -> None:
+    app = git_repo(ws / "app", "me/dem-1-x", "me@example.com")
+    cases = [
+        ("git -c user.email=other@x.io commit -m x", "author"),
+        ("git -c author.email=other@x.io commit -m x", "author"),
+        ("git commit --author='O <other@x.io>' -m x", "author"),
+        ("git commit --author 'O <other@x.io>' -m x", "author"),
+        ("GIT_AUTHOR_EMAIL=other@x.io git commit -m x", "author"),
+        ("env GIT_COMMITTER_EMAIL=other@x.io git commit -m x", "committer"),
+        ("export GIT_AUTHOR_EMAIL=other@x.io && git commit -m x", "author"),
+    ]
+
+    verdicts = decide([bash_at(command, app) for command, _ in cases])
+    from_session = decide(
+        [bash_at("git commit -m x", app)], env={"GIT_COMMITTER_EMAIL": "other@x.io"}
+    )
+
+    assert verdicts == [
+        ("deny", IDENTITY_REASON.format("commit", "other@x.io", role)) for _, role in cases
+    ]
+    assert from_session == [("deny", IDENTITY_REASON.format("commit", "other@x.io", "committer"))]
+
+
+def test_passes_commit_when_identity_matches(ws: Path, decide: Decide) -> None:
+    app = git_repo(ws / "app", "me/dem-1-x", "me@example.com")
+    web = git_repo(ws / "web", "me/dem-1-x", OTHER)
+    events = [
+        bash_at("git commit -am x", app),
+        bash_at("git commit --author='Me <ME@example.com>' -m x", app),
+        bash_at("git tag -a v1 -m x", app),
+        bash_at("git -c user.email=me@example.com commit -m x", web),
+        bash_at(
+            "GIT_AUTHOR_EMAIL=me@example.com GIT_COMMITTER_EMAIL=me@example.com git commit -m x",
+            web,
+        ),
+        bash_at("git tag v1", web),
+        bash_at("git tag -l", web),
+        bash_at("git merge --abort", web),
+        bash_at("git -C app commit -m x", ws),
+        bash_at("cd app && git commit -m x", ws),
+        bash_at("git commit -m x", ws / "demo-hub"),
+    ]
+
+    assert decide(events) == [None] * len(events)
+
+
+def test_passes_commit_when_hub_sets_no_author(ws: Path, decide: Decide) -> None:
+    project = {key: value for key, value in HUB_JSON["project"].items() if key != "author_email"}
+    (ws / "demo-hub" / "hub.json").write_text(json.dumps(HUB_JSON | {"project": project}))
+    app = git_repo(ws / "app", "me/dem-1-x", OTHER)
+
+    assert decide([bash_at("git commit -m x", app)]) == [None]
+
+
+def test_asks_when_commit_identity_cannot_be_read(ws: Path, decide: Decide) -> None:
+    broken = git_repo(ws / "app", "me/dem-1-x", "me@example.com")
+    (broken / ".git" / "config").write_text("[core\n\tbare = false\n", encoding="utf-8")
+    app = git_repo(ws / "web", "me/dem-1-x", "me@example.com")
+    cases = [
+        ("git commit -m x", broken, "commit", "git config cannot be read"),
+        ("git tag -a v1 -m x", broken, "tag", "git config cannot be read"),
+        ('cd "$WORKTREE" && git commit -m x', ws, "commit", "the folder it runs in cannot be told"),
+        ("git commit --author=Jose -m x", app, "commit", "--author names no email"),
+        (
+            'GIT_AUTHOR_EMAIL="$MAIL" git commit -m x',
+            app,
+            "commit",
+            "an email is a shell expansion",
+        ),
+    ]
+
+    verdicts = decide([bash_at(command, cwd) for command, cwd, _, _ in cases])
+
+    assert verdicts == [
+        ("ask", IDENTITY_UNCHECKED_REASON.format(cause, sub)) for _, _, sub, cause in cases
+    ]
+
+
+# The guard's 10 s hook timeout holds a few git reads: each is cut at 2 s, and one command reads
+# git at most 4 times (one read per folder and identity variables).
+GIT_LIMITS = """
+import json
+import guard
+print(json.dumps([guard.GIT_READ_TIMEOUT, guard.GIT_READS_CAP]))
+"""
+
+
+def test_states_git_read_limits_when_constants_read(
+    ws: Path, *, hook_python: str, run_python: Callable[..., Any]
+) -> None:
+    assert run_python(hook_python, GIT_LIMITS, path=ws / "demo-hub" / HOOKS) == [2, 4]
