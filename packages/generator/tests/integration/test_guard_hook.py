@@ -2607,17 +2607,25 @@ def test_asks_when_owner_signoff_record_written(evaluate: Evaluate, workspace: P
     signoff = "brain/features/x/evals/owner-signoff.md"
     multi_edit = {
         "file_path": evals + "ac-3.md",
-        "edits": [{"old_string": "a", "new_string": "b"}, {"old_string": "c", "new_string": "provenance: 'owner'"}],
+        "edits": [
+            {"old_string": "a", "new_string": "b"},
+            {"old_string": "c", "new_string": "provenance: 'owner'"},
+        ],
     }
     calls = {
         signoff: file("Write", {"file_path": signoff, "content": "x"}),
         evals + "owner-signoff-r2.md": file(
-            "Edit", {"file_path": evals + "owner-signoff-r2.md", "old_string": "a", "new_string": "b"}
+            "Edit",
+            {"file_path": evals + "owner-signoff-r2.md", "old_string": "a", "new_string": "b"},
         ),
         evals + "ac-1.md": file("Write", {"file_path": evals + "ac-1.md", "content": OWNER_EVAL}),
         evals + "ac-2.md": file(
             "Edit",
-            {"file_path": evals + "ac-2.md", "old_string": "provenance: agent", "new_string": "provenance: owner"},
+            {
+                "file_path": evals + "ac-2.md",
+                "old_string": "provenance: agent",
+                "new_string": "provenance: owner",
+            },
         ),
         evals + "ac-3.md": f"check_file('MultiEdit', {multi_edit!r}, cfg)",
         "brain/features/x/evals/owner-signoff-r3.md": bash(
@@ -2636,16 +2644,28 @@ def test_asks_when_owner_signoff_record_written(evaluate: Evaluate, workspace: P
     assert evaluate([RULE_OF_VERDICT.format(calls[signoff])]) == ["owner_signoff"]
 
 
-def test_passes_when_eval_written_without_owner_provenance(evaluate: Evaluate, workspace: Path) -> None:
+def test_passes_when_eval_written_without_owner_provenance(
+    evaluate: Evaluate, workspace: Path
+) -> None:
     evals = f"{workspace / 'demo-hub' / 'brain' / 'features' / 'dem-1-x' / 'evals'}/"
     calls = [
         file("Write", {"file_path": evals + "ac-1.md", "content": AGENT_EVAL}),
         file(
             "Edit",
-            {"file_path": evals + "ac-1.md", "old_string": "provenance: owner", "new_string": "provenance: agent"},
+            {
+                "file_path": evals + "ac-1.md",
+                "old_string": "provenance: owner",
+                "new_string": "provenance: agent",
+            },
         ),
         file("Write", {"file_path": evals + "ac-2.md", "content": "provenance: owner-review\n"}),
-        file("Write", {"file_path": str(workspace / "app" / "docs" / "owner-signoff.md"), "content": OWNER_EVAL}),
+        file(
+            "Write",
+            {
+                "file_path": str(workspace / "app" / "docs" / "owner-signoff.md"),
+                "content": OWNER_EVAL,
+            },
+        ),
         bash("cat brain/features/x/evals/owner-signoff.md"),
         bash("echo 'provenance: agent' > brain/features/x/evals/ac-1.md"),
     ]

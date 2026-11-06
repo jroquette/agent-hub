@@ -297,6 +297,17 @@ call nobody chose to confirm. Proof: `packages/generator/tests/integration/test_
 - **AC-430.4** Given auto mode, when the guard turns an ask into a deny, then the decision it records through the
   event sensor is `kind: deny` under the ask's `rule`.
 
+## The guard keeps the owner's steps and the change flow (AGH-699)
+
+The 2026-11-06 audit found paths round the guard's rules for authorship (rule 1) and the change flow (rule 2). Each rule
+below asks where the owner has a legitimate use for the call, and denies where the hub's rules never allow it. Proof:
+`packages/generator/tests/integration/test_guard_hook.py`.
+
+- **Owner sign-off** (rule `owner_signoff`, ask): a Write, Edit, MultiEdit or Bash write (a redirect, `tee`, `sed -i`,
+  `rm`, `mv`, `cp`, `truncate`, `ln` target) of a feature eval, `brain/features/<slug>/evals/<name>`, asks when the
+  name is `owner-signoff[-rN]` or its new text (Write's content, Edit's and MultiEdit's new strings, the Bash command)
+  holds a `provenance: owner` line. Only hub web writes the owner's verdict; an eval with `provenance: agent` passes.
+
 ## Decisions
 
 - [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md): ownership, lock, sync, adopt; no 3-way merge or marker blocks.

@@ -38,6 +38,8 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         plugin/<project>/hooks/, .claude/settings*.json, hub.lock, hub.json and hub.local.json, in the hub or a hub worktree,
         and the hub/agent launchers (a Bash write asks only when one is its target, so running them never asks);
         editing paths in guard.ask_before_edit, writing brain/ outside now.md, journal/, _inbox/, auto/, features/,
+        writing an owner sign-off record (brain/features/<slug>/evals/owner-signoff[-rN], or an eval whose new
+        text says provenance: owner; from Write, Edit, MultiEdit or a Bash write),
         a mutating hub env (add, set, remove, service add|remove; list and show pass) or hub repo
         (add, set, remove; list passes),
         with HUB_RUN_ENVIRONMENT naming a declared environment of access read or production (an agent
@@ -304,6 +306,13 @@ REPO_COMMAND = LazyPattern(
     r"(?<![\w.-])hub['\"]?[ \t]+(?:--[ \t]+)?repo[ \t]+(?:--[ \t]+)?(add|set|remove)(?![\w-])"
 )
 REPO_COMMAND_REASON = "hub repo {} changes hub.json's repos (the checks the Stop hook runs); confirm"
+# An owner sign-off record is the owner's own verdict, which hub web writes: a feature eval named
+# owner-signoff[-rN], or any feature eval whose new text says `provenance: owner`.
+FEATURE_EVAL = LazyPattern(r"(?:^|/)brain/features/[^/]+/evals/[^/]+$")
+OWNER_SIGNOFF_NAME = LazyPattern(r"(?:^|/)owner-signoff[^/]*$", re.I)
+OWNER_PROVENANCE = LazyPattern(r"^[ \t]*provenance[ \t]*:[ \t]*['\"]?owner['\"]?[ \t]*\r?$", re.M)
+OWNER_SIGNOFF_REASON = ("owner sign-off: {} holds the owner's own verdict (owner-signoff, or provenance: owner); "
+                        "the owner signs off in hub web, confirm")
 AUTO_MODE_SUFFIX = (
     " (denied in auto mode, which never stops to confirm: take another way, or ask the user to"
     " switch the session out of auto mode to approve it)"
@@ -319,6 +328,20 @@ def _edits(ti: dict) -> list[dict]:
     """MultiEdit's edits: a list of objects, other items (and a non-list) dropped."""
     edits = ti.get("edits")
     return [e for e in edits if isinstance(e, dict)] if isinstance(edits, list) else []
+
+
+def _new_text(tool: str, ti: dict) -> str:
+    """The text a Write, Edit or MultiEdit puts in its file (MultiEdit's new strings, one per line)."""
+    if tool == "Write":
+        return _str(ti.get("content"))
+    if tool == "Edit":
+        return _str(ti.get("new_string"))
+    return "\n".join(_str(e.get("new_string")) for e in _edits(ti)) if tool == "MultiEdit" else ""
+
+
+def _owner_signoff(path: str, text: str) -> bool:
+    """Whether a write of text to path makes or changes an owner sign-off record."""
+    return bool(FEATURE_EVAL.search(path)) and bool(OWNER_SIGNOFF_NAME.search(path) or OWNER_PROVENANCE.search(text))
 
 
 def _read_text(path: str) -> str:
@@ -1127,6 +1150,11 @@ def _after_infra(c: str, cfg: Config) -> Verdict:
                     return "ask", GUARD_PARENT_REASON.format(tok, held or "the hub")
     if re.search(r"\b(rm|mv|truncate)\b[^;&|\n]*\s" + TEST_PATH, c) or re.search(r"\bsed\s+(-\w*i\w*|--in-place)\b[^;&|\n]*\s" + TEST_PATH, c):
         return "ask", "deleting or sed-editing tests from Bash bypasses the assertion guard; use Edit, or confirm this is intended"
+    if "evals/" in c:
+        for seg in segments:
+            for tok in _write_targets(seg) if BASH_WRITE.search(seg) else ():
+                if _owner_signoff(tok, c):
+                    return "ask", OWNER_SIGNOFF_REASON.format(tok)
     if "brain/" in c and re.search(r"(>>?|\btee\b(\s+-a)?|\bsed\s+-\w*i\w*|\b(rm|mv|cp)\b)[^;&|\n]*\bbrain/(?!(now\.md|journal/|_inbox/|auto/|features/))\S+", c):
         return "ask", "brain/ is curated: agents write only now.md, journal/, _inbox/, auto/ and features/; propose via /learn or confirm"
     if cfg.ask_before_edit:
@@ -1212,6 +1240,8 @@ def check_file(tool: str, ti: dict, cfg: Config | None = None) -> Verdict:
     pat = protected(path, cfg)
     if pat:
         return "ask", f"{path} matches guard.ask_before_edit `{pat}` (hub.json): plan and approval first; confirm this change is intended"
+    if _owner_signoff(path, _new_text(tool, ti)):
+        return "ask", OWNER_SIGNOFF_REASON.format(path)
     rel = _brain_rel(path, cfg)
     if rel is not None and not re.match(r"(now\.md|journal/|_inbox/|auto/|features/)", rel):
         return "ask", "brain/ is curated: agents write only now.md, journal/, _inbox/, auto/ and features/; propose via /learn or confirm"
@@ -2303,6 +2333,7 @@ RULE_IDS = (
     ("git_internals", LazyPattern(r"^\.git is git's own state")),
     ("test_bash_edit", LazyPattern(r"^deleting or sed-editing tests")),
     ("brain_curated", LazyPattern(r"^brain/ is curated")),
+    ("owner_signoff", LazyPattern(r"^owner sign-off: ")),
     ("assertions_removed", LazyPattern(r"^this edit removes \d+ assertion")),
     ("skip_marker", LazyPattern(r"^this edit adds a skip")),
     ("secret_file", LazyPattern(r"^(\S.* may hold secrets|Grep over \.env files)")),
