@@ -3007,9 +3007,17 @@ PINNED_USES = re.compile(rf"^\s+-?\s*uses: [\w.-]+(?:/[\w.-]+)+{ACTION_PIN}$")
 HUB_DOCTOR_ENTRY = "./hub doctor"
 
 
-def pre_commit_entry(text: str) -> str:
-    """The value of the one ``entry:`` key, as written."""
-    entries = [line.strip() for line in text.splitlines() if line.strip().startswith("entry:")]
+def pre_commit_hook(text: str, hook_id: str) -> str:
+    """The lines of the one hook whose ``- id:`` is ``hook_id``, as written."""
+    blocks = re.findall(rf"^( +)- id: {re.escape(hook_id)}\n((?:\1  .*\n)*)", text, re.MULTILINE)
+    assert len(blocks) == 1, text
+    return str(blocks[0][1])
+
+
+def pre_commit_entry(text: str, hook_id: str = "hub-doctor") -> str:
+    """The value of the ``entry:`` key of the hook ``hook_id``, as written."""
+    hook = pre_commit_hook(text, hook_id)
+    entries = [line.strip() for line in hook.splitlines() if line.strip().startswith("entry:")]
     assert len(entries) == 1, entries
     return entries[0].removeprefix("entry:").strip()
 
@@ -3869,8 +3877,28 @@ def test_pins_hygiene_hooks_when_pre_commit_rendered(demo_config: HubConfig) -> 
     )
     assert re.findall(r"^\s+rev: (.*)$", pre_commit, re.MULTILINE) == ["v6.0.0"]
     hook_ids = re.findall(r"^\s+- id: (.*)$", pre_commit, re.MULTILINE)
-    assert hook_ids == [*HYGIENE_HOOKS, "hub-doctor"]
+    assert hook_ids == [*HYGIENE_HOOKS, "hub-doctor", "commit-msg"]
     assert pre_commit.count("- repo: local\n") == 1
+
+
+# AGH-699 C-8: `pre-commit install` installs both hook types; every hook runs at the pre-commit
+# stage only but the commit-msg one, which runs at that stage only, on the hub's rendered file.
+def test_installs_commit_msg_hook_when_pre_commit_rendered(
+    demo_config: HubConfig, variant_config: HubConfig
+) -> None:
+    for config in (demo_config, variant_config):
+        pre_commit = text_of(config, ".pre-commit-config.yaml")
+        commit_msg = pre_commit_hook(pre_commit, "commit-msg")
+
+        assert "\ndefault_install_hook_types: [pre-commit, commit-msg]\n" in pre_commit
+        assert "\ndefault_stages: [pre-commit]\n" in pre_commit
+        assert re.findall(r"^\s+stages: (.*)$", pre_commit, re.MULTILINE) == ["[commit-msg]"]
+        assert "        stages: [commit-msg]\n" in commit_msg
+        assert "        language: system\n" in commit_msg
+        assert pre_commit_entry(pre_commit, "commit-msg") == (
+            "python3 plugin/hub-workflow/hooks/commit_msg.py"
+        )
+        assert "always_run" not in commit_msg
 
 
 def test_runs_hub_doctor_through_shim_when_pre_commit_entry_run(
