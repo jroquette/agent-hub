@@ -62,7 +62,7 @@ describe("Skeleton", () => {
     // AGH-659: on a loaded machine the commit that ends the loading can end past the delay,
     // before React runs the effects that clear its timer; the timer then ran first and put the
     // skeleton over the page just drawn, for 300 ms (the app's hub gate test saw it).
-    const actEnvironment = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    const actEnvironment = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean | undefined };
     const previous = actEnvironment.IS_REACT_ACT_ENVIRONMENT;
     onTestFinished(() => {
       actEnvironment.IS_REACT_ACT_ENVIRONMENT = previous;
