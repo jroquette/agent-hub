@@ -25,6 +25,7 @@ from typer.testing import CliRunner
 from agent_hub.cli.hub_root import HUB_ROOT_VARIABLE
 from agent_hub.cli.main import app
 from agent_hub.core.knowledge.document_rules import MAX_DOCUMENT_BYTES
+from agent_hub.mcp_server.server import INSTRUCTIONS
 
 pytestmark = pytest.mark.disable_socket
 
@@ -168,6 +169,23 @@ def test_speaks_only_json_rpc_on_stdout_when_serving(
     ]
     for value in ("worktrees", "brain/now.md", title, body):
         assert value not in stderr
+
+
+def test_sends_instructions_in_initialize_reply_when_serving(
+    knowledge_hub: KnowledgeHubFactory, tmp_path: Path
+) -> None:
+    hub = knowledge_hub({"brain/now.md": NOW_TEXT})
+
+    with serving(hub, tmp_path / "knowledge.db") as served:
+        reply = served.initialize()
+        stderr = served.close()
+
+    assert served.process.returncode == 0, stderr
+    assert reply["result"]["instructions"] == INSTRUCTIONS
+    assert served.lines
+    for line in served.lines:
+        assert line.endswith(b"\n")
+        assert json.loads(line)["jsonrpc"] == "2.0"
 
 
 def _socket_inodes(pid: int) -> set[str]:
