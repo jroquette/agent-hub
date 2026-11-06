@@ -162,9 +162,14 @@ describe("StartTicket", () => {
     expect(row.getByText(/Can start on/)).toHaveTextContent("Can start on T2's branch");
     expect(row.getByText("AGH-2 is in review, not merged")).toBeInTheDocument();
     expect(row.queryByText(/Waiting on/)).toBe(null);
-    const start = await row.findByRole("button", {
-      name: "Start AGH-3 on AGH-2's branch (AGH-2 is in review, not merged)",
-    });
+    // The button takes this name once two reads have answered, one after the other (can this
+    // machine drive Claude, then the hub folder): about 170 ms on an idle machine, past the
+    // 1 s findBy default on a loaded one, where this, the file's first render, failed (AGH-659).
+    const start = await row.findByRole(
+      "button",
+      { name: "Start AGH-3 on AGH-2's branch (AGH-2 is in review, not merged)" },
+      { timeout: 3_000 },
+    );
     expect(start).toHaveTextContent("Start");
     await waitFor(() => {
       expect(start).toBeEnabled();
