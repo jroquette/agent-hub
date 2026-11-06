@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -29,9 +29,6 @@ export function AddServiceScreen() {
   const { project = "" } = useParams();
   const location = useLocation();
   const config = useApi("/api/v1/projects/{project}/config", { path: { project } });
-  useEffect(() => {
-    document.title = `Add service · ${project}`;
-  }, [project]);
   if (config.isError)
     return (
       <div className="ah-page">

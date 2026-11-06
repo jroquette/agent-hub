@@ -18,6 +18,7 @@ import { DiscussProvider, useDiscuss } from "./discuss";
 import { DiscussPanel, useDiscussWidth } from "./DiscussPanel";
 import { DiscussSelection } from "./DiscussSelection";
 import { ScreenDiscussFallback } from "./screenContext";
+import { DocumentTitle } from "./DocumentTitle";
 import { GlobalStreamProvider, useGlobalStream } from "./GlobalStream";
 import { GO, armGoSequence, clearGoSequence, goSequencePending, typingIn } from "./goSequence";
 import { OfflineBanner } from "./OfflineBanner";
@@ -218,6 +219,7 @@ function ShellLayout({ children }: { children?: ReactNode }) {
         <DiscussPanel resize={discussWidth} />
         <DiscussSelection />
         {discuss.open && <ScreenDiscussFallback />}
+        <DocumentTitle />
       </div>
       {palette && (
         <CommandPalette onClose={closeAll} initialQuery={palette.query} project={scope} />

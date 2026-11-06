@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useMemo, useState } from "react";
+import { Fragment, useId, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -61,9 +61,6 @@ export function ReviewScreen() {
   });
   const config = useApi("/api/v1/projects/{project}/config", { path: { project } });
   const notices = useSaveNotices();
-  useEffect(() => {
-    document.title = `Review what Claude found · ${project}`;
-  }, [project]);
 
   let body: ReactNode;
   if (found.isError || config.isError)

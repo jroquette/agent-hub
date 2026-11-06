@@ -47,12 +47,12 @@ function tickets(): FeatureTickets {
   };
 }
 
-function show(path: string, evals: EvalRecord[] = []) {
+function show(path: string, evals: EvalRecord[] = [], data: FeatureTickets = tickets()) {
   return renderWithApi(
     <TicketsTab
       project="agent-hub"
       slug="control-plane"
-      data={tickets()}
+      data={data}
       error={null}
       onRefresh={() => undefined}
       acPasses={{ "AC-200.4": true }}
@@ -168,6 +168,35 @@ describe("TicketPanel (AC-1.10)", () => {
     expect(await within(panel()).findByTitle(/^Open the session/)).toBeVisible();
     // Start stays on the card or row, once per view (A15).
     expect(within(panel()).queryByRole("button", { name: /Start/ })).toBeNull();
+  });
+
+  it("links a done Context step to the ticket's context brief in Brain", () => {
+    const data = tickets();
+    const withBrief: FeatureTickets = {
+      ...data,
+      tickets: data.tickets.map((row) =>
+        row.ref === "AGH-202"
+          ? {
+              ...row,
+              flow: aTicketFlow({
+                steps: aTicketFlow().steps.map((step) =>
+                  step.name === "context" ? { ...step, state: "done", meta: null } : step,
+                ),
+              }),
+            }
+          : row,
+      ),
+    };
+    show("/?doc=tickets&ticket=AGH-202&step=context", [], withBrief);
+
+    const card = within(panel()).getByRole("region", { name: "Context · step 1 of 7" });
+    expect(card).not.toHaveTextContent("Not reached");
+    expect(
+      within(card).getByRole("link", { name: "Open the context brief in Brain" }),
+    ).toHaveAttribute(
+      "href",
+      "/projects/agent-hub/brain/features/control-plane/tickets/AGH-202/brief.md",
+    );
   });
 
   it("AC-1.10 Esc closes it and returns focus to the opener", async () => {

@@ -1137,9 +1137,6 @@ export function HubConfigScreen() {
     brief: BRIEF,
     starters: STARTERS,
   });
-  useEffect(() => {
-    document.title = `Hub configuration · ${project}`;
-  }, [project]);
 
   const view = config.data;
   useEffect(() => {
