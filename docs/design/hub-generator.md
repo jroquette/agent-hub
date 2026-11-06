@@ -159,7 +159,9 @@ only when it is a regular file of this user, set to 0600. Each write holds an `f
 within 0.2 s or the envelope is dropped. A spool over 8 MiB (`MAX_SPOOL_BYTES`) loses its oldest lines down to 6 MiB
 (`SPOOL_KEEP_BYTES`), written to `hook-spool.trim` then renamed over it, and its first line `{"dropped": n}` adds those
 lines to the count an earlier trim wrote. Any failure there is silent, the exit code stays 0, and the hook's time is
-the send's deadline plus the lock wait and a few writes. After deciding, and after printing its decision, the
+the send's deadline plus the lock wait and a few writes. `hub web` imports the spool when it starts and
+`hub collect --spool` imports it on demand, both through the collector's `HookSpool` ([SPEC](../SPEC.md), "Hooks as
+sensors"). After deciding, and after printing its decision, the
 guard sends a deny or an ask (`decision: {by: guard, kind, rule}`, `rule` a stable id read from the reason, e.g.
 `push_protected_branch`, `ask_before_edit`) and the Stop gate a block (`{by: stop_gate, kind: block, command,
 exit_code}`) through the sensor's `send_decision`, bounded the same way; their output and exit codes do not change

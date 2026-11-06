@@ -15,8 +15,9 @@ Makefile uses.
   or `~/.claude`; files go under pytest's `tmp_path`. The real database is the file `hub collect` picks: `--db PATH`,
   else `AGENT_HUB_DB`, else `$XDG_DATA_HOME/agent-hub/agent-hub.db` (when `XDG_DATA_HOME` is absolute), else
   `~/.local/share/agent-hub/agent-hub.db`, where `~` is `HOME` when it is non-empty and absolute, else the account's
-  home from the password database. `packages/cli/tests/conftest.py` has an autouse fixture that points `HOME`
-  and `XDG_DATA_HOME` under `tmp_path` and unsets `AGENT_HUB_DB` for every cli test; a test that needs other values
+  home from the password database. `packages/cli/tests/conftest.py` has an autouse fixture that points `HOME`,
+  `XDG_DATA_HOME` and `XDG_STATE_HOME` (the hook spool's folder, which `hub web` imports at start) under `tmp_path`
+  and unsets `AGENT_HUB_DB` for every cli test; a test that needs other values
   passes them to `CliRunner.invoke(env=...)`. JSON Lines inputs are written to `tmp_path` at test time from the
   builders (`an_event`, `events_to_jsonl`); no `*.jsonl` file is committed. A test that runs a child process and
   must show it stays off the network uses the outbound probe, `agent_hub.core.testing.outbound_probe`: the child gets
