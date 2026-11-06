@@ -460,7 +460,9 @@ printed when it ends. `make check-changed`, a narrower run for one change, comes
   (the floors).
 
 The API's integration tests (including `test_performance.py`, the NFR budgets on 10,000 synthetic events, `serial`)
-run in `test-suite` and `test-suite-serial`, and the web smoke in `test-e2e-serial`. `test-fast`,
+run in `test-suite` and `test-suite-serial`, and the web smoke in `test-e2e-serial`. Its hook POST budget counts the
+process's CPU time, not wall time: each POST commits with an fsync, and a runner's disk can stall one for 100 ms
+while the route's work takes 3 ms (AGH-506), so wall time there measures the disk, not the code. `test-fast`,
 `test-integration` and `test-e2e` stay for running one level by hand.
 
 `make check-changed` (while working, for one change; `scripts/check_changed.py`):
