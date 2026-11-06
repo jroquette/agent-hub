@@ -6,8 +6,10 @@
    session's id, or a store that was reset); the stream then goes on with live frames only
    (steps 4 and 5), and the client reloads the snapshot and the log;
 2. the stored records after the position's ``seq``, in pages, as the store holds them
-   (redacted, E9); no position (None) means live frames only: no replay and no ring deltas
-   (the API route sends its own reset for a malformed ``Last-Event-ID``);
+   (redacted, E9); while the session is live, only up to its last record when the stream
+   attached: a record emitted after that comes in step 5, raw, even while the replay still
+   reads the store (AGH-432); no position (None) means live frames only: no replay and no
+   ring deltas (the API route sends its own reset for a malformed ``Last-Event-ID``);
 3. while the session is live, the deltas of its open block that the ring still holds after the
    position (``<seq>.<n>``); when the ring dropped one of them, none: the completed ``text``
    record brings the content instead;
@@ -79,6 +81,9 @@ async def frames(
 ) -> AsyncIterator[StreamItem]:
     """The stream of ``session`` from ``after`` (None: live frames only); see the module
     docstring. ``live`` is the session while the server drives it."""
+    # Attached and ``last_seq`` read with no await between: ``_emit`` moves ``last_seq`` before
+    # it publishes, so every record past it is published after the attach, among the
+    # subscriber's live frames.
     subscriber = None if live is None else live.attach()
     try:
         last_seq = session.last_seq if live is None else live.last_seq
@@ -88,7 +93,8 @@ async def frames(
         position = after if after is not None and replay else StreamPosition(seq=last_seq)
         sent = _Sent(position)
         if replay:
-            async for item in _replayed(read, sent, ring=None if live is None else live.ring):
+            ring, until = (None, None) if live is None else (live.ring, last_seq)
+            async for item in _replayed(read, sent, ring=ring, until=until):
                 yield item
         if live is None or subscriber is None:
             yield StatusFrame(status=session.status, end_reason=session.end_reason)
@@ -106,15 +112,16 @@ def _new[T: StreamItem](items: Iterable[T], sent: _Sent) -> Iterator[T]:
 
 
 async def _replayed(
-    read: RecordReader, sent: _Sent, *, ring: DeltaRing | None = None
+    read: RecordReader, sent: _Sent, *, ring: DeltaRing | None = None, until: int | None = None
 ) -> AsyncIterator[StreamItem]:
-    """The stored records after the last one sent, in pages; then, given the ring, the deltas
-    it still holds after the position (none when it dropped one)."""
+    """The stored records after the last one sent, in pages, up to ``until`` when given; then,
+    given the ring, the deltas it still holds after the position (none when it dropped one)."""
     position = (sent.seq, sent.delta)
     after = sent.seq
-    while True:
+    while until is None or after < until:
         page = await read(after, REPLAY_PAGE)
-        for record in _new(page, sent):
+        kept = page if until is None else [record for record in page if record.seq <= until]
+        for record in _new(kept, sent):
             yield record
         if len(page) < REPLAY_PAGE:
             break
