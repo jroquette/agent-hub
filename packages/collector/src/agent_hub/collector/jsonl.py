@@ -43,8 +43,8 @@ class ParsedBatch(BaseModel):
     errors: tuple[LineError, ...]
 
 
-class _LineRejectedError(Exception):
-    """A line that is not a canonical event; the message is the reason."""
+class LineRejectedError(Exception):
+    """A line that is not what its reader expects; the message is the reason."""
 
 
 def read_text(path: Path) -> str:
@@ -96,12 +96,26 @@ def parse_events(text: str) -> ParsedBatch:
             continue
         try:
             events.append(ParsedEvent(line_number=line_number, event=_parse_line(line)))
-        except _LineRejectedError as error:
-            errors.append(LineError(line_number=line_number, reason=_bounded(str(error))))
+        except LineRejectedError as error:
+            errors.append(LineError(line_number=line_number, reason=bounded_reason(str(error))))
     return ParsedBatch(events=tuple(events), errors=tuple(errors))
 
 
 def _parse_line(line: str) -> Event:
+    value = json_object(line)
+    try:
+        return Event.model_validate(value)
+    except ValidationError as error:
+        raise LineRejectedError(validation_reason(error)) from error
+    except RecursionError as error:
+        raise LineRejectedError(NESTED_TOO_DEEPLY) from error
+
+
+def json_object(line: str) -> dict[str, object]:
+    """The JSON object ``line`` holds; else ``LineRejectedError`` with the reason.
+
+    NaN, Infinity and a repeated key are refused, as is nesting deeper than the parser allows.
+    """
     try:
         value = json.loads(
             line, parse_constant=_reject_constant, object_pairs_hook=_reject_duplicate_keys
@@ -109,18 +123,13 @@ def _parse_line(line: str) -> Event:
     except ValueError as error:
         # JSONDecodeError is a ValueError; so are the rejected-constant and duplicate-key errors.
         reason = error.msg if isinstance(error, json.JSONDecodeError) else str(error)
-        raise _LineRejectedError(f"invalid JSON: {reason}") from error
+        raise LineRejectedError(f"invalid JSON: {reason}") from error
     except RecursionError as error:
-        raise _LineRejectedError(NESTED_TOO_DEEPLY) from error
+        raise LineRejectedError(NESTED_TOO_DEEPLY) from error
     if not isinstance(value, dict):
         msg = "expected a JSON object"
-        raise _LineRejectedError(msg)
-    try:
-        return Event.model_validate(value)
-    except ValidationError as error:
-        raise _LineRejectedError(_describe_validation_error(error)) from error
-    except RecursionError as error:
-        raise _LineRejectedError(NESTED_TOO_DEEPLY) from error
+        raise LineRejectedError(msg)
+    return value
 
 
 def _reject_constant(name: str) -> object:
@@ -140,7 +149,8 @@ def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]
     return result
 
 
-def _describe_validation_error(error: ValidationError) -> str:
+def validation_reason(error: ValidationError) -> str:
+    """Each of ``error``'s problems as ``<location>: <message>``, joined with ``; ``."""
     return "; ".join(
         f"{_describe_location(detail['loc'])}: {detail['msg']}" for detail in error.errors()
     )
@@ -160,7 +170,8 @@ def _describe_location_part(part: int | str) -> str:
     return json.dumps(part)
 
 
-def _bounded(reason: str) -> str:
+def bounded_reason(reason: str) -> str:
+    """``reason`` cut to ``MAX_REASON_LENGTH`` characters, an ellipsis last when cut."""
     if len(reason) <= MAX_REASON_LENGTH:
         return reason
     return f"{reason[: MAX_REASON_LENGTH - 1]}…"

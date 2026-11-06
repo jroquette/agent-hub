@@ -1,6 +1,9 @@
 import json
 from typing import Any
 
+import pytest
+
+from agent_hub.collector import hook_spool
 from agent_hub.collector.hook_spool import parse_spool
 from agent_hub.core.ingestion.hook_envelope import MAX_BODY_BYTES
 from agent_hub.core.testing.hook_inputs import a_hook_input, an_envelope
@@ -46,7 +49,6 @@ def test_reports_each_bad_line_with_its_reason_when_lines_not_envelopes() -> Non
             json.dumps(no_project).encode(),
             b'{"dropped": -1}',
             b"\xff\xfe",
-            b"[" * 5000 + b"]" * 5000,
         ]
     )
 
@@ -54,13 +56,33 @@ def test_reports_each_bad_line_with_its_reason_when_lines_not_envelopes() -> Non
 
     assert [item.line_number for item in lines.envelopes] == [1]
     reasons = {error.line_number: error.reason for error in lines.errors}
-    assert sorted(reasons) == [2, 3, 4, 5, 6, 7]
+    assert sorted(reasons) == [2, 3, 4, 5, 6]
     assert reasons[2] == "invalid JSON: Expecting property name enclosed in double quotes"
     assert reasons[3] == "expected a JSON object"
     assert reasons[4] == "project: Field required"
     assert "dropped: Extra inputs are not permitted" in reasons[5]
     assert reasons[6] == "not valid UTF-8 (byte 0)"
-    assert reasons[7] == "invalid JSON: nested too deeply"
+
+
+# The parser's overflow is simulated, not built: Python 3.14 reads 200,000 levels.
+@pytest.mark.parametrize("target", ["agent_hub.collector.jsonl.json.loads", "envelope"])
+def test_reports_nested_too_deeply_when_parse_or_validation_overflows(
+    monkeypatch: pytest.MonkeyPatch, target: str
+) -> None:
+    def overflow(*_args: object, **_kwargs: object) -> object:
+        raise RecursionError
+
+    line = _line()
+    if target == "envelope":
+        monkeypatch.setattr(hook_spool.HookEnvelope, "model_validate", overflow)
+    else:
+        monkeypatch.setattr(target, overflow)
+
+    lines = parse_spool(line)
+
+    assert [(error.line_number, error.reason) for error in lines.errors] == [
+        (1, "invalid JSON: nested too deeply")
+    ]
 
 
 def test_refuses_line_when_longer_than_body_limit() -> None:
