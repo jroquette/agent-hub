@@ -233,18 +233,25 @@ describe("PortfolioScreen", () => {
     );
     await screen.findByRole("region", { name: "Needs you" });
     const global = stream("/api/v1/events/stream");
-    const before = requests.filter((r) => r.url.includes("/needs-you")).length;
+    const regions = ["/api/v1/projects", "/api/v1/needs-you", "/api/v1/activity"];
+    const reads = () =>
+      regions.map((path) => requests.filter((r) => new URL(r.url).pathname === path).length);
+    const before = reads();
 
-    act(() => {
+    // What hub web sends on a fresh connection (AGH-699): the counts as they are, with no id.
+    // They only arm the refresh.
+    await act(async () => {
       global.open();
       global.emit("counts", aStreamCounts());
+      await Promise.resolve();
     });
+    expect(reads()).toEqual(before);
     act(() => {
       global.emit("counts", aStreamCounts({ approvals_open: 3 }));
     });
 
     await waitFor(() => {
-      expect(requests.filter((r) => r.url.includes("/needs-you")).length).toBeGreaterThan(before);
+      expect(reads().every((count, index) => count > (before[index] ?? Infinity))).toBe(true);
     });
   });
 
