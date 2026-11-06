@@ -60,7 +60,9 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         -n, core.hooksPath set by -c, --config-env, an assignment or git config), a message file that cannot
         be read (stdin, an expansion, unreadable, not regular, over 1 MiB), a bare push whose branch cannot
         be told, a commit identity that cannot be (git config unreadable, an expansion, a folder that
-        cannot be told, an --author with no email),
+        cannot be told, an --author with no email), a git push whose remote or refspec is a shell expansion
+        or that deletes a remote branch (--delete, -d, a :<branch> refspec), git push or commit or gh pr in
+        the words after an interpreter or shell word (python*, node, deno, bun, perl, ruby, php, a shell, eval),
         with HUB_RUN_ENVIRONMENT naming a declared environment of access read or production (an agent
         node of a workflow that declares it), a Bash command naming one of its endpoints' hosts or
         resources, or a WebFetch of a URL on one of its hosts (environment_endpoint, after the env-file
@@ -1214,6 +1216,17 @@ HOOKS_PATH_REASON = "core.hooksPath changes which git hooks run; confirm"
 PUSH_REASON = "pushing to {} is not allowed; open a PR from a {} branch"
 PUSH_UNKNOWN_REASON = ("the branch this `git push` sends cannot be told (no branch checked out there, or a folder the "
                        "guard cannot read); confirm it is not a protected branch")
+PUSH_HIDDEN_REASON = ("a `git push` remote or refspec is a shell expansion the guard cannot read; confirm the branch "
+                      "it pushes")
+PUSH_DELETE_REASON = "`git push {}` deletes a remote branch; confirm"
+INTERPRETER_REASON = "`{}` runs git push or commit, or gh pr, out of the guard's sight; confirm"
+# An interpreter or shell word (the whole word's last path component) whose later words hold `git`
+# with `push` or `commit`, or `gh` with `pr`, runs them where the guard cannot read the call.
+INTERPRETER = LazyPattern(r"(?:python[0-9.]*|node|nodejs|deno|bun|perl|ruby|php|bash|sh|zsh|dash|ksh|fish|eval)\Z")
+INTERPRETED = (
+    (LazyPattern(r"\bgit\b"), LazyPattern(r"\b(?:push|commit)\b")),
+    (LazyPattern(r"\bgh\b"), LazyPattern(r"\bpr\b")),
+)
 IDENTITY_REASON = ("commit identity: this `git {}` would record {} as its {}, not {} (project.author_email of hub.json "
                    "or hub.local.json); set user.email in git config, or drop the override")
 IDENTITY_UNCHECKED_REASON = "commit identity not checked: {}; confirm this `git {}` is by {}"
@@ -1649,6 +1662,12 @@ def _git_call(words: list[tuple[str, bool]], at: int, env: dict[str, str | None]
         verdict = tighten(verdict, ("ask", NO_VERIFY_REASON.format(sub, skipped)))
     folder = _git_folder(here, options)
     if sub == "push":
+        if any(expanded for _, expanded in operands) or any(value and value[1] for name, value in flags if name == "--repo"):
+            verdict = tighten(verdict, ("ask", PUSH_HIDDEN_REASON))
+        deleted = next((name for name, _ in flags if name in ("--delete", "-d")), None)
+        deleted = deleted or next((spec for spec, _ in operands[1:] if spec.startswith(":")), None)
+        if deleted:
+            verdict = tighten(verdict, ("ask", PUSH_DELETE_REASON.format(_infra_value(deleted, _code_escaped))))
         return tighten(verdict, _bare_push(flags, operands, folder, options, env, cfg, reads))
     files = [value for name, value in flags if name in ("-F", "--file") and value is not None]
     verdict = tighten(verdict, _message_files(files, folder, targets, COMMIT_ATTRIBUTION_REASON))
@@ -1726,6 +1745,18 @@ def _gh_api(args: list[tuple[str, bool]], here: str | None, targets: set[str], c
     return tighten(verdict, _github_fields(named, writes, cfg))
 
 
+def _interpreted(words: list[tuple[str, bool]], at: int) -> Verdict:
+    """An ask when an interpreter or shell word of the call, from words[at] on (INTERPRETER), is
+    followed by words that hold git with push or commit, or gh with pr (INTERPRETED)."""
+    for index in range(at, len(words)):
+        if INTERPRETER.match(words[index][0].rsplit("/", 1)[-1]):
+            text = " ".join(word for word, _ in words[index + 1:])
+            if any(tool.search(text) and action.search(text) for tool, action in INTERPRETED):
+                return "ask", INTERPRETER_REASON.format(_infra_value(words[index][0], _code_escaped))
+            return None
+    return None
+
+
 def _gh_call(words: list[tuple[str, bool]], at: int, here: str | None, targets: set[str], cfg: Config) -> Verdict:
     """The change-flow rules on one gh call (words[at] is gh)."""
     args = words[at + 1:]
@@ -1771,6 +1802,8 @@ def check_change_flow(cmd: str, cfg: Config, cwd: str | None = None) -> Verdict:
             found = _git_call(words, at, {**exported, **env}, here, cfg, targets, reads)
         elif program == "gh":
             found = _gh_call(words, at, here, targets, cfg)
+        else:
+            found = _interpreted(words, at)
         if found and found[0] == "deny":
             return found
         verdict = verdict or found
@@ -2940,6 +2973,9 @@ RULE_IDS = (
     ("push_branch_unknown", LazyPattern(r"^the branch this `git push` sends cannot be told")),
     ("commit_identity", LazyPattern(r"^commit identity( not checked)?: ")),
     ("pr_merge", LazyPattern(r"^merging is the user's step")),
+    ("push_hidden", LazyPattern(r"^a `git push` remote or refspec is a shell expansion")),
+    ("push_delete", LazyPattern(r"^`git push [^`]*` deletes a remote branch")),
+    ("interpreter_git", LazyPattern(r"^`[^`]*` runs git push or commit, or gh pr, out of the guard's sight")),
     ("agent_branch", LazyPattern(r"^branches are \S*, never claude/")),
     ("git_internals", LazyPattern(r"^\.git is git's own state")),
     ("test_bash_edit", LazyPattern(r"^deleting or sed-editing tests")),

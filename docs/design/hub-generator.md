@@ -343,6 +343,12 @@ below asks where the owner has a legitimate use for the call, and denies where t
   from the owner, since both use the owner's credentials. So `gh pr merge` (`--auto` too), `gh api` PUT or POST on
   `pulls/<n>/merge`, POST on `merges`, a `graphql` `mergePullRequest` or `enablePullRequestAutoMerge`, and the MCP
   `merge_pull_request` and `enable_pr_auto_merge` are denied; reading whether a PR is merged passes.
+- **Hidden pushes** (rules `push_hidden`, `push_delete`, `interpreter_git`, ask): defence in depth beside branch
+  protection (the AGH-184 decision keeps these asks). A `git push` whose remote or refspec is a shell expansion
+  (`$x`, `"$BRANCH"`, `$(…)`, backticks); one that deletes a remote branch (`--delete`, `-d`, a `:<branch>` refspec; a
+  protected one is still denied); and a call where an interpreter or shell word (`python*`, `node`, `deno`, `bun`,
+  `perl`, `ruby`, `php`, a shell, `eval`) is followed by words holding `git` with `push` or `commit`, or `gh` with
+  `pr` (`python3 -c "subprocess.run(['git','push',…])"`, `bash -c 'git commit …'`).
 - **Skipped hooks** (rules `no_verify`, `hooks_path`, ask): `--no-verify` on `git commit` (and its `-n`), `push` or
   `merge`, and `core.hooksPath` set through `git -c`, `--config-env`, an assignment such as `GIT_CONFIG_PARAMETERS`,
   or `git config` (set, `--unset`); reading it passes.
