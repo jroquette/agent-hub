@@ -194,6 +194,68 @@ def test_turns_values_read_off_when_in_container(*, signed_in: bool) -> None:
     assert response.json()["type"] == "urn:agent-hub:problem:run-control-off"
 
 
+# The owner's writes (AGH-699, audit C-2): only the owner's own page makes them, and an exact
+# Origin is something any local process can send, so they need the launch cookie too; the
+# container mints no token, so there they are off, cookie or not.
+OWNER_WRITES = (
+    ("PUT", "/api/v1/projects/demo/config/local"),
+    ("POST", "/api/v1/projects/demo/config/environments"),
+    ("POST", "/api/v1/projects/demo/config/repos"),
+    ("POST", "/api/v1/hubs/hub-1/platform-sync"),
+    ("POST", "/api/v1/hubs/hub-1/doctor-fix"),
+    ("POST", "/api/v1/learnings/learning-1/accept"),
+    ("POST", "/api/v1/learnings/learning-1/reject"),
+    ("POST", "/api/v1/learnings/decisions"),
+    ("PUT", "/api/v1/tracker/linear"),
+    ("DELETE", "/api/v1/tracker/linear"),
+    ("PUT", "/api/v1/feature-names"),
+    ("POST", "/api/v1/features/demo/demo-feature/owner-signoff"),
+)
+
+
+@pytest.mark.parametrize(("method", "path"), OWNER_WRITES)
+def test_answers_unauthorized_when_owner_write_without_cookie(method: str, path: str) -> None:
+    response = _client(sessions_off=False).request(method, path, json={})
+
+    assert response.status_code == 401
+    assert response.json()["type"] == "urn:agent-hub:problem:agent-session-unauthorized"
+    assert response.headers["www-authenticate"] == 'Cookie realm="agent-hub"'
+
+
+@pytest.mark.parametrize(("method", "path"), OWNER_WRITES)
+def test_serves_owner_write_when_cookie_matches(method: str, path: str) -> None:
+    response = _client(sessions_off=False, signed_in=True).request(method, path, json={})
+
+    assert response.json() == {"served": True}
+
+
+@pytest.mark.parametrize("signed_in", [False, True])
+@pytest.mark.parametrize(("method", "path"), OWNER_WRITES)
+def test_turns_owner_write_off_when_in_container(
+    method: str, path: str, *, signed_in: bool
+) -> None:
+    response = _client(sessions_off=True, signed_in=signed_in).request(method, path, json={})
+
+    assert response.status_code == 404
+    assert response.headers["content-type"] == "application/problem+json"
+    body = response.json()
+    assert (body["type"], body["title"]) == (
+        "urn:agent-hub:problem:owner-writes-off",
+        "Owner writes are off",
+    )
+    assert "served" not in body
+
+
+@pytest.mark.parametrize("sessions_off", [False, True])
+@pytest.mark.parametrize(
+    "path", ["/api/v1/tracker/linear", "/api/v1/feature-names", "/api/v1/projects/demo/config"]
+)
+def test_serves_owner_page_read_when_no_cookie(path: str, *, sessions_off: bool) -> None:
+    response = _client(sessions_off=sessions_off).get(path)
+
+    assert response.json() == {"served": True}
+
+
 # The agent-session read mark (ADR 0056 "Access"): written on every request passed on, True only
 # for a GET or HEAD that the agent-session read checks pass.
 SCREEN = "/api/v1/screens/sessions"

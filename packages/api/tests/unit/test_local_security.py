@@ -22,6 +22,7 @@ from agent_hub.api.local_security import (
     is_hub_registry_write,
     is_item_write,
     is_json_media_type,
+    is_owner_write,
     is_run_write,
     is_strict_write,
     parse_allowed_hosts,
@@ -682,6 +683,59 @@ def test_passes_playground_hub_write_when_own_origin_and_json(
     response = client.request(method, path, json={}, headers=OWN_JSON)
 
     assert response.status_code not in {403, 415}
+
+
+# The owner's writes (AGH-699, audit C-2): the Hub config writes, the hub actions, the learning
+# decisions, the Linear key, a feature's nickname and the owner sign-off. Only the owner's own
+# page makes them: they take the strict rule here and the launch cookie (``session_access``).
+OWNER_WRITES = (
+    *PLAYGROUND_HUB_WRITES,
+    ("POST", "/api/v1/learnings/learning-1/accept"),
+    ("POST", "/api/v1/learnings/learning-1/reject"),
+    ("POST", "/api/v1/learnings/decisions"),
+    ("PUT", "/api/v1/tracker/linear"),
+    ("DELETE", "/api/v1/tracker/linear"),
+    ("PUT", "/api/v1/feature-names"),
+    ("POST", "/api/v1/features/demo/demo-feature/owner-signoff"),
+)
+
+
+@pytest.mark.parametrize(("method", "path"), OWNER_WRITES)
+def test_marks_strict_owner_write_when_owner_page_write(method: str, path: str) -> None:
+    assert is_owner_write(method, path)
+    assert is_strict_write(method, path)
+    assert not is_hub_registry_write(method, path)
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/api/v1/tracker/linear"),
+        ("GET", "/api/v1/feature-names"),
+        ("GET", "/api/v1/projects/demo/config"),
+        ("POST", "/api/v1/tracker/linear/extra"),
+        ("PUT", "/api/v1/feature-names/demo"),
+        ("POST", "/api/v1/features/demo/a/b/owner-signoff"),
+        ("POST", "/api/v1/hubs"),
+        ("DELETE", "/api/v1/hubs/hub-1"),
+        ("POST", "/api/v1/events/hooks"),
+    ],
+)
+def test_keeps_other_checks_when_not_owner_write(method: str, path: str) -> None:
+    assert not is_owner_write(method, path)
+
+
+# The owner's writes take the strict rule: a body that is not JSON is refused, a DELETE aside.
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [(method, path) for method, path in OWNER_WRITES if method != "DELETE"],
+)
+def test_refuses_owner_write_when_body_not_json(client: TestClient, method: str, path: str) -> None:
+    headers = {**OWN_JSON, "Content-Type": "text/plain"}
+
+    response = client.request(method, path, content=b"{}", headers=headers)
+
+    assert response.status_code == 415
 
 
 # AC-PG-37.1: an AC's check run starts a process, so it is a strict run write.
