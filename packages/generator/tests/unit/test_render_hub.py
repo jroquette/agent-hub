@@ -4888,27 +4888,28 @@ def test_names_module_files_when_agents_rendered(modules: dict[str, dict[str, st
 
 # Owner decision on slice 16: `.claude/settings.json` wires the base plugin's hooks, so enabling
 # `hub-workflow` from a marketplace too would run every hook twice (Claude Code merges only
-# identical command strings). The base rules say so in one bullet.
+# identical command strings). The base rules say so in one bullet, a Claude Code note of
+# CLAUDE.md since AGH-688 AM-1 (it is about Claude Code only, and AGENTS.md is at its line cap).
 DOUBLE_WIRING_RULE = "must not be enabled from a marketplace"
 
 
-def test_forbids_marketplace_plugin_when_agents_rendered(demo_config: HubConfig) -> None:
+def test_forbids_marketplace_plugin_when_claude_rendered(demo_config: HubConfig) -> None:
     agents = text_of(demo_config, "AGENTS.md")
+    claude = text_of(demo_config, "CLAUDE.md")
 
-    bullets = [
-        " ".join(bullet.split())
-        for bullet in re.split(r"\n(?=- )", agents)
-        if DOUBLE_WIRING_RULE in " ".join(bullet.split())
-    ]
+    bullets = [bullet for bullet in claude_notes_bullets(claude) if DOUBLE_WIRING_RULE in bullet]
 
+    assert DOUBLE_WIRING_RULE not in " ".join(agents.split())
     assert len(bullets) == 1, bullets
     assert "`.claude/settings.json`" in bullets[0]
     assert "`hub-workflow`" in bullets[0]
     assert "twice" in bullets[0]
 
 
-# AGH-23 (D-enable): superpowers is optional; one "What lives here" bullet, right after the
-# double-wiring note, says how a project enables it.
+# AGH-23 (D-enable): superpowers is optional; one bullet, right after the double-wiring note,
+# says how a project enables it. AGH-688 AM-1 moved both bullets word for word from AGENTS.md
+# "What lives here" to the end of CLAUDE.md "Claude Code notes": they are about Claude Code only,
+# and AGENTS.md had no line left under its 100-line cap for the brain text.
 SUPERPOWERS_ENABLE_PHRASES = (
     "`/feature`",
     "`/create-plan`",
@@ -4929,27 +4930,50 @@ def what_lives_here_bullets(agents: str) -> list[str]:
     return [" ".join(part.split()) for part in re.split(r"\n(?=- )", section) if part.strip()]
 
 
+def claude_notes_raw_bullets(claude: str) -> list[str]:
+    """The "Claude Code notes" bullets of a rendered ``CLAUDE.md``, as written."""
+    section = claude.split("\n## Claude Code notes\n", 1)[1].split("\n## ", 1)[0]
+    return [part.strip("\n") for part in re.split(r"\n(?=- )", section) if part.strip()]
+
+
+def claude_notes_bullets(claude: str) -> list[str]:
+    """The "Claude Code notes" bullets of a rendered ``CLAUDE.md``, whitespace-normalized."""
+    return [" ".join(part.split()) for part in claude_notes_raw_bullets(claude)]
+
+
 @pytest.mark.parametrize(
     "document",
     [builders.a_hub_document, builders.a_two_team_document, builders.a_conventions_document],
     ids=["demo", "two_teams", "conventions"],
 )
-def test_names_superpowers_enable_line_when_agents_rendered(
+def test_names_superpowers_enable_line_when_claude_rendered(
     document: Callable[[], dict[str, Any]],
 ) -> None:
     config = HubConfig.model_validate(document())
-    first = {file.path: file.content for file in render_hub(config).files}["AGENTS.md"]
-    second = {file.path: file.content for file in render_hub(config).files}["AGENTS.md"]
-    agents = first.decode("utf-8")
-    bullets = what_lives_here_bullets(agents)
+    first = {file.path: file.content for file in render_hub(config).files}
+    second = {file.path: file.content for file in render_hub(config).files}
+    agents = first["AGENTS.md"].decode("utf-8")
+    claude = first["CLAUDE.md"].decode("utf-8")
+    bullets = claude_notes_bullets(claude)
     wiring = [index for index, bullet in enumerate(bullets) if DOUBLE_WIRING_RULE in bullet]
     named = [index for index, bullet in enumerate(bullets) if "superpowers" in bullet.lower()]
+    moved = [
+        raw
+        for raw, bullet in zip(claude_notes_raw_bullets(claude), bullets, strict=True)
+        if DOUBLE_WIRING_RULE in bullet or "superpowers" in bullet.lower()
+    ]
 
-    assert first == second
+    assert first["AGENTS.md"] == second["AGENTS.md"]
+    assert first["CLAUDE.md"] == second["CLAUDE.md"]
+    assert "superpowers" not in agents.lower()
+    assert [b for b in what_lives_here_bullets(agents) if DOUBLE_WIRING_RULE in b] == []
     assert [line for line in agents.splitlines() if len(line) > 120] == []
+    # CLAUDE.md's first notes are wider than 120 already: only the moved bullets are held to it.
+    assert len(moved) == 2, bullets
+    assert [line for raw in moved for line in raw.splitlines() if len(line) > 120] == []
     assert len(wiring) == 1, bullets
     assert named == [wiring[0] + 1], bullets
-    assert bullets[named[0] + 1].startswith("- Repos, checked out next to this hub:"), bullets
+    assert named[0] == len(bullets) - 1, bullets
     bullet = bullets[named[0]]
     for phrase in SUPERPOWERS_ENABLE_PHRASES:
         assert phrase in bullet, phrase
@@ -4958,8 +4982,9 @@ def test_names_superpowers_enable_line_when_agents_rendered(
 
 
 def test_merges_superpowers_enable_line_when_project_settings_set(demo_config: HubConfig) -> None:
-    bullets = what_lives_here_bullets(text_of(demo_config, "AGENTS.md"))
+    bullets = claude_notes_bullets(text_of(demo_config, "CLAUDE.md"))
     spans = [match.group(1) for bullet in bullets for match in ENABLE_LINE_JSON.finditer(bullet)]
+    assert "superpowers" not in text_of(demo_config, "AGENTS.md").lower()
     assert len(spans) == 1, bullets
     sibling = ("{" + spans[0] + "}").encode()
     extensions = ExtensionInputs(
