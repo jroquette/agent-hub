@@ -133,6 +133,8 @@ export function resultHeadline(result: EvidenceResult | null): string | null {
   if (!result) return null;
   const { passed, failed, exit } = result;
   if (failed) return `${String(failed)} of ${String((passed ?? 0) + failed)} tests failed`;
+  // The tests passed but the command still failed: another step of it (a diff, a grep) did.
+  if (exit !== null && exit !== "0") return `Command failed (exit code ${exit})`;
   if (passed !== null) return `${tests(passed)} passed`;
   if (exit === "0") return "Command succeeded";
   return exit !== null ? `Command failed (exit code ${exit})` : null;
@@ -153,6 +155,11 @@ export function resultExplanation(result: EvidenceResult | null): string[] {
     lines.push(`${tests(result.passed)} that check this criterion ran and passed.`);
   }
   if (result.failed) lines.push(`${tests(result.failed)} ran and failed.`);
+  if (result.exit !== null && result.exit !== "0" && !result.failed && result.passed !== null) {
+    lines.push(
+      "No test failed, so another step of the command failed (a diff or a grep after the tests). The evaluator's note says which.",
+    );
+  }
   if (result.deselected !== null) {
     lines.push(
       `${tests(result.deselected)} in the same files were not run: the command picks only the tests of this criterion (pytest calls them "deselected"). That is expected, not a problem.`,

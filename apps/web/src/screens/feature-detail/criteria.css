@@ -135,6 +135,27 @@
   font-size: 13px;
   color: var(--waiting);
 }
+.ah-ac-why {
+  border-left: 3px solid var(--failed);
+  padding: 8px 12px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--failed) 8%, transparent);
+  max-width: 110ch;
+}
+.ah-ac-why-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--failed);
+}
+.ah-ac-why p {
+  margin: 6px 0;
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
 .ah-ac-raw summary {
   cursor: pointer;
   font-size: 12px;
