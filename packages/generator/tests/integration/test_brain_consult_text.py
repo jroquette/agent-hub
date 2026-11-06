@@ -4,7 +4,9 @@ The hub's ``AGENTS.md`` names the hub MCP's ``search``, ``read`` and ``propose``
 steps 2 and 3 and in the first "Brain rules" bullet: a search of 2 to 4 key words once the task
 is known and again before a feature's research, how to weigh ``kind`` and ``status``, and the
 ``./hub`` fallback when the tools are missing, which never blocks the work. The lines are generic:
-no project value reaches them. Checked on the demo, two-team and conventions renders.
+no project value reaches them. ``/kickoff`` (once the item is accepted), ``/feature`` (once sized)
+and ``/implement`` (in its context step) each run one brain search inside an existing step and list
+up to 5 results. Checked on the demo, two-team and conventions renders.
 """
 
 import re
@@ -42,6 +44,20 @@ AGENTS_PLACEHOLDERS = frozenset(
     }
 )
 PLACEHOLDER = re.compile(r"@@\{?(\w+)")
+# What each skill's brain search line says, in all three skills.
+SEARCH_PHRASES = (
+    "`mcp__hub__search`",
+    "`limit: 5`",
+    "2 to 4 key words",
+    "filler words",
+    "the guard refuses the call",
+    "retry once with fewer words",
+    "at most 5 results",
+    "(`path`, `kind`, `status`)",
+    "nothing was found",
+    "`./hub search <words>`",
+    "hub directory",
+)
 DOCUMENTS = [
     pytest.param(a_hub_document, id="demo"),
     pytest.param(a_two_team_document, id="two_teams"),
@@ -58,6 +74,14 @@ def config(request: pytest.FixtureRequest) -> HubConfig:
 @pytest.fixture
 def agents(config: HubConfig) -> str:
     content = {file.path: file.content for file in render_hub(config).files}[AGENTS]
+    assert content is not None
+    return content.decode("utf-8")
+
+
+def skill(config: HubConfig, name: str) -> str:
+    """The rendered ``/name`` skill's text."""
+    path = f"plugin/hub-workflow/skills/{name}/SKILL.md"
+    content = {file.path: file.content for file in render_hub(config).files}[path]
     assert content is not None
     return content.decode("utf-8")
 
@@ -90,6 +114,21 @@ def new_text(agents: str) -> str:
     return "\n".join(
         (workflow_step(agents, 2), workflow_step(agents, 3), brain_rules_first_bullet(agents))
     )
+
+
+def kickoff_step_five(text: str) -> list[str]:
+    """Step 5 of ``/kickoff``: its ``5. `` line up to the ``Never start editing`` line."""
+    lines = text.splitlines()
+    start = next(index for index, line in enumerate(lines) if line.startswith("5. "))
+    end = next(index for index, line in enumerate(lines) if line.startswith("Never start editing"))
+    return lines[start:end]
+
+
+def step_text(text: str, number: int) -> str:
+    """Step ``number``'s text, up to the next step."""
+    start = text.index(f" {number}. **")
+    end = text.find(f" {number + 1}. **", start)
+    return text[start : end if end != -1 else None]
 
 
 def test_agents_names_brain_tools_when_hub_rendered(agents: str) -> None:
@@ -162,3 +201,51 @@ def test_agents_fallback_never_blocks_when_mcp_missing(agents: str) -> None:
     assert naming_mcp != []
     for sentence in naming_mcp:
         assert re.search(r"\b(stop|wait|ask)\b", sentence, re.IGNORECASE) is None, sentence
+
+
+def test_kickoff_skill_searches_after_item_accepted_when_rendered(config: HubConfig) -> None:
+    text = skill(config, "kickoff")
+    step = kickoff_step_five(text)
+    [line] = [line for line in text.splitlines() if "`mcp__hub__search`" in line]
+    search = flat(line)
+
+    assert line in step[1:], line
+    for phrase in (
+        *SEARCH_PHRASES,
+        "accepts the item",
+        "Never search before the user accepts the item",
+    ):
+        assert phrase in search, phrase
+    assert "/fix" not in line
+    assert "Never start editing during /kickoff" in text
+
+
+def test_feature_skill_searches_after_sizing_when_rendered(config: HubConfig) -> None:
+    lines = skill(config, "feature").splitlines()
+    size = next(index for index, line in enumerate(lines) if line.startswith("1. **Size it**"))
+    spec = next(index for index, line in enumerate(lines) if line.startswith("2. **Spec**"))
+    [index] = [index for index, line in enumerate(lines) if "`mcp__hub__search`" in line]
+    search = flat(lines[index])
+
+    assert size < index < spec, (size, index, spec)
+    assert lines[index].startswith("   ") and not lines[index].startswith("    ")
+    for phrase in (*SEARCH_PHRASES, "before step 2's questions", "issue's title"):
+        assert phrase in search, phrase
+    assert "/fix" not in lines[index]
+
+
+def test_implement_skill_searches_in_context_step_when_rendered(config: HubConfig) -> None:
+    text = flat(skill(config, "implement"))
+    step = step_text(text, 3)
+
+    for phrase in (
+        *SEARCH_PHRASES,
+        "ticket's title",
+        "never enters a subagent's prompt",
+        "preflight's `drift`",
+        "review rounds",
+    ):
+        assert phrase in step, phrase
+    assert step.index("ticket-brief") < step.index("`mcp__hub__search`")
+    assert "`mcp__hub__search`" not in text.replace(step, "")
+    assert "Give it to the subagent whole and unchanged" in text
