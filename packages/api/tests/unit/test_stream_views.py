@@ -3,6 +3,7 @@ from typing import Any
 
 from agent_hub.api.stream_views import (
     GlobalStreamView,
+    LiveStreamView,
     RunStreamView,
     SessionStreamView,
     changed_fields,
@@ -110,3 +111,33 @@ def test_sends_collector_when_source_sends_while_open(fakes: Any) -> None:
     assert messages[0].data == {"sources": {"claude_code": "2026-10-11T12:00:00.000Z"}}
     assert [message.event for message in view.replay(stored)] == ["counts"]
     assert view.heartbeat(AT)["sources"] == {"claude_code": "2026-10-11T12:00:00.000Z"}
+
+
+def test_opens_with_primed_counts_when_global_stream_starts_fresh(fakes: Any) -> None:
+    view = GlobalStreamView(fakes.EventReadModels(), None, Scope())
+    view.prime()
+
+    messages = view.opening()
+
+    assert [(message.event, message.id) for message in messages] == [("counts", None)]
+    assert messages[0].data == {
+        "approvals_open": 0,
+        "live_sessions": 0,
+        "failed_runs_7d": 0,
+        "learnings_proposed": 0,
+        "doctor_errors": None,
+        "ready_issues": None,
+    }
+
+
+def test_opens_with_nothing_when_session_live_or_run_stream_starts_fresh(fakes: Any) -> None:
+    models = fakes.EventReadModels(runs=[a_run()])
+    views = [
+        SessionStreamView(models, "session-1"),
+        LiveStreamView(models, Scope()),
+        RunStreamView(models, "1a2b3c4d"),
+    ]
+    for view in views:
+        view.prime()
+
+    assert [view.opening() for view in views] == [[], [], []]
