@@ -2590,6 +2590,69 @@ def test_asks_when_curated_brain_path_written(evaluate: Evaluate, workspace: Pat
     assert app_brain is None
 
 
+# AGH-699 (C-5): an owner sign-off record (`owner-signoff[-rN].md` in a feature's evals, or an
+# eval whose new text says `provenance: owner`) is the owner's own verdict, which hub web writes:
+# an agent's write of one asks, from a file tool or Bash.
+OWNER_SIGNOFF_REASON = (
+    "owner sign-off: {} holds the owner's own verdict (owner-signoff, or provenance: owner);"
+    " the owner signs off in hub web, confirm"
+)
+OWNER_EVAL = "---\ntype: eval\nverdict: SHIP\nprovenance: owner\n---\n"
+AGENT_EVAL = "---\ntype: eval\nverdict: SHIP\nprovenance: agent\n---\n"
+RULE_OF_VERDICT = "__import__('guard').rule_of({}[1])"
+
+
+def test_asks_when_owner_signoff_record_written(evaluate: Evaluate, workspace: Path) -> None:
+    evals = f"{workspace / 'demo-hub' / 'brain' / 'features' / 'dem-1-x' / 'evals'}/"
+    signoff = "brain/features/x/evals/owner-signoff.md"
+    multi_edit = {
+        "file_path": evals + "ac-3.md",
+        "edits": [{"old_string": "a", "new_string": "b"}, {"old_string": "c", "new_string": "provenance: 'owner'"}],
+    }
+    calls = {
+        signoff: file("Write", {"file_path": signoff, "content": "x"}),
+        evals + "owner-signoff-r2.md": file(
+            "Edit", {"file_path": evals + "owner-signoff-r2.md", "old_string": "a", "new_string": "b"}
+        ),
+        evals + "ac-1.md": file("Write", {"file_path": evals + "ac-1.md", "content": OWNER_EVAL}),
+        evals + "ac-2.md": file(
+            "Edit",
+            {"file_path": evals + "ac-2.md", "old_string": "provenance: agent", "new_string": "provenance: owner"},
+        ),
+        evals + "ac-3.md": f"check_file('MultiEdit', {multi_edit!r}, cfg)",
+        "brain/features/x/evals/owner-signoff-r3.md": bash(
+            "echo verdict: SHIP > brain/features/x/evals/owner-signoff-r3.md"
+        ),
+        "brain/features/x/evals/ac-4.md": bash(
+            "cat > brain/features/x/evals/ac-4.md <<'EOF'\nverdict: SHIP\nprovenance: owner\nEOF"
+        ),
+    }
+
+    verdicts = evaluate(list(calls.values()))
+
+    assert dict(zip(calls, verdicts, strict=True)) == {
+        path: ("ask", OWNER_SIGNOFF_REASON.format(path)) for path in calls
+    }
+    assert evaluate([RULE_OF_VERDICT.format(calls[signoff])]) == ["owner_signoff"]
+
+
+def test_passes_when_eval_written_without_owner_provenance(evaluate: Evaluate, workspace: Path) -> None:
+    evals = f"{workspace / 'demo-hub' / 'brain' / 'features' / 'dem-1-x' / 'evals'}/"
+    calls = [
+        file("Write", {"file_path": evals + "ac-1.md", "content": AGENT_EVAL}),
+        file(
+            "Edit",
+            {"file_path": evals + "ac-1.md", "old_string": "provenance: owner", "new_string": "provenance: agent"},
+        ),
+        file("Write", {"file_path": evals + "ac-2.md", "content": "provenance: owner-review\n"}),
+        file("Write", {"file_path": str(workspace / "app" / "docs" / "owner-signoff.md"), "content": OWNER_EVAL}),
+        bash("cat brain/features/x/evals/owner-signoff.md"),
+        bash("echo 'provenance: agent' > brain/features/x/evals/ac-1.md"),
+    ]
+
+    assert evaluate(calls) == [None] * len(calls)
+
+
 def test_denies_write_when_git_internals_targeted(evaluate: Evaluate) -> None:
     denied = [
         "rm .git",
