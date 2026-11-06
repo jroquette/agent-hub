@@ -1,7 +1,8 @@
 """Server-Sent Events: the wire format, resumption after ``Last-Event-ID`` and the stream loop.
 
 Every stream sends ``retry: 3000`` first; replays what came after ``Last-Event-ID`` (at most
-10,000 events and 24 h, else ``event: reset``); then sends what each new batch of events
+10,000 events and 24 h, else ``event: reset``), or without one sends the view's opening
+messages; then sends what each new batch of events
 changes, and a heartbeat every 15 s carrying the last real id, so a reconnecting client resumes
 exactly (design spec 02, "SSE contract"). What a batch changes is the view's business
 (``stream_views``); this module knows only events, ids and time.
@@ -54,7 +55,7 @@ RETRY = f"retry: {RETRY_MILLISECONDS}\n\n".encode()
 
 class StreamView(Protocol):
     """What one stream shows; every method is synchronous (it reads the store) and runs in a
-    worker thread."""
+    worker thread, except ``opening``, which reads only the primed state."""
 
     def scope(self) -> EventQuery:
         """The events that concern this stream (filters only; the window is the loop's)."""
@@ -62,6 +63,10 @@ class StreamView(Protocol):
 
     def prime(self) -> None:
         """Take the starting state that later batches are compared with."""
+        ...
+
+    def opening(self) -> list[SseMessage]:
+        """The messages for a client that does not resume, from the primed state."""
         ...
 
     def replay(self, events: Sequence[StoredEvent]) -> list[SseMessage]:
@@ -144,11 +149,14 @@ async def event_stream(
     timer = feed.timer
     position = _Position(seq=await run_in_threadpool(reader.high_water_mark), last_id=None)
     await run_in_threadpool(view.prime)
-    if last_event_id is not None:
-        for message in await run_in_threadpool(
+    if last_event_id is None:
+        first = view.opening()
+    else:
+        first = await run_in_threadpool(
             _resume, view, reader, last_event_id, now=timer.now(), position=position
-        ):
-            yield message.encode()
+        )
+    for message in first:
+        yield message.encode()
     next_beat = timer.monotonic() + HEARTBEAT_SECONDS
     while True:
         mark = await feed.wait_beyond(position.seq, deadline=next_beat)
