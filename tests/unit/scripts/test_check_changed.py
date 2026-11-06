@@ -9,14 +9,16 @@ too. git and every step are fakes: no process starts.
 import itertools
 import re
 import shlex
+import sys
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 
+import scripts.check_changed as check_changed
 from scripts.check_changed import (
     Graph,
     Plan,
@@ -43,6 +45,9 @@ CLI_SOURCE = "packages/cli/src/agent_hub/cli/main.py"
 MCP_SERVER_SOURCE = "packages/mcp_server/src/agent_hub/mcp_server/server.py"
 FLAKY_SCRIPT = f"{BUILTIN}/flaky/scripts/repeat.py"
 WEB_COMPONENT = "apps/web/src/components/Dialog.tsx"
+WEB_SCREEN = "apps/web/src/screens/portfolio/index.tsx"
+# A web path that keeps the full web steps: Vitest cannot tell which tests it reaches.
+WEB_CONFIG = "apps/web/vite.config.ts"
 
 # The fast test folders of the small tree: cli and mcp_server have no contract tests.
 FAST_DIRS = (
@@ -356,6 +361,49 @@ def test_runs_no_web_step_when_no_web_path_changes(path: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "paths",
+    [
+        pytest.param((WEB_SCREEN,), id="screen"),
+        pytest.param((WEB_COMPONENT, "apps/web/src/lib/format.ts"), id="two-files"),
+        pytest.param((WEB_COMPONENT, STORAGE_DB), id="beside-python"),
+        pytest.param(("apps/web/src/api/schema.d.ts",), id="declarations"),
+        pytest.param(("apps/web/src/testing/setup.ts",), id="setup-file"),
+    ],
+)
+def test_narrows_web_steps_when_only_web_sources_change(paths: tuple[str, ...]) -> None:
+    plan = plan_change(paths, GRAPH, TREE)
+
+    assert plan.web is True
+    assert plan.web_files == tuple(sorted(path for path in paths if path.startswith("apps/web/")))
+
+
+@pytest.mark.parametrize(
+    ("paths", "named"),
+    [
+        pytest.param(("apps/web/package.json",), "apps/web/package.json", id="package"),
+        pytest.param(("apps/web/package-lock.json",), "apps/web/package-lock.json", id="lock"),
+        pytest.param((WEB_CONFIG,), WEB_CONFIG, id="vite-config"),
+        pytest.param(("apps/web/tsconfig.json",), "apps/web/tsconfig.json", id="tsconfig"),
+        pytest.param(("apps/web/eslint.config.js",), "apps/web/eslint.config.js", id="eslint"),
+        pytest.param(("apps/web/src/styles/base.css",), "apps/web/src/styles/base.css", id="css"),
+        pytest.param(("apps/web/e2e/smoke.spec.ts",), "apps/web/e2e/smoke.spec.ts", id="e2e"),
+        pytest.param(("apps/web/scripts/gen-tokens.mjs",), "apps/web/scripts/", id="script"),
+        pytest.param(("apps/web/design/tokens.json",), "apps/web/design/tokens.json", id="tokens"),
+        pytest.param(("apps/web/src/a b.tsx",), "apps/web/src/a b.tsx", id="space"),
+        pytest.param((WEB_COMPONENT, "apps/web/package.json"), "apps/web/package.json", id="mixed"),
+        pytest.param(None, "unknown", id="unknown-change-set"),
+    ],
+)
+def test_runs_full_web_steps_when_web_change_cannot_be_narrowed(
+    paths: tuple[str, ...] | None, named: str
+) -> None:
+    plan = plan_change(paths, GRAPH, TREE)
+
+    assert (plan.web, plan.web_files) == (True, ())
+    assert [reason for reason in plan.reasons if named in reason] != [], plan.reasons
+
+
+@pytest.mark.parametrize(
     "path",
     [
         "pyproject.toml",
@@ -581,7 +629,7 @@ class FakeStart:
     failing: str = NO_STEP
     calls: list[tuple[str, ...]] = field(default_factory=list)
 
-    def __call__(self, argv: Sequence[str]) -> tuple[int, str]:
+    def __call__(self, argv: Sequence[str], stop: threading.Event | None = None) -> tuple[int, str]:
         call = tuple(argv)
         self.calls.append(call)
         return (1, f"{self.failing} failed\n") if _names(call, self.failing) else (0, "")
@@ -595,7 +643,7 @@ class LaneStart:
     waiter: str
     failed: threading.Event = field(default_factory=threading.Event)
 
-    def __call__(self, argv: Sequence[str]) -> tuple[int, str]:
+    def __call__(self, argv: Sequence[str], stop: threading.Event | None = None) -> tuple[int, str]:
         if _names(argv, self.failing):
             self.failed.set()
             return 1, f"{FAILED_OUTPUT}\n"
@@ -656,7 +704,7 @@ class RunCase:
     [
         pytest.param(RunCase(STORAGE_DB, STORAGE_PLAN, openapi=True, web=False), id="storage"),
         pytest.param(RunCase(FLAKY_SCRIPT, FLAKY_PLAN, openapi=False, web=False), id="pack"),
-        pytest.param(RunCase(WEB_COMPONENT, (), openapi=False, web=True), id="web"),
+        pytest.param(RunCase(WEB_CONFIG, (), openapi=False, web=True), id="web"),
         pytest.param(
             RunCase(
                 CORE_ERRORS,
@@ -695,8 +743,11 @@ def test_runs_checks_on_whole_tree_when_plan_runs(case: RunCase) -> None:
         pytest.param(STORAGE_DB, "lint", id="checks"),
         pytest.param(STORAGE_DB, "scripts.export_openapi", id="openapi"),
         pytest.param(STORAGE_DB, "pytest", id="tests"),
-        pytest.param(WEB_COMPONENT, "web-install", id="web-install"),
-        pytest.param(WEB_COMPONENT, "web-test", id="web-test"),
+        pytest.param(WEB_CONFIG, "web-install", id="web-install"),
+        pytest.param(WEB_CONFIG, "web-test", id="web-test"),
+        pytest.param(WEB_SCREEN, "web-install", id="narrowed-web-install"),
+        pytest.param(WEB_SCREEN, "lint:changed", id="narrowed-lint"),
+        pytest.param(WEB_SCREEN, "test:related", id="narrowed-test"),
     ],
 )
 def test_exits_non_zero_when_a_step_fails(
@@ -731,6 +782,159 @@ def test_prints_failed_lane_last_when_lanes_end(
     assert out.rindex(PASSED_OUTPUT) < out.index(FAILED_OUTPUT)
 
 
+# How long a held step lasts when nothing stops it: far longer than a stopped run takes.
+HOLD_S = 10.0
+
+
+@dataclass
+class StopStart:
+    """Fails the step naming ``failing`` at once; holds the step naming ``holder`` until the run
+    stops it (``HOLD_S`` at most), then answers as a killed step does."""
+
+    failing: str
+    holder: str
+    calls: list[tuple[str, ...]] = field(default_factory=list)
+    stopped: list[tuple[str, ...]] = field(default_factory=list)
+
+    def __call__(self, argv: Sequence[str], stop: threading.Event | None = None) -> tuple[int, str]:
+        call = tuple(argv)
+        self.calls.append(call)
+        if _names(call, self.failing):
+            return 1, f"{FAILED_OUTPUT}\n"
+        if not _names(call, self.holder):
+            return 0, ""
+        if stop is None:
+            time.sleep(HOLD_S)
+        elif stop.wait(HOLD_S):
+            self.stopped.append(call)
+            return -15, "stopped\n"
+        return 0, f"{PASSED_OUTPUT}\n"
+
+
+@pytest.mark.parametrize(
+    ("failing", "holder", "never"),
+    [
+        pytest.param("lint", "pytest", "test:related", id="checks-lane-fails"),
+        pytest.param("pytest", "lint", "lint:changed", id="tests-lane-fails"),
+    ],
+)
+def test_stops_other_lane_when_a_lane_fails_first(
+    failing: str, holder: str, *, never: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    start = StopStart(failing, holder)
+    began = time.monotonic()
+
+    code = main([WEB_SCREEN], environ={}, start=start, git=FakeGit({}))
+
+    elapsed = time.monotonic() - began
+    last = capsys.readouterr().out.splitlines()[-1]
+    assert code == 1
+    assert [_names(call, holder) for call in start.stopped] == [True]
+    assert [call for call in start.calls if _names(call, never)] == []
+    assert elapsed < HOLD_S / 2
+    assert _names(shlex.split(last.removeprefix(FAILED_LINE)), failing)
+
+
+# A step that starts a grandchild, which beats on a file until it is killed (30 s at most).
+GRANDCHILD = """
+import sys, time
+deadline = time.monotonic() + 30
+while time.monotonic() < deadline:
+    with open(sys.argv[1], "a") as beat:
+        beat.write(".")
+    time.sleep(0.05)
+"""
+PARENT = """
+import subprocess, sys, time
+subprocess.Popen([sys.executable, "-c", sys.argv[1], sys.argv[2]])
+time.sleep(30)
+"""
+STOP_WAIT_S = 15.0
+
+
+def _until(check: Callable[[], bool]) -> None:
+    deadline = time.monotonic() + STOP_WAIT_S
+    while not check():
+        assert time.monotonic() < deadline, "the step never started its grandchild"
+        time.sleep(0.05)
+
+
+def test_kills_step_and_what_it_started_when_run_stops(tmp_path: Path) -> None:
+    beats = tmp_path / "beats"
+    stop = threading.Event()
+    ended: list[tuple[int, str]] = []
+    argv = [sys.executable, "-c", PARENT, GRANDCHILD, str(beats)]
+    step = threading.Thread(target=lambda: ended.append(check_changed.start_step(argv, stop)))
+    step.start()
+    _until(lambda: beats.exists() and beats.stat().st_size > 0)
+
+    stop.set()
+    step.join(timeout=STOP_WAIT_S)
+
+    assert not step.is_alive()
+    seen = beats.stat().st_size
+    time.sleep(0.5)
+    assert beats.stat().st_size == seen
+    assert [code != 0 for code, _ in ended] == [True]
+
+
+@dataclass
+class WebListStart(FakeStart):
+    """Records, for each narrowed web step, the lines of the file it names last."""
+
+    lists: dict[str, list[str]] = field(default_factory=dict)
+
+    def __call__(self, argv: Sequence[str], stop: threading.Event | None = None) -> tuple[int, str]:
+        for script in ("lint:changed", "test:related"):
+            if script in argv:
+                self.lists[script] = Path(argv[-1]).read_text("utf-8").splitlines()
+        return super().__call__(argv, stop)
+
+
+def test_hands_web_files_in_list_file_when_web_steps_narrowed() -> None:
+    start = WebListStart()
+
+    code = main([WEB_SCREEN, WEB_COMPONENT], environ={}, start=start, git=FakeGit({}))
+
+    files = ["src/components/Dialog.tsx", "src/screens/portfolio/index.tsx"]
+    named = {call[-1] for call in start.calls if "lint:changed" in call or "test:related" in call}
+    assert code == 0
+    assert start.lists == {"lint:changed": files, "test:related": files}
+    assert [path for path in named if Path(path).exists()] == []
+    args = [arg for call in start.calls for arg in call]
+    assert [arg for arg in args if "Dialog" in arg or "portfolio" in arg] == []
+    assert _make_words(start.calls) & WEB_STEPS == {"web-install"}
+    assert _names(start.calls[0], "web-install")
+
+
+def _npm_scripts(steps: Sequence[Sequence[str]]) -> list[str]:
+    """The npm script each web step runs (``npm --prefix apps/web run <script>``)."""
+    return [step[step.index("run") + 1] for step in steps if Path(step[0]).name == "npm"]
+
+
+def test_runs_typecheck_lint_and_related_tests_when_web_steps_narrowed() -> None:
+    plan = plan_change([WEB_SCREEN], GRAPH, TREE)
+
+    checks, tests = check_changed.lanes(plan, web_list="/scratch/web-files.txt")
+
+    assert _make_words(checks) >= CHECKS
+    assert _make_words([*checks, *tests]) & WEB_STEPS == set()
+    assert _npm_scripts(checks) == ["typecheck", "lint:changed"]
+    assert _npm_scripts(tests) == ["test:related"]
+    lists = [step[-1] for step in (*checks, *tests) if "--" in step]
+    assert lists == ["/scratch/web-files.txt", "/scratch/web-files.txt"]
+    assert [step for step in tests if any("coverage" in arg for arg in step)] == []
+    pytest_targets = [_pytest_view(step)[2] for step in tests if _is_pytest(step)]
+    assert pytest_targets == [frozenset({PLAYGROUND})]
+
+
+def test_runs_full_web_steps_in_check_when_makefile_read() -> None:
+    makefile = MAKEFILE.read_text("utf-8")
+
+    assert "web-static" in _recipe(makefile, "lane-checks").split()
+    assert "web-test" in _recipe(makefile, "lane-tests").split()
+
+
 def test_prints_plan_and_runs_nothing_when_plan_flag_given(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -741,6 +945,37 @@ def test_prints_plan_and_runs_nothing_when_plan_flag_given(
     out = capsys.readouterr().out
     assert (code, start.calls) == (0, [])
     assert [target for target in STORAGE_PLAN if target not in out] == []
+
+
+NARROWED_LINE = "  web steps: narrowed: "
+MANY_WEB_FILES = tuple(f"apps/web/src/lib/file{index:02}.ts" for index in range(21))
+
+
+@pytest.mark.parametrize(
+    ("paths", "steps", "files"),
+    [
+        pytest.param((WEB_SCREEN,), NARROWED_LINE, [WEB_SCREEN], id="narrowed"),
+        pytest.param(
+            MANY_WEB_FILES,
+            NARROWED_LINE,
+            [*MANY_WEB_FILES[:20], "… and 1 more"],
+            id="narrowed-capped",
+        ),
+        pytest.param((WEB_CONFIG,), "  web steps: full", [], id="full"),
+        pytest.param((STORAGE_DB,), "  web steps: no", [], id="none"),
+    ],
+)
+def test_prints_web_steps_and_files_when_plan_flag_given(
+    paths: tuple[str, ...], steps: str, *, files: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    start = FakeStart()
+
+    code = main(["--plan", *paths], environ={}, start=start, git=FakeGit({}))
+
+    lines = capsys.readouterr().out.splitlines()
+    assert (code, start.calls) == (0, [])
+    assert [line for line in lines if line.startswith("  web steps: ")][0].startswith(steps)
+    assert [line.removeprefix("  web file: ") for line in lines if "web file:" in line] == files
 
 
 # The most reason lines the printed plan holds; one more line counts the rest.
