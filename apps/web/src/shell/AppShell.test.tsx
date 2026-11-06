@@ -1,5 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useEffect, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { Dialog } from "../components/Dialog";
@@ -417,6 +418,45 @@ describe("AppShell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
     expect(document.querySelector(".ah-shell")).toHaveAttribute("data-collapsed", "true");
+  });
+
+  it("folds the sidebar while a page asks for the width, keeping the person's own choice", () => {
+    // The person's own choice: expanded (an earlier test collapses it).
+    window.localStorage.clear();
+    function Wide() {
+      const { compactSidebar } = useShell();
+      const [on, setOn] = useState(true);
+      useEffect(() => {
+        compactSidebar(on);
+        return () => {
+          compactSidebar(false);
+        };
+      }, [on, compactSidebar]);
+      return (
+        <button
+          type="button"
+          onClick={() => {
+            setOn(false);
+          }}
+        >
+          Leave
+        </button>
+      );
+    }
+    renderWithApi(
+      <AppShell>
+        <Wide />
+      </AppShell>,
+      { routes },
+    );
+    expect(document.querySelector(".ah-shell")).toHaveAttribute("data-collapsed", "true");
+    // The top bar's toggle says what is shown, and expands it for this visit.
+    fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
+    expect(document.querySelector(".ah-shell")).not.toHaveAttribute("data-collapsed");
+    expect(screen.getByRole("button", { name: "Collapse sidebar" })).toBeInTheDocument();
+    // The page no longer asks: the sidebar is as the person left it.
+    fireEvent.click(screen.getByRole("button", { name: "Leave" }));
+    expect(document.querySelector(".ah-shell")).not.toHaveAttribute("data-collapsed");
   });
 
   it("cycles the theme from the top bar", () => {

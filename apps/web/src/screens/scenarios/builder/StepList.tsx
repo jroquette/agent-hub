@@ -87,6 +87,12 @@ export interface StepListProps {
   onEditNode?: ((id: string, node: BuilderNode) => void) | undefined;
   onDuplicate?: ((id: string) => void) | undefined;
   onDelete?: ((id: string) => void) | undefined;
+  /** The step whose full editor is open in the side panel: it does not open in place too. */
+  inPanel?: string | null | undefined;
+  /** Opens a step's full editor in the side panel ("Edit all in the panel"). */
+  onOpenPanel?: ((id: string) => void) | undefined;
+  /** The run bar's mode: what a Wait until that never holds does in it. */
+  mode?: "interactive" | "regression" | undefined;
   /** Where a step's values come from (environment, scenario variables, kept values). */
   sources?: StepSources | null | undefined;
   /** Edits one value of a step in the side panel (its body, a value taken from elsewhere). */
@@ -257,6 +263,9 @@ export function StepList(props: StepListProps) {
     onDelete,
     sources = null,
     onEditField,
+    mode = "interactive",
+    inPanel = null,
+    onOpenPanel,
   } = props;
   const nodeOfRow = (id: string): BuilderNode | null => {
     const find = (list: readonly Item[]): BuilderNode | null => {
@@ -659,24 +668,31 @@ export function StepList(props: StepListProps) {
         )}
       </>
     );
+    const editingInPanel =
+      selected === id && inPanel === id && (node.type === "action" || node.type === "expect");
     const kept = keptOf?.(id) ?? [];
-    const news =
-      plan?.plan || kept.length > 0 ? (
-        <span className="st-news">
-          {plan?.plan && (
-            <span className={planStale ? "st-plan st-plan-stale" : "st-plan"}>
-              <Icon name={planStale ? "clock" : "scan-eye"} size="sm" />{" "}
-              {planStale ? "Planned before your changes · " : "Plan: "}
-              {plan.plan}
-            </span>
-          )}
-          {kept.length > 0 && (
-            <span className="st-kept">
-              <Icon name="bookmark" size="sm" /> Kept {kept.join(" · ")}
-            </span>
-          )}
+    const news = editingInPanel ? (
+      <span className="st-news">
+        <span className="st-open-quiet">
+          <Icon name="pencil" size="sm" /> Editing in the panel
         </span>
-      ) : null;
+      </span>
+    ) : plan?.plan || kept.length > 0 ? (
+      <span className="st-news">
+        {plan?.plan && (
+          <span className={planStale ? "st-plan st-plan-stale" : "st-plan"}>
+            <Icon name={planStale ? "clock" : "scan-eye"} size="sm" />{" "}
+            {planStale ? "Planned before your changes · " : "Plan: "}
+            {plan.plan}
+          </span>
+        )}
+        {kept.length > 0 && (
+          <span className="st-kept">
+            <Icon name="bookmark" size="sm" /> Kept {kept.join(" · ")}
+          </span>
+        )}
+      </span>
+    ) : null;
     const editable = !readOnly && onEditNode !== undefined;
     const commitEdit = (next: BuilderNode) => {
       setEditing(null);
@@ -737,7 +753,8 @@ export function StepList(props: StepListProps) {
       node.type === "action" || node.type === "expect" || node.type === "include"
         ? ownValues(node, action)
         : [];
-    const isOpen = selected === id && (node.type === "action" || node.type === "expect");
+    const opens = selected === id && (node.type === "action" || node.type === "expect");
+    const isOpen = opens && inPanel !== id;
     const given = record(node.with);
     const number = numbers.get(id) ?? id;
     const editor = (name: string): ReactNode => {
@@ -747,6 +764,13 @@ export function StepList(props: StepListProps) {
         return field("timing", `How often ${number} checks`, every, (typed) => ({
           ...node,
           every: typed.trim() || every,
+        }));
+      }
+      if (name === "timeout") {
+        const timeout = text(node.timeout);
+        return field("timeout", `When ${number} gives up`, timeout, (typed) => ({
+          ...node,
+          timeout: typed.trim() || timeout,
         }));
       }
       const key = name.slice("with:".length);
@@ -759,8 +783,17 @@ export function StepList(props: StepListProps) {
     };
     const open = isOpen ? (
       <OpenStep
+        number={number}
+        onOpenPanel={
+          onOpenPanel
+            ? () => {
+                onOpenPanel(id);
+              }
+            : null
+        }
         node={node}
         action={action}
+        mode={mode}
         sources={sources}
         values={values}
         editor={editor}
@@ -768,6 +801,13 @@ export function StepList(props: StepListProps) {
           editable
             ? (name) => {
                 setEditing({ id, field: name });
+              }
+            : null
+        }
+        onChangeNode={
+          editable
+            ? (next) => {
+                onEditNode(id, next);
               }
             : null
         }

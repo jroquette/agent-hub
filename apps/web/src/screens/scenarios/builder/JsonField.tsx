@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button, Icon, IconButton, SegmentedControl } from "../../../components";
 import { ValueToken, tokenOf } from "./CardParts";
@@ -38,7 +38,13 @@ export function JsonField({
   sources,
   describedBy,
   onChange,
+  startAs,
+  focusOnOpen = false,
 }: {
+  /** The view it opens in (default: fields for a flat object, else JSON). */
+  startAs?: Mode;
+  /** Takes focus when it opens (opened on purpose, from the step's code). */
+  focusOnOpen?: boolean;
   id: string;
   /** The input's name ("body"), for the controls' names. */
   name: string;
@@ -49,12 +55,15 @@ export function JsonField({
 }) {
   const read = parseLoose(value);
   const flat = read.ok && isObject(read.value);
-  const [mode, setMode] = useState<Mode>(flat ? "fields" : "json");
+  const [mode, setMode] = useState<Mode>(startAs ?? (flat ? "fields" : "json"));
   const [draft, setDraft] = useState<string | null>(null);
   const shownText = draft ?? (read.ok ? stringifyLoose(read.value, true) : value);
   const draftRead = draft === null ? null : parseLoose(draft);
   const rows = Math.min(16, Math.max(5, shownText.split("\n").length + 1));
   const box = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (focusOnOpen) box.current?.focus();
+  }, [focusOnOpen]);
   // Where the cursor was in the JSON text: a value from earlier goes there.
   const cursor = useRef<number | null>(null);
 

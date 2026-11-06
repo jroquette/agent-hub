@@ -387,6 +387,14 @@ function actionsWith(overrides: Parameters<typeof aScenarioAction>[0]) {
 }
 
 /** The scenario with its steps (and anything else of its document) as given. */
+/** A step's full editor in the side panel. A Run an action or a Wait until opens in place in
+ * Blocks; its panel opens on asking ("Edit all in the panel"), so that is asked first. */
+async function inPanel(user: ReturnType<typeof userEvent.setup>, name: string | RegExp) {
+  const ask = screen.queryByRole("button", { name: /^Edit all of step .* in the panel$/ });
+  if (ask) await user.click(ask);
+  return screen.findByRole("region", { name });
+}
+
 function detailWith(changes: Record<string, unknown>, environments?: unknown[]) {
   return aScenarioDetail({
     document: { ...document, ...changes },
@@ -516,7 +524,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
 
     // One change is the only change Save sends.
     await user.click(within(tree).getByRole("treeitem", { name: /^Step 1\.2,/ }));
-    const editor = screen.getByRole("region", { name: "Inspector: Wait until fetch-order--2" });
+    const editor = await inPanel(user, "Inspector: Wait until fetch-order--2");
     const field = within(editor).getByLabelText("Give up after");
     await user.clear(field);
     await user.type(field, "20m");
@@ -561,7 +569,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     });
 
     await user.click(await screen.findByRole("treeitem", { name: /^Step 1\.3,/ }));
-    const editor = screen.getByRole("region", { name: /^Inspector: Run an action / });
+    const editor = await inPanel(user, /^Inspector: Run an action /);
     await user.click(within(editor).getByRole("button", { name: "More: id" }));
     expect(within(editor).getByLabelText("Id")).toBeInTheDocument();
     expect(await seriousViolations(container)).toEqual([]);
@@ -582,7 +590,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(added).toHaveAttribute("aria-selected", "true");
 
     // Its editor renames it; a step goes into it from its empty slot.
-    const editor = screen.getByRole("region", { name: "Inspector: Stage 2" });
+    const editor = await inPanel(user, "Inspector: Stage 2");
     const nameField = within(editor).getByLabelText("Name");
     await user.clear(nameField);
     // A stage with no name is read out as it shows.
@@ -617,7 +625,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
 
     // Its editor removes it, with what it holds, and Undo brings it back.
     await user.click(screen.getByRole("treeitem", { name: /^Stage 1: Ship/ }));
-    expect(screen.getByRole("region", { name: "Inspector: Stage 1" })).toBeInTheDocument();
+    expect(await inPanel(user, "Inspector: Stage 1")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Delete the stage and its steps" }));
     expect(screen.queryByRole("treeitem", { name: /^Stage 1: Ship/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Undo" }));
@@ -645,7 +653,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const { requests } = renderTree(REFERENCE, { [SAVE]: () => SAVED });
 
     await user.click(await screen.findByRole("treeitem", { name: /^Step 1\.1,/ }));
-    const editor = screen.getByRole("region", { name: "Inspector: Run an action fetch-order--1" });
+    const editor = await inPanel(user, "Inspector: Run an action fetch-order--1");
     await user.click(within(editor).getByRole("button", { name: "More: id" }));
     // Position is order: no "runs after", no "only if", no join to choose.
     expect(within(editor).queryByText("Runs after")).not.toBeInTheDocument();
@@ -657,9 +665,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
 
     await user.type(id, "fetch");
     await user.tab();
-    expect(
-      await screen.findByRole("region", { name: "Inspector: Run an action fetch" }),
-    ).toBeInTheDocument();
+    expect(await inPanel(user, "Inspector: Run an action fetch")).toBeInTheDocument();
     await save(user);
     const sent = (await savedDocument(requests)) as { stages: { steps: { id?: string }[] }[] };
     expect(sent.stages[0]?.steps.map((step) => step.id ?? null)).toEqual(["fetch", null]);
@@ -670,16 +676,14 @@ describe("ScenarioBuilder (scenario builder)", () => {
     renderTree(REFERENCE, { [SAVE]: () => SAVED });
 
     await user.click(await screen.findByRole("treeitem", { name: /^Step 1\.1,/ }));
-    const editor = screen.getByRole("region", { name: "Inspector: Run an action fetch-order--1" });
+    const editor = await inPanel(user, "Inspector: Run an action fetch-order--1");
     await user.click(within(editor).getByRole("button", { name: "More: id" }));
     const id = within(editor).getByLabelText("Id");
     await user.type(id, "self");
     await user.tab();
 
     expect(id).toHaveValue("");
-    expect(
-      screen.getByRole("region", { name: "Inspector: Run an action fetch-order--1" }),
-    ).toBeInTheDocument();
+    expect(await inPanel(user, "Inspector: Run an action fetch-order--1")).toBeInTheDocument();
     expect(screen.queryByText("Unsaved")).not.toBeInTheDocument();
   });
 
@@ -709,7 +713,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     });
 
     await user.click(await screen.findByRole("treeitem", { name: /^Step 1\.2,/ }));
-    const editor = screen.getByRole("region", { name: "Inspector: Wait until fetch-order--2" });
+    const editor = await inPanel(user, "Inspector: Wait until fetch-order--2");
     await user.click(within(editor).getByRole("button", { name: "More: id" }));
     const id = within(editor).getByLabelText("Id");
     expect(id).toHaveValue("");
@@ -724,7 +728,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     shared = true;
     await user.click(within(blocks).getByRole("button", { name: "Add Pause after step 1.1" }));
     await user.click(await screen.findByRole("treeitem", { name: /^Step 1\.3, Wait until/ }));
-    const moved = screen.getByRole("region", { name: "Inspector: Wait until fetch-order--2" });
+    const moved = await inPanel(user, "Inspector: Wait until fetch-order--2");
     await user.click(within(moved).getByRole("button", { name: "More: id" }));
     expect(within(moved).getByLabelText("Id")).toHaveValue("fetch-order--2");
     // The Pause now at 1.2 runs under that id too: the check names it, and Save stays off.
@@ -733,7 +737,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
 
     // The Pause given an id of its own: nothing is shared, and the file can be saved.
     await user.click(screen.getByRole("treeitem", { name: /^Step 1\.2,/ }));
-    const pause = screen.getByRole("region", { name: /^Inspector: .* fetch-order--2$/ });
+    const pause = await inPanel(user, /^Inspector: .* fetch-order--2$/);
     await user.click(within(pause).getByRole("button", { name: "More: id" }));
     await user.type(within(pause).getByLabelText("Id"), "pause");
     shared = false;
@@ -756,16 +760,14 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const { requests } = renderTree("blocks-repeat", { [SAVE]: () => SAVED });
 
     await user.click(await screen.findByRole("treeitem", { name: /^Step 1\.2\.2,/ }));
-    const editor = screen.getByRole("region", { name: "Inspector: Wait until poll" });
+    const editor = await inPanel(user, "Inspector: Wait until poll");
     await user.click(within(editor).getByRole("button", { name: "More: id" }));
     const id = within(editor).getByLabelText("Id");
     expect(id).toHaveValue("poll");
     await user.clear(id);
     await user.type(id, "review-poll");
     await user.tab();
-    expect(
-      await screen.findByRole("region", { name: "Inspector: Wait until review-poll" }),
-    ).toBeInTheDocument();
+    expect(await inPanel(user, "Inspector: Wait until review-poll")).toBeInTheDocument();
 
     await save(user);
     const sent = (await savedDocument(requests)) as {
@@ -795,9 +797,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(await screen.findByRole("treeitem", { name: /^Step 1\.1, Pause/ })).toBeInTheDocument();
     // The stage renamed, letter by letter.
     await user.click(screen.getByRole("treeitem", { name: /^Stage 1: Fetch order/ }));
-    const nameField = within(
-      screen.getByRole("region", { name: "Inspector: Stage 1" }),
-    ).getByLabelText("Name");
+    const nameField = within(await inPanel(user, "Inspector: Stage 1")).getByLabelText("Name");
     await user.clear(nameField);
     await user.type(nameField, "Get order");
 
@@ -841,10 +841,9 @@ describe("ScenarioBuilder (scenario builder)", () => {
 
     await user.click(await screen.findByRole("treeitem", { name: /^Step 1\.2,/ }));
     await user.click(
-      within(screen.getByRole("region", { name: "Inspector: Run an action ship--2" })).getByRole(
-        "button",
-        { name: "More: id" },
-      ),
+      within(await inPanel(user, "Inspector: Run an action ship--2")).getByRole("button", {
+        name: "More: id",
+      }),
     );
     // Block 1.2 given the id block 1.1 has, then the id block 1.3's place gives, each fixed after.
     for (const [from, to] of [
@@ -907,9 +906,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     // Typed letter by letter, the name passes through "Order", the first stage's: two blocks
     // then run as order--1 for a moment.
     await user.click(await screen.findByRole("treeitem", { name: /^Stage 2: Pay/ }));
-    const nameField = within(
-      screen.getByRole("region", { name: "Inspector: Stage 2" }),
-    ).getByLabelText("Name");
+    const nameField = within(await inPanel(user, "Inspector: Stage 2")).getByLabelText("Name");
     await user.clear(nameField);
     await user.type(nameField, "Order pay");
 
@@ -1807,7 +1804,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     );
     // The If's editor says what is wrong with its condition.
     await user.click(screen.getByRole("treeitem", { name: /^Step 1\.2,/ }));
-    expect(screen.getByRole("region", { name: "Inspector: If" })).toHaveTextContent(
+    expect(await inPanel(user, "Inspector: If")).toHaveTextContent(
       "the If's condition names no value",
     );
     // The Problems list opens the block a problem is on; its editor shows it under the field.
@@ -1818,9 +1815,9 @@ describe("ScenarioBuilder (scenario builder)", () => {
       "aria-selected",
       "true",
     );
-    const action = within(
-      screen.getByRole("region", { name: "Inspector: Run an action check--3" }),
-    ).getByLabelText("Action");
+    const action = within(await inPanel(user, "Inspector: Run an action check--3")).getByLabelText(
+      "Action",
+    );
     expect(action.closest(".sb-field")).toHaveTextContent("unknown action 'queue-send'");
   });
 
@@ -1852,7 +1849,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
 
     expect(await screen.findByText("2 problems")).toBeInTheDocument();
     await user.click(screen.getByRole("treeitem", { name: /^Stage 1:/ }));
-    const editor = screen.getByRole("region", { name: "Inspector: Stage 1" });
+    const editor = await inPanel(user, "Inspector: Stage 1");
     expect(editor).toHaveTextContent("a stage holds at most 64 steps");
     expect(within(editor).getByLabelText("Name").closest(".sb-field")).toHaveTextContent(
       "the stage name is also stage 2's",
@@ -1882,7 +1879,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
 
     expect(await screen.findByText("2 problems")).toBeInTheDocument();
     await user.click(screen.getByRole("treeitem", { name: /^Stage 1:/ }));
-    const editor = screen.getByRole("region", { name: "Inspector: Stage 1" });
+    const editor = await inPanel(user, "Inspector: Stage 1");
     expect(within(editor).getByLabelText("Name")).toBeInTheDocument();
     expect(within(editor).getByLabelText(/What it is for/)).toBeInTheDocument();
 
@@ -1936,9 +1933,9 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const { requests } = renderBuilder({ [MIGRATE]: () => MIGRATION });
 
     await user.click(await screen.findByRole("treeitem", { name: CHECK }));
-    const field = within(
-      screen.getByRole("region", { name: "Inspector: Wait until order-on-hold" }),
-    ).getByLabelText("Give up after");
+    const field = within(await inPanel(user, "Inspector: Wait until order-on-hold")).getByLabelText(
+      "Give up after",
+    );
     await user.clear(field);
     await user.type(field, "10m");
     expect(await screen.findByText("Unsaved")).toBeInTheDocument();
@@ -2261,7 +2258,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const { requests } = renderBuilder({ [SAVE]: () => SAVED });
 
     await insertStep(user, "Add step", /^Ask me/);
-    const editor = await screen.findByRole("region", { name: "Inspector: Ask me manual-step" });
+    const editor = await inPanel(user, "Inspector: Ask me manual-step");
     await user.clear(within(editor).getByLabelText("What to do"));
     await user.type(within(editor).getByLabelText("What to do"), "Create the order");
     await user.click(within(editor).getByLabelText(/Ask me to type a value/));
@@ -2282,7 +2279,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     renderBuilder();
 
     await user.click(await screen.findByRole("treeitem", { name: CHECK }));
-    const editor = screen.getByRole("region", { name: "Inspector: Wait until order-on-hold" });
+    const editor = await inPanel(user, "Inspector: Wait until order-on-hold");
     await user.click(within(editor).getByRole("button", { name: /^Where it can stop: / }));
     expect(
       within(editor).getByText(
@@ -2306,7 +2303,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const { requests } = renderBuilder({ [SAVE]: () => SAVED });
 
     await user.click(await screen.findByRole("treeitem", { name: CHECK }));
-    const editor = screen.getByRole("region", { name: "Inspector: Wait until order-on-hold" });
+    const editor = await inPanel(user, "Inspector: Wait until order-on-hold");
     const field = within(editor).getByLabelText("Give up after");
     await user.clear(field);
     await user.type(field, "10m");
@@ -2377,9 +2374,9 @@ describe("ScenarioBuilder (scenario builder)", () => {
     row.focus();
     await user.keyboard("{Enter}");
     expect(
-      within(
-        screen.getByRole("region", { name: "Inspector: Run an action fetch-order" }),
-      ).getAllByText("unknown action 'x'").length,
+      within(await inPanel(user, "Inspector: Run an action fetch-order")).getAllByText(
+        "unknown action 'x'",
+      ).length,
     ).toBeGreaterThan(0);
   });
 
@@ -2435,10 +2432,9 @@ describe("ScenarioBuilder (scenario builder)", () => {
 
     const fetch = await screen.findByRole("treeitem", { name: FETCH });
     await user.click(fetch);
+    const panel = await inPanel(user, "Inspector: Run an action fetch-order");
     await waitFor(() => {
-      expect(
-        screen.getByRole("region", { name: "Inspector: Run an action fetch-order" }),
-      ).toHaveTextContent("The hub's actions could not be read");
+      expect(panel).toHaveTextContent("The hub's actions could not be read");
     });
     expect(fetch).not.toHaveTextContent("Changes data");
     await user.click(screen.getByRole("tab", { name: /Actions/ }));
@@ -2477,9 +2473,9 @@ describe("ScenarioBuilder (scenario builder)", () => {
       inputs: { external_ref: "T-1" },
     });
     await user.click(fetch);
-    expect(
-      screen.getByRole("region", { name: "Inspector: Run an action fetch-order" }),
-    ).toHaveTextContent("asks you first");
+    expect(await inPanel(user, "Inspector: Run an action fetch-order")).toHaveTextContent(
+      "asks you first",
+    );
 
     await insertStep(user, "Add step", /^Pause/);
     expect(fetch).toHaveTextContent("Planned before your changes · Would send one message");
@@ -2525,7 +2521,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     });
 
     await user.click(await screen.findByRole("treeitem", { name: FETCH }));
-    const form = screen.getByRole("region", { name: "Inspector: Run an action fetch-order" });
+    const form = await inPanel(user, "Inspector: Run an action fetch-order");
     // Fields: one row per key; a bare reference stays a token, "as a number".
     const event = await within(form).findByLabelText("Value of event_type in body");
     await user.clear(event);
@@ -2584,9 +2580,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     // Still the run's value, as the editor says.
     await user.click(fetch);
     expect(
-      within(
-        screen.getByRole("region", { name: "Inspector: Run an action fetch-order" }),
-      ).getByRole("note"),
+      within(await inPanel(user, "Inspector: Run an action fetch-order")).getByRole("note"),
     ).toHaveTextContent("external_ref comes from the scenario run (asked at start).");
   });
 
@@ -2632,9 +2626,9 @@ describe("ScenarioBuilder (scenario builder)", () => {
 
     const check = await screen.findByRole("treeitem", { name: CHECK });
     expect(check).toHaveAttribute("aria-selected", "true");
-    expect(
-      screen.getByRole("region", { name: "Inspector: Wait until order-on-hold" }),
-    ).toHaveTextContent("the condition does not parse");
+    expect(await inPanel(user, "Inspector: Wait until order-on-hold")).toHaveTextContent(
+      "the condition does not parse",
+    );
   });
 
   it("scenario builder picks a step's action and sets a value the run would give", async () => {
@@ -2643,7 +2637,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
 
     const fetch = await screen.findByRole("treeitem", { name: FETCH });
     await user.click(fetch);
-    const form = screen.getByRole("region", { name: "Inspector: Run an action fetch-order" });
+    const form = await inPanel(user, "Inspector: Run an action fetch-order");
     await user.selectOptions(within(form).getByLabelText("Action"), "orders/get-order-by-ref");
     expect(fetch).toHaveTextContent("get-order-by-ref");
     // external_ref is a scenario input: the step takes the run's value unless it sets its own.
@@ -2655,6 +2649,8 @@ describe("ScenarioBuilder (scenario builder)", () => {
       "external_ref",
     );
     await user.type(within(form).getByLabelText("external_ref"), "T-1");
+    // Closing the panel brings the open step back.
+    await user.click(screen.getByRole("button", { name: "Close step fetch-order" }));
     // The open step lists the value under its name.
     expect(fetch).toHaveTextContent(/external_ref.*T-1/);
     // AC-596.3.3: on the same row, the value right after its own name.
@@ -2775,7 +2771,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
 
     const fetch = await screen.findByRole("treeitem", { name: FETCH });
     await user.click(fetch);
-    const form = screen.getByRole("region", { name: "Inspector: Run an action fetch-order" });
+    const form = await inPanel(user, "Inspector: Run an action fetch-order");
     // A step with no action yet offers to write one.
     await user.selectOptions(within(form).getByLabelText("Action"), "");
     await user.click(within(form).getByRole("button", { name: "New action" }));
@@ -2882,7 +2878,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     renderSources();
 
     await user.click(await screen.findByRole("treeitem", { name: FETCH }));
-    const form = screen.getByRole("region", { name: "Inspector: Run an action fetch-order" });
+    const form = await inPanel(user, "Inspector: Run an action fetch-order");
     await waitFor(() => {
       expect(within(form).getByRole("tab", { name: /Settings/ })).toHaveAttribute(
         "aria-selected",
@@ -2903,7 +2899,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     renderSources();
 
     await user.click(await screen.findByRole("treeitem", { name: FETCH }));
-    const form = screen.getByRole("region", { name: "Inspector: Run an action fetch-order" });
+    const form = await inPanel(user, "Inspector: Run an action fetch-order");
     await user.click(await within(form).findByRole("button", { name: /View script/ }));
     const tabs = within(form).getByRole("tablist", { name: "Step editor" });
     expect(within(tabs).getByRole("tab", { name: /Script/ })).toHaveAttribute(
@@ -3058,7 +3054,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
 
     const check = await screen.findByRole("treeitem", { name: CHECK });
     await user.click(check);
-    const form = screen.getByRole("region", { name: "Inspector: Wait until order-on-hold" });
+    const form = await inPanel(user, "Inspector: Wait until order-on-hold");
     const [words] = within(form).getAllByLabelText("Type the condition in words");
     if (!words) throw new Error("no words field");
     await user.type(words, "status is DONE{Enter}");
@@ -3080,9 +3076,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.click(await screen.findByRole("button", { name: "Add a block after fetch-order" }));
     await user.click(screen.getByRole("menuitem", { name: "Pause" }));
 
-    expect(
-      await screen.findByRole("region", { name: "Inspector: Pause pause" }),
-    ).toBeInTheDocument();
+    expect(await inPanel(user, "Inspector: Pause pause")).toBeInTheDocument();
   });
 
   it("scenario builder shows the generated YAML", async () => {
@@ -3137,17 +3131,13 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const tree = await screen.findByRole("tree", { name: "Steps of order-lifecycle" });
     await user.click(within(tree).getByRole("treeitem", { name: CHECK }));
 
-    await user.click(
-      within(tree).getByRole("button", {
-        name: "Edit how often it checks: every 10 s, up to 5 min",
-      }),
-    );
+    await user.click(within(tree).getByRole("button", { name: "Edit how often it checks: 10 s" }));
     const field = screen.getByRole("textbox", { name: "How often 2 checks" });
     await user.clear(field);
     await user.type(field, "30s{Enter}");
 
     expect(within(tree).getByRole("treeitem", { name: CHECK })).toHaveTextContent(
-      "every 30 s, up to 5 min",
+      "Checksevery30 s",
     );
   });
 
@@ -3174,11 +3164,11 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(screen.getByRole("form", { name: "Run order-lifecycle" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start scenario run" })).toBeDisabled();
 
-    // Opening a step in the editor covers the run panel; the run bar stays.
+    // One editor at a time: a step opens in place and the run panel stays beside it.
     await user.click(screen.getByRole("treeitem", { name: FETCH }));
     expect(
-      screen.queryByRole("complementary", { name: "Scenario runs of order-lifecycle" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("complementary", { name: "Scenario runs of order-lifecycle" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("form", { name: "Run order-lifecycle" })).toBeInTheDocument();
   });
 
@@ -3212,14 +3202,14 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(within(body).getByTitle("Scenario input external_ref")).toHaveTextContent(
       "external_ref",
     );
-    // The open step reads in order: what it does, its values, then the values from earlier.
-    expect(within(fetch).getByText("What it does")).toBeInTheDocument();
+    // The open step reads in order: its action, its values, then the values from earlier.
+    expect(within(fetch).getByText("Action")).toBeInTheDocument();
     // AC-596.3.20: in that order.
     expect(
       within(within(fetch).getByRole("group", { name: "Step 1 settings" }))
         .getAllByRole("region")
         .map((region) => region.getAttribute("aria-label")),
-    ).toEqual(["What it does", "Values for this step", "Values from earlier"]);
+    ).toEqual(["Action", "Values for this step", "Values from earlier"]);
     expect(
       within(fetch).getByText("Scenario input · asked when the scenario run starts"),
     ).toBeInTheDocument();
@@ -3235,7 +3225,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const script = within(fetch).getByLabelText(
       "Text of actions/orders/scripts/send_queue_message.py",
     );
-    // Folded until asked for.
+    // Folded until asked for, right under the action it runs: Show the code it runs.
     expect(script).not.toBeVisible();
     await user.click(within(fetch).getByText("Show the code it runs"));
     expect(script).toBeVisible();
@@ -3347,9 +3337,13 @@ describe("ScenarioBuilder (scenario builder)", () => {
         .getAllByRole("option")
         .map((option) => option.textContent),
     ).toEqual(["Any kind", "Database", "Queue (SQS)"]);
-    // A kind chosen filters the list.
+    // A kind chosen filters the list. Another kind than the picked service's empties the field
+    // (that service no longer fits) and opens the list on that kind.
     await user.selectOptions(kind, "database");
-    await user.click(within(fetch).getByRole("button", { name: "target: payments-queue" }));
+    expect(
+      within(fetch).getByRole("button", { name: "target: choose a service" }),
+    ).toBeInTheDocument();
+    expect(kind.closest(".st-g-row")).toHaveTextContent("Choose a database in personal");
     const filtered = screen.getByRole("dialog", { name: "Choose target" });
     expect(
       within(filtered)
@@ -3361,9 +3355,16 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.keyboard("{Escape}");
     // AC-596.4.6: Esc closes the list and changes nothing.
     expect(screen.queryByRole("dialog", { name: "Choose target" })).not.toBeInTheDocument();
+    expect(within(fetch).getByRole("button", { name: "target: choose a service" })).toBeVisible();
+    // The emptied field is one edit of the draft: Undo brings the service back.
+    await user.click(screen.getByRole("button", { name: "Undo (⌘Z)" }));
     expect(within(fetch).getByRole("button", { name: "target: payments-queue" })).toBeVisible();
+    // Back with a queue, the kind is the queue's again: the select never disagrees with the pick.
+    expect(within(fetch).getByRole("combobox", { name: "Kind of service for target" })).toHaveValue(
+      "sqs",
+    );
     // The side panel picks it the same way: a field, never a text box.
-    const panel = screen.getByRole("region", { name: /^Inspector: / });
+    const panel = await inPanel(user, /^Inspector: /);
     expect(
       within(panel).getByRole("button", { name: "target: payments-queue" }),
     ).toBeInTheDocument();
@@ -3465,11 +3466,11 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(values).toHaveTextContent("1 needs a value");
     expect(values).toHaveTextContent("region_codeNeeds a value");
     expect(within(values).getByRole("button", { name: "Set it in the panel" })).toBeInTheDocument();
-    // The draft says what it means and gives its commit command.
-    expect(within(open).getByText("Draft: needs acceptance")).toBeInTheDocument();
+    // The draft is said on the step's first line, in words, with the way to its commit.
+    expect(within(open).getByText("Draft action")).toBeInTheDocument();
     expect(
-      within(open).getByRole("button", { name: "Copy the commit command for send-queue-message" }),
-    ).toBeInTheDocument();
+      within(open).getByRole("link", { name: "commit it in Before you start" }),
+    ).toHaveAttribute("href", "#before-you-start");
   });
 
   it("scenario builder's View control offers no Run view", async () => {
@@ -3623,10 +3624,13 @@ describe("ScenarioBuilder (scenario builder)", () => {
       within(open)
         .getAllByRole("region")
         .map((region) => region.getAttribute("aria-label")),
-    ).toEqual(["What it does", "Values for this step"]);
-    // What it does: the action, with its runtime in words.
-    const does = within(open).getByRole("region", { name: "What it does" });
-    expect(does).toHaveTextContent("Actionsend-queue-messagePython");
+    ).toEqual(["Action", "Values for this step"]);
+    // Action: the action it runs, picked in place, with its runtime in words.
+    const does = within(open).getByRole("region", { name: "Action" });
+    expect(within(does).getByRole("combobox", { name: "Action of step 1" })).toHaveValue(
+      "send-queue-message",
+    );
+    expect(does).toHaveTextContent("Python");
     // Open, the row's own line 2 and technical line give way to the open part.
     expect(fetch.querySelector(".st-lines > .st-detail")).toBeNull();
     expect(fetch.querySelector(".st-lines > .st-tech")).toBeNull();
@@ -3736,20 +3740,21 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const check = await screen.findByRole("treeitem", { name: CHECK });
     await user.click(check);
     const open = within(check).getByRole("group", { name: "Step 2 settings" });
-    const does = within(open).getByRole("region", { name: "What it does" });
-    expect(does).toHaveTextContent("Checksevery 10 s, up to 5 min");
-    expect(does).toHaveTextContent("Untilstatus is ON_HOLD");
+    // A check reads by its poll: Done when (each condition a row), then How often.
+    const does = within(open).getByRole("region", { name: "How often" });
+    expect(does).toHaveTextContent("Checksevery10 s· up to5 min");
+    expect(within(open).getByRole("region", { name: "Done when" })).toHaveTextContent(
+      "statusisON_HOLD",
+    );
     const keeps = within(open).getByRole("region", { name: "Keeps for later steps" });
     expect(within(keeps).getByTitle("Kept value order_status")).toHaveTextContent("order_status");
     expect(keeps).toHaveTextContent("from");
     expect(within(keeps).getByTitle("Output status of this step")).toBeInTheDocument();
-    // Keeps comes last.
+    // Keeps comes before More details, which folds the rest.
     expect(
-      within(open)
-        .getAllByRole("region")
-        .map((region) => region.getAttribute("aria-label"))
-        .at(-1),
-    ).toBe("Keeps for later steps");
+      keeps.compareDocumentPosition(within(open).getByText("More details")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("scenario builder's open step says where each value from earlier comes from, only from the steps before it", async () => {
@@ -3816,12 +3821,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
       within(within(notify).getByRole("group", { name: "Step 3 settings" }))
         .getAllByRole("region")
         .map((region) => region.getAttribute("aria-label")),
-    ).toEqual([
-      "What it does",
-      "Values for this step",
-      "Values from earlier",
-      "Keeps for later steps",
-    ]);
+    ).toEqual(["Action", "Values for this step", "Keeps for later steps", "Values from earlier"]);
     const later = within(notify).getByRole("region", { name: "Values from earlier" });
     expect(
       within(later).getByTitle("Kept value order_status").closest(".st-g-row"),
@@ -3869,17 +3869,20 @@ describe("ScenarioBuilder (scenario builder)", () => {
       "Changes data",
     );
 
+    // Edit body edits it right here, in the panel's own JSON editor; Done folds it back.
     await user.click(within(values).getByRole("button", { name: "Edit body" }));
-    const panel = screen.getByRole("region", { name: "Inspector: Run an action fetch-order" });
-    expect(within(panel).getByRole("tab", { name: /Settings/ })).toHaveAttribute(
-      "aria-selected",
+    expect(screen.queryByRole("region", { name: /^Inspector: / })).not.toBeInTheDocument();
+    expect(within(values).queryByLabelText("body, as JSON")).not.toBeInTheDocument();
+    expect(within(values).getByRole("button", { name: "Done" })).toHaveAttribute(
+      "aria-expanded",
       "true",
     );
-    // At the body's field: its first row, shown as fields.
-    await waitFor(() => {
-      expect(panel.contains(globalThis.document.activeElement)).toBe(true);
-    });
-    expect(globalThis.document.activeElement?.tagName).toMatch(/^(INPUT|TEXTAREA|SELECT|BUTTON)$/);
+    // Opened as JSON, the whole body in one text box, focused.
+    const text = within(values).getByRole("textbox", { name: "Edit body as JSON" });
+    expect(text).toHaveFocus();
+    expect((text as HTMLTextAreaElement).value).toContain('"event_type": "FETCH_ORDERS"');
+    await user.click(within(values).getByRole("button", { name: "Done" }));
+    expect(within(values).getByLabelText("body, as JSON")).toBeInTheDocument();
   });
 
   it("scenario builder's Set it in the panel focuses that value's own field, region apart from region_code", async () => {
@@ -3903,7 +3906,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(region).toHaveTextContent("regionNeeds a value");
 
     await user.click(within(region).getByRole("button", { name: "Set it in the panel" }));
-    const panel = screen.getByRole("region", { name: "Inspector: Run an action fetch-order" });
+    const panel = await inPanel(user, "Inspector: Run an action fetch-order");
     expect(within(panel).getByRole("tab", { name: /Settings/ })).toHaveAttribute(
       "aria-selected",
       "true",
@@ -3971,7 +3974,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     // aws_account_id is a scenario input the environment gives.
     expect(values).not.toHaveTextContent("aws_account_id");
 
-    const form = screen.getByRole("region", { name: "Inspector: Run an action fetch-order" });
+    const form = await inPanel(user, "Inspector: Run an action fetch-order");
     await user.click(await within(form).findByRole("button", { name: /View script/ }));
     const table = within(
       within(form).getByRole("region", { name: "How this step fills each input" }),
@@ -4013,7 +4016,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(within(fetch).getByText("YAML")).toBeVisible();
 
     // The side panel's Script tab shows the same files, with no caption.
-    const form = screen.getByRole("region", { name: "Inspector: Run an action fetch-order" });
+    const form = await inPanel(user, "Inspector: Run an action fetch-order");
     await user.click(await within(form).findByRole("button", { name: /View script/ }));
     const files = within(form).getByRole("region", { name: "Files" });
     expect(within(files).getByRole("tab", { name: "Script" })).toBeInTheDocument();
@@ -4275,7 +4278,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     });
     const fetch = await screen.findByRole("treeitem", { name: FETCH });
     await user.click(fetch);
-    const panel = screen.getByRole("region", { name: /^Inspector: / });
+    const panel = await inPanel(user, /^Inspector: /);
     expect(within(panel).queryByRole("textbox", { name: /target/ })).not.toBeInTheDocument();
     // Nothing picked: the panel says what to choose, not the action's own words.
     const note = within(panel).getByText("Choose a service in personal");
@@ -4287,30 +4290,34 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.click(within(panel).getByRole("button", { name: "target: choose a service" }));
     const picker = screen.getByRole("dialog", { name: "Choose target" });
     await user.click(within(picker).getByRole("option", { name: /orders-queue/ }));
+    // One editor at a time: the open step shows the pick once the panel closes.
+    await user.click(screen.getByRole("button", { name: "Close step fetch-order" }));
     const field = within(fetch).getByRole("button", { name: "target: orders-queue" });
     expect(field.closest(".st-g-row")?.querySelector(".st-g-note")).toHaveTextContent(
       "target · Required · Queue (SQS) · Orders to pay · orders-queue-personal",
     );
+    const panelAgain = await inPanel(user, /^Inspector: /);
     expect(
-      within(panel).getByText("Queue (SQS) · Orders to pay · orders-queue-personal"),
+      within(panelAgain).getByText("Queue (SQS) · Orders to pay · orders-queue-personal"),
     ).toBeInTheDocument();
 
     // A service with no address here says so, in both places.
-    await user.click(within(panel).getByRole("button", { name: "target: orders-queue" }));
+    await user.click(within(panelAgain).getByRole("button", { name: "target: orders-queue" }));
     // The kind follows the pick, so choose any kind to see the database.
     await user.keyboard("{Escape}");
     await user.selectOptions(
-      within(panel).getByRole("combobox", { name: "Kind of service for target" }),
+      within(panelAgain).getByRole("combobox", { name: "Kind of service for target" }),
       "",
     );
-    await user.click(within(panel).getByRole("button", { name: "target: orders-queue" }));
+    await user.click(within(panelAgain).getByRole("button", { name: "target: orders-queue" }));
     await user.click(
       within(screen.getByRole("dialog", { name: "Choose target" })).getByRole("option", {
         name: /orders-db/,
       }),
     );
+    expect(within(panelAgain).getByText("Database · no address in personal")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close step fetch-order" }));
     expect(within(fetch).getByRole("button", { name: "target: orders-db" })).toBeInTheDocument();
-    expect(within(panel).getByText("Database · no address in personal")).toBeInTheDocument();
     expect(within(fetch).getByText(/Database · no address in personal/)).toBeInTheDocument();
   });
 
@@ -4481,7 +4488,176 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const fetch = await screen.findByRole("treeitem", { name: FETCH });
     await user.click(fetch);
     await user.click(within(fetch).getByText("Show the code it runs"));
-    expect(within(fetch).getByText("Draft: needs acceptance")).toBeVisible();
+    expect(within(fetch).getByText("Draft action")).toBeVisible();
     expect(await seriousViolations(globalThis.document.body)).toEqual([]);
+  });
+
+  it("scenario builder's open check reads as a poll: its conditions, how it checks, what if it never holds", async () => {
+    const user = userEvent.setup();
+    renderBuilder({
+      [DETAIL]: detailWith({
+        nodes: [
+          document.nodes[0],
+          {
+            ...document.nodes[1],
+            with: { external_ref: "$INPUTS.external_ref" },
+            until_when: "$self.output.status == 'ON_HOLD' && $self.output.cover == 'PENDING'",
+            capture: { order_id: "$self.output.order_id" },
+          },
+        ],
+      }),
+    });
+    // Two conditions: the row's title names the first and how many more.
+    const check = await screen.findByRole("treeitem", {
+      name: /Wait until: Wait until status is ON_HOLD and 1 more/,
+    });
+    await user.click(check);
+    const open = within(check).getByRole("group", { name: "Step 2 settings" });
+
+    // Each condition is a row, the second after an "and".
+    const done = within(open).getByRole("region", { name: "Done when" });
+    expect(done).toHaveTextContent("statusisON_HOLD");
+    // (a token's hidden words, "Output of this step", sit before its name)
+    expect(done).toHaveTextContent(/and(Output of this step)?coverisPENDING/);
+    // Under the action it reads with: the values it reads with; How often edits both timings.
+    expect(
+      within(within(open).getByRole("region", { name: "Reads with the action" })).getByTitle(
+        "Scenario input external_ref",
+      ),
+    ).toBeInTheDocument();
+    const how = within(open).getByRole("region", { name: "How often" });
+    expect(how).toHaveTextContent("at most 30 checks");
+    await user.click(within(how).getByRole("button", { name: "Edit when it gives up: 5 min" }));
+    const field = screen.getByRole("textbox", { name: "When 2 gives up" });
+    await user.clear(field);
+    await user.type(field, "20m{Enter}");
+    expect(within(open).getByRole("region", { name: "How often" })).toHaveTextContent(
+      "up to20 min",
+    );
+    // What happens when it never holds, by the run bar's mode.
+    expect(within(open).getByRole("region", { name: "If it never holds" })).toHaveTextContent(
+      "After 20 min the scenario run pauses and a read-only agent investigates with you.",
+    );
+    await user.click(
+      within(screen.getByRole("group", { name: "Scenario run mode" })).getByRole("button", {
+        name: "Regression",
+      }),
+    );
+    expect(within(open).getByRole("region", { name: "If it never holds" })).toHaveTextContent(
+      "After 20 min the scenario run fails here.",
+    );
+    // What it keeps, from its own answer.
+    expect(within(open).getByRole("region", { name: "Keeps for later steps" })).toHaveTextContent(
+      "from its output",
+    );
+  });
+
+  it("scenario builder shows one editor at a time: the open step, or its panel on asking", async () => {
+    const user = userEvent.setup();
+    renderBuilder();
+    const fetch = await screen.findByRole("treeitem", { name: FETCH });
+    await user.click(fetch);
+
+    // Open in place: the run panel stays on the right, no side editor.
+    const open = within(fetch).getByRole("group", { name: "Step 1 settings" });
+    expect(
+      screen.getByRole("complementary", { name: "Scenario runs of order-lifecycle" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /^Inspector: / })).not.toBeInTheDocument();
+
+    // Asked for, the panel opens and the open step folds: the same fields never show twice.
+    await user.click(within(open).getByRole("button", { name: "Edit all of step 1 in the panel" }));
+    expect(
+      await screen.findByRole("region", { name: "Inspector: Run an action fetch-order" }),
+    ).toBeInTheDocument();
+    expect(within(fetch).queryByRole("group", { name: "Step 1 settings" })).not.toBeInTheDocument();
+    expect(fetch).toHaveTextContent("Editing in the panel");
+
+    // Esc closes the panel first (the open step comes back), then the selection.
+    fetch.focus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("region", { name: /^Inspector: / })).not.toBeInTheDocument();
+    expect(within(fetch).getByRole("group", { name: "Step 1 settings" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(within(fetch).queryByRole("group", { name: "Step 1 settings" })).not.toBeInTheDocument();
+  });
+
+  it("scenario builder's left column is a rail below 1920 px, opening over the list", async () => {
+    // A laptop's width: no (min-width: 1920px).
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
+    try {
+      const user = userEvent.setup();
+      renderBuilder();
+      const rail = await screen.findByRole("toolbar", { name: "Left column" });
+      // Only the rail: the column itself is not there until a tab is pressed.
+      expect(
+        screen.queryByRole("complementary", { name: "Blocks, variables and actions" }),
+      ).not.toBeInTheDocument();
+      const variables = within(rail).getByRole("button", { name: "Variables" });
+      await user.click(variables);
+      const column = screen.getByRole("complementary", { name: "Blocks, variables and actions" });
+      expect(variables).toHaveAttribute("aria-expanded", "true");
+      expect(variables).toHaveAttribute("aria-controls", column.id);
+      // Focus moves into the column, on its tab.
+      expect(within(column).getByRole("tab", { name: "Variables" })).toHaveFocus();
+      expect(await seriousViolations(globalThis.document.body)).toEqual([]);
+      // Esc closes it and focus goes back to its rail button.
+      await user.keyboard("{Escape}");
+      expect(
+        screen.queryByRole("complementary", { name: "Blocks, variables and actions" }),
+      ).not.toBeInTheDocument();
+      expect(variables).toHaveFocus();
+      // So does its close button.
+      const blocks = within(rail).getByRole("button", { name: "Blocks" });
+      await user.click(blocks);
+      await user.click(screen.getByRole("button", { name: "Close Blocks, variables and actions" }));
+      expect(
+        screen.queryByRole("complementary", { name: "Blocks, variables and actions" }),
+      ).not.toBeInTheDocument();
+      expect(blocks).toHaveFocus();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("scenario builder changes a step's action and edits its body on the step itself", async () => {
+    const user = userEvent.setup();
+    renderBuilder({
+      [DETAIL]: detailWith({
+        nodes: [
+          { ...document.nodes[0], with: { body: '{"event_type":"FETCH_ORDERS"}' } },
+          document.nodes[1],
+        ],
+      }),
+    });
+    const fetch = await screen.findByRole("treeitem", { name: FETCH });
+    await user.click(fetch);
+    const open = within(fetch).getByRole("group", { name: "Step 1 settings" });
+
+    // The action is picked here, as in the panel.
+    await user.selectOptions(
+      within(open).getByRole("combobox", { name: "Action of step 1" }),
+      "orders/get-order-by-ref",
+    );
+    expect(screen.getByText("Unsaved")).toBeInTheDocument();
+    expect(within(fetch).getByRole("combobox", { name: "Action of step 1" })).toHaveValue(
+      "orders/get-order-by-ref",
+    );
+
+    // The body edits here: a field changed, Done shows it written.
+    const values = within(fetch).getByRole("region", { name: "Values for this step" });
+    // A click on the code itself opens it as JSON, ready to type.
+    await user.click(within(values).getByLabelText("body, as JSON"));
+    const text = within(values).getByRole("textbox", { name: "Edit body as JSON" });
+    expect(text).toHaveFocus();
+    await user.clear(text);
+    await user.paste('{"event_type":"POLL_QUOTE"}');
+    await user.click(within(values).getByRole("button", { name: "Done" }));
+    expect(within(values).getByLabelText("body, as JSON")).toHaveTextContent('"POLL_QUOTE"');
   });
 });

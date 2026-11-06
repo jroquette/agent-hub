@@ -72,7 +72,11 @@ export function useServiceField({ label, value, options, environment, onPick }: 
   // A bare name two repos declare: the run refuses it, so it is not shown as either one.
   const ambiguous = named.length > 1;
   const [chosenKind, setChosenKind] = useState<string | null>(null);
-  const kind = chosenKind ?? picked?.kind ?? "";
+  const fieldRef = useRef<HTMLButtonElement>(null);
+  // With a service picked, the kind is its own (unless Any kind was chosen to see them all), so
+  // the select and the note never disagree with the pick; with none, it is the kind chosen.
+  const kind =
+    picked !== null ? (chosenKind === "" ? "" : (picked.kind ?? "")) : (chosenKind ?? "");
   const kinds = [...new Set(options.map((option) => option.kind ?? "").filter(Boolean))].sort(
     (a, b) => serviceKindWords(a).label.localeCompare(serviceKindWords(b).label),
   );
@@ -102,7 +106,15 @@ export function useServiceField({ label, value, options, environment, onPick }: 
         event.stopPropagation();
       }}
       onChange={(event) => {
-        setChosenKind(event.target.value);
+        const next = event.target.value;
+        setChosenKind(next);
+        // Another kind than the picked service's: that service no longer fits, so the field is
+        // emptied (Undo brings it back) and the list opens on the services of the new kind.
+        if (next !== "" && value !== "" && picked?.kind !== next) {
+          onPick("");
+          const box = fieldRef.current?.getBoundingClientRect();
+          if (box) setAnchor(box);
+        }
       }}
     >
       <option value="">Any kind</option>
@@ -116,6 +128,7 @@ export function useServiceField({ label, value, options, environment, onPick }: 
   const field = (
     <>
       <button
+        ref={fieldRef}
         type="button"
         className="ah-input st-service"
         aria-haspopup="dialog"

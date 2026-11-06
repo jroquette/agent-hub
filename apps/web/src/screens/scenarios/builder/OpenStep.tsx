@@ -1,20 +1,23 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { CopyButton, Icon } from "../../../components";
 import { ActionFiles } from "../ActionPanel";
-import { DraftLine } from "../parts";
 import type { ScenarioAction } from "../queries";
-import { pace } from "../story";
+import { maxChecks, pace } from "../story";
 import { TokenText, ValueToken, tokenOf } from "./CardParts";
+import { JsonField } from "./JsonField";
 import { looksLikeJson, parseLoose, stringifyLoose } from "./looseJson";
 import { useServiceField, type ServiceOption } from "./ServicePicker";
 import { resolveInputs } from "./StepScript";
+import type { LibraryAction } from "./useScenarioDraft";
 import {
-  conditionWords,
+  OPERATORS,
+  parseCondition,
   record,
   shown,
   text,
   upstreamOf,
+  valueSources,
   type BuilderDocument,
   type BuilderNode,
   type Json,
@@ -38,6 +41,8 @@ export interface StepSources {
   kept: readonly { name: string; number: string; step?: string; node: string }[];
   /** The services declared in the environment, for a `service` input's picker. */
   services?: readonly ServiceOption[];
+  /** The hub's actions: the one the step runs is picked from them, here as in the panel. */
+  library?: readonly LibraryAction[];
 }
 
 export interface OpenStepProps {
@@ -56,6 +61,14 @@ export interface OpenStepProps {
   onEditInPanel?: ((name: string) => void) | null;
   /** Selects the step that keeps a value, by its id. */
   onGoToStep?: ((step: string) => void) | null;
+  /** The run bar's mode: what a check that never holds does in it. */
+  mode?: "interactive" | "regression";
+  /** The step's number, to name its controls. */
+  number?: string;
+  /** Opens the step's full editor in the side panel (the open step folds meanwhile). */
+  onOpenPanel?: (() => void) | null;
+  /** Changes the step itself (the action it runs). */
+  onChangeNode?: ((next: BuilderNode) => void) | null;
 }
 
 function written(value: Json): string {
@@ -137,7 +150,20 @@ export function OpenStep({
   onSet = null,
   onEditInPanel = null,
   onGoToStep = null,
+  mode = "interactive",
+  number = "",
+  onOpenPanel = null,
+  onChangeNode = null,
 }: OpenStepProps) {
+  // The body edited here, in the panel's own JSON editor (fields or JSON).
+  const [editingBody, setEditingBody] = useState<string | null>(null);
+  const library = sources?.library ?? [];
+  const ref = text(node.action);
+  const outputs = (name: string) =>
+    library
+      .find((item) => item.action.ref === name || item.action.name === name)
+      ?.output_fields.map((field) => field.path) ?? [];
+  const bodySources = sources ? valueSources(sources.document, node.id, outputs) : [];
   const params = values.filter(([, value]) => !isBody(value));
   const bodies = values.filter(([, value]) => isBody(value));
   const env = sources?.environment ?? null;
@@ -152,6 +178,26 @@ export function OpenStep({
   );
   const keptBefore = (sources?.kept ?? []).filter((item) => before.has(item.node));
 
+  // A check (Wait until): what it waits for, row by row, and how many times it can read.
+  const check = node.type === "expect";
+  const conditions = check ? parseCondition(text(node.until_when)) : [];
+  const checks =
+    check && text(node.every) && text(node.timeout)
+      ? maxChecks(text(node.every), text(node.timeout))
+      : null;
+  // The scenario values it reads with (the same name, so not its "own" values): listed once.
+  const readsWith = check
+    ? Object.values(record(node.with))
+        .map((value) => written(value))
+        .filter((value) => /^\$INPUTS\.[A-Za-z0-9_]+$/.test(value))
+    : [];
+  const needsCondition = (
+    <span className="st-g-missing">
+      <Icon name="circle-alert" size="sm" />
+      Needs a condition
+    </span>
+  );
+
   // The references the step's values use, each once.
   const uses = new Map<string, string>();
   for (const [, value] of values) {
@@ -161,6 +207,13 @@ export function OpenStep({
   }
 
   const given = record(node.with);
+  // Values from earlier that need a look (nothing gives them): the fold says how many.
+  const toCheck = [...uses.entries()].filter(([ref, name]) => {
+    if (ref.startsWith("$INPUTS.")) {
+      return !(sources?.inputs.includes(name) ?? false) && !(env !== null && name in env.values);
+    }
+    return !keptBefore.some((item) => item.name === name);
+  }).length;
   const editChip = (field: string, label: string, title: string) =>
     onEdit ? (
       <button
@@ -262,49 +315,91 @@ export function OpenStep({
         event.stopPropagation();
       }}
     >
-      {action?.description && <p className="st-open-about">{action.description}</p>}
+      <div className="st-open-top">
+        {action?.description && <p className="st-open-about">{action.description}</p>}
+        {draft && (
+          <span className="st-open-draft-badge">
+            <span className="ah-badge ah-badge-quiet">
+              <Icon name="git-commit-horizontal" size="sm" /> Draft action
+            </span>
+            <a className="st-g-link" href="#before-you-start">
+              commit it in Before you start
+            </a>
+          </span>
+        )}
+        {onOpenPanel && (
+          <button
+            type="button"
+            className="st-g-link st-open-panel"
+            aria-label={`Edit all of step ${number} in the panel`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenPanel();
+            }}
+          >
+            <Icon name="pencil" size="sm" /> Edit all in the panel
+          </button>
+        )}
+      </div>
 
-      <Group title="What it does">
+      <Group title={check ? "Reads with the action" : "Action"}>
         <Row
-          label="Action"
+          label={check ? "Reads" : "Runs"}
           value={
-            <>
-              <span className="st-open-mono st-open-strong">
-                {action?.name ?? text(node.action)}
-              </span>
+            <span className="st-open-value-ref">
+              {onChangeNode ? (
+                <select
+                  className="ah-input st-open-action"
+                  aria-label={`Action of step ${number}`}
+                  value={ref}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                  }}
+                  onChange={(event) => {
+                    onChangeNode({ ...node, action: event.target.value });
+                  }}
+                >
+                  <option value="">Choose an action</option>
+                  {ref !== "" &&
+                    !library.some(
+                      (item) => item.action.ref === ref || item.action.name === ref,
+                    ) && <option value={ref}>{ref} (not in this hub)</option>}
+                  {library
+                    .filter((item) => !check || item.action.effect === "read")
+                    .map((item) => (
+                      <option
+                        key={item.action.ref}
+                        value={item.action.name === ref ? ref : item.action.ref}
+                      >
+                        {item.action.name}
+                        {item.action.draft ? " · draft" : ""}
+                      </option>
+                    ))}
+                </select>
+              ) : (
+                <span className="st-open-mono st-open-strong">{action?.name ?? ref}</span>
+              )}
               {action?.runtime && (
                 <span className="st-open-quiet">{RUNTIME[action.runtime] ?? action.runtime}</span>
               )}
-            </>
+            </span>
           }
           note={
-            draft ? (
-              <DraftLine
-                compact
-                className="st-open-draft"
-                commands={action.accept_command ? [action.accept_command] : []}
-                action={action.name}
-              >
-                It plans now; a scenario run starts once it is committed in the hub checkout.
-              </DraftLine>
-            ) : undefined
+            check ? "Only an action that reads can wait: it runs again on every check." : undefined
           }
         />
-        {node.type === "expect" && every && timeout && (
+        {check && readsWith.length > 0 && (
           <Row
-            label="Checks"
+            label="Reads with"
             value={
-              editor("timing") ??
-              editChip(
-                "timing",
-                `every ${pace(every)}, up to ${pace(timeout)}`,
-                "Edit how often it checks",
-              )
+              <span className="st-open-value-ref">
+                {readsWith.map((ref) => (
+                  <ValueToken key={ref} value={ref} />
+                ))}
+              </span>
             }
+            note="Values from the scenario run, the same in every check."
           />
-        )}
-        {node.type === "expect" && text(node.until_when) && (
-          <Row label="Until" value={conditionWords(text(node.until_when))} />
         )}
         {action && (action.script_text != null || action.document_text != null) && (
           <li className="st-g-row st-g-more">
@@ -322,6 +417,85 @@ export function OpenStep({
           </li>
         )}
       </Group>
+
+      {check && (
+        <Group title="Done when">
+          {conditions === null ? (
+            <Row
+              label="Condition"
+              value={<span className="st-open-mono">{text(node.until_when)}</span>}
+              note="Shown as written: the builder cannot put it in words."
+            />
+          ) : conditions.length === 0 ? (
+            <Row label="Condition" value={needsCondition} />
+          ) : (
+            conditions.flatMap((group, at) => [
+              ...(at > 0 ? [<Row key={`or-${String(at)}`} label="" value={<b>or</b>} />] : []),
+              ...group.map((row, index) => (
+                <Row
+                  key={`${String(at)}-${String(index)}`}
+                  label={
+                    <span className="st-open-value-ref">
+                      {index > 0 && <span className="st-open-quiet">and</span>}
+                      <ValueToken value={row.field} />
+                    </span>
+                  }
+                  value={
+                    <span className="st-open-value-ref">
+                      <span className="st-open-quiet">
+                        {row.value === "" && row.op === "!="
+                          ? "is set"
+                          : row.value === "" && row.op === "=="
+                            ? "is empty"
+                            : (OPERATORS.find((item) => item.op === row.op)?.words ?? row.op)}
+                      </span>
+                      {row.value !== "" && <span className="st-open-mono">{row.value}</span>}
+                    </span>
+                  }
+                />
+              )),
+            ])
+          )}
+          {onEditInPanel && (
+            <li className="st-g-row st-g-more">
+              <button
+                type="button"
+                className="st-g-link"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onEditInPanel("Until");
+                }}
+              >
+                <Icon name="pencil" size="sm" /> Edit the condition in the panel
+              </button>
+            </li>
+          )}
+        </Group>
+      )}
+
+      {check && every && timeout && (
+        <Group title="How often">
+          <Row
+            label="Checks"
+            value={
+              <span className="st-open-value-ref">
+                <span className="st-open-quiet">every</span>
+                {editor("timing") ?? editChip("timing", pace(every), "Edit how often it checks")}
+                <span className="st-open-quiet">· up to</span>
+                {editor("timeout") ?? editChip("timeout", pace(timeout), "Edit when it gives up")}
+                {checks !== null && (
+                  <span
+                    className="st-open-quiet"
+                    title={`Worked out: ${pace(timeout)} ÷ ${pace(every)}`}
+                  >
+                    · at most {checks} checks
+                  </span>
+                )}
+              </span>
+            }
+          />
+        </Group>
+      )}
 
       {(params.length > 0 ||
         bodies.length > 0 ||
@@ -390,71 +564,75 @@ export function OpenStep({
                   <span className="st-open-mono">{name}</span>
                   <span className="st-open-quiet">JSON</span>
                   <span className="ah-grow" />
-                  {onEditInPanel && (
+                  {onSet && (
                     <button
                       type="button"
                       className="st-g-link"
+                      aria-expanded={editingBody === name}
                       onClick={(event) => {
                         event.stopPropagation();
-                        onEditInPanel(name);
+                        setEditingBody(editingBody === name ? null : name);
                       }}
                     >
-                      <Icon name="pencil" size="sm" /> Edit {name}
+                      {editingBody === name ? (
+                        <>
+                          <Icon name="check" size="sm" /> Done
+                        </>
+                      ) : (
+                        <>
+                          <Icon name="pencil" size="sm" /> Edit {name}
+                        </>
+                      )}
                     </button>
                   )}
                   <CopyButton text={body} label={`Copy ${name}`} compact />
                 </span>
-                {/* A scrollable region is reached by keyboard. */}
-                {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
-                <pre className="ah-json st-open-json" tabIndex={0} aria-label={`${name}, as JSON`}>
-                  <JsonText source={body} />
-                </pre>
+                {editingBody === name && onSet ? (
+                  <div className="st-open-json-edit">
+                    <label className="ah-sr" htmlFor={`open-${number}-${name}`}>
+                      Edit {name} as JSON
+                    </label>
+                    <JsonField
+                      id={`open-${number}-${name}`}
+                      name={name}
+                      value={written(value)}
+                      sources={bodySources}
+                      startAs="json"
+                      focusOnOpen
+                      onChange={(next) => {
+                        onSet(name, next);
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <>
+                    {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- a scrollable code well that also opens its editor; Edit is the plain button */}
+                    <pre
+                      className="ah-json st-open-json"
+                      data-editable={onSet ? "true" : undefined}
+                      title={onSet ? `Click to edit ${name}` : undefined}
+                      // A scrollable region is reached by keyboard; Enter (or a click) edits it.
+                      // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+                      tabIndex={0}
+                      aria-label={`${name}, as JSON`}
+                      onClick={(event) => {
+                        if (!onSet) return;
+                        event.stopPropagation();
+                        setEditingBody(name);
+                      }}
+                      onKeyDown={(event) => {
+                        if (!onSet || event.key !== "Enter") return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setEditingBody(name);
+                      }}
+                    >
+                      <JsonText source={body} />
+                    </pre>
+                  </>
+                )}
                 {about && <span className="st-g-note">{about}</span>}
               </li>
-            );
-          })}
-        </Group>
-      )}
-
-      {uses.size > 0 && (
-        <Group title="Values from earlier">
-          {[...uses.entries()].map(([ref, name]) => {
-            const scenario = ref.startsWith("$INPUTS.");
-            const envValue = scenario && env !== null ? env.values[name] : undefined;
-            const kept = keptBefore.find((item) => item.name === name);
-            const asked = sources?.inputs.includes(name) ?? false;
-            return (
-              <Row
-                key={ref}
-                label={<ValueToken value={ref} />}
-                value={
-                  <span className="st-open-value-ref">
-                    <span className="st-open-quiet">
-                      {scenario
-                        ? envValue !== undefined
-                          ? `Scenario input · ${envValue} from ${env?.name ?? ""}`
-                          : asked
-                            ? "Scenario input · asked when the scenario run starts"
-                            : "Not asked by the scenario"
-                        : kept
-                          ? `Kept by ${kept.number}`
-                          : "Not given by any earlier step"}
-                    </span>
-                    {!scenario && kept?.step && onGoToStep && (
-                      <button
-                        type="button"
-                        className="st-g-link"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onGoToStep(kept.step ?? "");
-                        }}
-                      >
-                        Go to {kept.number}
-                      </button>
-                    )}
-                  </span>
-                }
-              />
             );
           })}
         </Group>
@@ -468,12 +646,102 @@ export function OpenStep({
               label={<ValueToken value={`$CTX.${name}`} />}
               value={
                 <span className="st-open-quiet">
-                  from <TokenText value={written(from)} />
+                  {written(from).startsWith("$self.output.") ? "from its output " : "from "}
+                  <TokenText value={written(from)} />
+                  {check ? ", when the wait ends" : ""}
                 </span>
               }
             />
           ))}
         </Group>
+      )}
+
+      {/* The rest of the step, folded: what if it never holds, where its values come from. */}
+      {((check && timeout !== "") || uses.size > 0) && (
+        <details className="st-more">
+          <summary>
+            <Icon name="chevron-right" size="sm" />
+            More details
+            {toCheck > 0 ? (
+              <span className="st-g-missing">
+                <Icon name="circle-alert" size="sm" />
+                {toCheck} to check
+              </span>
+            ) : (
+              <span className="st-open-quiet">
+                {[
+                  check && timeout !== "" ? "if it never holds" : null,
+                  uses.size > 0 ? "values from earlier" : null,
+                ]
+                  .filter(Boolean)
+                  .join(", ")}
+              </span>
+            )}
+          </summary>
+          <div className="st-more-body">
+            {check && timeout && (
+              <Group title="If it never holds">
+                <Row
+                  label={
+                    <span className="st-open-value-ref">
+                      <Icon name={mode === "interactive" ? "text-search" : "circle-x"} size="sm" />
+                      {mode === "interactive" ? "Interactive" : "Regression"}
+                    </span>
+                  }
+                  value={
+                    mode === "interactive"
+                      ? `After ${pace(timeout)} the scenario run pauses and a read-only agent investigates with you.`
+                      : `After ${pace(timeout)} the scenario run fails here.`
+                  }
+                  note="Set by the scenario run's mode in the bar above."
+                />
+              </Group>
+            )}
+            {uses.size > 0 && (
+              <Group title="Values from earlier">
+                {[...uses.entries()].map(([ref, name]) => {
+                  const scenario = ref.startsWith("$INPUTS.");
+                  const envValue = scenario && env !== null ? env.values[name] : undefined;
+                  const kept = keptBefore.find((item) => item.name === name);
+                  const asked = sources?.inputs.includes(name) ?? false;
+                  return (
+                    <Row
+                      key={ref}
+                      label={<ValueToken value={ref} />}
+                      value={
+                        <span className="st-open-value-ref">
+                          <span className="st-open-quiet">
+                            {scenario
+                              ? envValue !== undefined
+                                ? `Scenario input · ${envValue} from ${env?.name ?? ""}`
+                                : asked
+                                  ? "Scenario input · asked when the scenario run starts"
+                                  : "Not asked by the scenario"
+                              : kept
+                                ? `Kept by ${kept.number}`
+                                : "Not given by any earlier step"}
+                          </span>
+                          {!scenario && kept?.step && onGoToStep && (
+                            <button
+                              type="button"
+                              className="st-g-link"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onGoToStep(kept.step ?? "");
+                              }}
+                            >
+                              Go to {kept.number}
+                            </button>
+                          )}
+                        </span>
+                      }
+                    />
+                  );
+                })}
+              </Group>
+            )}
+          </div>
+        </details>
       )}
     </div>
   );
