@@ -84,9 +84,16 @@ def build_server(
     clock: Callable[[], datetime],
     log: TextIO,
 ) -> MCPServer:
-    """The server for ``hub``: ``search``, ``read`` and ``propose``."""
+    """The server for ``hub``: ``search``, ``read`` and ``propose``, with ``INSTRUCTIONS`` in its
+    initialize reply."""
     answer = _Answers(log)
-    server = _HubServer(answer, name=SERVER_NAME, version=hub.version, log_level="WARNING")
+    server = _HubServer(
+        answer,
+        name=SERVER_NAME,
+        version=hub.version,
+        instructions=INSTRUCTIONS,
+        log_level="WARNING",
+    )
     knowledge = KnowledgeTools(hub)
     proposals = ProposeTool(hub, change_requests=change_requests, clock=clock)
 
