@@ -647,3 +647,70 @@ def test_passes_gh_api_when_read_or_clean(ws: Path, decide: Decide) -> None:
     ]
 
     assert decide([bash_at(command, ws) for command in commands]) == [None] * len(commands)
+
+
+# C-13: a push the guard cannot read asks (branch protection is the barrier, this is defence in
+# depth): a remote or refspec that is a shell expansion, git push or commit (or gh pr) inside an
+# interpreter's or a shell's one-liner, and deleting a remote branch.
+PUSH_HIDDEN_REASON = (
+    "a `git push` remote or refspec is a shell expansion the guard cannot read; confirm the branch"
+    " it pushes"
+)
+INTERPRETER_REASON = "`{}` runs git push or commit, or gh pr, out of the guard's sight; confirm"
+PUSH_DELETE_REASON = "`git push {}` deletes a remote branch; confirm"
+
+
+def test_asks_when_push_hides_behind_expansion_or_interpreter(ws: Path, decide: Decide) -> None:
+    cases = [
+        ("x=main; git push origin $x", PUSH_HIDDEN_REASON),
+        ('git push -u origin "$BRANCH"', PUSH_HIDDEN_REASON),
+        ("git push origin $(git branch --show-current)", PUSH_HIDDEN_REASON),
+        ("git push origin `cat branch.txt`", PUSH_HIDDEN_REASON),
+        ("git push $REMOTE me/dem-1-x", PUSH_HIDDEN_REASON),
+        (
+            "python3 -c \"subprocess.run(['git','push','origin','main'])\"",
+            INTERPRETER_REASON.format("python3"),
+        ),
+        (
+            "node -e \"require('child_process').execSync('gh pr create --fill')\"",
+            INTERPRETER_REASON.format("node"),
+        ),
+        ("bash -c 'git commit -m x'", INTERPRETER_REASON.format("bash")),
+        ('eval "git push origin $B"', INTERPRETER_REASON.format("eval")),
+        (
+            "uv run python -c \"import os; os.system('git push')\"",
+            INTERPRETER_REASON.format("python"),
+        ),
+    ]
+
+    verdicts = decide([bash_at(command, ws) for command, _ in cases])
+
+    assert verdicts == [("ask", reason) for _, reason in cases]
+
+
+def test_asks_when_push_deletes_remote_branch(ws: Path, decide: Decide) -> None:
+    cases = [
+        ("git push origin :roquettejh/agh-1-x", ":roquettejh/agh-1-x"),
+        ("git push --delete origin me/dem-1-x", "--delete"),
+        ("git push -d origin me/dem-1-x", "-d"),
+        ("git push origin --delete me/dem-1-x", "--delete"),
+    ]
+
+    verdicts = decide([bash_at(command, ws) for command, _ in cases])
+
+    assert verdicts == [("ask", PUSH_DELETE_REASON.format(shown)) for _, shown in cases]
+
+
+def test_passes_when_push_target_literal_or_interpreter_harmless(ws: Path, decide: Decide) -> None:
+    app = git_repo(ws / "app", "me/dem-1-x")
+    commands = [
+        "git push -u origin roquettejh/agh-1-x",
+        "git push origin me/dem-1-x:me/dem-1-x",
+        "echo $HOME && git push -u origin me/dem-1-x",
+        'python3 -c "print(1)"',
+        "python3 -m pytest -q",
+        "bash scripts/check.sh",
+        "git commit -m 'run bash' -m 'then python'",
+    ]
+
+    assert decide([bash_at(command, app) for command in commands]) == [None] * len(commands)
