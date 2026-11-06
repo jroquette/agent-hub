@@ -137,7 +137,7 @@ export function resultHeadline(result: EvidenceResult | null): string | null {
   if (exit !== null && exit !== "0") return `Command failed (exit code ${exit})`;
   if (passed !== null) return `${tests(passed)} passed`;
   if (exit === "0") return "Command succeeded";
-  return exit !== null ? `Command failed (exit code ${exit})` : null;
+  return null;
 }
 
 /** What each number of the result means, one sentence per number, for a tooltip or a list. */
