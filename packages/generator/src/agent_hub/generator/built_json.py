@@ -75,6 +75,10 @@ _HOOKS_FOLDER: Final = "$CLAUDE_PROJECT_DIR/plugin/hub-workflow/hooks"
 # the pinned release; `CLAUDE_PROJECT_DIR` is the hub when Claude Code sets it, else the cwd.
 _MCP_SERVER: Final = "hub"
 _MCP_COMMAND: Final = "${CLAUDE_PROJECT_DIR:-.}/hub"
+# AGH-697: the server's two read-only tools (`search`, `read`) run with no prompt, by their exact
+# Claude Code names; `propose` opens a hub pull request, so it keeps asking, and no rule names the
+# whole server.
+_MCP_READ_TOOLS: Final = tuple(f"mcp__{_MCP_SERVER}__{tool}" for tool in ("search", "read"))
 
 
 class HookEvent(NamedTuple):
@@ -134,7 +138,8 @@ def managed_settings(config: HubConfig) -> JsonValue:
     """The managed ``.claude/settings.json``: the rules base every hub shares (spec D5).
 
     The schema, the authorship rule (empty attribution, no co-author line), the hooks block, the
-    read-only git allows and those a headless ``/onboard propose`` needs (AGH-114), the base
+    read-only git allows, the ``hub`` server's read-only ``search`` and ``read`` tools (AGH-697;
+    ``propose`` still asks) and the allows a headless ``/onboard propose`` needs (AGH-114), the base
     denies (secret reads, force pushes and pushes to a protected branch, infra tools (``terraform``,
     ``aws``; left to the guard when ``hub.json`` sets ``guard.infra``), ``ssh``, a bare ``sh`` or
     ``bash``), the repos as additional directories (``../<dir>``, in ``hub.json``
@@ -152,6 +157,7 @@ def managed_settings(config: HubConfig) -> JsonValue:
         "permissions": {
             "allow": [
                 *_ALLOWED_COMMANDS,
+                *_MCP_READ_TOOLS,
                 *_ONBOARD_PROPOSE_COMMANDS,
                 *_onboard_repo_reads(config),
                 _ONBOARD_PROPOSAL_EDIT,

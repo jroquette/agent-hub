@@ -193,7 +193,9 @@ def test_keeps_reviewers_read_only_when_review_json_added(texts: dict[str, str])
         text = texts[path]
 
         frontmatter = text.split("\n---\n", 1)[0].splitlines()
-        assert "tools: Read, Grep, Glob, Bash" in frontmatter, path
+        # No Write or Edit; the hub MCP's two read-only tools only (AGH-697).
+        tools = "tools: Read, Grep, Glob, Bash, mcp__hub__search, mcp__hub__read"
+        assert tools in frontmatter, path
         assert "You review; you never edit." in text, path
 
 

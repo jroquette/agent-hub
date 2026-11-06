@@ -43,7 +43,7 @@
     ".claude/settings.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "3e84fc75cdc525028a5d22837d64cc2f54f7ed2132f3b181db3da2239a27514c"
+      "sha256": "15de0761bb03f41dceeb8371cf8523bfe66aaf785d17296e8992f9366ea2a7bc"
     },
     ".claude/settings.project.json": {
       "ownership": "seeded"
@@ -291,52 +291,52 @@
     "plugin/hub-workflow/agents/architect.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "c05495f6c642331142aa43dc9df5cacac3dabf7ea14c16758846ed23c2096554"
+      "sha256": "944ff449baeb1e573159c58a7076707bc22ff75695c676cdadf34e811a1873a9"
     },
     "plugin/hub-workflow/agents/evaluator.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "adc603678389880e6a358d1a90bf827676058be16da5f2387fc3f8e3e3e365da"
+      "sha256": "569c63eed27f4181d854b146cdcd1206021519a8b9debe404c3aada0aa14f27f"
     },
     "plugin/hub-workflow/agents/planner.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "e4b36eaa358fa185fcbe09e7f3dad87ab35b0ca9efae4b907001dc33f2881715"
+      "sha256": "0c4f2269bec4744ac0333c4a894666c51eeabe1fdc21577d1c2d2d22aa9ece73"
     },
     "plugin/hub-workflow/agents/quality-reviewer.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "3847f076fcc122041375afccbc8fa87caf9345d3368939e314682f61c0fe33bb"
+      "sha256": "313b88033861a4dc31fa082f8149704fe02e23d88c3019010951c5ed314e914c"
     },
     "plugin/hub-workflow/agents/requirements-analyst.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "a89674148648b6e5d17365d6e0d997e9a921c7d9f54a47fd99b63494aecc3353"
+      "sha256": "b83cd46e2d32ef70c90e7457fefefa84ed001e612b20905df9debf61e8058a9e"
     },
     "plugin/hub-workflow/agents/researcher.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "f4859e0b694dff6cea2a69d29074d111c9374971f544289b134a8f0a620da9cf"
+      "sha256": "7b4528a4a7f5a11575155da7b67134b946d10b85eaabdc0b95579b123d6d004a"
     },
     "plugin/hub-workflow/agents/security-reviewer.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "1fe3ab6edd2241ad3a9e41ec3fd45abf0bfbfe93fed0eb708a18941f18fb454d"
+      "sha256": "7a25786f23907b146b2b617b3874e5c941b5237d4a1ef362a9a20e1df814d621"
     },
     "plugin/hub-workflow/agents/spec-reviewer.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "54ae53835b987ac549f3058736a22c4038bd41bbc4d8d59e1b20c7cb74adc451"
+      "sha256": "94e2e844a34ab14b1165ada826fdef1eb9f7eec3296d5489ccb428630bb94030"
     },
     "plugin/hub-workflow/agents/test-writer.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "b1372a03d7e6f38ecefae2be9b093b70b540fa02c5c64c04018334362b6cc7af"
+      "sha256": "0b7db8aaf57ef0d4fb021c6fbdbdf466ccc032cd94160dc9a24c4095a83aea28"
     },
     "plugin/hub-workflow/agents/ux-designer.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "eee7b9c45495fda3e66ae433bc87dcadfd4bc53b5b9bab82531bac8b101b5ebf"
+      "sha256": "eff4967f5f3f85b0e5eb2352f28b6c0ff5524a0bea360208d69000d52a7159bf"
     },
     "plugin/hub-workflow/hooks/event_sensor.py": {
       "executable": true,
@@ -476,7 +476,7 @@
     "plugin/hub-workflow/skills/learn/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "89d93592da8fb6d344418729a1205113920160e7b7f6182c1170f206ffdcbfa6"
+      "sha256": "1f4d8a378fc06c457a619c8818d93528afb2ea0ed1731cda89c36785a4458ae3"
     },
     "plugin/hub-workflow/skills/onboard/SKILL.md": {
       "executable": false,
@@ -516,7 +516,7 @@
     "plugin/hub-workflow/skills/recall/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "62a78cf03c8b07910906921dc1816198f429ea24fd7a3c70e961516ed2ebd8ad"
+      "sha256": "4399bb9e0d576bc5f0e99302280a8236ec16312065b507ce9a15a25a5f56faf1"
     },
     "plugin/hub-workflow/skills/refactor/SKILL.md": {
       "executable": false,

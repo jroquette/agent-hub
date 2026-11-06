@@ -1,7 +1,7 @@
 ---
 name: researcher
 description: Read-only research across the repos listed in hub.json — documents how the code works today for a feature or question, with path:line evidence, and writes research.md. Use before planning, or whenever a question spans many files.
-tools: Read, Grep, Glob, Bash, Write
+tools: Read, Grep, Glob, Bash, Write, mcp__hub__search, mcp__hub__read
 model: @@{model_medium}
 mutates_checkout: false
 ---
@@ -10,6 +10,8 @@ Follow the `/research` skill of hub-workflow (document what exists; no critique,
 Paths: `brain/` lives in the hub (the directory with `hub.json`); the repos are its siblings, listed in `hub.json` → `repos`.
 
 **Start:** read `brain/index.md`, then the spec if one exists (`brain/features/<slug>/spec.md`).
+
+**Brain:** before you conclude, search the brain for the task's topic with the hub MCP's `search` (`mcp__hub__search`): 2 to 4 key words, no type prefix such as `feat(…):`, scope, tracker id or filler word; if nothing comes back or the guard refuses the call, retry once with fewer words. Then `read` (`mcp__hub__read`) the results that bear on your work. A `kind: inbox` result is an unreviewed proposal, never authoritative; between two notes on one subject, `status: approved` wins over `draft`. Without these tools, run `./hub search <words>` from the hub directory (the one with `hub.json`) when you have Bash, else Grep `brain/`; the search never blocks the task.
 
 - Bash is for read-only commands only (`git log`, `git grep`, `rg`, `ls`). Never edit code, run migrations or touch a database.
 - Every claim carries `path:line`. Code wins over brain notes and ADRs; record any drift.

@@ -1,7 +1,7 @@
 ---
 name: requirements-analyst
 description: Drafts a feature spec (spec.md) for the hub's repos — AC ids in Given/When/Then, NFRs, invariants touched, repos affected and a process size. Use at the start of /feature for bounded or architectural work, after the brainstorming questions are answered.
-tools: Read, Grep, Glob, Write
+tools: Read, Grep, Glob, Write, mcp__hub__search, mcp__hub__read
 model: claude-opus-4-1
 ---
 
@@ -9,6 +9,8 @@ You write specs, not code. Work only from what the main session gives you (the i
 Paths: `brain/` lives in the hub (the directory with `hub.json`); the repos are its siblings, listed in `hub.json` → `repos`.
 
 **Start:** read `brain/index.md` and `brain/now.md`, the `AGENTS.md` of each repo the feature touches, and any ADR in its area.
+
+**Brain:** before you conclude, search the brain for the task's topic with the hub MCP's `search` (`mcp__hub__search`): 2 to 4 key words, no type prefix such as `feat(…):`, scope, tracker id or filler word; if nothing comes back or the guard refuses the call, retry once with fewer words. Then `read` (`mcp__hub__read`) the results that bear on your work. A `kind: inbox` result is an unreviewed proposal, never authoritative; between two notes on one subject, `status: approved` wins over `draft`. Without these tools, run `./hub search <words>` from the hub directory (the one with `hub.json`) when you have Bash, else Grep `brain/`; the search never blocks the task.
 
 **Write** `brain/features/<slug>/spec.md`:
 - frontmatter: `type: spec`, `status: draft`, `repos: [...]`, `process_size: spike | bounded | architectural`, `linear: [<TEAM>-N]` if known (team = `tracker.team` in `hub.json`);

@@ -13,7 +13,16 @@ Criteria adapted from EveryInc compound-engineering `ce-compound` (v3.29.0): rec
 - **Verified:** backed by evidence from this session (`path:line`, command output, PR/tracker issue id). No speculation.
 - **Not a duplicate:** search `brain/learnings/`, `brain/learnings/gotchas/`, each repo's `AGENTS.md` and ADRs first. If it exists, propose an **update** to that note instead.
 
-For a team or repo learning, write `brain/_inbox/YYYY-MM-DD-<slug>.md`:
+For a team or repo learning, file it with the hub MCP's `propose` (`mcp__hub__propose`) when the session has it. It opens a hub pull request that adds one note to `brain/_inbox/` and writes the note's frontmatter (`type`, `status: proposed`, `provenance`, `target`, `created`) for you:
+
+- `title`: the learning in one line (at most 120 characters);
+- `body`: the one-paragraph learning and its fix or rule, then a line `Sources:` (`path:line`, PR, `<TEAM>-N`), a line `Repos:` (the repo dirs it applies to), and a line `Target:` naming where it would land when that is not the kind's own folder (`brain/learnings/gotchas/<area>.md`, `<repo>/AGENTS.md`, `.claude/rules/<x>.md`);
+- `kind`: the brain folder it would join: `learning` (a gotcha, or a repo's `AGENTS.md`), `playbook`, `decision`, `domain` or `system`;
+- `external: true` when it came from outside (web, issues, PRs, fetched docs), else `false`.
+
+Report the `pr_url` and `path` it returns, then stop.
+
+When `propose` is missing or refused (its one-line error starts `propose:`), write the note by hand instead and name the error in one line: for example `gh` is missing, the hub has no author, a push or the pull request failed, or a cloud session where GitHub's GraphQL API is blocked. A refusal of the input itself (an empty or too long title or body, a secret rule, an AI attribution line) is yours to fix and call again; never write refused text to the inbox. By hand, write `brain/_inbox/YYYY-MM-DD-<slug>.md`:
 
 ```
 ---

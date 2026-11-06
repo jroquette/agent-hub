@@ -5485,29 +5485,30 @@ def test_ignores_local_file_when_gitignore_rendered(demo_config: HubConfig) -> N
 # them.
 # AGH-139 changed the reviewers' and the evaluator's text: their sha256 are those of the new text,
 # which every config below still renders byte for byte. The quality reviewer's was re-pinned when it
-# gained the Comments check.
+# gained the Comments check, and all of them when each agent gained the hub MCP's read tools and its
+# brain line (AGH-697).
 AGENTS_FOLDER = "plugin/hub-workflow/agents"
 AGENT_FILES_SHA256 = {
     f"{AGENTS_FOLDER}/architect.md": (
-        "c05495f6c642331142aa43dc9df5cacac3dabf7ea14c16758846ed23c2096554"
+        "944ff449baeb1e573159c58a7076707bc22ff75695c676cdadf34e811a1873a9"
     ),
     f"{AGENTS_FOLDER}/evaluator.md": (
-        "adc603678389880e6a358d1a90bf827676058be16da5f2387fc3f8e3e3e365da"
+        "569c63eed27f4181d854b146cdcd1206021519a8b9debe404c3aada0aa14f27f"
     ),
     f"{AGENTS_FOLDER}/planner.md": (
-        "e4b36eaa358fa185fcbe09e7f3dad87ab35b0ca9efae4b907001dc33f2881715"
+        "0c4f2269bec4744ac0333c4a894666c51eeabe1fdc21577d1c2d2d22aa9ece73"
     ),
     f"{AGENTS_FOLDER}/quality-reviewer.md": (
-        "3847f076fcc122041375afccbc8fa87caf9345d3368939e314682f61c0fe33bb"
+        "313b88033861a4dc31fa082f8149704fe02e23d88c3019010951c5ed314e914c"
     ),
     f"{AGENTS_FOLDER}/requirements-analyst.md": (
-        "a89674148648b6e5d17365d6e0d997e9a921c7d9f54a47fd99b63494aecc3353"
+        "b83cd46e2d32ef70c90e7457fefefa84ed001e612b20905df9debf61e8058a9e"
     ),
     f"{AGENTS_FOLDER}/researcher.md": (
-        "f4859e0b694dff6cea2a69d29074d111c9374971f544289b134a8f0a620da9cf"
+        "7b4528a4a7f5a11575155da7b67134b946d10b85eaabdc0b95579b123d6d004a"
     ),
     f"{AGENTS_FOLDER}/spec-reviewer.md": (
-        "54ae53835b987ac549f3058736a22c4038bd41bbc4d8d59e1b20c7cb74adc451"
+        "94e2e844a34ab14b1165ada826fdef1eb9f7eec3296d5489ccb428630bb94030"
     ),
 }
 # The tier each agent template names: its default (spec D3).

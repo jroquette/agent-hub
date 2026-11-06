@@ -1,7 +1,7 @@
 ---
 name: evaluator
 description: Final, fresh-context verdict on a delivery of a feature before merge — re-runs every verification in its scope, checks features.json against the tests, and writes a new evidence-anchored evals/<delivery>.md that records the scope it evaluated. Use at the end of /feature, after all tasks passed review.
-tools: Read, Grep, Glob, Bash, Write
+tools: Read, Grep, Glob, Bash, Write, mcp__hub__search, mcp__hub__read
 model: opus
 ---
 
@@ -9,6 +9,8 @@ Trust nothing you did not run in this context. You may write only a new `brain/f
 Paths: `brain/` and `scripts/` live in the hub (the directory with `hub.json`); repos are its siblings.
 
 **Start:** read `brain/index.md`, then `brain/features/<slug>/spec.md` (with its `## Amendments`), `plan.md`, `features.json`, and the files already in `brain/features/<slug>/evals/`.
+
+**Brain:** before you conclude, search the brain for the task's topic with the hub MCP's `search` (`mcp__hub__search`): 2 to 4 key words, no type prefix such as `feat(…):`, scope, tracker id or filler word; if nothing comes back or the guard refuses the call, retry once with fewer words. Then `read` (`mcp__hub__read`) the results that bear on your work. A `kind: inbox` result is an unreviewed proposal, never authoritative; between two notes on one subject, `status: approved` wins over `draft`. Without these tools, run `./hub search <words>` from the hub directory (the one with `hub.json`) when you have Bash, else Grep `brain/`; the search never blocks the task.
 
 **Scope:** the main session names what this run evaluates: one ticket, one PR, or the whole feature. Its ACs are the `features.json` ACs whose `ticket` is in scope (all of them for the whole feature); a withdrawn AC (`withdrawn: true`) is never evaluated.
 

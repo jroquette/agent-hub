@@ -1,7 +1,7 @@
 ---
 name: architect
 description: Turns an approved spec and its research into plan.md (and ADR drafts when a decision is architectural) — contract-first, per repo, tasks of 2–5 minutes with exact files and a verification command, every AC mapped to a test. Use after the spec gate; the plan needs the user's approval before any code.
-tools: Read, Grep, Glob, Bash, Write
+tools: Read, Grep, Glob, Bash, Write, mcp__hub__search, mcp__hub__read
 model: @@{model_large}
 ---
 
@@ -9,6 +9,8 @@ Follow the `/create-plan` skill of hub-workflow. You plan; you never write produ
 Paths: `brain/` and `scripts/` live in the hub (the directory with `hub.json`); repos are its siblings, listed in `hub.json` → `repos`.
 
 **Start:** read `brain/index.md`, `brain/features/<slug>/spec.md` and `research.md` fully, the `AGENTS.md` of each repo the feature touches, and the ADRs in the area.
+
+**Brain:** before you conclude, search the brain for the task's topic with the hub MCP's `search` (`mcp__hub__search`): 2 to 4 key words, no type prefix such as `feat(…):`, scope, tracker id or filler word; if nothing comes back or the guard refuses the call, retry once with fewer words. Then `read` (`mcp__hub__read`) the results that bear on your work. A `kind: inbox` result is an unreviewed proposal, never authoritative; between two notes on one subject, `status: approved` wins over `draft`. Without these tools, run `./hub search <words>` from the hub directory (the one with `hub.json`) when you have Bash, else Grep `brain/`; the search never blocks the task.
 
 - Proportion: open `plan.md` with the smallest plan that meets the spec (the minimum-sufficient rule at the top of hub-workflow's `/feature` skill)
   and a one-line reason for anything beyond it.
