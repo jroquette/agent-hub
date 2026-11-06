@@ -5,7 +5,11 @@ checkout on request and never stored. A list reads at most ``SUMMARY_READ_BYTES`
 for its summary, the detail at most ``MAX_NOTE_BYTES``. A learning whose note cannot be read
 says why in ``note_unavailable`` (L10); one that cannot be accepted or rejected here says why
 in ``actions_unavailable``. ``in_brain`` and ``archived`` are inferred from where the note sits
-in the checkout once its PR is merged and pulled (L11).
+in the checkout once its PR is merged and pulled (L11). A proposal whose inbox note is gone
+from a checkout whose ``brain/`` reads fine is ``resolved_elsewhere``: triaged outside the app
+(merged into another note, deleted). That is derived here on every read and never stored, so
+the owner's decision is not invented; a note that exists but cannot be read keeps its
+``note_unavailable`` reason.
 """
 
 from collections.abc import Callable
@@ -46,6 +50,7 @@ NOTE_OUTSIDE_INBOX: Final = "Note outside brain/_inbox/"
 NOTE_TOO_LARGE: Final = "Note too large"
 NOT_REGULAR_FILE: Final = "Not a regular file"
 NOTE_UNREADABLE: Final = "Note could not be read"
+RESOLVED_ELSEWHERE: Final = "Resolved outside the app: the note is no longer in the inbox"
 
 _UNREAD_REASONS: Final = {
     "missing": NOTE_NOT_IN_CHECKOUT,
@@ -88,6 +93,8 @@ class _NoteRead:
     split: Frontmatter | None = None
     size: int = 0
     unavailable: str | None = None
+    # The note is absent from the checkout (not unreadable): it may have been triaged elsewhere.
+    missing: bool = False
 
 
 def _inbox_location(learning: Learning) -> PurePosixPath:
@@ -136,6 +143,7 @@ class ReadLearnings:
         """Learnings matching the filter, each with its summary or why its note is unavailable."""
         page = self._events.list_learnings(learning_filter)
         hubs: dict[str, tuple[LearningHub | UnavailableHub, str | None]] = {}
+        readable: dict[str, bool] = {}
         items: list[Learning] = []
         for learning in page.items:
             if learning.project not in hubs:
@@ -144,6 +152,7 @@ class ReadLearnings:
             hub, actions = hubs[learning.project]
             state = self._state(learning, hub)
             read = self._read(learning, hub, state, max_bytes=SUMMARY_READ_BYTES)
+            state = self._resolved(state, read, hub, readable=readable)
             items.append(learning.model_copy(update=self._fields(read, state, actions)))
         return page.model_copy(update={"items": tuple(items)})
 
@@ -153,6 +162,7 @@ class ReadLearnings:
         hub = self._hub_of(learning.project)
         state = self._state(learning, hub)
         read = self._read(learning, hub, state, max_bytes=MAX_NOTE_BYTES)
+        state = self._resolved(state, read, hub, readable={})
         fields = self._fields(read, state, self._actions_unavailable(hub))
         hub_path = hub.path
         note = None
@@ -193,6 +203,24 @@ class ReadLearnings:
             return LearningState.IN_BRAIN
         return LearningState.ARCHIVED
 
+    def _resolved(
+        self,
+        state: LearningState | None,
+        read: _NoteRead,
+        hub: LearningHub | UnavailableHub,
+        *,
+        readable: dict[str, bool],
+    ) -> LearningState | None:
+        """``resolved_elsewhere`` for a proposal whose inbox note is absent while the checkout's
+        ``brain/`` reads fine (``readable`` caches that per checkout), else ``state``. An absent
+        or unreadable ``brain/`` proves nothing, so the note stays unavailable."""
+        hub_path = hub.path
+        if state != LearningState.PROPOSED or not read.missing or hub_path is None:
+            return state
+        if hub_path not in readable:
+            readable[hub_path] = bool(self._files.brain_folders(hub_path))
+        return LearningState.RESOLVED_ELSEWHERE if readable[hub_path] else state
+
     def _read(
         self,
         learning: Learning,
@@ -214,7 +242,9 @@ class ReadLearnings:
         content = self._files.read_brain_file(hub_path, str(location), max_bytes=max_bytes)
         if isinstance(content, UnreadHubFile):
             return _NoteRead(
-                location=location, unavailable=self._unread(hub_path, location, content)
+                location=location,
+                unavailable=self._unread(hub_path, location, content),
+                missing=content.kind == "missing" or (content.kind is None and content.is_missing),
             )
         text = content.decode("utf-8", errors="replace")
         return _NoteRead(location=location, split=split_frontmatter(text), size=len(content))
@@ -233,6 +263,14 @@ class ReadLearnings:
         read: _NoteRead, state: LearningState | None, actions: str | None
     ) -> dict[str, object]:
         summary = None if read.split is None else first_paragraph(read.split.body) or None
+        if state == LearningState.RESOLVED_ELSEWHERE:
+            # Not a read failure: the note left the inbox, and there is nothing to decide here.
+            return {
+                "state": state,
+                "summary": None,
+                "note_unavailable": None,
+                "actions_unavailable": RESOLVED_ELSEWHERE,
+            }
         if actions is None and state == LearningState.PROPOSED:
             # A note the owner cannot read here is not decided from here.
             actions = read.unavailable

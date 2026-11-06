@@ -25,14 +25,20 @@ header.
   header reads "Learnings · {n} {status}"; the strip above the table reads "{r} ready · {b} blocked · oldest first"
   when some proposals are blocked. A row shows the title (without an agent's "Proposal:" prefix, wrapped to two
   lines, the whole title on hover), the summary (one line), a `blocked` `StatusBadge` naming why when the proposal
-  cannot be decided here, and its state, provenance, external label and project.
+  cannot be decided here, and its state, provenance, external label and project. A proposal **resolved elsewhere**
+  (its inbox note is gone from a hub checkout that reads fine: someone triaged it by hand) is not a pending
+  decision: it is hidden from All, Ready to decide and Blocked, and its row reads "Resolved outside the app: the note
+  is no longer in the inbox" with a "Resolved elsewhere" (`ended`) state badge instead of a `blocked` one.
 - **Detail.** Title, state badge, provenance (from the event, else the note's frontmatter), "proposed {age} ago by
   {agent}" (the exact time on hover); a **Frontmatter** section with `FrontmatterChips` (type, repos, last verified)
   when the note has any; the **Note** section; **Review**; **Project**; the **Trail** (AGH-393, below), which
   replaces the Source, In the brain, Pull request and Decision rows; **Target in brain/** (decidable proposals only,
   next to the action bar); the action bar.
   A proposal that cannot be decided shows, under the disabled buttons, a warning `Banner` "Cannot be decided here."
-  with the reason. A note missing from the hub checkout says that the agent recorded that path, that it was likely
+  with the reason. A proposal resolved elsewhere instead shows, under the disabled buttons (their tooltip the same
+  reason), an info `Banner` "Nothing to decide here." with "Resolved outside the app: the note is no longer in the
+  inbox"; its Note section names the inbox path, says nothing is recorded as accepted or rejected, and that a note
+  written only in another worktree comes back once pushed and pulled. A note missing from the hub checkout says that the agent recorded that path, that it was likely
   written in another worktree and never pushed, and that pulling the hub brings it in.
 - **Edit before accepting** ([ADR 0037](../../../adr/0037-learning-decisions-unpushed-notes-and-edits.md)). On a
   proposal that can be decided and whose note is readable, "Edit note" (`file-pen`) opens, in place in the Note
@@ -80,7 +86,9 @@ header.
   all there is.
 
 - **Filters** (above the queue, in the URL, mirroring the Skills catalog): a search over title, summary and project
-  (200 characters); quick views **All · {n}**, **Ready to decide · {n}**, **Blocked · {n}** (Proposed only); compact
+  (200 characters); quick views **All · {n}**, **Ready to decide · {n}**, **Blocked · {n}** and, when there is any,
+  **Resolved elsewhere · {n}** (Proposed only; All is ready plus blocked). The quick-view counts, and the Learnings
+  tab's count, are decisions, not rows: proposals of the same inbox note (one per session) count once; compact
   `FacetMenu`s "Project" (one project; shown when the queue spans several), "Claude" (its recommendation) and
   "Source" (provenance), each listing its options with how many learnings each keeps given the other filters; "Clear
   all"; an empty result says nothing matches. A menu closes on Escape or a click outside it. Unknown values in a
@@ -118,6 +126,8 @@ header.
 | Id | Given / when / then | Test |
 |---|---|---|
 | AC-272.1 | Given proposals some of which cannot be decided here, when the queue loads, then the decidable ones come first and the blocked ones after them, each group oldest first, each blocked row names why, and the strip reads "{r} ready · {b} blocked · oldest first" | `index.test.tsx` "lists decidable proposals before blocked ones and says why each is blocked" |
+| AC-272.4 | Given a proposal resolved elsewhere (its note gone from a readable hub checkout) and two proposals of the same note, when the Proposed queue loads, then they are hidden from All, Ready to decide and Blocked, "Resolved elsewhere · 1" lists both rows, each reading "Resolved outside the app: the note is no longer in the inbox" with a "Resolved elsewhere" badge and no `blocked` badge | `index.test.tsx` "hides what was resolved outside the app and counts it once in its own view"; `filters.test.ts` "counts proposals of the same note once" |
+| AC-272.5 | Given a proposal resolved elsewhere, when its detail opens, then Accept and Reject are disabled with that reason as tooltip, an info banner says "Nothing to decide here.", the Note section names the inbox path, the server refuses a decision with 409 and no event is stored; axe finds no serious or critical violation | `index.test.tsx` "disables accept and reject on a learning resolved outside the app" and "has no serious a11y violations in the resolved view (a11y)"; `test_decide_learning.py` "test_refuses_and_stores_nothing_when_note_resolved_elsewhere" |
 | AC-272.2 | Given a title starting "Proposal:", when it is shown in the queue or the detail, then the prefix is left out | same test |
 | AC-272.3 | Given a long title, when its row renders, then it wraps to two lines without widening the table and the whole title is its tooltip | `index.test.tsx` "wraps a long title and keeps it whole on hover" |
 | AC-272.4 | Given a status other than Proposed, when the owner picks it, then the URL carries `?status=` and Back returns to the previous status; opening that URL shows that status | `index.test.tsx` "keeps the status in the URL" |

@@ -126,7 +126,9 @@ The first terminal event, in its source's own order, wins; a later one stays in 
 accept whose proposal is not stored yet waits and is applied once the proposal arrives. A learning stays `proposed`
 until closed. An app decision (source `control_plane`, [ADR 0024](../adr/0024-learning-actions-from-the-app.md)) only
 opens a hub PR; its `state` is `accepted_pr_open` or `rejected_pr_open`, read as `in_brain` or `archived` once the note
-is at its destination in the hub checkout. The note's text and summary are read on request, never folded.
+is at its destination in the hub checkout. A proposed learning whose inbox note is gone from a checkout whose `brain/`
+reads fine is read as `resolved_elsewhere` (triaged outside the app); no decision event is invented for it. The note's
+text and summary are read on request, never folded.
 
 ### Approval
 
