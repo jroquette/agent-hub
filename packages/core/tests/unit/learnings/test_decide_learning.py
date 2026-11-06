@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -8,6 +8,7 @@ from agent_hub.core.events.event import Event, EventSource, EventType
 from agent_hub.core.events.event_store import AppendResult
 from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.learnings.brain_change_requests import (
+    MAX_BATCH_CHANGES,
     BrainChange,
     BrainChangeBatch,
     ChangeRequestFailedError,
@@ -17,7 +18,9 @@ from agent_hub.core.learnings.brain_change_requests import (
 from agent_hub.core.learnings.decide_learning import (
     BATCH_DESTINATIONS,
     BATCH_EMPTY,
+    BATCH_PROJECTS,
     BATCH_REPEATED,
+    BATCH_TOO_LARGE,
     REASON_REQUIRED,
     DecideLearning,
 )
@@ -469,12 +472,28 @@ def test_refuses_batch_and_stores_nothing_when_one_already_decided() -> None:
             BATCH_DESTINATIONS,
         ),
         ([LearningDecision(learning_id="toolu_1", action="reject")], REASON_REQUIRED),
+        (
+            [
+                LearningDecision(learning_id="toolu_1", action="reject", reason="a"),
+                LearningDecision(learning_id="toolu_9", action="reject", reason="b"),
+            ],
+            BATCH_PROJECTS,
+        ),
+        (
+            [
+                LearningDecision(learning_id=f"toolu_{n}", action="reject", reason="a")
+                for n in range(MAX_BATCH_CHANGES + 1)
+            ],
+            BATCH_TOO_LARGE,
+        ),
     ],
 )
 def test_refuses_batch_when_decisions_do_not_fit(
     decisions: list[LearningDecision], reason: str
 ) -> None:
     setup = _two_notes()
+    # A learning of another project, for the one-project rule.
+    setup.store.append([_proposal("elsewhere", "toolu_9").model_copy(update={"project": "other"})])
 
     with pytest.raises(LearningConflictError) as raised:
         setup.decide().decide_batch(decisions)
@@ -482,3 +501,56 @@ def test_refuses_batch_when_decisions_do_not_fit(
     assert raised.value.reason == reason
     assert setup.port.calls == []
     assert setup.decisions() == []
+
+
+def test_refuses_batch_and_stores_nothing_when_hub_read_only() -> None:
+    origin = FakeBrainOrigin()
+    setup = Setup(
+        notes={"testing-x": NOTE_TEXT, "other-y": NOTE_TEXT.replace("Testing x", "Y")},
+        origin=origin,
+        changes=InMemoryBrainChangeRequests(origin, unavailable="Hub is read-only here"),
+    )
+
+    with pytest.raises(HubReadOnlyError) as refused:
+        setup.decide().decide_batch(
+            [
+                LearningDecision(learning_id="toolu_1", action="accept", target="learnings/"),
+                LearningDecision(learning_id="toolu_2", action="reject", reason="Duplicate"),
+            ]
+        )
+
+    assert refused.value.reason == "Hub is read-only here"
+    assert setup.port.calls == []
+    assert setup.decisions() == []
+
+
+def test_opens_second_pull_request_when_batch_retried_after_ingest_failed() -> None:
+    """Pins a known limit: unlike a single decision, a batch whose PR opened but whose events
+    failed to store does not adopt that PR when retried. Its branch is stamped to the second,
+    so the retry pushes a new branch and opens a second PR; the first one stays open."""
+    setup = _two_notes()
+    clock = iter([NOW, NOW + timedelta(seconds=1)])
+    decide = DecideLearning(
+        setup.reads(),
+        _FlakyIngest(setup.store),
+        setup.port,
+        hub_of=lambda project: setup.hub,
+        today=lambda: next(clock),
+    )
+    decisions = [
+        LearningDecision(learning_id="toolu_1", action="accept", target="learnings/"),
+        LearningDecision(learning_id="toolu_2", action="reject", reason="Duplicate"),
+    ]
+
+    with pytest.raises(OSError, match="event store unavailable"):
+        decide.decide_batch(decisions)
+    assert setup.decisions() == []
+
+    result = decide.decide_batch(decisions)
+
+    assert result.pr_url == "https://github.com/acme/demo-hub/pull/2"
+    assert [pr.head for pr in setup.origin.pull_requests()] == [
+        "demo/learning-triage-20261012-123000",
+        "demo/learning-triage-20261012-123001",
+    ]
+    assert {e.payload["pr_url"] for e in setup.decisions()} == {result.pr_url}

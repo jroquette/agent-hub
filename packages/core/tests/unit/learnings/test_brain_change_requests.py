@@ -5,6 +5,7 @@ from agent_hub.core.brain.brain_path import MAX_NOTE_BYTES
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.learnings.brain_change_requests import (
     BrainChange,
+    BrainChangeBatch,
     BrainProposal,
     ChangeRequestConflictError,
     ChangeRequestError,
@@ -112,3 +113,61 @@ def test_refuses_proposal_when_text_larger_than_note_limit() -> None:
 def test_refuses_proposal_when_slug_not_branch_safe(slug: str) -> None:
     with pytest.raises(ValidationError, match="slug"):
         a_proposal(slug=slug)
+
+
+def a_batch(**overrides: object) -> BrainChangeBatch:
+    fields: dict[str, object] = {
+        "hub_path": "/home/demo/demo-hub",
+        "hub_repo": "acme/demo-hub",
+        "default_branch": "main",
+        "branch_prefix": "demo/",
+        "slug": "20261012-123000",
+        "changes": (
+            a_change(),
+            a_change(
+                action="reject",
+                note="_inbox/other-y.md",
+                destination="_inbox/_archive/other-y.md",
+                frontmatter={"status": "rejected", "rejected_reason": "Duplicate"},
+            ),
+        ),
+        "author": CommitAuthor(name="Demo Owner", email="owner@example.com"),
+        "title": "Triage learnings: 1 accepted, 1 rejected",
+        "body": "- **Accept** Testing x\n",
+        "commit_message": "docs(brain): triage 2 learnings",
+    }
+    return BrainChangeBatch.model_validate(fields | overrides)
+
+
+def test_names_triage_branch_when_batch_built() -> None:
+    assert a_batch().branch == "demo/learning-triage-20261012-123000"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        pytest.param(
+            {"branch_prefix": "", "default_branch": "learning-triage-20261012-123000"},
+            "default branch",
+            id="default_branch",
+        ),
+        pytest.param(
+            {"changes": (a_change(), a_change(hub_repo="acme/other-hub", note="_inbox/b.md"))},
+            "batch's hub",
+            id="other_hub",
+        ),
+        pytest.param(
+            {"changes": (a_change(), a_change(destination="learnings/other.md"))},
+            "decided twice",
+            id="repeated_note",
+        ),
+        pytest.param(
+            {"changes": (a_change(), a_change(note="_inbox/other-y.md"))},
+            "share a destination",
+            id="shared_destination",
+        ),
+    ],
+)
+def test_refuses_batch_when_changes_do_not_fit(overrides: dict[str, object], message: str) -> None:
+    with pytest.raises(ValidationError, match=message):
+        a_batch(**overrides)

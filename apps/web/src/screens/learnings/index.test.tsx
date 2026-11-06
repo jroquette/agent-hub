@@ -1,6 +1,6 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { GlobalStreamProvider } from "../../shell/GlobalStream";
 import { seriousViolations } from "../../testing/axe";
@@ -18,6 +18,7 @@ import {
   type ApiRoutes,
 } from "../../testing/builders";
 import { LearningsScreen } from "./index";
+import { stageDecision } from "./staged";
 
 const newer = aLearning({
   id: "l-new",
@@ -379,5 +380,115 @@ describe("LearningsScreen filters", () => {
     await userEvent.type(await screen.findByRole("searchbox", { name: "Search learnings" }), "zzz");
 
     expect(await screen.findByText("No learnings match these filters.")).toBeInTheDocument();
+  });
+});
+
+describe("LearningsScreen triage marks", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  const queueOf = (texts: string[]) =>
+    texts.map((text, n) => aLearning({ id: `q-${String(n)}`, text, proposed_at: at(100 + n) }));
+
+  /** A decidable, B blocked, C already marked, D decidable, in that order. */
+  function openQueue() {
+    const [a, b, c, d] = queueOf(["Alpha gate", "Bravo gate", "Charlie gate", "Delta gate"]);
+    if (!a || !b || !c || !d) throw new Error("expected four learnings");
+    const blocked = { ...b, actions_unavailable: "Note not in the hub checkout" };
+    stageDecision(c.id, { action: "reject", project: c.project, title: c.text, reason: "Old" });
+    const result = open({
+      "/api/v1/learnings": aPage([a, blocked, c, d]),
+      [`/api/v1/learnings/${a.id}`]: detailOf(a),
+      [`/api/v1/learnings/${b.id}`]: detailOf(blocked),
+      [`/api/v1/learnings/${c.id}`]: detailOf(c),
+      [`/api/v1/learnings/${d.id}`]: detailOf(d),
+    });
+    return { ...result, a, d };
+  }
+
+  async function markShown(action: "Accept" | "Reject") {
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+    await userEvent.click(await within(detail).findByRole("button", { name: action }));
+    const dialog = screen.getByRole("dialog");
+    if (action === "Reject") {
+      await userEvent.type(within(dialog).getByRole("textbox", { name: /Reason/ }), "Duplicate");
+    }
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: `Mark to ${action.toLowerCase()}` }),
+    );
+  }
+
+  it("moves to the next decidable unmarked learning after a mark", async () => {
+    const { router, d } = openQueue();
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+    await within(detail).findByRole("heading", { name: "Alpha gate" });
+
+    await markShown("Accept");
+
+    await waitFor(() => {
+      expect(router.state.location.search).toBe(`?learning=${d.id}`);
+    });
+    expect(
+      await within(screen.getByRole("region", { name: "Proposal" })).findByRole("heading", {
+        name: "Delta gate",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("stays on the learning when no decidable unmarked one follows it", async () => {
+    const [a] = queueOf(["Alpha gate"]);
+    if (!a) throw new Error("expected a learning");
+    const { router } = open({
+      "/api/v1/learnings": aPage([a]),
+      [`/api/v1/learnings/${a.id}`]: detailOf(a),
+    });
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+    await within(detail).findByRole("heading", { name: "Alpha gate" });
+
+    await markShown("Accept");
+
+    expect(await within(detail).findByText("Marked to accept")).toBeInTheDocument();
+    expect(router.state.location.search).toBe("");
+    expect(within(detail).getByRole("heading", { name: "Alpha gate" })).toBeInTheDocument();
+  });
+
+  it("shows the marks bar for proposed learnings only", async () => {
+    const [a] = queueOf(["Alpha gate"]);
+    if (!a) throw new Error("expected a learning");
+    open({
+      "/api/v1/learnings": aPage([a]),
+      [`/api/v1/learnings/${a.id}`]: detailOf(a),
+    });
+    await within(await screen.findByRole("region", { name: "Proposal" })).findByRole("heading", {
+      name: "Alpha gate",
+    });
+
+    await markShown("Accept");
+    expect(await screen.findByRole("region", { name: "Marked learnings" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Accepted" }));
+    expect(screen.queryByRole("region", { name: "Marked learnings" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["Accept", "Marked: accept"],
+    ["Reject", "Marked: reject"],
+  ] as const)("badges the queue row after a mark to %s", async (action, badge) => {
+    const [a] = queueOf(["Alpha gate"]);
+    if (!a) throw new Error("expected a learning");
+    open({
+      "/api/v1/learnings": aPage([a]),
+      [`/api/v1/learnings/${a.id}`]: detailOf(a),
+    });
+    const table = await screen.findByRole("table", { name: "Proposed learnings" });
+    await within(await screen.findByRole("region", { name: "Proposal" })).findByRole("heading", {
+      name: "Alpha gate",
+    });
+
+    await markShown(action);
+
+    const row = await within(table).findByRole("row", { name: /Alpha gate/ });
+    expect(await within(row).findByText(badge)).toBeInTheDocument();
   });
 });

@@ -804,5 +804,25 @@ describe("LearningDetail", () => {
       expect(within(detail).queryByText("Marked to accept")).toBeNull();
       expect(window.localStorage.getItem("ah.learning.staged")).toBeNull();
     });
+
+    it("drops the mark when the marked learning is decided on its own", async () => {
+      renderWithApi(<LearningDetail id={ID} row={aLearning()} now={Date.now()} />, {
+        routes: { ...base, [ACCEPT]: aLearningActionResult() },
+        path: "/knowledge/learnings",
+      });
+      const detail = await region();
+      await userEvent.click(within(detail).getByRole("button", { name: "Reject" }));
+      const marking = screen.getByRole("dialog", { name: "Reject this learning?" });
+      await userEvent.type(within(marking).getByRole("textbox", { name: /Reason/ }), "Duplicate");
+      await userEvent.click(within(marking).getByRole("button", { name: "Mark to reject" }));
+      expect(window.localStorage.getItem("ah.learning.staged")).not.toBeNull();
+
+      await userEvent.click(within(detail).getByRole("button", { name: "Accept" }));
+      const dialog = screen.getByRole("dialog", { name: "Accept this learning?" });
+      await userEvent.click(within(dialog).getByRole("button", { name: "Open pull request" }));
+
+      expect(await screen.findByText("Pull request opened")).toBeInTheDocument();
+      expect(window.localStorage.getItem("ah.learning.staged")).toBeNull();
+    });
   });
 });

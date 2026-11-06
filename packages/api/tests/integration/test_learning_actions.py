@@ -358,14 +358,34 @@ def test_opens_one_pull_request_for_every_decision_when_batched(
     assert hub_world.snapshot() == checkout_before
 
 
-def test_refuses_batch_when_origin_header_missing(world_app: Any, propose: Any) -> None:
+@pytest.mark.parametrize(
+    "headers",
+    [pytest.param({}, id="missing"), pytest.param({"Origin": "http://evil.example"}, id="foreign")],
+)
+def test_refuses_batch_when_origin_missing_or_foreign(
+    world_app: Any, propose: Any, headers: dict[str, str]
+) -> None:
     learning_id = propose(world_app, "gate-first.md", NOTE)
 
     response = world_app.client.post(
         "/api/v1/learnings/decisions",
         json={"decisions": [{"learning_id": learning_id, "action": "reject", "reason": "x"}]},
-        headers={"Origin": "http://evil.example"},
+        headers=headers,
     )
 
     assert response.status_code == 403
+    assert _decisions(world_app) == []
+
+
+def test_refuses_batch_when_body_not_json(world_app: Any, propose: Any) -> None:
+    learning_id = propose(world_app, "gate-first.md", NOTE)
+    body = {"decisions": [{"learning_id": learning_id, "action": "reject", "reason": "x"}]}
+
+    response = world_app.client.post(
+        "/api/v1/learnings/decisions",
+        content=json.dumps(body),
+        headers=ACTION_HEADERS | {"Content-Type": "text/plain"},
+    )
+
+    assert response.status_code == 415
     assert _decisions(world_app) == []

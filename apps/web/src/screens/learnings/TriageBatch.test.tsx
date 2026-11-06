@@ -136,6 +136,64 @@ describe("TriageBatchBar", () => {
     expect(screen.getByRole("region", { name: "Marked learnings" })).toHaveTextContent("1 marked");
   });
 
+  it("groups the marks by project in alphabetical order, one pull request each", async () => {
+    stageDecision("o1", { action: "reject", project: "other", title: "Stale", reason: "Old" });
+    markTwo();
+    const { requests } = openBar({ [BATCH]: RESULT });
+
+    await userEvent.click(screen.getByRole("button", { name: "Review and open PR" }));
+    const dialog = screen.getByRole("dialog", { name: "Open the triage pull request" });
+    const sends = within(dialog).getAllByRole("button", { name: "Open pull request" });
+    expect(sends).toHaveLength(2);
+    const blocks = sends.map((b) => b.closest(".ah-stack"));
+    expect(blocks[0]).toHaveTextContent(/^demo/);
+    expect(blocks[1]).toHaveTextContent(/^other/);
+    const [, other] = sends;
+    if (!other) throw new Error("no second block");
+    await userEvent.click(other);
+
+    await within(dialog).findByText(/Pull request opened for other/);
+    const posts = requests.filter((r) => r.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(await posts[0]?.json()).toEqual({
+      decisions: [{ learning_id: "o1", action: "reject", target: "", reason: "Old" }],
+    });
+  });
+
+  it("refuses more than 50 marks of one project in one pull request", async () => {
+    for (let n = 0; n < 51; n += 1) {
+      stageDecision(`l${String(n)}`, {
+        action: "reject",
+        project: "demo",
+        title: `Learning ${String(n)}`,
+        reason: "Duplicate",
+      });
+    }
+    openBar();
+
+    await userEvent.click(screen.getByRole("button", { name: "Review and open PR" }));
+
+    const send = screen.getByRole("button", { name: "Open pull request" });
+    expect(send).toBeDisabled();
+    expect(send).toHaveAttribute("title", "At most 50 per pull request");
+  });
+
+  it("keeps Tab inside the dialog and closes it with Escape", async () => {
+    markTwo();
+    openBar();
+
+    await userEvent.click(screen.getByRole("button", { name: "Review and open PR" }));
+    const dialog = screen.getByRole("dialog");
+    const send = within(dialog).getByRole("button", { name: "Open pull request" });
+    expect(send).toHaveFocus();
+    within(dialog).getByRole("button", { name: "Close" }).focus();
+    await userEvent.tab();
+    expect(send).toHaveFocus();
+
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("has no serious a11y violations with the dialog open (a11y)", async () => {
     markTwo();
     const { container } = openBar();

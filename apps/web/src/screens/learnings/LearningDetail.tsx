@@ -744,6 +744,9 @@ export function LearningDetail({ id, row, now, onDecide, onMarked, claude }: Lea
           }
           setDeciding(null);
           draft.discard();
+          // Decided on its own: a mark left behind would send it again in the project's batch,
+          // which the server refuses as a whole.
+          unstageDecisions([id]);
         },
       },
     );

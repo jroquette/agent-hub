@@ -1,8 +1,9 @@
 /* The triage batch: how many learnings are marked, and the dialog that lists them and opens one
  * hub pull request per project with all of them. */
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { Button, IconButton, StatusBadge } from "../../components";
+import { useModalFocus } from "../../lib/modalFocus";
 import { displayTitle, PullRequestLink } from "./LearningDetail";
 import {
   MAX_BATCH,
@@ -109,13 +110,23 @@ function ProjectBatch({
   entries,
   onSelect,
   onSent,
+  onPending,
 }: {
   project: string;
   entries: readonly [string, StagedDecision][];
   onSelect: (id: string) => void;
   onSent: (project: string, result: LearningBatchResult) => void;
+  onPending: (project: string, pending: boolean) => void;
 }) {
   const send = useSendStaged();
+  // The dialog locks Escape while any project's pull request is being opened. A sent block
+  // unmounts on success, so the cleanup reports it as no longer pending.
+  useEffect(() => {
+    onPending(project, send.isPending);
+    return () => {
+      onPending(project, false);
+    };
+  }, [onPending, project, send.isPending]);
   const ids = entries.map(([id]) => id);
   const tooMany = ids.length > MAX_BATCH;
   return (
@@ -231,25 +242,29 @@ export function TriageBatchDialog({
   const titleId = useId();
   const dialog = useRef<HTMLDivElement>(null);
   const groups = byProject(staged);
+  const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
+  const onPending = useCallback((project: string, isPending: boolean) => {
+    setPending((current) => {
+      if (current.has(project) === isPending) return current;
+      const next = new Set(current);
+      if (isPending) next.add(project);
+      else next.delete(project);
+      return next;
+    });
+  }, []);
 
-  useEffect(() => {
-    const before = document.activeElement;
-    dialog.current?.querySelector<HTMLElement>("button.ah-btn-primary, button")?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      if (before instanceof HTMLElement) before.focus();
-    };
-  }, [onClose]);
+  useModalFocus(dialog, {
+    locked: pending.size > 0,
+    onEscape: onClose,
+    initial: "button.ah-btn-primary",
+  });
 
   return (
     <div className="ah-scrim">
       <div
         ref={dialog}
         className="ah-dialog"
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -281,6 +296,7 @@ export function TriageBatchDialog({
               project={project}
               entries={entries}
               onSelect={onSelect}
+              onPending={onPending}
               onSent={(p, result) => {
                 setOpened((current) => [...current, [p, result]]);
               }}
