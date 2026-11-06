@@ -1092,13 +1092,13 @@ def function_imports(module: ast.Module) -> Iterator[tuple[str, int]]:
 FUNCTION_IMPORTS = {
     EXTENSION_RUNNER: ["from stdlib_reader import load_hub_file"],  # a broken reader exits 3
     GUARD_HOOK: [
-        "import subprocess",  # a git read (a bare push's branch)
         "from urllib.parse import unquote, urlsplit",  # a WebFetch only
         "from urllib.parse import urlsplit",
         "import glob",  # a hub.json that names no project
         "import project_guard_runner",  # in the forked child
         "import tempfile",  # to run the extension
         "from event_sensor import send_decision",  # on a deny or an ask
+        "import subprocess",  # a git read: a bare push's branch, a commit's identity
     ],
     "plugin/hub-workflow/hooks/event_sensor.py": ["import socket"],  # when it sends
     "plugin/hub-workflow/hooks/hubhooks.py": ["import subprocess", "import subprocess"],  # git

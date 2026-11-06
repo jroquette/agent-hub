@@ -10,6 +10,10 @@ deny  = hard block (secrets (guard.secret_env_files added, guard.readable_env_fi
         -F/--body-file names, read when the call runs unless the same command writes it, or in a file tool's
         write of a message file: pr.md, <name>-pr.md, body.md, msg.txt and the like), a bare push (no refspec,
         or HEAD or @) from a protected branch (git symbolic-ref where the call runs, followed through cd and -C),
+        a git commit, annotated tag or merge that would record an author, committer or tagger email (from
+        --author, GIT_AUTHOR_EMAIL or GIT_COMMITTER_EMAIL of the call, an export or the session, git -c, git
+        config where it runs, EMAIL) other than the hub's project.author_email (hub.local.json, else
+        hub.json; none set: no check),
         editing .git internals, network to guard.deny_hosts, reading or changing paths in guard.deny_paths,
         from a file tool or any Bash token; first of all, a blocked word (guard.blocked_words of hub.json,
         hub.local.json and $HUB_CONFIG together, ignoring ASCII case, no letter beside it) in the Bash
@@ -48,7 +52,8 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         (add, set, remove; list passes), git hooks skipped (--no-verify on commit, push or merge, commit's
         -n, core.hooksPath set by -c, --config-env, an assignment or git config), a message file that cannot
         be read (stdin, an expansion, unreadable, not regular, over 1 MiB), a bare push whose branch cannot
-        be told,
+        be told, a commit identity that cannot be (git config unreadable, an expansion, a folder that
+        cannot be told, an --author with no email),
         with HUB_RUN_ENVIRONMENT naming a declared environment of access read or production (an agent
         node of a workflow that declares it), a Bash command naming one of its endpoints' hosts or
         resources, or a WebFetch of a URL on one of its hosts (environment_endpoint, after the env-file
@@ -63,8 +68,9 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         env file is declared)
 Project values (default branch, tracker team, guard lists) come from hub.json. The branch prefix of a deny's
 hint is the developer's: hub.local.json, else hub.json, else the local part of git config user.email plus `/`
-(git runs only on that deny); with none, the hint has no prefix. Besides, git runs (2 s each) only for a
-bare push, to read the branch it sends. A list entry `@hub/<path>` is <path> in the hub that holds this file; with no such hub (plugin cache) it is skipped.
+(git runs only on that deny); with none, the hint has no prefix. Besides, git runs (2 s each, at most 4
+reads per command) only for a bare push, to read the branch it sends, and for a commit, annotated tag or
+merge, to read its identity's git config. A list entry `@hub/<path>` is <path> in the hub that holds this file; with no such hub (plugin cache) it is skipped.
 Then, for Bash and the file tools (EXTENSION_TOOLS) and unless the verdict is deny (final), the project's extension plugin/<project>/hooks/project_guard.py
 of the hub that holds this file (never one found from $CLAUDE_PROJECT_DIR, the cwd or the tool input;
 none in the plugin cache) runs in a child, project_guard_runner.py's main in a fork of this hook (no
@@ -1201,6 +1207,22 @@ HOOKS_PATH_REASON = "core.hooksPath changes which git hooks run; confirm"
 PUSH_REASON = "pushing to {} is not allowed; open a PR from a {} branch"
 PUSH_UNKNOWN_REASON = ("the branch this `git push` sends cannot be told (no branch checked out there, or a folder the "
                        "guard cannot read); confirm it is not a protected branch")
+IDENTITY_REASON = ("commit identity: this `git {}` would record {} as its {}, not {} (project.author_email of hub.json "
+                   "or hub.local.json); set user.email in git config, or drop the override")
+IDENTITY_UNCHECKED_REASON = "commit identity not checked: {}; confirm this `git {}` is by {}"
+# Per subcommand, the identities git records (a tagger is the committer's), each as the variable
+# that sets its email and the git config keys read for it, first one set wins.
+IDENTITY_ROLES = {
+    "commit": (("author", "GIT_AUTHOR_EMAIL", ("author.email", "user.email")),
+               ("committer", "GIT_COMMITTER_EMAIL", ("committer.email", "user.email"))),
+    "merge": (("author", "GIT_AUTHOR_EMAIL", ("author.email", "user.email")),
+              ("committer", "GIT_COMMITTER_EMAIL", ("committer.email", "user.email"))),
+    "tag": (("tagger", "GIT_COMMITTER_EMAIL", ("committer.email", "user.email")),),
+}
+TAG_CREATES = frozenset(("-a", "-s", "-u", "-m", "-F", "--annotate", "--sign", "--local-user", "--message", "--file"))
+MERGE_ENDS = frozenset(("--abort", "--quit"))
+AUTHOR_EMAIL = LazyPattern(r"<([^<>]*)>")
+IDENTITY_CONFIG = r"^(user|author|committer)\.email$"
 # A file tool's commit or PR message file, by name: pr.md, <ticket>-pr.md, body.md, msg.txt and the like.
 MESSAGE_FILE = LazyPattern(r"(?:^|[-_.])(?:pr|body|msg|message)\.(?:md|txt)$", re.I)
 CHANGE_FLOW_WORDS = LazyPattern(r"\b(?:git|gh)\b")
@@ -1212,7 +1234,8 @@ SHELL_DQ_ESCAPE = LazyPattern(r"\\([$`\"\\\n])")
 SHELL_CALL_END = "\n;&|()"
 CALL_PREFIX_WORDS = INFRA_PREFIX_WORDS | {"{", "!", "exec", "nohup"}
 ENV_VALUE_OPTIONS = INFRA_ENV_VALUE | {"-u", "--unset"}
-GIT_READ_TIMEOUT = 2  # seconds for one git read: the branch a bare push sends
+GIT_READ_TIMEOUT = 2  # seconds for one git read: the branch a bare push sends, a commit's identities
+GIT_READS_CAP = 4  # git reads one command makes; past it a read asks, so all fit the hook's 10 s
 # git's own options that take the next word as their value, and those that move where it runs.
 GIT_VALUE_OPTIONS = frozenset(("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--super-prefix"))
 GIT_LOCATION_OPTIONS = ("--git-dir", "--work-tree")
@@ -1308,16 +1331,17 @@ def _shell_calls(cmd: str) -> tuple[list[list[tuple[str, bool]]], set[str]]:
     return calls, targets
 
 
-def _program(words: list[tuple[str, bool]]) -> tuple[int, dict[str, str]]:
+def _program(words: list[tuple[str, bool]]) -> tuple[int, dict[str, str | None]]:
     """The index of a call's program word, after its assignments, keywords (`if`, `then`, `{`, `!`)
-    and wrappers (`command`, `exec`, `time`, `env` and env's options), and the variables it sets."""
-    env: dict[str, str] = {}
+    and wrappers (`command`, `exec`, `time`, `env` and env's options), and the variables it sets
+    (None for a value that is an expansion)."""
+    env: dict[str, str | None] = {}
     at = 0
     while at < len(words):
-        text = words[at][0]
+        text, expanded = words[at]
         name = INFRA_ASSIGNMENT.match(text)
         if name:
-            env[text[: name.end()].rstrip("+=")] = text[name.end():]
+            env[text[: name.end()].rstrip("+=")] = None if expanded else text[name.end():]
         elif text.rsplit("/", 1)[-1] == "env":
             while at + 1 < len(words) and words[at + 1][0].startswith("-"):
                 at += 2 if words[at + 1][0] in ENV_VALUE_OPTIONS else 1
@@ -1404,22 +1428,37 @@ def _git_folder(here: str | None, options: list[tuple[str, tuple[str, bool]]]) -
     return here
 
 
-def _git_read(args: list[str], folder: str | None, options: list[tuple[str, tuple[str, bool]]],
-              env: dict[str, str]) -> tuple[int, str] | None:
-    """(git's exit code, its stdout) for `git <location options> <args>` run in folder, with the
-    call's own variables; None when it cannot run (no folder, an expanded location, no git, the
-    timeout)."""
-    location = [f"{name}={value}" for name, (value, expanded) in options if name in GIT_LOCATION_OPTIONS]
-    if folder is None or any(expanded for name, (_, expanded) in options if name in GIT_LOCATION_OPTIONS):
-        return None
-    import subprocess  # here, not at the top: a call with no git read never loads it
+class _GitReads:
+    """One command's git reads: each one run once (by its arguments, folder, location options and
+    the call's variables), at most GIT_READS_CAP of them, each cut at GIT_READ_TIMEOUT."""
 
-    try:
-        done = subprocess.run(["git", *location, *args], cwd=folder, env={**os.environ, **env}, capture_output=True,
-                              stdin=subprocess.DEVNULL, timeout=GIT_READ_TIMEOUT)
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        return None
-    return done.returncode, done.stdout.decode("utf-8", "replace")
+    def __init__(self) -> None:
+        self.done: dict[tuple, tuple[int, str] | None] = {}
+
+    def read(self, args: list[str], folder: str | None, options: list[tuple[str, tuple[str, bool]]],
+             env: dict[str, str | None]) -> tuple[int, str] | None:
+        """(git's exit code, its stdout) for `git <location options> <args>` run in folder with the
+        call's variables; None when it cannot run (no folder, an expanded location, no git, the
+        timeout, the cap reached)."""
+        location = [f"{name}={value}" for name, (value, _) in options if name in GIT_LOCATION_OPTIONS]
+        if folder is None or any(expanded for name, (_, expanded) in options if name in GIT_LOCATION_OPTIONS):
+            return None
+        variables = {name: value for name, value in env.items() if value is not None}
+        key = (tuple(args), folder, tuple(location), tuple(sorted(variables.items())))
+        if key not in self.done:
+            self.done[key] = self._run([*location, *args], folder, variables) if len(self.done) < GIT_READS_CAP else None
+        return self.done[key]
+
+    @staticmethod
+    def _run(args: list[str], folder: str, variables: dict[str, str]) -> tuple[int, str] | None:
+        import subprocess  # here, not at the top: a call with no git read never loads it
+
+        try:
+            done = subprocess.run(["git", *args], cwd=folder, env={**os.environ, **variables}, capture_output=True,
+                                  stdin=subprocess.DEVNULL, timeout=GIT_READ_TIMEOUT)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return None
+        return done.returncode, done.stdout.decode("utf-8", "replace")
 
 
 def _message_text(path: str) -> tuple[str | None, str | None]:
@@ -1476,27 +1515,101 @@ def _hooks_path_set(args: list[tuple[str, bool]]) -> Verdict:
 
 
 def _bare_push(flags: list[tuple[str, tuple[str, bool] | None]], operands: list[tuple[str, bool]],
-               folder: str | None, options: list[tuple[str, tuple[str, bool]]], env: dict[str, str],
-               cfg: Config) -> Verdict:
+               folder: str | None, options: list[tuple[str, tuple[str, bool]]], env: dict[str, str | None],
+               cfg: Config, reads: _GitReads) -> Verdict:
     """For a push that sends the branch checked out (no refspec, or only `HEAD` or `@`): a deny when
     that branch is protected, an ask when it cannot be told; else None."""
     if {name for name, _ in flags} & {"--tags", "--all", "--branches", "--mirror"}:
         return None
     if any(spec not in ("HEAD", "@") for spec, _ in operands[1:]):
         return None
-    read = _git_read(["symbolic-ref", "--quiet", "--short", "HEAD"], folder, options, env)
+    read = reads.read(["symbolic-ref", "--quiet", "--short", "HEAD"], folder, options, env)
     branch = read[1].strip() if read and read[0] == 0 else ""
     if not branch:
         return "ask", PUSH_UNKNOWN_REASON
     return ("deny", PUSH_REASON.format(branch, _branch_hint(cfg))) if branch in cfg.protected_branches else None
 
 
-def _git_call(words: list[tuple[str, bool]], at: int, env: dict[str, str], here: str | None, cfg: Config,
-              targets: set[str]) -> Verdict:
+def _hub_author(cfg: Config) -> tuple[str, str]:
+    """(name, email) of the hub's author as hub.local.json, else hub.json, sets them ("" when
+    unset): unlike the branch hint, never git config, which is what the identity rule checks."""
+    local, project = cfg.identity.local_file, cfg.hub_file.project
+    return local.author_name or project.author_name, local.author_email or project.author_email
+
+
+def _config_emails(reads: _GitReads, folder: str, options: list[tuple[str, tuple[str, bool]]],
+                   env: dict[str, str | None]) -> dict[str, str] | None:
+    """git config's user, author and committer emails where the call runs, by lowercase key (a later
+    value wins, as in git); None when git config cannot be read."""
+    read = reads.read(["config", "--null", "--get-regexp", IDENTITY_CONFIG], folder, options, env)
+    if read is None or read[0] not in (0, 1):  # 1: none set
+        return None
+    found: dict[str, str] = {}
+    for entry in read[1].split("\0"):
+        key, _, value = entry.partition("\n")
+        if key:
+            found[key.lower()] = value
+    return found
+
+
+def _identity(sub: str, flags: list[tuple[str, tuple[str, bool] | None]], folder: str | None,
+              options: list[tuple[str, tuple[str, bool]]], env: dict[str, str | None], cfg: Config,
+              reads: _GitReads) -> Verdict:
+    """For a git commit, annotated tag or merge: a deny when an identity it records (IDENTITY_ROLES)
+    has another email than the hub's author (case ignored); an ask when one cannot be told; None
+    when the hub sets no email, the call records none (a lightweight tag or a listing, merge --abort
+    or --quit) or git has none (git then refuses or makes one up). Each email comes, first found,
+    from --author (the author only), the call's or the session's variable, git -c, then git config
+    where the call runs, then EMAIL."""
+    name, expected = _hub_author(cfg)
+    names = {flag for flag, _ in flags}
+    if not expected or (sub == "tag" and not names & TAG_CREATES) or (sub == "merge" and names & MERGE_ENDS):
+        return None
+    shown = _infra_value(f"{name} <{expected}>" if name else expected)
+    configured: dict[str, str | None] = {}
+    for option, (value, expanded) in options:
+        if option == "-c":
+            key, _, setting = value.partition("=")
+            configured[key.lower()] = None if expanded else setting
+    author = [value for flag, value in flags if flag == "--author" and value is not None]
+    files: dict[str, str] | None = None
+    unchecked: Verdict = None
+    for role, variable, keys in IDENTITY_ROLES[sub]:
+        email: str | None = None
+        cause = None
+        if role == "author" and author:
+            found = AUTHOR_EMAIL.search(author[-1][0])
+            cause = "an email is a shell expansion" if author[-1][1] else None if found else "--author names no email"
+            email = found.group(1) if found and not cause else None
+        elif variable in env or variable in os.environ:
+            email = env[variable] if variable in env else os.environ[variable]
+            cause = None if email is not None else "an email is a shell expansion"
+        else:
+            for key in keys:
+                if key in configured and configured[key] is None:
+                    cause = "an email is a shell expansion"
+                elif key not in configured and files is None and folder is None:
+                    cause = "the folder it runs in cannot be told"
+                elif key not in configured and files is None:
+                    files = _config_emails(reads, folder or "", options, env)
+                    cause = None if files is not None else "git config cannot be read"
+                email = None if cause else configured[key] if key in configured else (files or {}).get(key)
+                if cause or email:
+                    break
+            email = email or (None if cause else env.get("EMAIL") or os.environ.get("EMAIL"))
+        if cause:
+            unchecked = unchecked or ("ask", IDENTITY_UNCHECKED_REASON.format(cause, sub, shown))
+        elif email and email.strip().lower() != expected.strip().lower():
+            return "deny", IDENTITY_REASON.format(sub, _infra_value(email), role, shown)
+    return unchecked
+
+
+def _git_call(words: list[tuple[str, bool]], at: int, env: dict[str, str | None], here: str | None, cfg: Config,
+              targets: set[str], reads: _GitReads) -> Verdict:
     """The change-flow rules on one git call (words[at] is git)."""
     options, sub_at = _git_command(words, at + 1)
     hooks = any(name in ("-c", "--config-env") and value.lower().startswith("core.hookspath")
-                for name, (value, _) in options) or any("core.hookspath" in value.lower() for value in env.values())
+                for name, (value, _) in options) or any("core.hookspath" in (value or "").lower() for value in env.values())
     verdict: Verdict = ("ask", HOOKS_PATH_REASON) if hooks else None
     if sub_at >= len(words):
         return verdict
@@ -1511,9 +1624,12 @@ def _git_call(words: list[tuple[str, bool]], at: int, env: dict[str, str], here:
         verdict = tighten(verdict, ("ask", NO_VERIFY_REASON.format(sub, skipped)))
     folder = _git_folder(here, options)
     if sub == "push":
-        return verdict if verdict and verdict[0] == "deny" else tighten(verdict, _bare_push(flags, operands, folder, options, env, cfg))
+        return tighten(verdict, _bare_push(flags, operands, folder, options, env, cfg, reads))
     files = [value for name, value in flags if name in ("-F", "--file") and value is not None]
-    return tighten(verdict, _message_files(files, folder, targets, COMMIT_ATTRIBUTION_REASON))
+    verdict = tighten(verdict, _message_files(files, folder, targets, COMMIT_ATTRIBUTION_REASON))
+    if verdict and verdict[0] == "deny":
+        return verdict
+    return tighten(verdict, _identity(sub, flags, folder, options, env, cfg, reads))
 
 
 def _gh_call(words: list[tuple[str, bool]], at: int, here: str | None, targets: set[str]) -> Verdict:
@@ -1529,15 +1645,21 @@ def _gh_call(words: list[tuple[str, bool]], at: int, here: str | None, targets: 
 def check_change_flow(cmd: str, cfg: Config, cwd: str | None = None) -> Verdict:
     """The change-flow rules on each git and gh call of cmd, in order, run from cwd (None: the
     process's own folder), the folder followed through `cd` and `pushd` (one it cannot tell, after
-    an expansion or `popd`, makes a later read ask): the first deny, else the first ask."""
+    an expansion or `popd`, makes a later read ask), the variables a call sets added to those an
+    `export` or a lone assignment set before it: the first deny, else the first ask."""
     if not CHANGE_FLOW_WORDS.search(cmd):
         return None
     calls, targets = _shell_calls(cmd)
     here: str | None = cwd or os.getcwd()
+    exported: dict[str, str | None] = {}
+    reads = _GitReads()
     verdict: Verdict = None
     for words in calls:
         at, env = _program(words)
-        if at >= len(words) or words[at][1]:
+        if at >= len(words):
+            exported.update(env)
+            continue
+        if words[at][1]:
             continue
         program = words[at][0].rsplit("/", 1)[-1]
         found: Verdict = None
@@ -1545,8 +1667,10 @@ def check_change_flow(cmd: str, cfg: Config, cwd: str | None = None) -> Verdict:
             here = _moved(here, words[at + 1:])
         elif program == "popd":
             here = None
+        elif program == "export":
+            exported.update(_program(words[at + 1:])[1])
         elif program == "git":
-            found = _git_call(words, at, env, here, cfg, targets)
+            found = _git_call(words, at, {**exported, **env}, here, cfg, targets, reads)
         elif program == "gh":
             found = _gh_call(words, at, here, targets)
         if found and found[0] == "deny":
@@ -2716,6 +2840,7 @@ RULE_IDS = (
     ("no_verify", LazyPattern(r"^`git \w+ (?:-n|--no-verify)` skips the repo's git hooks")),
     ("hooks_path", LazyPattern(r"^core\.hooksPath changes which git hooks run")),
     ("push_branch_unknown", LazyPattern(r"^the branch this `git push` sends cannot be told")),
+    ("commit_identity", LazyPattern(r"^commit identity( not checked)?: ")),
     ("agent_branch", LazyPattern(r"^branches are \S*, never claude/")),
     ("git_internals", LazyPattern(r"^\.git is git's own state")),
     ("test_bash_edit", LazyPattern(r"^deleting or sed-editing tests")),

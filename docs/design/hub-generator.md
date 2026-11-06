@@ -322,6 +322,15 @@ below asks where the owner has a legitimate use for the call, and denies where t
   branch checked out where it runs (`git symbolic-ref --short HEAD`, 2 s): a protected branch denies, a branch that
   cannot be told (detached, no repo, an unknown folder) asks (`push_branch_unknown`). `--tags` and `--all` are not
   read as a bare push.
+- **Commit identity** (rule `commit_identity`, deny): when `hub.local.json` or `hub.json` sets
+  `project.author_email`, a `git commit`, `git merge` (not `--abort`/`--quit`) or annotated `git tag` whose author,
+  committer or tagger email differs from it (case ignored) is denied, and the reason names the expected identity. Each
+  email is, first found: `--author` (author only), the `GIT_AUTHOR_EMAIL` or `GIT_COMMITTER_EMAIL` the call, an earlier
+  `export` or the session sets, `git -c author.email|committer.email|user.email`, `git config` where the call runs (one
+  `git config --get-regexp` read, 2 s), then `EMAIL`. A config git cannot read, an expansion, a folder that cannot be
+  told or an `--author` with no `<email>` asks; no email anywhere passes (git refuses or makes one up), as does a hub
+  that sets none. A command makes at most four git reads (bare push and identity together), so they fit the hook's
+  10 s; this is the commit-time half of rule 1, the CI author check its server-side half.
 - **Skipped hooks** (rules `no_verify`, `hooks_path`, ask): `--no-verify` on `git commit` (and its `-n`), `push` or
   `merge`, and `core.hooksPath` set through `git -c`, `--config-env`, an assignment such as `GIT_CONFIG_PARAMETERS`,
   or `git config` (set, `--unset`); reading it passes.
