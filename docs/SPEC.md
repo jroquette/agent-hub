@@ -1129,7 +1129,9 @@ the scenario builder and the playground's screens (AGH-521), the flaky workflow 
 signal in the brief's Outcome (AGH-451), and v0.25.0 scenarios written as blocks, with `hub scenario migrate` and
 a run debugger in the CLI and `hub web` (AGH-507, ADR 0049), and v0.26.0 `/implement` running a ticket in its own
 session, and v0.27.0 tickets that own several repos (AGH-585, ADR 0051), `hub repo` to change a hub's repos, and the
-scenario page that builds and runs on one screen (AGH-596);
+scenario page that builds and runs on one screen (AGH-596), and v0.32.0 a playground delivery: learnings decided
+together in one hub pull request, a feature's UX designs tab with HTML mockups, and the scenario builder that edits
+one step at a time (AGH-687);
 other agents' adapters stay in Phase 4. The Phase 1 gate (Loki hub recreated) is open;
 pilot: AGH-54.
 
