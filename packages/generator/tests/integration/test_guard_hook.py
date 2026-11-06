@@ -5355,6 +5355,26 @@ def test_denies_read_when_listed_file_contents_hold_word(decide: Decide, blocked
     ] + [blocked_word("prod", f"the contents of {cut(absolute)}")]
 
 
+def test_keeps_deny_when_runner_too_slow_for_scan_budget(
+    decide: Decide, decide_opens: DecideOpens, blocked_hub: Path
+) -> None:
+    """Regression: AGH-522 (on a loaded runner the 300 ms budget ran out and a deny became an ask).
+
+    The harness reads a frozen clock, so no verdict depends on how fast the machine is: a budget of
+    0 s, which a moving clock always spends, still gives the deny. The product's budget stays 300 ms
+    (``test_states_scan_limits_when_constants_read``); the out-of-time ask is driven by a budget of
+    -1 s or by a clock that moves per look (``test_asks_when_budget_spent_on_folder_entries``)."""
+    ws = blocked_hub.parent
+    put(ws, "demo-api/config/app.json", '{"stage": "prod"}\n')
+    event = at(read_call("demo-api/config/app.json"), ws)
+
+    verdicts = decide([(event, None)], seams={"BLOCKED_SCAN_BUDGET": 0})
+    opened, _ = decide_opens([(event, None)], seams={"BLOCKED_SCAN_BUDGET": 0})
+
+    denied = blocked_word("prod", "the contents of demo-api/config/app.json")
+    assert (verdicts, opened) == ([denied], [denied])
+
+
 def test_passes_read_when_contents_or_name_not_listed(decide: Decide, blocked_hub: Path) -> None:
     ws = blocked_hub.parent
     put(ws, "demo-api/config/app.json", '{"product": 1}\n')
