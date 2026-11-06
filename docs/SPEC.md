@@ -563,7 +563,8 @@ page makes, the owner writes (`OWNER_WRITES`, AGH-699: the Hub config writes, a 
 the learning decisions, the Linear key, a feature's nickname, the owner sign-off), need the launch cookie on top of
 this server's exact `Origin`, a same-origin fetch and a JSON body, as the run and item writes do: an `Origin` alone is
 something any local process can send. In the container, which mints no token, they answer 404 `owner-writes-off`
-([API.md](API.md#local-security)).
+([API.md](API.md#local-security)). A checked-in table names every write route's class, and a test fails for a write
+route the table lacks and probes each one for its class's answers.
 It reaches the network in two documented cases only: the learning decisions' explicit
 pull request ([ADR 0024](adr/0024-learning-actions-from-the-app.md)), and a read-only, server-side read of Linear's
 GraphQL API for a feature's tickets, only when `LINEAR_API_KEY` is set where `hub web` runs

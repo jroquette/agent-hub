@@ -1227,6 +1227,9 @@ minted and the hubs are mounted read-only) a restore, a publish or a scenario bu
 included) answers 409 `hub_read_only` before the cookie is checked, a run write or the values read 404 `run-control-off`,
 and an owner write 404 `urn:agent-hub:problem:owner-writes-off` ("Owner writes are off"), cookie or not: no request
 there could hold the cookie, and the Linear key comes from the container's `LINEAR_API_KEY` instead.
+Every `POST`, `PUT`, `PATCH` and `DELETE` route is listed with its class (cookie and strict, exact `Origin`, or basic
+by design) in `packages/api/tests/integration/test_write_route_inventory.py`, which fails for a write route the table
+lacks and probes each route for its class's answers (AGH-699): a new write route must name its class there.
 
 The owner's writes, which write hub files, reach the network or run the CLI in a hub, the four workflow
 run commands and a workflow gate's decision,
