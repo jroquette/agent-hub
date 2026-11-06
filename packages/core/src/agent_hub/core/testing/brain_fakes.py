@@ -21,6 +21,7 @@ from agent_hub.core.brain.brain_path import (
 from agent_hub.core.brain.frontmatter import with_body, with_frontmatter
 from agent_hub.core.learnings.brain_change_requests import (
     BrainChange,
+    BrainChangeBatch,
     BrainProposal,
     ChangeRequestConflictError,
     ChangeRequestFailedError,
@@ -106,7 +107,7 @@ class InMemoryBrainChangeRequests:
         self.origin = origin
         self.unavailable = unavailable
         self.fail_step = fail_step
-        self.calls: list[BrainChange | BrainProposal] = []
+        self.calls: list[BrainChange | BrainChangeBatch | BrainProposal] = []
 
     def availability(self, hub_path: str) -> str | None:
         """``unavailable``, whatever the hub."""
@@ -120,6 +121,37 @@ class InMemoryBrainChangeRequests:
     def reject(self, change: BrainChange) -> ChangeRequestResult:
         """Archive the note with its reason on a new branch and open its PR."""
         return self._open(change)
+
+    def decide_batch(self, batch: BrainChangeBatch) -> ChangeRequestResult:
+        """Apply every change of the batch on one new branch and open its one PR; refused as a
+        whole when any change is, or when the branch exists."""
+        self.calls.append(batch)
+        if self.unavailable is not None:
+            raise ChangeRequestConflictError(self.unavailable)
+        if batch.branch in self.origin.files:
+            raise ChangeRequestConflictError(f"branch exists: {batch.branch}")
+        for change in batch.changes:
+            self._refuse(change)
+        if self.fail_step is not None:
+            raise ChangeRequestFailedError(step=self.fail_step)
+        files = dict(self.origin.files[self.origin.default_branch])
+        for change in batch.changes:
+            text = files.pop(_hub_path(change.note))
+            if change.note_body is not None:
+                text = with_body(text, change.note_body)
+            files[_hub_path(change.destination)] = with_frontmatter(text, change.frontmatter)
+        self.origin.files[batch.branch] = files
+        return self._push_and_open(
+            branch=batch.branch,
+            commit=OriginCommit(
+                author_name=batch.author.name,
+                author_email=batch.author.email,
+                message=batch.commit_message,
+            ),
+            hub_repo=batch.hub_repo,
+            title=batch.title,
+            body=batch.body,
+        )
 
     def propose(self, proposal: BrainProposal) -> ChangeRequestResult:
         """Add the proposal's note on a new branch off the default branch and open its PR."""

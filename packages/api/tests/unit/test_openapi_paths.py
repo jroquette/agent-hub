@@ -75,6 +75,7 @@ CLARITY_SPEC_PATHS = {
     ("get", "/api/v1/sessions/{session_id}/problems"),
     ("post", "/api/v1/learnings/{learning_id}/accept"),
     ("post", "/api/v1/learnings/{learning_id}/reject"),
+    ("post", "/api/v1/learnings/decisions"),
     ("get", "/api/v1/projects/{project}/brain"),
     ("get", "/api/v1/projects/{project}/brain/note"),
 }

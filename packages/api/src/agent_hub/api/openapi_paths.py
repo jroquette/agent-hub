@@ -60,6 +60,7 @@ CLARITY_PATHS: frozenset[tuple[str, str]] = frozenset(
         ("get", "/sessions/{session_id}/problems"),
         ("post", "/learnings/{learning_id}/accept"),
         ("post", "/learnings/{learning_id}/reject"),
+        ("post", "/learnings/decisions"),
         ("get", "/projects/{project}/brain"),
         ("get", "/projects/{project}/brain/note"),
     )

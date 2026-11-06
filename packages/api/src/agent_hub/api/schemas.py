@@ -3,12 +3,13 @@
 Read models come from core; only what exists for HTTP alone is declared here.
 """
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import Header, Query
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StringConstraints
 
 from agent_hub.core.brain.brain_path import MAX_NOTE_BYTES
+from agent_hub.core.learnings.brain_change_requests import MAX_BATCH_CHANGES
 from agent_hub.core.readmodels.filters import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT
 from agent_hub.core.readmodels.page import MAX_CURSOR_CHARS
 from agent_hub.core.skills.skill_view import ITEM_NAME, ItemKind
@@ -69,6 +70,29 @@ class RejectLearningBody(BaseModel):
     reason: Annotated[
         str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_REASON_CHARS)
     ]
+
+
+class LearningDecisionItem(BaseModel):
+    """One decision of ``POST /learnings/decisions``: an accept with its ``target`` (and the
+    optional edited ``note_body``) or a reject with its ``reason``."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    learning_id: str = Field(min_length=1, max_length=512)
+    action: Literal["accept", "reject"]
+    target: str = Field(default="", max_length=MAX_TARGET_CHARS)
+    reason: Annotated[
+        str, StringConstraints(strip_whitespace=True, max_length=MAX_REASON_CHARS)
+    ] = ""
+    note_body: str | None = Field(default=None, min_length=1, max_length=MAX_NOTE_BYTES)
+
+
+class LearningDecisionsBody(BaseModel):
+    """``POST /learnings/decisions``: 1 to 50 decisions of one project, sent as one hub PR."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    decisions: list[LearningDecisionItem] = Field(min_length=1, max_length=MAX_BATCH_CHANGES)
 
 
 class RestoreVersionBody(BaseModel):

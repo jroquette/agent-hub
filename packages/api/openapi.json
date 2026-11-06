@@ -2822,6 +2822,25 @@
         "title": "DebugPauseEntry",
         "type": "object"
       },
+      "DecidedLearning": {
+        "additionalProperties": false,
+        "description": "Where one learning of a triage batch now is.",
+        "properties": {
+          "learning_id": {
+            "title": "Learning Id",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/LearningState"
+          }
+        },
+        "required": [
+          "learning_id",
+          "state"
+        ],
+        "title": "DecidedLearning",
+        "type": "object"
+      },
       "DecisionEntry": {
         "additionalProperties": false,
         "properties": {
@@ -6537,6 +6556,105 @@
           "branch"
         ],
         "title": "LearningActionResult",
+        "type": "object"
+      },
+      "LearningBatchResult": {
+        "additionalProperties": false,
+        "description": "What a triage batch did: the one pull request it opened, its branch, and each learning.",
+        "properties": {
+          "branch": {
+            "title": "Branch",
+            "type": "string"
+          },
+          "decided": {
+            "items": {
+              "$ref": "#/components/schemas/DecidedLearning"
+            },
+            "title": "Decided",
+            "type": "array"
+          },
+          "pr_url": {
+            "title": "Pr Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pr_url",
+          "branch",
+          "decided"
+        ],
+        "title": "LearningBatchResult",
+        "type": "object"
+      },
+      "LearningDecisionItem": {
+        "additionalProperties": false,
+        "description": "One decision of ``POST /learnings/decisions``: an accept with its ``target`` (and the\noptional edited ``note_body``) or a reject with its ``reason``.",
+        "properties": {
+          "action": {
+            "enum": [
+              "accept",
+              "reject"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "learning_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Learning Id",
+            "type": "string"
+          },
+          "note_body": {
+            "anyOf": [
+              {
+                "maxLength": 262144,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note Body"
+          },
+          "reason": {
+            "default": "",
+            "maxLength": 300,
+            "title": "Reason",
+            "type": "string"
+          },
+          "target": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "learning_id",
+          "action"
+        ],
+        "title": "LearningDecisionItem",
+        "type": "object"
+      },
+      "LearningDecisionsBody": {
+        "additionalProperties": false,
+        "description": "``POST /learnings/decisions``: 1 to 50 decisions of one project, sent as one hub PR.",
+        "properties": {
+          "decisions": {
+            "items": {
+              "$ref": "#/components/schemas/LearningDecisionItem"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Decisions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "decisions"
+        ],
+        "title": "LearningDecisionsBody",
         "type": "object"
       },
       "LearningDetail": {
@@ -20696,6 +20814,98 @@
           }
         },
         "summary": "List Learnings",
+        "tags": [
+          "learnings"
+        ]
+      }
+    },
+    "/api/v1/learnings/decisions": {
+      "post": {
+        "description": "Open one hub PR that applies every decision (accepts and rejects of one project) in one\ncommit; refused as a whole when any decision is. Nothing changes until it is merged.",
+        "operationId": "decide_learnings_api_v1_learnings_decisions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LearningDecisionsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningBatchResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Already decided, target refused, note not on the default branch, or actions unavailable for this hub"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The body is not application/json"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Could not open the pull request"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The action passed its 60 s deadline"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Decide Learnings",
         "tags": [
           "learnings"
         ]

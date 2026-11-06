@@ -38,8 +38,11 @@ from agent_hub.core.ingestion.hook_envelope import HookEnvelope
 from agent_hub.core.ingestion.ingestion_ports import HookMapping
 from agent_hub.core.ingestion.ingestion_status import IngestionCounters
 from agent_hub.core.learnings.learning import (
+    DecidedLearning,
     Learning,
     LearningActionResult,
+    LearningBatchResult,
+    LearningDecision,
     LearningDetail,
     LearningState,
 )
@@ -437,6 +440,25 @@ class FakeLearningDecisions:
 
     def reject(self, learning_id: str, *, reason: str) -> LearningActionResult:
         return self._decide("reject", learning_id, reason, state=LearningState.REJECTED_PR_OPEN)
+
+    def decide_batch(self, decisions: Sequence[LearningDecision]) -> LearningBatchResult:
+        for d in decisions:
+            self.calls.append(("batch-" + d.action, d.learning_id, d.target or d.reason))
+        if self.failure is not None:
+            raise self.failure
+        return LearningBatchResult(
+            pr_url="https://github.com/acme/demo-hub/pull/2",
+            branch="demo/learning-triage-20261012-123000",
+            decided=tuple(
+                DecidedLearning(
+                    learning_id=d.learning_id,
+                    state=LearningState.ACCEPTED_PR_OPEN
+                    if d.action == "accept"
+                    else LearningState.REJECTED_PR_OPEN,
+                )
+                for d in decisions
+            ),
+        )
 
     def _decide(
         self, action: str, learning_id: str, value: str, *, state: LearningState

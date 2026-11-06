@@ -733,4 +733,76 @@ describe("LearningDetail", () => {
     });
     expect(await seriousViolations(container)).toEqual([]);
   });
+
+  describe("marking for the triage pull request", () => {
+    beforeEach(() => {
+      window.localStorage.clear();
+    });
+
+    function openMarking() {
+      const onMarked = vi.fn();
+      const result = renderWithApi(
+        <LearningDetail id={ID} row={aLearning()} now={Date.now()} onMarked={onMarked} />,
+        { routes: base, path: "/knowledge/learnings" },
+      );
+      return { ...result, onMarked };
+    }
+
+    it("marks an accept to the edited target without opening a pull request", async () => {
+      const { requests, onMarked } = openMarking();
+      const detail = await region();
+      const target = within(detail).getByRole("combobox", { name: "Target in brain/" });
+      await userEvent.clear(target);
+      await userEvent.type(target, "learnings/gotchas/web-gates.md");
+
+      await userEvent.click(within(detail).getByRole("button", { name: "Accept" }));
+      await userEvent.click(screen.getByRole("button", { name: "Mark to accept" }));
+
+      const marked = await within(detail).findByRole("status");
+      expect(marked).toHaveTextContent("Marked to accept");
+      expect(marked).toHaveTextContent("brain/learnings/gotchas/web-gates.md");
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(requests.some((r) => r.method === "POST")).toBe(false);
+      expect(onMarked).toHaveBeenCalledWith(ID);
+      expect(JSON.parse(window.localStorage.getItem("ah.learning.staged") ?? "{}")).toEqual({
+        [ID]: {
+          action: "accept",
+          project: aLearning().project,
+          title: aLearning().text,
+          target: "learnings/gotchas/web-gates.md",
+        },
+      });
+    });
+
+    it("marks a reject with its reason and offers it again to change", async () => {
+      const { requests } = openMarking();
+      const detail = await region();
+
+      await userEvent.click(within(detail).getByRole("button", { name: "Reject" }));
+      const dialog = screen.getByRole("dialog", { name: "Reject this learning?" });
+      expect(within(dialog).getByRole("button", { name: "Mark to reject" })).toBeDisabled();
+      await userEvent.type(within(dialog).getByRole("textbox", { name: /Reason/ }), "Duplicate");
+      await userEvent.click(within(dialog).getByRole("button", { name: "Mark to reject" }));
+
+      const marked = await within(detail).findByRole("status");
+      expect(marked).toHaveTextContent("Marked to reject");
+      expect(marked).toHaveTextContent("Duplicate");
+      expect(requests.some((r) => r.method === "POST")).toBe(false);
+
+      await userEvent.click(within(detail).getByRole("button", { name: "Reject" }));
+      expect(screen.getByRole("textbox", { name: /Reason/ })).toHaveValue("Duplicate");
+    });
+
+    it("unmarks a marked learning", async () => {
+      openMarking();
+      const detail = await region();
+      await userEvent.click(within(detail).getByRole("button", { name: "Accept" }));
+      await userEvent.click(screen.getByRole("button", { name: "Mark to accept" }));
+
+      await userEvent.click(within(detail).getByRole("button", { name: "Unmark" }));
+
+      expect(within(detail).queryByText("Marked to accept")).toBeNull();
+      expect(window.localStorage.getItem("ah.learning.staged")).toBeNull();
+    });
+  });
 });

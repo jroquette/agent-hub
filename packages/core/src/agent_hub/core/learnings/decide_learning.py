@@ -8,7 +8,7 @@ started meanwhile is refused, not queued.
 """
 
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import PurePosixPath
@@ -31,12 +31,17 @@ from agent_hub.core.brain.frontmatter import first_paragraph
 from agent_hub.core.events.event import Event, EventSource, EventType
 from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.learnings.brain_change_requests import (
+    MAX_BATCH_CHANGES,
     BrainChange,
+    BrainChangeBatch,
     BrainChangeRequests,
     ChangeRequestResult,
 )
 from agent_hub.core.learnings.learning import (
+    DecidedLearning,
     LearningActionResult,
+    LearningBatchResult,
+    LearningDecision,
     LearningDetail,
     LearningState,
     LearningStatus,
@@ -59,6 +64,11 @@ ACTION_RUNNING: Final = "Another learning action is running for this hub"
 REASON_REQUIRED: Final = "A reason is required to reject a learning"
 EDIT_EMPTY: Final = "The edited note is empty"
 EDIT_TOO_LARGE: Final = "The edited note is larger than the note size limit"
+BATCH_EMPTY: Final = "No decisions to send"
+BATCH_TOO_LARGE: Final = f"At most {MAX_BATCH_CHANGES} decisions per pull request"
+BATCH_REPEATED: Final = "A learning is decided twice"
+BATCH_PROJECTS: Final = "Decisions of one pull request must be of one project"
+BATCH_DESTINATIONS: Final = "Two decisions move notes to the same place"
 
 _ALREADY: Final = {
     LearningState.ACCEPTED_PR_OPEN: "Learning already accepted, PR open",
@@ -157,6 +167,98 @@ class DecideLearning:
     def reject(self, learning_id: str, *, reason: str) -> LearningActionResult:
         """Open a PR that archives the note with ``reason``."""
         return self._decide(learning_id, "reject", target="", reason=reason)
+
+    def decide_batch(self, decisions: Sequence[LearningDecision]) -> LearningBatchResult:
+        """Open one PR whose single commit applies every decision (all of one project's hub),
+        then store one event per learning, each naming that PR. Refused as a whole when any
+        decision is: nothing is pushed and nothing stored."""
+        if not decisions:
+            raise LearningConflictError(BATCH_EMPTY)
+        if len(decisions) > MAX_BATCH_CHANGES:
+            raise LearningConflictError(BATCH_TOO_LARGE)
+        if len({d.learning_id for d in decisions}) != len(decisions):
+            raise LearningConflictError(BATCH_REPEATED)
+        projects = {self._reads.get_learning(d.learning_id).project for d in decisions}
+        if len(projects) != 1:
+            raise LearningConflictError(BATCH_PROJECTS)
+        hub = self._usable_hub(projects.pop())
+        with self._one_action(hub.path):
+            learnings = [self._reads.get_learning(d.learning_id) for d in decisions]
+            for learning in learnings:
+                _refuse_decided(learning)
+            unavailable = self._changes.availability(hub.path)
+            if unavailable is not None:
+                raise HubReadOnlyError(unavailable)
+            now = self._today()
+            changes = [
+                self._change(
+                    learning,
+                    hub,
+                    decision.action,
+                    target=decision.target,
+                    reason=decision.reason,
+                    note_body=decision.note_body if decision.action == "accept" else None,
+                    now=now,
+                )
+                for learning, decision in zip(learnings, decisions, strict=True)
+            ]
+            if len({c.destination for c in changes}) != len(changes):
+                raise LearningConflictError(BATCH_DESTINATIONS)
+            batch = self._batch(hub, changes, learnings, now=now)
+            opened = self._changes.decide_batch(batch)
+            events = [
+                self._event(
+                    learning, change=change, state=_PR_OPEN[change.action], opened=opened, now=now
+                )
+                for learning, change in zip(learnings, changes, strict=True)
+            ]
+            self._ingest.execute(events)
+        return LearningBatchResult(
+            pr_url=opened.pr_url,
+            branch=opened.branch,
+            decided=tuple(
+                DecidedLearning(learning_id=learning.id, state=_PR_OPEN[change.action])
+                for learning, change in zip(learnings, changes, strict=True)
+            ),
+        )
+
+    def _batch(
+        self,
+        hub: LearningHub,
+        changes: Sequence[BrainChange],
+        learnings: Sequence[LearningDetail],
+        *,
+        now: datetime,
+    ) -> BrainChangeBatch:
+        accepted = sum(c.action == "accept" for c in changes)
+        rejected = len(changes) - accepted
+        counts = [
+            f"{n} {verb}" for n, verb in ((accepted, "accepted"), (rejected, "rejected")) if n
+        ]
+        title = f"Triage learnings: {', '.join(counts)}"
+        lines: list[str] = []
+        for learning, change in zip(learnings, changes, strict=True):
+            heading = _redacted(learning.text, MAX_TITLE_CHARS)
+            lines.append(f"- **{_VERB[change.action]}** {heading}")
+            lines.append(
+                f"  `{BRAIN_FOLDER}/{change.note}` → `{BRAIN_FOLDER}/{change.destination}`"
+            )
+            if change.note_body is not None:
+                lines.append("  The note was edited in agent-hub before it was accepted.")
+            if change.action == "reject":
+                lines.append(f"  Reason: {change.frontmatter['rejected_reason']}")
+        return BrainChangeBatch(
+            hub_path=hub.path,
+            hub_repo=hub.hub_repo,
+            default_branch=hub.default_branch,
+            branch_prefix=hub.branch_prefix,
+            slug=now.strftime("%Y%m%d-%H%M%S"),
+            changes=tuple(changes),
+            author=hub.author,
+            title=title,
+            body="\n".join(lines) + "\n",
+            commit_message=f"docs(brain): triage {len(changes)} learnings",
+        )
 
     def _decide(
         self,
