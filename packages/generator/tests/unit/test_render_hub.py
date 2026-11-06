@@ -106,6 +106,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/agents/spec-reviewer.md",
     "plugin/hub-workflow/agents/test-writer.md",
     "plugin/hub-workflow/agents/ux-designer.md",
+    "plugin/hub-workflow/hooks/commit_msg.py",
     "plugin/hub-workflow/hooks/event_sensor.py",
     "plugin/hub-workflow/hooks/guard.py",
     "plugin/hub-workflow/hooks/hooks.json",
