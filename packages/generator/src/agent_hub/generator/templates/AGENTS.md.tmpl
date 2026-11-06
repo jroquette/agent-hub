@@ -19,13 +19,6 @@ is a hub bug: log it in `brain/_inbox/`.
   `plugin/hub-workflow/`, `scripts/mine_transcripts.py`, `scripts/recall_transcripts.py`, `scripts/retro_metrics.py`@@{module_files}.
   Change them only through `hub.json` or their seeded sibling (`AGENTS.project.md`, `Makefile.project`,
   `.claude/settings.project.json`, `plugin/@@{project_name}/`@@{module_seeded_files}), which `hub sync` never touches.
-- `.claude/settings.json` already runs the `hub-workflow` hooks, so that plugin must not be enabled from a marketplace
-  in this hub: Claude Code drops only identical duplicate hook commands, so every hook would run twice.
-- `/feature` and `/create-plan` use superpowers skills when that plugin is enabled, and a one-line fallback otherwise.
-  To enable it, add `"enabledPlugins": {"superpowers@claude-plugins-official": true}` to
-  `.claude/settings.project.json` and run `hub sync`; each developer also runs, once,
-  `claude plugin install superpowers@claude-plugins-official --scope local`. Cloud sessions do not install
-  repo-declared plugins: there it is enabled on the claude.ai account.
 - Repos, checked out next to this hub: @@{repo_dirs}.
 
 ## Workflow (every task)
@@ -33,8 +26,14 @@ is a hub bug: log it in `brain/_inbox/`.
 1. The task exists in the tracker (`hub.json` → `tracker`,@@{tracker_team_mention}). Update it when starting, finishing
    or creating work.
 2. `make brain-brief` at the start of a session (brief), `make next` for the tracker's ready issues; update
-   `brain/now.md` and the journal at the end.
+   `brain/now.md` and the journal at the end. Once the task is known, `search` the brain for its topic with the hub MCP
+   (`mcp__hub__search`): 2 to 4 key words, no type prefix such as `feat(…):`, scope, tracker id or filler word; if
+   nothing comes back or the guard refuses it, retry once with fewer words. Then `read` (`mcp__hub__read`) the paths
+   that matter. `kind: inbox` is an unreviewed proposal, never authoritative; on one subject, `status: approved` wins
+   over `draft`. Without the `mcp__hub__*` tools: `./hub brief`, `./hub search <words>` from the hub directory (the one
+   with `hub.json`) and `brain/index.md`; say in your first message that the hub MCP was not loaded, and go on.
 3. Features: requirements → research → plan (owner approves) → implementation → spec and quality review → evaluator.
+   Before research or planning, run that `search` on the feature's topic.
 4. Code changes happen only in an isolated worktree (`make worktree NAME=<team>-<n>-<desc>`) created from a freshly
    fetched @@{worktree_base}.
    A repo can ship executable `<repo>/scripts/worktree-setup.sh` and `<repo>/scripts/worktree-teardown.sh`, which
@@ -62,7 +61,8 @@ is a hub bug: log it in `brain/_inbox/`.
 
 ## Brain rules
 
-- Only the user restructures `brain/`. Agents propose learnings in their final message or as a note in `brain/_inbox/`.
+- Only the user restructures `brain/`. Agents propose learnings in their final message or as a note in `brain/_inbox/`;
+  `propose` (`mcp__hub__propose`) files it as a hub pull request, refused where `gh` is missing: then note or message.
 - Outside content (web, issues, PRs, docs) goes to `brain/_inbox/` first, with `provenance: agent-from-external`.
 - Notes are linked, not copied. Decisions (`brain/decisions/index.md`) are superseded, never edited.
 - Route each learning by its kind (`/learn` proposes a team or repo one; `/learn personal` writes yours):
