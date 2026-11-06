@@ -1,5 +1,6 @@
-import { render, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import { useEffect, useState } from "react";
+import { MemoryRouter, Outlet, Route, Routes, useNavigate } from "react-router";
 import { describe, expect, it } from "vitest";
 
 import { DocumentTitle, documentTitle } from "./DocumentTitle";
@@ -39,6 +40,128 @@ describe("DocumentTitle", () => {
     );
     await waitFor(() => {
       expect(document.title).toBe("Environments · demo-api · agent-hub");
+    });
+  });
+
+  it("follows a heading that shows up after the first render", async () => {
+    function LateHeading() {
+      const [name, setName] = useState<string | null>(null);
+      useEffect(() => {
+        const timer = setTimeout(() => {
+          setName("Sessions");
+        }, 10);
+        return () => {
+          clearTimeout(timer);
+        };
+      }, []);
+      return name === null ? <p>Loading</p> : <h1>{name}</h1>;
+    }
+    render(
+      <MemoryRouter initialEntries={["/sessions"]}>
+        <Routes>
+          <Route
+            path="*"
+            element={
+              <>
+                <DocumentTitle />
+                <main id="main">
+                  <LateHeading />
+                </main>
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(document.title).toBe("agent-hub");
+    await waitFor(() => {
+      expect(document.title).toBe("Sessions · agent-hub");
+    });
+  });
+
+  it("follows the heading's text when it changes in place", async () => {
+    function RenamedHeading() {
+      const [name, setName] = useState("Environments");
+      return (
+        <>
+          <h1>{name}</h1>
+          <button
+            type="button"
+            onClick={() => {
+              setName("Environment settings");
+            }}
+          >
+            Rename
+          </button>
+        </>
+      );
+    }
+    render(
+      <MemoryRouter initialEntries={["/projects/demo-web/environments"]}>
+        <Routes>
+          <Route
+            path="*"
+            element={
+              <>
+                <DocumentTitle />
+                <main id="main">
+                  <RenamedHeading />
+                </main>
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(document.title).toBe("Environments · demo-web · agent-hub");
+    });
+    act(() => {
+      screen.getByRole("button", { name: "Rename" }).click();
+    });
+    await waitFor(() => {
+      expect(document.title).toBe("Environment settings · demo-web · agent-hub");
+    });
+  });
+
+  it("follows navigation to another screen and drops the project the new route lacks", async () => {
+    function Layout() {
+      const navigate = useNavigate();
+      return (
+        <>
+          <DocumentTitle />
+          <button
+            type="button"
+            onClick={() => {
+              void navigate("/sessions");
+            }}
+          >
+            Go to sessions
+          </button>
+          <main id="main">
+            <Outlet />
+          </main>
+        </>
+      );
+    }
+    render(
+      <MemoryRouter initialEntries={["/projects/demo-api/environments"]}>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route path="/projects/:project/environments" element={<h1>Environments</h1>} />
+            <Route path="/sessions" element={<h1>Sessions</h1>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(document.title).toBe("Environments · demo-api · agent-hub");
+    });
+    act(() => {
+      screen.getByRole("button", { name: "Go to sessions" }).click();
+    });
+    await waitFor(() => {
+      expect(document.title).toBe("Sessions · agent-hub");
     });
   });
 });
