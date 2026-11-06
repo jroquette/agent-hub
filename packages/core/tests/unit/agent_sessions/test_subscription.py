@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator, Callable
 
 import pytest
 
+from agent_hub.core.agent_sessions import subscription
 from agent_hub.core.agent_sessions.agent_session import AgentSessionStatus, SendMessage
 from agent_hub.core.agent_sessions.driver import TextBlock, TextDelta
 from agent_hub.core.agent_sessions.errors import AgentSessionNotFoundError
@@ -139,6 +140,39 @@ async def test_streams_raw_live_and_replays_redacted_when_text_holds_token(
     assert isinstance(stored_text, LogRecord)
     assert live_text.body["text"] == secret
     assert GITHUB_TOKEN not in str(stored_text.body)
+
+
+async def test_streams_record_raw_when_turn_released_during_replay(make_rig: MakeRig) -> None:
+    """Regression: AGH-432. A record emitted after the stream attached, while its replay still
+    reads the store, comes live (raw), not as the store's redacted copy."""
+    secret = f"token {GITHUB_TOKEN}"
+    rig = make_rig(replies={"Show it.": (Hold(), TextBlock(block=0, text=secret))})
+    created = await rig.create("Show it.")
+    await rig.until(lambda: "init" in rig.kinds(created.id))
+    live = rig.control._live[created.id]  # noqa: SLF001 -- the session the stream reads
+    reads: list[int] = []
+
+    async def read_releasing_turn(after: int, limit: int) -> tuple[LogRecord, ...]:
+        # The first read lets the turn run to its stored text record, as a turn released while
+        # the replay reads would.
+        if not reads:
+            rig.driver.release(rig.handle())
+            await rig.until(lambda: "text" in rig.kinds(created.id))
+        reads.append(after)
+        return rig.store.records(created.id, after=after, limit=limit)
+
+    stream = subscription.frames(
+        live.view(), StreamPosition(seq=0), live=live, read=read_releasing_turn
+    )
+    texts: list[LogRecord] = []
+    async for item in stream:
+        if isinstance(item, LogRecord) and item.kind == "text":
+            texts.append(item)
+        if _label(item) == "4:result":
+            break
+
+    assert reads != []
+    assert [text.body["text"] for text in texts] == [secret]
 
 
 async def test_ends_stream_after_status_when_session_ended(make_rig: MakeRig) -> None:
