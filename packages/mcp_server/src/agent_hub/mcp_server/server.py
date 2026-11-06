@@ -28,6 +28,32 @@ from agent_hub.mcp_server.propose_tool import ProposeTool
 SERVER_NAME: Final = "hub"
 # Every line ``hub mcp`` writes to its log (stderr) starts with this.
 LOG_PREFIX: Final = "hub mcp: "
+# What the server tells every client in its initialize reply: how to use the three tools. It
+# stands alone (no AGENTS.md needed), names no project, repo or path from hub.json, and stays
+# within 1,500 characters.
+INSTRUCTIONS: Final = "\n".join(
+    (
+        "This server reads the hub's brain (its team memory: decisions, learnings, playbooks, "
+        "feature records and the inbox) and its repos' docs/. Its tools are search, read and "
+        "propose (in Claude Code: mcp__hub__search, mcp__hub__read, mcp__hub__propose). Use them "
+        "at the start of every task and again before research or planning:",
+        "1. search the task's topic with 2 to 4 key words. Every word must appear in a result, so "
+        "drop type prefixes such as feat(...):, scopes, tracker ids and filler words. If nothing "
+        "comes back, or a hook refuses the call, retry once with fewer words, then go on. limit 5 "
+        "is enough to start.",
+        "2. read the paths that matter before you plan.",
+        "3. Weigh each result by its kind and status: kind inbox is an unreviewed proposal, never "
+        "authoritative; of two notes on the same subject, the one with status approved wins over "
+        "a draft one.",
+        "4. To file a learning, propose opens a hub pull request that adds one note to "
+        "brain/_inbox/. When propose is refused (for example where gh is missing, as in a cloud "
+        "session), write the learning as a note in brain/_inbox/ or put it in your final message.",
+        "Without these tools in the session, run ./hub search <words> from the hub directory (the "
+        "one with hub.json), with the same key words, and ./hub brief for the current focus; "
+        "brain/index.md says where things are. A missing server never blocks the work: say in "
+        "your first message that it was not loaded, and go on.",
+    )
+)
 
 _SEARCH: Final = (
     "Search the hub's brain and its repos' docs (the hub search index, brought up to date "
@@ -58,9 +84,16 @@ def build_server(
     clock: Callable[[], datetime],
     log: TextIO,
 ) -> MCPServer:
-    """The server for ``hub``: ``search``, ``read`` and ``propose``."""
+    """The server for ``hub``: ``search``, ``read`` and ``propose``, with ``INSTRUCTIONS`` in its
+    initialize reply."""
     answer = _Answers(log)
-    server = _HubServer(answer, name=SERVER_NAME, version=hub.version, log_level="WARNING")
+    server = _HubServer(
+        answer,
+        name=SERVER_NAME,
+        version=hub.version,
+        instructions=INSTRUCTIONS,
+        log_level="WARNING",
+    )
     knowledge = KnowledgeTools(hub)
     proposals = ProposeTool(hub, change_requests=change_requests, clock=clock)
 

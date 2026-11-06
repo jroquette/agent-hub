@@ -43,7 +43,7 @@
     ".claude/settings.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "ac58d9bf1d2760ed92ba9fe171c2a8833e7f121462439144625c8cc36a224724"
+      "sha256": "3e84fc75cdc525028a5d22837d64cc2f54f7ed2132f3b181db3da2239a27514c"
     },
     ".claude/settings.project.json": {
       "ownership": "seeded"
@@ -181,7 +181,7 @@
     "AGENTS.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "9e552c7db5ea79b207bb05b1041a9d3878be76bbeaf13fb26d1e431ac1bdacb0"
+      "sha256": "bafcb1a81b28b255d37c8331a21d48dd9d94f7459ec9532c74f002d777e62cf4"
     },
     "AGENTS.project.md": {
       "ownership": "seeded"
@@ -189,7 +189,7 @@
     "CLAUDE.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "e508056a1a52130bbb64f61dabafa8e8a7a2746ae6d445bbd94489354223da6e"
+      "sha256": "9d4828a2463e76f1d083582dea7b0f214a84b6a9fb60a38691dda6617a8d1613"
     },
     "Makefile": {
       "executable": false,
@@ -446,7 +446,7 @@
     "plugin/hub-workflow/skills/feature/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "11e9bcd6412224f969123218febef01c7cb0c318f9aeb4cdd65aa3f8eded4f77"
+      "sha256": "89ea5cfa7fed504f95471af6b5499621844caf57d85ebf8a50a35437d5f6f25e"
     },
     "plugin/hub-workflow/skills/fix/SKILL.md": {
       "executable": false,
@@ -461,7 +461,7 @@
     "plugin/hub-workflow/skills/implement/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "323379618d0dcf7a770f688532064b0d779be23d31494e8912c7919b840650ff"
+      "sha256": "362327b3c2b3ce58a153cfde7f9c7e73e81a59a241c5f8e17ff0b59a3a259cc5"
     },
     "plugin/hub-workflow/skills/incident/SKILL.md": {
       "executable": false,
@@ -471,7 +471,7 @@
     "plugin/hub-workflow/skills/kickoff/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "7d0f2e3f34caf8cb168bb6933ab4fec43ef318d9478f36e3b4f57eea7ab4b337"
+      "sha256": "8b397b26ae0be1e825ac477df6e2ae7cd92342863645e8fdd78b2d7e4242b2f4"
     },
     "plugin/hub-workflow/skills/learn/SKILL.md": {
       "executable": false,

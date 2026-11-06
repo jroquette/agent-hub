@@ -13,6 +13,9 @@ from pathlib import Path
 import pytest
 from typer.testing import Result
 
+from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.generator.built_json import managed_settings
+
 pytestmark = pytest.mark.disable_socket
 
 # The conftest's in-process runs and checkout factory (tests cannot import a conftest in
@@ -22,6 +25,9 @@ type DoctorRunner = Callable[..., Result]
 type CheckoutFactory = Callable[[str], Path]
 
 MCP_CONFIG = ".mcp.json"
+SETTINGS = ".claude/settings.json"
+PROJECT_SETTINGS = ".claude/settings.project.json"
+ENABLED_SERVERS = "enabledMcpjsonServers"
 # D-mcp-json in the JSON byte form every built file has: sorted keys, 2-space indent, newline.
 MCP_BYTES = (
     b"{\n"
@@ -107,3 +113,64 @@ def test_passes_doctor_rules_when_mcp_config_rendered(
     assert (result.exit_code, result.stderr) == (0, ""), result.output
     assert result.stdout.splitlines() == [CLEAN]
     assert (demo_hub / MCP_CONFIG).read_bytes() == MCP_BYTES
+
+
+def test_passes_settings_rules_with_enabled_mcp_servers_when_synced(
+    demo_hub: Path, run_sync: SyncRunner, run_doctor: DoctorRunner
+) -> None:
+    # ADR 0057: the managed settings enable the `hub` server; every other key keeps its value.
+    config = HubConfig.model_validate(json.loads((demo_hub / "hub.json").read_bytes()))
+
+    result = run_sync(demo_hub)
+
+    assert (result.exit_code, result.stderr) == (0, ""), result.output
+    written = (demo_hub / SETTINGS).read_bytes()
+    settings = json.loads(written)
+    assert settings[ENABLED_SERVERS] == ["hub"]
+    expected = managed_settings(config)
+    assert isinstance(expected, dict)
+    expected.pop(ENABLED_SERVERS, None)
+    settings.pop(ENABLED_SERVERS)
+    assert settings == expected
+    assert lock_files(demo_hub)[SETTINGS]["sha256"] == hashlib.sha256(written).hexdigest()
+    doctor = run_doctor(
+        demo_hub,
+        "--only",
+        "settings.valid",
+        "--only",
+        "settings.weakening",
+        "--only",
+        "permissions.bypass",
+        "--only",
+        "lock.drift",
+    )
+    assert (doctor.exit_code, doctor.stderr) == (0, ""), doctor.output
+    assert doctor.stdout.splitlines() == [CLEAN]
+
+
+def test_keeps_enabled_mcp_servers_when_project_settings_add_keys(
+    demo_hub: Path, run_sync: SyncRunner
+) -> None:
+    (demo_hub / PROJECT_SETTINGS).write_text('{"enabledPlugins": {"demo-plugin@demo": true}}\n')
+
+    result = run_sync(demo_hub)
+
+    assert (result.exit_code, result.stderr) == (0, ""), result.output
+    written = (demo_hub / SETTINGS).read_text()
+    settings = json.loads(written)
+    assert settings[ENABLED_SERVERS] == ["hub"]
+    assert written.count(f'"{ENABLED_SERVERS}"') == 1
+    assert settings["enabledPlugins"] == {"demo-plugin@demo": True}
+
+
+def test_keeps_hub_once_in_enabled_mcp_servers_when_project_settings_list_more(
+    demo_hub: Path, run_sync: SyncRunner
+) -> None:
+    # The add-only merge keeps the project's own servers and never repeats `hub`.
+    (demo_hub / PROJECT_SETTINGS).write_text('{"enabledMcpjsonServers": ["hub", "other"]}\n')
+
+    result = run_sync(demo_hub)
+
+    assert (result.exit_code, result.stderr) == (0, ""), result.output
+    settings = json.loads((demo_hub / SETTINGS).read_bytes())
+    assert settings[ENABLED_SERVERS] == ["hub", "other"]

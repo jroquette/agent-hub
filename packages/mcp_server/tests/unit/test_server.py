@@ -38,7 +38,7 @@ from agent_hub.core.testing.knowledge_fakes import FakeKnowledgeCheckout, InMemo
 from agent_hub.mcp_server.hub_context import HubCheckout, HubContext, ProposalFacts
 from agent_hub.mcp_server.proposal_input import KINDS as PROPOSAL_KINDS
 from agent_hub.mcp_server.proposal_input import pull_request_body
-from agent_hub.mcp_server.server import build_server
+from agent_hub.mcp_server.server import INSTRUCTIONS, build_server
 
 NOW = datetime(2026, 10, 21, 12, 0, tzinfo=UTC)
 AUTHOR = CommitAuthor(name="Demo Owner", email="owner@example.com")
@@ -171,6 +171,76 @@ def test_lists_three_tools_with_schemas_when_client_initializes() -> None:
     assert all(word in by_name["search"].description for word in ("500", "50", "10"))
     assert all(word in by_name["read"].description for word in ("1024", "256 KiB", "brain/"))
     assert all(word in by_name["propose"].description for word in ("120", "65,536", "_inbox"))
+
+
+INSTRUCTION_PHRASES = (
+    "search",
+    "2 to 4 key words",
+    "filler words",
+    "fewer words",
+    "hook refuses",
+    "read the paths",
+    "kind inbox",
+    "unreviewed proposal",
+    "status approved",
+    "draft",
+    "propose",
+    "hub pull request",
+    "brain/_inbox/",
+    "final message",
+    "mcp__hub__search",
+    "mcp__hub__read",
+    "mcp__hub__propose",
+    "./hub search",
+    "hub directory",
+    "hub.json",
+    "never blocks",
+)
+# The fake hub's values and a hub file name: the instructions stand alone and name none of them.
+INSTRUCTION_LEAKS = ("AGENTS.md", "demo", "acme", "/home/")
+
+
+def test_sends_standalone_instructions_when_client_initializes() -> None:
+    hub = _Hub()
+
+    async def listing(client: Client) -> tuple[str | None, Any]:
+        return client.instructions, (await client.list_tools()).tools
+
+    instructions, tools = hub.run(listing)
+
+    assert instructions == INSTRUCTIONS
+    assert 0 < len(INSTRUCTIONS) <= 1500  # noqa: PLR2004 - the instructions' size budget
+    assert [phrase for phrase in INSTRUCTION_PHRASES if phrase not in INSTRUCTIONS] == []
+    assert [leak for leak in INSTRUCTION_LEAKS if leak in INSTRUCTIONS] == []
+    by_name = {tool.name: tool for tool in tools}
+    assert sorted(by_name) == ["propose", "read", "search"]
+    search = by_name["search"].input_schema
+    assert search["required"] == ["query"]
+    query = search["properties"]["query"]
+    assert (query["type"], query["minLength"], query["maxLength"]) == ("string", 1, 500)
+    limit = search["properties"]["limit"]
+    assert (limit["type"], limit["minimum"], limit["maximum"], limit["default"]) == (
+        "integer",
+        1,
+        50,
+        10,
+    )
+    assert _enum(search, "kind") == sorted(KINDS)
+    read = by_name["read"].input_schema
+    assert read["required"] == ["path"]
+    assert read["properties"]["path"]["type"] == "string"
+    propose = by_name["propose"].input_schema
+    assert sorted(propose["required"]) == ["body", "external", "kind", "title"]
+    assert _enum(propose, "kind") == sorted(PROPOSAL_KINDS)
+    assert propose["properties"]["external"]["type"] == "boolean"
+    assert by_name["search"].annotations.read_only_hint is True
+    assert by_name["read"].annotations.read_only_hint is True
+    proposing = by_name["propose"].annotations
+    assert (
+        proposing.read_only_hint,
+        proposing.destructive_hint,
+        proposing.open_world_hint,
+    ) == (False, False, True)
 
 
 def _enum(schema: dict[str, Any], name: str) -> list[str]:

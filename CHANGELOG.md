@@ -41,6 +41,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   still shows when it is in another repository (AGH-687).
 - `hub web`: each browser tab is named after its screen (`<screen> · <project> · agent-hub`), and the app has the
   agent-hub favicon (AGH-687).
+- Agents consult the brain first (AGH-688): `hub mcp` sends server instructions on connect (search the task's topic
+  in 2 to 4 key words, read, weigh `kind` and `status`, `propose`, and the `./hub search` fallback), the hub's
+  `AGENTS.md` says the same at session start and before a feature's research, and `/kickoff`, `/implement` and
+  `/feature` run one search and list up to 5 results. The managed `.claude/settings.json` enables the `hub` server
+  (`enabledMcpjsonServers`), so a trusted hub no longer asks to approve it; opt out with `disabledMcpjsonServers` in
+  `.claude/settings.local.json` (ADR 0057). The superpowers and plugin double-wiring notes move from `AGENTS.md` to
+  `CLAUDE.md`. Arrives after you bump `platform.version` and run `hub sync`.
 
 ### Changed
 

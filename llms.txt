@@ -101,3 +101,4 @@ License: Apache-2.0.
 - [0054. Pin the platform release by commit](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0054-pin-the-platform-release-by-commit.md): `docs/adr/0054-pin-the-platform-release-by-commit.md`
 - [0055. SessionStart brief from a cache, refreshed in the background](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0055-session-start-brief-from-a-cache.md): `docs/adr/0055-session-start-brief-from-a-cache.md`
 - [0056. Screen-shaped reads beside the resource routes](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0056-screen-shaped-reads.md): `docs/adr/0056-screen-shaped-reads.md`
+- [0057. The managed settings enable the `hub` MCP server, which takes effect in a trusted folder](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0057-managed-settings-enable-hub-mcp.md): `docs/adr/0057-managed-settings-enable-hub-mcp.md`
