@@ -479,6 +479,27 @@ def test_asks_when_command_names_too_many_message_files(ws: Path, decide: Decide
     assert verdicts == [None, ("ask", UNCHECKED_REASON.format("body.md", cause))]
 
 
+CALLS_LIMIT = """
+import json
+import guard
+print(json.dumps(guard.CHANGE_FLOW_CALLS_CAP))
+"""
+CALLS_UNCHECKED_REASON = "change flow not checked: over 64 git and gh calls in one command; confirm"
+
+
+def test_asks_when_command_has_too_many_git_calls(
+    ws: Path, decide: Decide, *, hook_python: str, run_python: Callable[..., Any]
+) -> None:
+    """Each git call reads the variables exported before it: 64 calls at most keep a command of
+    thousands of exports and calls linear."""
+    sixty_four = "; ".join(["git status"] * 64)
+
+    verdicts = decide([bash_at(sixty_four, ws), bash_at(sixty_four + "; gh pr view 3", ws)])
+
+    assert verdicts == [None, ("ask", CALLS_UNCHECKED_REASON)]
+    assert run_python(hook_python, CALLS_LIMIT, path=ws / "demo-hub" / HOOKS) == 64
+
+
 def test_reads_option_cluster_once_when_word_is_huge(ws: Path, decide: Decide) -> None:
     """A 4 MiB cluster of short options: copying the rest of the word for each letter copies 8 TiB
     (1 MiB took 22 s here), far past the child's 60 s; read once, it takes about a second."""
