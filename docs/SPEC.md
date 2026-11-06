@@ -1214,7 +1214,8 @@ Continuity between sessions comes from the brain and the summaries, not from rer
   without the tools. The hub's `AGENTS.md` and `/kickoff`, `/implement` and `/feature` say the same. Every agent of
   the base plugin lists `search` and `read` (`mcp__hub__search`, `mcp__hub__read`) in its `tools:` and searches before
   it concludes; `/recall` searches through them before `./hub search` and `rg`; `/learn` files a team learning with
-  `propose` and writes the inbox note by hand only when the call is refused (AGH-697). The managed settings pre-allow
+  `propose` and writes the inbox note by hand only when the hub cannot open the pull request: never for a learning
+  already proposed, a refused input or a read-only hub (AGH-697). The managed settings pre-allow
   `search` and `read`, never `propose`, and enable the `hub` server (`enabledMcpjsonServers`), which takes effect once
   the folder is trusted ([ADR 0057](adr/0057-managed-settings-enable-hub-mcp.md)).
 - Out of scope: hosting, Postgres, accounts, sharing transcripts, embeddings. A move to hosted later replaces only where

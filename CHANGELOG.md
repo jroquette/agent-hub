@@ -16,8 +16,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - Subagents, `/recall` and `/learn` use the hub MCP (AGH-697). Every agent of the base plugin (`researcher`,
   `architect`, the reviewers, …) lists `mcp__hub__search` and `mcp__hub__read` in its `tools:` and searches the
   brain for its task's topic before it concludes. `/recall` searches through the hub MCP first, then `./hub search`,
-  and only then `rg`. `/learn` files a team learning with `mcp__hub__propose`, and writes the note in `brain/_inbox/`
-  by hand when the call is refused (no `gh`, or a cloud session where GitHub's API is blocked). The managed
+  and only then `rg`. `/learn` files a team learning with `mcp__hub__propose`. It writes the note in `brain/_inbox/`
+  by hand when the hub cannot open the pull request (no `gh`, or a cloud session where GitHub's GraphQL API is
+  blocked), and never when the learning is already proposed or the hub is read-only. The managed
   `.claude/settings.json` pre-allows `mcp__hub__search` and `mcp__hub__read`; `propose` still asks. Arrives after
   you bump `platform.version` and run `hub sync`.
 

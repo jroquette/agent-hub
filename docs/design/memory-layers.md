@@ -120,4 +120,5 @@ approval of that path.
 - `autoMemoryDirectory` in the managed `.claude/settings.json` would load personal memory in a plain `claude` too;
   whether Claude Code accepts it from project settings is unchecked.
 - Cloud sessions and a plain `claude` do not load `MEMORY.md`, and a cloud container loses the folder when it ends.
-- Duplicates across layers (AGH-53); `/learn` opening PRs for a team learning (AGH-67).
+- Duplicates across layers (AGH-53). `/learn` now opens a hub PR for a team learning through the hub MCP's `propose`
+  (AGH-697), so AGH-67's question is answered.
