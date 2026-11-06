@@ -5490,25 +5490,25 @@ def test_ignores_local_file_when_gitignore_rendered(demo_config: HubConfig) -> N
 AGENTS_FOLDER = "plugin/hub-workflow/agents"
 AGENT_FILES_SHA256 = {
     f"{AGENTS_FOLDER}/architect.md": (
-        "944ff449baeb1e573159c58a7076707bc22ff75695c676cdadf34e811a1873a9"
+        "42b29a1b7d7cd39c50d7b09242079db919fbb109f860fe03dd0f4a522a9189c0"
     ),
     f"{AGENTS_FOLDER}/evaluator.md": (
-        "569c63eed27f4181d854b146cdcd1206021519a8b9debe404c3aada0aa14f27f"
+        "052a257cb5f46d615dc9943f416a1d9bd085dfaa200e295d3f7effb0bf39abae"
     ),
     f"{AGENTS_FOLDER}/planner.md": (
-        "0c4f2269bec4744ac0333c4a894666c51eeabe1fdc21577d1c2d2d22aa9ece73"
+        "6b628adb57070c467134c81104fd560d737ea681084f2325e4f1e81c08e7732e"
     ),
     f"{AGENTS_FOLDER}/quality-reviewer.md": (
-        "313b88033861a4dc31fa082f8149704fe02e23d88c3019010951c5ed314e914c"
+        "155dba092069bfc0f7499ab4394c1a399f42c427050728f6eb465f9243b93223"
     ),
     f"{AGENTS_FOLDER}/requirements-analyst.md": (
-        "b83cd46e2d32ef70c90e7457fefefa84ed001e612b20905df9debf61e8058a9e"
+        "afb00dd0265f59f72f5be2b2bafb8dc6912f78641d8cc0ca8a20e7eefb3d49b7"
     ),
     f"{AGENTS_FOLDER}/researcher.md": (
-        "7b4528a4a7f5a11575155da7b67134b946d10b85eaabdc0b95579b123d6d004a"
+        "52c8aba28ed3aeb7f1f92e35a821cd9d267989c7fdb6970e391f550f8d3bdd08"
     ),
     f"{AGENTS_FOLDER}/spec-reviewer.md": (
-        "94e2e844a34ab14b1165ada826fdef1eb9f7eec3296d5489ccb428630bb94030"
+        "f2f27988fae2277c7e75163a77cad5a30ea8a924ba034a08d16f388c4913289e"
     ),
 }
 # The tier each agent template names: its default (spec D3).

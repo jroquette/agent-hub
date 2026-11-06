@@ -22,7 +22,16 @@ For a team or repo learning, file it with the hub MCP's `propose` (`mcp__hub__pr
 
 Report the `pr_url` and `path` it returns, then stop.
 
-When `propose` is missing or refused (its one-line error starts `propose:`), write the note by hand instead and name the error in one line: for example `gh` is missing, the hub has no author, a push or the pull request failed, or a cloud session where GitHub's GraphQL API is blocked. A refusal of the input itself (an empty or too long title or body, a secret rule, an AI attribution line) is yours to fix and call again; never write refused text to the inbox. By hand, write `brain/_inbox/YYYY-MM-DD-<slug>.md`:
+When the call is refused, its one-line error starts `propose:`. Read it:
+
+- **Already proposed** (`branch exists: <branch>` or `note exists: brain/<note>`): the learning already has a pull request or is on the default branch. Report that branch or path and stop; never write a second copy. Only when it holds a different learning whose title gives the same file name, reword the title and call once more.
+- **The input** (any refusal about the title, body, kind or arguments: empty, too long, not one line, no letters or digits, not UTF-8, an unknown kind, a secret rule, an AI attribution line): fix it and call once more; refused again for the same reason, stop and tell the user. Never write refused text to the inbox.
+- **`Hub is read-only here`**: nothing can be written in this hub. Put the learning in your final message and stop.
+- **Anything else** (`gh` is missing, the hub has no author, a push or the pull request failed or timed out, or a cloud session where GitHub's GraphQL API is blocked): write the note by hand, below, and name the error in one line.
+
+When the session has no `propose`, write the note by hand too. When the user declines the `propose` call, ask before writing it by hand.
+
+By hand, write `brain/_inbox/YYYY-MM-DD-<slug>.md`:
 
 ```
 ---

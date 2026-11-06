@@ -32,6 +32,7 @@ pytestmark = pytest.mark.disable_socket
 
 # The conftest's hub factory (tests cannot import a conftest in importlib mode).
 type KnowledgeHubFactory = Callable[..., Path]
+type CheckoutState = Callable[[Path], tuple[str, dict[str, bytes]]]
 
 DECISION = (
     b"---\nstatus: accepted\nprovenance: agent\n---\n"
@@ -126,6 +127,28 @@ def test_returns_text_and_metadata_when_path_allowed(
         "provenance": None,
         "text": ADR.decode(),
     }
+
+
+def test_leaves_checkouts_unchanged_when_read_called(
+    knowledge_hub: KnowledgeHubFactory, tmp_path: Path, checkout_state: CheckoutState
+) -> None:
+    """AGH-697: ``read`` writes nothing in the hub's or the repo's checkout (ignored files
+    included), so the read-only gate never holds a read-only agent that calls it."""
+    hub = knowledge_hub(
+        {"brain/decisions/0001-worktrees.md": DECISION, "demo-api/docs/adr/0001-x.md": ADR}
+    )
+    checkouts = (hub, tmp_path / "demo-api")
+    before = [checkout_state(folder) for folder in checkouts]
+
+    decision, adr = served(
+        hub_env(hub, tmp_path),
+        ("read", {"path": "brain/decisions/0001-worktrees.md"}),
+        ("read", {"path": "demo-api/docs/adr/0001-x.md"}),
+    )
+
+    assert found_by(decision)["text"] == DECISION.decode()
+    assert found_by(adr)["text"] == ADR.decode()
+    assert [checkout_state(folder) for folder in checkouts] == before
 
 
 def test_returns_file_when_exactly_at_size_limit(

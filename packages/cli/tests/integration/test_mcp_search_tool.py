@@ -34,6 +34,7 @@ pytestmark = pytest.mark.disable_socket
 # The conftest's in-process run and hub factory (tests cannot import a conftest in importlib mode).
 type CommandRunner = Callable[..., Result]
 type KnowledgeHubFactory = Callable[..., Path]
+type CheckoutState = Callable[[Path], tuple[str, dict[str, bytes]]]
 
 DECISION = b"---\nstatus: accepted\n---\n# Worktrees from origin\n\nCreate worktrees from origin.\n"
 PLAYBOOK = b"# Cleanup\n\nRemove old worktrees after the merge.\n"
@@ -133,6 +134,23 @@ def test_matches_hub_search_results_when_query_given(
         assert hit["snippet"]
         assert "\n" not in hit["snippet"]
         assert len(hit["snippet"]) <= SNIPPET_CHARS
+
+
+def test_leaves_checkouts_unchanged_when_search_syncs_index(
+    knowledge_hub: KnowledgeHubFactory, tmp_path: Path, checkout_state: CheckoutState
+) -> None:
+    """AGH-697: ``search`` brings the index up to date and writes only its database, so the hub's
+    and the repo's checkouts (ignored files included) stay as they were. The base plugin's
+    read-only agents call it, and the read-only gate holds an agent that changed a checkout."""
+    hub = ranked_hub(knowledge_hub)
+    checkouts = (hub, tmp_path / "demo-api")
+    before = [checkout_state(folder) for folder in checkouts]
+
+    [result] = served(hub_env(hub, tmp_path), ("search", {"query": "worktrees"}))
+
+    assert paths_of(found_by(result)) != []
+    assert (tmp_path / "index.db").is_file()
+    assert [checkout_state(folder) for folder in checkouts] == before
 
 
 def test_caps_results_at_limit_when_sixty_match(

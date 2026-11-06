@@ -12,7 +12,7 @@ Paths are relative to the hub (the directory with `hub.json`).
 
 1. Brain: the hub MCP's `search` (`mcp__hub__search`) on the topic in 2 to 4 key words (drop type prefixes such as `feat(…):`, scopes, tracker ids and filler words); if nothing comes back or the guard refuses the call, retry once with fewer words. Then `read` (`mcp__hub__read`) each result that bears on the question. A `kind: inbox` result is an unreviewed proposal, never authoritative; between two notes on one subject, `status: approved` wins over `draft`.
    Without the hub MCP, run `./hub search <words>` from the hub directory (the one with `hub.json`) with the same words, read the paths it prints, and say in one line that the hub MCP was not loaded.
-   Only when neither is available, or both found nothing after the retry: `brain/index.md` → the matching folder; `rg -n -i "<terms>" brain/`.
+   Only when neither is available or works, or the search found nothing after the retry: `brain/index.md` → the matching folder; `rg -n -i "<terms>" brain/`.
 2. Decisions: `brain/decisions/index.md`, then the ADR/decision folder of each repo in `hub.json` → `repos` (see its `AGENTS.md`).
 3. Journal: the same search with `kind: journal` (`--kind journal` for `./hub search`), newest first; only when it finds nothing, `rg -n -i "<terms>" brain/journal/` (newest first).
 4. Past transcripts (local, pull-only): `python3 scripts/recall_transcripts.py <term> [<term>…] [--any]`. It prints only the matching message text, newest session first.

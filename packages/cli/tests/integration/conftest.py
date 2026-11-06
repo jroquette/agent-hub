@@ -352,6 +352,30 @@ def knowledge_hub(tmp_path: Path, demo_checkout: CheckoutFactory) -> KnowledgeHu
     return build
 
 
+@pytest.fixture
+def checkout_state() -> Callable[[Path], tuple[str, dict[str, bytes]]]:
+    """``checkout_state(folder)``: a checkout as the read-only gate sees it, ``git status
+    --porcelain --ignored -uall``, and every file's bytes outside ``.git/`` by relative path."""
+    git = shutil.which("git")
+    assert git is not None, "git is needed for a checkout's state"
+
+    def state(folder: Path) -> tuple[str, dict[str, bytes]]:
+        status = subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
+            [git, "status", "--porcelain", "--ignored", "-uall"],
+            cwd=folder,
+            check=True,
+            capture_output=True,
+        ).stdout.decode("utf-8")
+        files = {
+            path.relative_to(folder).as_posix(): path.read_bytes()
+            for path in sorted(folder.rglob("*"))
+            if path.is_file() and ".git" not in path.relative_to(folder).parts
+        }
+        return status, files
+
+    return state
+
+
 # ``hub mcp``'s ``propose`` (AGH-392): a hub whose ``origin`` is a local bare repository behind a
 # GitHub url, and a fake ``gh``. Adapted from ``packages/hub_git/tests/conftest.py`` (a conftest
 # cannot be shared across packages).

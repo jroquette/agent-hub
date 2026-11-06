@@ -5,10 +5,11 @@ An agent whose frontmatter lists its tools gets no MCP tool it does not name, so
 ``mcp__hub__read``) after its built-in ones, never ``mcp__hub__propose``, and keeps its
 ``mutates_checkout``. Its prompt holds one line, the same in every agent, that searches the brain
 for the task's topic and reads what matters before it concludes, with the ``./hub search`` or
-Grep fallback. ``/recall`` searches through the MCP, then ``./hub search``, and only then ``rg``.
-``/learn`` files a team learning with ``propose`` and writes the inbox note by hand only when the
-tool is missing or refused for a reason other than its own text. Checked on the demo, two-team
-and conventions renders.
+Grep fallback (the test-writer adds that brain results follow its "Never read" rule). ``/recall``
+searches through the MCP, then ``./hub search``, and only then ``rg``. ``/learn`` files a team
+learning with ``propose`` and writes the inbox note by hand only when the hub cannot open the pull
+request: never for a learning already proposed, a refused input or a read-only hub. Checked on
+the demo, two-team and conventions renders.
 """
 
 from collections.abc import Callable
@@ -56,9 +57,11 @@ BRAIN_PHRASES = (
     "`status: approved` wins over `draft`",
     "`./hub search <words>`",
     "hub directory (the one with `hub.json`)",
-    "Grep",
+    "without Bash, or when it fails, Grep `brain/`",
     "never blocks",
 )
+# The test-writer's own line after it: brain results never lift its "Never read" rule.
+TEST_WRITER_BRAIN = "Brain results follow the **Never read** rule"
 # What `/recall`'s first step says besides the three searches.
 RECALL_PHRASES = (
     "2 to 4 key words",
@@ -77,6 +80,36 @@ CLI_SEARCH = "`./hub search <words>`"
 BRAIN_RG = '`rg -n -i "<terms>" brain/`'
 JOURNAL_RG = '`rg -n -i "<terms>" brain/journal/`'
 INBOX_NOTE = "`brain/_inbox/YYYY-MM-DD-<slug>.md`"
+# `/learn`'s refusal cases (each a bullet that starts with its bold label), with what each says:
+# a learning already proposed and a refused input are never written by hand, a read-only hub goes
+# to the final message, and only the rest falls back to the hand-written note.
+REFUSAL_CASES = {
+    "Already proposed": (
+        "`branch exists: <branch>`",
+        "`note exists: brain/<note>`",
+        "Report that branch or path and stop",
+        "never write a second copy",
+        "reword the title and call once more",
+    ),
+    "The input": (
+        "title, body, kind or arguments",
+        "an unknown kind",
+        "a secret rule",
+        "an AI attribution line",
+        "call once more",
+        "refused again for the same reason, stop and tell the user",
+        "Never write refused text to the inbox",
+    ),
+    "`Hub is read-only here`": ("Put the learning in your final message and stop",),
+    "Anything else": (
+        "`gh` is missing",
+        "the hub has no author",
+        "cloud session",
+        "GraphQL",
+        "write the note by hand",
+        "name the error in one line",
+    ),
+}
 DOCUMENTS = [
     pytest.param(a_hub_document, id="demo"),
     pytest.param(a_two_team_document, id="two_teams"),
@@ -122,6 +155,12 @@ def flat(text: str) -> str:
     return " ".join(text.split())
 
 
+def refusal_case(text: str, label: str) -> str:
+    """The flat text of the one bullet that starts with ``- **<label>**``."""
+    [line] = [line for line in text.splitlines() if line.startswith(f"- **{label}**")]
+    return flat(line)
+
+
 def test_lists_hub_mcp_reads_when_agent_rendered(texts: dict[str, str]) -> None:
     found = agents(texts)
 
@@ -149,6 +188,10 @@ def test_searches_brain_before_concluding_when_agent_rendered(texts: dict[str, s
         assert starts, name
         assert min(starts) < prompt.index(line), name
         lines[name] = line
+        # Only the test-writer, right after it, keeps brain results under its "Never read" rule.
+        following = prompt.split(line + "\n", 1)[1].split("\n", 1)[0]
+        assert following.startswith(TEST_WRITER_BRAIN) == (name == "test-writer"), name
+        assert (TEST_WRITER_BRAIN in prompt) == (name == "test-writer"), name
 
     # One line, the same in every agent.
     assert len(set(lines.values())) == 1, lines
@@ -162,7 +205,9 @@ def test_recall_searches_mcp_then_cli_then_rg_when_rendered(texts: dict[str, str
     assert text.index(MCP_SEARCH) < text.index(CLI_SEARCH) < text.index(BRAIN_RG)
     for phrase in RECALL_PHRASES:
         assert phrase in text, phrase
-    assert "Only when neither" in text[text.index(CLI_SEARCH) : text.index(BRAIN_RG)]
+    fallback = text[text.index(CLI_SEARCH) : text.index(BRAIN_RG)]
+    assert "Only when neither is available or works" in fallback
+    assert "the search found nothing after the retry" in fallback
     assert journal.index("`kind: journal`") < journal.index("`--kind journal`")
     assert journal.index("`--kind journal`") < journal.index(JOURNAL_RG)
 
@@ -186,18 +231,19 @@ def test_learn_proposes_through_mcp_before_inbox_note_when_rendered(
         "`pr_url`",
     ):
         assert phrase in text, phrase
-    fallback = text[text.index("`mcp__hub__propose`") : text.index(INBOX_NOTE)]
+    refusals = text[text.index("`mcp__hub__propose`") : text.index(INBOX_NOTE)]
+    assert "its one-line error starts `propose:`" in refusals
+    for label, phrases in REFUSAL_CASES.items():
+        case = refusal_case(team, label)
+        assert case in refusals, label
+        for phrase in phrases:
+            assert phrase in case, (label, phrase)
+        # Only the last case writes the note by hand.
+        assert ("by hand" in case) == (label == "Anything else"), label
     for phrase in (
-        "missing or refused",
-        "`propose:`",
-        "`gh`",
-        "cloud session",
-        "GraphQL",
-        "by hand",
-        "secret rule",
-        "AI attribution",
-        "never write refused text",
+        "When the session has no `propose`, write the note by hand too",
+        "When the user declines the `propose` call, ask before writing it by hand",
     ):
-        assert phrase in fallback, phrase
+        assert phrase in refusals, phrase
     # `personal` and `promote` never propose.
     assert "mcp__hub__propose" not in rest

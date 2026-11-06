@@ -291,52 +291,52 @@
     "plugin/hub-workflow/agents/architect.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "944ff449baeb1e573159c58a7076707bc22ff75695c676cdadf34e811a1873a9"
+      "sha256": "42b29a1b7d7cd39c50d7b09242079db919fbb109f860fe03dd0f4a522a9189c0"
     },
     "plugin/hub-workflow/agents/evaluator.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "569c63eed27f4181d854b146cdcd1206021519a8b9debe404c3aada0aa14f27f"
+      "sha256": "052a257cb5f46d615dc9943f416a1d9bd085dfaa200e295d3f7effb0bf39abae"
     },
     "plugin/hub-workflow/agents/planner.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "0c4f2269bec4744ac0333c4a894666c51eeabe1fdc21577d1c2d2d22aa9ece73"
+      "sha256": "6b628adb57070c467134c81104fd560d737ea681084f2325e4f1e81c08e7732e"
     },
     "plugin/hub-workflow/agents/quality-reviewer.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "313b88033861a4dc31fa082f8149704fe02e23d88c3019010951c5ed314e914c"
+      "sha256": "155dba092069bfc0f7499ab4394c1a399f42c427050728f6eb465f9243b93223"
     },
     "plugin/hub-workflow/agents/requirements-analyst.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "b83cd46e2d32ef70c90e7457fefefa84ed001e612b20905df9debf61e8058a9e"
+      "sha256": "afb00dd0265f59f72f5be2b2bafb8dc6912f78641d8cc0ca8a20e7eefb3d49b7"
     },
     "plugin/hub-workflow/agents/researcher.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "7b4528a4a7f5a11575155da7b67134b946d10b85eaabdc0b95579b123d6d004a"
+      "sha256": "52c8aba28ed3aeb7f1f92e35a821cd9d267989c7fdb6970e391f550f8d3bdd08"
     },
     "plugin/hub-workflow/agents/security-reviewer.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "7a25786f23907b146b2b617b3874e5c941b5237d4a1ef362a9a20e1df814d621"
+      "sha256": "c504084d5ca6a5e41d4e079ad3debbfe2adefeed1f6b53ad978b7f54fbcaaac8"
     },
     "plugin/hub-workflow/agents/spec-reviewer.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "94e2e844a34ab14b1165ada826fdef1eb9f7eec3296d5489ccb428630bb94030"
+      "sha256": "f2f27988fae2277c7e75163a77cad5a30ea8a924ba034a08d16f388c4913289e"
     },
     "plugin/hub-workflow/agents/test-writer.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "0b7db8aaf57ef0d4fb021c6fbdbdf466ccc032cd94160dc9a24c4095a83aea28"
+      "sha256": "912e44a2e648ef981bba25fc797a29cef30e5363cfd169f6a88e54b5b267c27c"
     },
     "plugin/hub-workflow/agents/ux-designer.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "eff4967f5f3f85b0e5eb2352f28b6c0ff5524a0bea360208d69000d52a7159bf"
+      "sha256": "5aad12229c74eecd6d2e083c74c568bd2f7042d7dfc40ef5aefe4e62028de952"
     },
     "plugin/hub-workflow/hooks/event_sensor.py": {
       "executable": true,
@@ -476,7 +476,7 @@
     "plugin/hub-workflow/skills/learn/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "1f4d8a378fc06c457a619c8818d93528afb2ea0ed1731cda89c36785a4458ae3"
+      "sha256": "cd2e5d8f02f9088e4da9e9e5447ae1e95c0113ee8c1f7f394d147d1497a81071"
     },
     "plugin/hub-workflow/skills/onboard/SKILL.md": {
       "executable": false,
@@ -516,7 +516,7 @@
     "plugin/hub-workflow/skills/recall/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "4399bb9e0d576bc5f0e99302280a8236ec16312065b507ce9a15a25a5f56faf1"
+      "sha256": "00d53f68873a26fac745b0df29ae9f5e882f7002ef8def88ca5eb78e17cd296c"
     },
     "plugin/hub-workflow/skills/refactor/SKILL.md": {
       "executable": false,
