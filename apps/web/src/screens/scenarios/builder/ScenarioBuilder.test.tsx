@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -4580,6 +4580,23 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(within(fetch).getByRole("group", { name: "Step 1 settings" })).toBeInTheDocument();
     await user.keyboard("{Escape}");
     expect(within(fetch).queryByRole("group", { name: "Step 1 settings" })).not.toBeInTheDocument();
+
+    // A panel asked for one step does not come back for it unasked after another step.
+    await user.click(fetch);
+    await user.click(
+      within(within(fetch).getByRole("group", { name: "Step 1 settings" })).getByRole("button", {
+        name: "Edit all of step 1 in the panel",
+      }),
+    );
+    expect(await screen.findByRole("region", { name: /^Inspector: / })).toBeInTheDocument();
+    await user.click(screen.getByRole("treeitem", { name: CHECK }));
+    await user.click(screen.getByRole("treeitem", { name: FETCH }));
+    expect(screen.queryByRole("region", { name: /^Inspector: / })).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole("treeitem", { name: FETCH })).getByRole("group", {
+        name: "Step 1 settings",
+      }),
+    ).toBeInTheDocument();
   });
 
   it("scenario builder's left column is a rail below 1920 px, opening over the list", async () => {
@@ -4620,6 +4637,20 @@ describe("ScenarioBuilder (scenario builder)", () => {
         screen.queryByRole("complementary", { name: "Blocks, variables and actions" }),
       ).not.toBeInTheDocument();
       expect(blocks).toHaveFocus();
+      // A click outside, on the list, closes it.
+      await user.click(blocks);
+      const scrim = globalThis.document.querySelector(".sb-rail-scrim");
+      expect(scrim).not.toBeNull();
+      if (scrim) fireEvent.pointerDown(scrim);
+      expect(
+        screen.queryByRole("complementary", { name: "Blocks, variables and actions" }),
+      ).not.toBeInTheDocument();
+      // So does a block added from it.
+      await user.click(blocks);
+      await user.click(screen.getByRole("button", { name: "Add Run an action at the end" }));
+      expect(
+        screen.queryByRole("complementary", { name: "Blocks, variables and actions" }),
+      ).not.toBeInTheDocument();
     } finally {
       vi.unstubAllGlobals();
     }

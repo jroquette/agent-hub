@@ -49,8 +49,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   - An open Wait until reads as a poll: Done when lists its conditions, How often gives "every … · up to … · at most
     N checks", each editable in place, and it offers only actions that read.
   - Below 1920 px the left column is a rail of three buttons (Blocks, Variables, Actions) that opens the column over
-    the list, and the app sidebar folds to its rail on the scenario page only. The sidebar's toggle expands it for the
-    visit without changing your stored choice.
+    the list, and the app sidebar folds to its rail on the scenario page only, where the restored-changes banner takes one line. The
+    sidebar's toggle expands it for the visit without changing your stored choice.
 - A done Context step in a ticket's panel links to the ticket's context brief in Brain instead of saying "Not reached"
   (AGH-687).
 - The `ux-designer` agent also writes a static HTML mockup, `ux-<new|change>-<screen>.html`, beside each design. Run

@@ -1,9 +1,21 @@
+import { readFileSync } from "node:fs";
+
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { useEffect, useState } from "react";
 import { MemoryRouter, Outlet, Route, Routes, useNavigate } from "react-router";
 import { describe, expect, it } from "vitest";
 
 import { DocumentTitle, documentTitle } from "./DocumentTitle";
+
+describe("the page's head", () => {
+  it("names the app and shows the agent-hub icon before any screen draws", () => {
+    const page = new DOMParser().parseFromString(readFileSync("index.html", "utf8"), "text/html");
+    expect(page.title).toBe("agent-hub");
+    const icon = page.querySelector('link[rel="icon"]');
+    expect(icon?.getAttribute("type")).toBe("image/svg+xml");
+    expect(decodeURIComponent(icon?.getAttribute("href") ?? "")).toContain(">ah</text>");
+  });
+});
 
 describe("documentTitle", () => {
   it("joins the screen, the project and the app name", () => {
