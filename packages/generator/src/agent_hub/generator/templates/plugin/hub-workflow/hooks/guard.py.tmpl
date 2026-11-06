@@ -58,7 +58,7 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         a mutating hub env (add, set, remove, service add|remove; list and show pass) or hub repo
         (add, set, remove; list passes), git hooks skipped (--no-verify on commit, push or merge, commit's
         -n, core.hooksPath set by -c, --config-env, an assignment or git config), a message file that cannot
-        be read (stdin, an expansion, unreadable, not regular, over 1 MiB), a bare push whose branch cannot
+        be read (stdin, an expansion, unreadable, not regular, over 1 MiB, past 8 in one command), a bare push whose branch cannot
         be told, a commit identity that cannot be (git config unreadable, an expansion, a folder that
         cannot be told, an --author with no email), a git push whose remote or refspec is a shell expansion
         or that deletes a remote branch (--delete, -d, a :<branch> refspec), git push or commit or gh pr in
@@ -1279,6 +1279,7 @@ CALL_PREFIX_WORDS = INFRA_PREFIX_WORDS | {"{", "!", "exec", "nohup"}
 ENV_VALUE_OPTIONS = INFRA_ENV_VALUE | {"-u", "--unset"}
 GIT_READ_TIMEOUT = 2  # seconds for one git read: the branch a bare push sends, a commit's identities
 GIT_READS_CAP = 4  # git reads one command makes; past it a read asks, so all fit the hook's 10 s
+MESSAGE_READS_CAP = 8  # message files one command reads (each at most BLOCKED_FILE_CAP); past it a file asks
 # git's own options that take the next word as their value, and those that move where it runs.
 GIT_VALUE_OPTIONS = frozenset(("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--super-prefix"))
 GIT_LOCATION_OPTIONS = ("--git-dir", "--work-tree")
@@ -1446,15 +1447,16 @@ def _parsed(
                 options.append((name, None))
         elif text.startswith("-") and len(text) > 1:
             for index in range(1, len(text)):
-                letter, rest = text[index], text[index + 1:]
+                letter = text[index]
+                if letter not in values and letter not in optional:
+                    options.append(("-" + letter, None))
+                    continue
+                rest = text[index + 1:]  # once per word: the letter that takes a value ends the cluster
                 if letter in values and not rest and at < len(args):
                     options.append(("-" + letter, args[at]))
                     at += 1
-                elif letter in values or letter in optional:
-                    options.append(("-" + letter, (rest, expanded) if rest else None))
                 else:
-                    options.append(("-" + letter, None))
-                    continue
+                    options.append(("-" + letter, (rest, expanded) if rest else None))
                 break
         else:
             operands.append((text, expanded))
@@ -1489,15 +1491,26 @@ def _git_folder(here: str | None, options: list[tuple[str, tuple[str, bool]]]) -
     return here
 
 
-class _GitReads:
-    """One command's git reads: each one run once (by its arguments, folder, location options and
-    the call's variables), at most GIT_READS_CAP of them, each cut at GIT_READ_TIMEOUT."""
+class _Reads:
+    """One command's reads, bounded so they fit the hook's 10 s: git runs (each run once, by its
+    arguments, folder, location options and the call's variables; at most GIT_READS_CAP, each cut
+    at GIT_READ_TIMEOUT) and message files (at most MESSAGE_READS_CAP); and targets, the words the
+    command's redirections write to."""
 
-    def __init__(self) -> None:
+    def __init__(self, targets: set[str]) -> None:
+        self.targets = targets
         self.done: dict[tuple, tuple[int, str] | None] = {}
+        self.messages = 0
 
-    def read(self, args: list[str], folder: str | None, options: list[tuple[str, tuple[str, bool]]],
-             env: dict[str, str | None]) -> tuple[int, str] | None:
+    def message(self, path: str) -> tuple[str | None, str | None]:
+        """_message_text(path), or (None, why) past MESSAGE_READS_CAP files."""
+        self.messages += 1
+        if self.messages > MESSAGE_READS_CAP:
+            return None, f"over {MESSAGE_READS_CAP} message files in one command"
+        return _message_text(path)
+
+    def git(self, args: list[str], folder: str | None, options: list[tuple[str, tuple[str, bool]]],
+            env: dict[str, str | None]) -> tuple[int, str] | None:
         """(git's exit code, its stdout) for `git <location options> <args>` run in folder with the
         call's variables; None when it cannot run (no folder, an expanded location, no git, the
         timeout, the cap reached)."""
@@ -1542,22 +1555,22 @@ def _message_text(path: str) -> tuple[str | None, str | None]:
     return data.decode("utf-8", "replace"), None
 
 
-def _message_files(files: list[tuple[str, bool]], folder: str | None, targets: set[str], reason: str) -> Verdict:
+def _message_files(files: list[tuple[str, bool]], folder: str | None, reason: str, reads: _Reads) -> Verdict:
     """A deny when a message file holds AI attribution; an ask when one cannot be read (stdin, an
-    expansion, a folder that cannot be told, a file that is unreadable, not regular or over 1 MiB).
-    A file the same command writes is skipped: its text was read as the command's."""
+    expansion, a folder that cannot be told, a file that is unreadable, not regular or over 1 MiB,
+    too many files). A file the same command writes is skipped: its text was read as the command's."""
     verdict: Verdict = None
     for path, expanded in files:
         if path == "-":
             cause = "stdin"
         elif expanded:
             cause = "a shell expansion"
-        elif path in targets:
+        elif path in reads.targets:
             continue
         elif folder is None and not os.path.isabs(os.path.expanduser(path)):
             cause = "a folder the guard cannot read"
         else:
-            text, cause = _message_text(os.path.join(folder or "", os.path.expanduser(path)))
+            text, cause = reads.message(os.path.join(folder or "", os.path.expanduser(path)))
             if text is not None and ai_attributed(text):
                 return "deny", HELD_BY_REASON.format(reason, _infra_value(path))
         if cause and verdict is None:
@@ -1577,14 +1590,14 @@ def _hooks_path_set(args: list[tuple[str, bool]]) -> Verdict:
 
 def _bare_push(flags: list[tuple[str, tuple[str, bool] | None]], operands: list[tuple[str, bool]],
                folder: str | None, options: list[tuple[str, tuple[str, bool]]], env: dict[str, str | None],
-               cfg: Config, reads: _GitReads) -> Verdict:
+               cfg: Config, reads: _Reads) -> Verdict:
     """For a push that sends the branch checked out (no refspec, or only `HEAD` or `@`): a deny when
     that branch is protected, an ask when it cannot be told; else None."""
     if {name for name, _ in flags} & {"--tags", "--all", "--branches", "--mirror"}:
         return None
     if any(spec not in ("HEAD", "@") for spec, _ in operands[1:]):
         return None
-    read = reads.read(["symbolic-ref", "--quiet", "--short", "HEAD"], folder, options, env)
+    read = reads.git(["symbolic-ref", "--quiet", "--short", "HEAD"], folder, options, env)
     branch = read[1].strip() if read and read[0] == 0 else ""
     if not branch:
         return "ask", PUSH_UNKNOWN_REASON
@@ -1598,11 +1611,11 @@ def _hub_author(cfg: Config) -> tuple[str, str]:
     return local.author_name or project.author_name, local.author_email or project.author_email
 
 
-def _config_emails(reads: _GitReads, folder: str, options: list[tuple[str, tuple[str, bool]]],
+def _config_emails(reads: _Reads, folder: str, options: list[tuple[str, tuple[str, bool]]],
                    env: dict[str, str | None]) -> dict[str, str] | None:
     """git config's user, author and committer emails where the call runs, by lowercase key (a later
     value wins, as in git); None when git config cannot be read."""
-    read = reads.read(["config", "--null", "--get-regexp", IDENTITY_CONFIG], folder, options, env)
+    read = reads.git(["config", "--null", "--get-regexp", IDENTITY_CONFIG], folder, options, env)
     if read is None or read[0] not in (0, 1):  # 1: none set
         return None
     found: dict[str, str] = {}
@@ -1615,7 +1628,7 @@ def _config_emails(reads: _GitReads, folder: str, options: list[tuple[str, tuple
 
 def _identity(sub: str, flags: list[tuple[str, tuple[str, bool] | None]], folder: str | None,
               options: list[tuple[str, tuple[str, bool]]], env: dict[str, str | None], cfg: Config,
-              reads: _GitReads) -> Verdict:
+              reads: _Reads) -> Verdict:
     """For a git commit, annotated tag or merge: a deny when an identity it records (IDENTITY_ROLES)
     has another email than the hub's author (case ignored); an ask when one cannot be told; None
     when the hub sets no email, the call records none (a lightweight tag or a listing, merge --abort
@@ -1666,7 +1679,7 @@ def _identity(sub: str, flags: list[tuple[str, tuple[str, bool] | None]], folder
 
 
 def _git_call(words: list[tuple[str, bool]], at: int, env: dict[str, str | None], here: str | None, cfg: Config,
-              targets: set[str], reads: _GitReads) -> Verdict:
+              reads: _Reads) -> Verdict:
     """The change-flow rules on one git call (words[at] is git)."""
     options, sub_at = _git_command(words, at + 1)
     hooks = any(name in ("-c", "--config-env") and value.lower().startswith("core.hookspath")
@@ -1693,7 +1706,7 @@ def _git_call(words: list[tuple[str, bool]], at: int, env: dict[str, str | None]
             verdict = tighten(verdict, ("ask", PUSH_DELETE_REASON.format(_infra_value(deleted, _code_escaped))))
         return tighten(verdict, _bare_push(flags, operands, folder, options, env, cfg, reads))
     files = [value for name, value in flags if name in ("-F", "--file") and value is not None]
-    verdict = tighten(verdict, _message_files(files, folder, targets, COMMIT_ATTRIBUTION_REASON))
+    verdict = tighten(verdict, _message_files(files, folder, COMMIT_ATTRIBUTION_REASON, reads))
     if verdict and verdict[0] == "deny":
         return verdict
     return tighten(verdict, _identity(sub, flags, folder, options, env, cfg, reads))
@@ -1733,7 +1746,7 @@ def check_github_tool(tool: str, ti: dict, cfg: Config) -> Verdict:
     return _github_fields([(name, value) for name, value in ti.items() if isinstance(value, str)], writes, cfg)
 
 
-def _gh_api(args: list[tuple[str, bool]], here: str | None, targets: set[str], cfg: Config) -> Verdict:
+def _gh_api(args: list[tuple[str, bool]], here: str | None, cfg: Config, reads: _Reads) -> Verdict:
     """The change-flow rules on a gh api call: a merge (PUT or POST on pulls/<n>/merge, POST on merges,
     a graphql mergePullRequest or enablePullRequestAutoMerge) denies; then _github_fields on its -f/-F
     fields (a -F value `@file` read as a message file), and a write to git/refs/heads/<protected>.
@@ -1756,7 +1769,7 @@ def _gh_api(args: list[tuple[str, bool]], here: str | None, targets: set[str], c
         name = key.rstrip("]").rsplit("[", 1)[-1]  # `body`, or the last key of `comments[][body]`
         reason = GITHUB_TEXT_FIELDS.get(name)
         if reason and option in ("-F", "--field") and value.startswith("@"):
-            verdict = tighten(verdict, _message_files([(value[1:], expanded)], here, targets, reason))
+            verdict = tighten(verdict, _message_files([(value[1:], expanded)], here, reason, reads))
         else:
             named.append((name, value))
     writes = method != "GET"
@@ -1780,7 +1793,7 @@ def _interpreted(words: list[tuple[str, bool]], at: int) -> Verdict:
     return None
 
 
-def _gh_call(words: list[tuple[str, bool]], at: int, here: str | None, targets: set[str], cfg: Config) -> Verdict:
+def _gh_call(words: list[tuple[str, bool]], at: int, here: str | None, cfg: Config, reads: _Reads) -> Verdict:
     """The change-flow rules on one gh call (words[at] is gh)."""
     args = words[at + 1:]
     if len(args) >= 2 and args[0][0] == "pr" and args[1][0] == "merge":
@@ -1788,9 +1801,9 @@ def _gh_call(words: list[tuple[str, bool]], at: int, here: str | None, targets: 
     if len(args) >= 2 and args[0][0] == "pr" and args[1][0] in GH_PR_ARGUMENTS:
         flags, _ = _parsed(args[2:], GH_PR_ARGUMENTS[args[1][0]], "", GH_LONG_VALUES)
         files = [value for name, value in flags if name in ("-F", "--body-file") and value is not None]
-        return _message_files(files, here, targets, PR_ATTRIBUTION_REASON)
+        return _message_files(files, here, PR_ATTRIBUTION_REASON, reads)
     if args and args[0][0] == "api":
-        return _gh_api(args[1:], here, targets, cfg)
+        return _gh_api(args[1:], here, cfg, reads)
     return None
 
 
@@ -1804,7 +1817,7 @@ def check_change_flow(cmd: str, cfg: Config, cwd: str | None = None) -> Verdict:
     calls, targets = _shell_calls(cmd)
     here: str | None = cwd or os.getcwd()
     exported: dict[str, str | None] = {}
-    reads = _GitReads()
+    reads = _Reads(targets)
     verdict: Verdict = None
     for words in calls:
         at, env = _program(words)
@@ -1822,9 +1835,9 @@ def check_change_flow(cmd: str, cfg: Config, cwd: str | None = None) -> Verdict:
         elif program == "export":
             exported.update(_program(words[at + 1:])[1])
         elif program == "git":
-            found = _git_call(words, at, {**exported, **env}, here, cfg, targets, reads)
+            found = _git_call(words, at, {**exported, **env}, here, cfg, reads)
         elif program == "gh":
-            found = _gh_call(words, at, here, targets, cfg)
+            found = _gh_call(words, at, here, cfg, reads)
         else:
             found = _interpreted(words, at)
         if found and found[0] == "deny":
