@@ -161,3 +161,16 @@ def test_keeps_enabled_mcp_servers_when_project_settings_add_keys(
     assert settings[ENABLED_SERVERS] == ["hub"]
     assert written.count(f'"{ENABLED_SERVERS}"') == 1
     assert settings["enabledPlugins"] == {"demo-plugin@demo": True}
+
+
+def test_keeps_hub_once_in_enabled_mcp_servers_when_project_settings_list_more(
+    demo_hub: Path, run_sync: SyncRunner
+) -> None:
+    # The add-only merge keeps the project's own servers and never repeats `hub`.
+    (demo_hub / PROJECT_SETTINGS).write_text('{"enabledMcpjsonServers": ["hub", "other"]}\n')
+
+    result = run_sync(demo_hub)
+
+    assert (result.exit_code, result.stderr) == (0, ""), result.output
+    settings = json.loads((demo_hub / SETTINGS).read_bytes())
+    assert settings[ENABLED_SERVERS] == ["hub", "other"]
