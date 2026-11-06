@@ -4206,6 +4206,8 @@ SETTINGS_KEYS = [
 ]
 SETTINGS_SCHEMA = "https://json.schemastore.org/claude-code-settings.json"
 SETTINGS_ALLOW = ["Bash(git status *)", "Bash(git diff *)", "Bash(git log *)", "Bash(git show *)"]
+# AGH-697: the hub MCP's read-only tools, by exact name; `mcp__hub__propose` still asks.
+HUB_MCP_ALLOW = ["mcp__hub__search", "mcp__hub__read"]
 # AGH-114: what `/onboard propose` runs headless with no prompt, from its skill text. The hash
 # pipe's two right-hand sides, the doctor baseline, the per-repo checkout and default-branch reads
 # (`git -C ../<dir>`, exact), and the proposal file with its dated archive names.
@@ -4370,7 +4372,7 @@ def test_holds_rules_base_only_when_settings_rendered(
     assert settings["includeCoAuthoredBy"] is False
     assert settings["enabledMcpjsonServers"] == ["hub"]
     assert settings["permissions"] == {
-        "allow": [*SETTINGS_ALLOW, *onboard_propose_allow(config_name)],
+        "allow": [*SETTINGS_ALLOW, *HUB_MCP_ALLOW, *onboard_propose_allow(config_name)],
         "deny": settings_deny(config_name),
         "additionalDirectories": [f"../{repo_dir}" for repo_dir in REPO_DIRS[config_name]],
     }
@@ -4392,7 +4394,7 @@ def test_holds_rules_base_only_when_settings_rendered(
 
 
 @pytest.mark.parametrize("config_name", CONFIG_NAMES)
-def test_allows_only_onboard_propose_when_settings_rendered(
+def test_allows_only_onboard_propose_and_hub_reads_when_settings_rendered(
     config_name: str, request: pytest.FixtureRequest
 ) -> None:
     config = request.getfixturevalue(f"{config_name}_config")
@@ -4401,14 +4403,20 @@ def test_allows_only_onboard_propose_when_settings_rendered(
     allow = strict_json(rendered[".claude/settings.json"].content)["permissions"]["allow"]
 
     # AGH-114: a headless `/onboard propose` writes its proposal and hashes hub.json with no
-    # prompt; each allow is one of the skill's exact read-only forms, the base git reads before.
-    assert allow == [*SETTINGS_ALLOW, *onboard_propose_allow(config_name)]
-    # Nothing broader: no bare tool and no new Bash wildcard (the onboard commands match
-    # exactly), and the one file rule is the proposal's (Claude Code checks writes against
-    # `Edit(path)` rules only; a `Write(path)` rule is never consulted).
-    assert all(rule.endswith(")") and "(" in rule for rule in allow), allow
+    # prompt; each allow is one of the skill's exact read-only forms, the base git reads and the
+    # hub MCP's two read-only tools (AGH-697) before.
+    assert allow == [*SETTINGS_ALLOW, *HUB_MCP_ALLOW, *onboard_propose_allow(config_name)]
+    # Nothing broader: no bare built-in tool, no MCP rule but the two exact read tools (not the
+    # whole server, not `propose`), no new Bash wildcard (the onboard commands match exactly),
+    # and the one file rule is the proposal's (Claude Code checks writes against `Edit(path)`
+    # rules only; a `Write(path)` rule is never consulted).
+    assert [rule for rule in allow if rule.startswith("mcp__")] == HUB_MCP_ALLOW
+    assert all(rule.endswith(")") and "(" in rule for rule in allow if rule not in HUB_MCP_ALLOW)
     assert [rule for rule in allow if "*" in rule] == [*SETTINGS_ALLOW, ONBOARD_PROPOSAL_EDIT]
-    assert [rule for rule in allow if not rule.startswith("Bash(")] == [ONBOARD_PROPOSAL_EDIT]
+    assert [rule for rule in allow if not rule.startswith("Bash(")] == [
+        *HUB_MCP_ALLOW,
+        ONBOARD_PROPOSAL_EDIT,
+    ]
 
 
 @pytest.mark.parametrize("config_name", CONFIG_NAMES)

@@ -792,6 +792,33 @@ def app_edit(ws: GateWorkspace) -> tuple[str, Mapping[str, object]]:
     return "Edit", {"file_path": str(ws.app / "a.py"), "old_string": "1", "new_string": "2"}
 
 
+# The base plugin's read-only agents (`mutates_checkout: false`).
+READ_ONLY_AGENTS = ("quality-reviewer", "researcher", "security-reviewer", "spec-reviewer")
+# AGH-697: the hub MCP's two read-only tools, as an agent calls them.
+HUB_MCP_TOOLS = ", mcp__hub__search, mcp__hub__read"
+HUB_MCP_CALLS: tuple[tuple[str, Mapping[str, object]], ...] = (
+    ("mcp__hub__search", {"query": "release workflow", "limit": 5}),
+    ("mcp__hub__read", {"path": "brain/index.md"}),
+)
+
+
+@pytest.mark.parametrize("agent_type", READ_ONLY_AGENTS)
+def test_stays_silent_when_read_only_agent_calls_hub_mcp(
+    gate: Gate, gate_ws: GateWorkspace, agent_type: str
+) -> None:
+    """AGH-697: each read-only agent of the rendered base plugin lists the hub MCP's search and
+    read in its tools and is still read-only; its calls to them change no checkout (the index
+    lives in the user's data folder), so the stop is silent and the state deleted."""
+    definition = (gate_ws.hub / BASE_AGENTS / f"{agent_type}.md").read_text(encoding="utf-8")
+    head = definition.split("\n---\n", 1)[0].splitlines()
+    assert "mutates_checkout: false" in head
+    assert [line for line in head if line.startswith("tools: ")][0].endswith(HUB_MCP_TOOLS)
+
+    assert run_agent(gate, agent_type, lambda: None, calls=HUB_MCP_CALLS) is None
+
+    assert state_files(gate_ws) == []
+
+
 @pytest.mark.parametrize(
     "case", ["write", "edit", "multiedit", "notebookedit", "hub_untracked", "app_main"]
 )

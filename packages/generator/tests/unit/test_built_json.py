@@ -359,6 +359,26 @@ def test_lists_hub_in_enabled_mcp_servers_when_settings_built(demo_config: HubCo
     assert settings["enabledMcpjsonServers"] == list(servers["mcpServers"])
 
 
+def test_allows_hub_reads_only_when_settings_built(demo_config: HubConfig) -> None:
+    # AGH-697: the declared server's two read-only tools run with no prompt; `propose` (a hub pull
+    # request) still asks, and no rule names the whole server.
+    settings = managed_settings(demo_config)
+    servers = mcp_config(demo_config)
+    assert isinstance(settings, dict)
+    assert isinstance(settings["permissions"], dict)
+    assert isinstance(servers, dict)
+    assert isinstance(servers["mcpServers"], dict)
+    [server] = servers["mcpServers"]
+
+    allow = settings["permissions"]["allow"]
+
+    assert isinstance(allow, list)
+    assert [rule for rule in allow if str(rule).startswith("mcp__")] == [
+        f"mcp__{server}__search",
+        f"mcp__{server}__read",
+    ]
+
+
 def test_equals_managed_hooks_when_base_block_read(demo_config: HubConfig) -> None:
     # Spec AC-11.12 (Q-14): hub doctor's settings.weakening compares against this block: the value
     # the managed settings embed; reading it renders nothing.
