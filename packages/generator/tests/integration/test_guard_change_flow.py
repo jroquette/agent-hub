@@ -450,3 +450,200 @@ def test_states_git_read_limits_when_constants_read(
     ws: Path, *, hook_python: str, run_python: Callable[..., Any]
 ) -> None:
     assert run_python(hook_python, GIT_LIMITS, path=ws / "demo-hub" / HOOKS) == [2, 4]
+
+
+# X-1: a GitHub MCP tool (`mcp__<server naming github>__<method>`) and `gh api` get the
+# attribution rule on their title, body and message fields, the `claude/` rule on their branch,
+# head and ref fields, and the protected-branch rule on what they write; and merging a pull
+# request is the user's step, however it is asked for.
+MERGE_REASON = "merging is the user's step: the user merges every PR; leave `{}` to them"
+AGENT_BRANCH_REASON = "branches are me/dem-<N>-<desc>, never claude/..."
+
+
+def test_denies_github_tool_when_text_holds_attribution(ws: Path, decide: Decide) -> None:
+    repo = {"owner": "o", "repo": "r"}
+    events = [
+        tool_at(
+            "mcp__github__create_pull_request",
+            ws,
+            **repo,
+            title="feat: x",
+            head="me/dem-1-x",
+            base="trunk",
+            body=GENERATED,
+        ),
+        tool_at("mcp__github__update_pull_request", ws, **repo, pullNumber=3, title="x \U0001f916"),
+        tool_at(
+            "mcp__github__push_files",
+            ws,
+            **repo,
+            branch="me/dem-1-x",
+            message=CO_AUTHORED,
+            files=[{"path": "a.md", "content": "a"}],
+        ),
+        tool_at(
+            "mcp__github__create_or_update_file",
+            ws,
+            **repo,
+            branch="me/dem-1-x",
+            path="a.md",
+            content="a",
+            message=CO_AUTHORED,
+        ),
+        tool_at(
+            "mcp__plugin_github_github__add_issue_comment",
+            ws,
+            **repo,
+            issue_number=3,
+            body=GENERATED,
+        ),
+    ]
+
+    verdicts = decide(events)
+
+    assert verdicts == [
+        ("deny", PR_REASON),
+        ("deny", PR_REASON),
+        ("deny", COMMIT_REASON),
+        ("deny", COMMIT_REASON),
+        ("deny", PR_REASON),
+    ]
+
+
+def test_denies_github_tool_when_branch_is_agent_or_protected(ws: Path, decide: Decide) -> None:
+    repo = {"owner": "o", "repo": "r"}
+    events = [
+        tool_at("mcp__github__create_branch", ws, **repo, branch="claude/x", from_branch="trunk"),
+        tool_at(
+            "mcp__github__create_pull_request", ws, **repo, title="x", head="claude/x", base="trunk"
+        ),
+        tool_at("mcp__github__push_files", ws, **repo, branch="main", message="feat: x", files=[]),
+        tool_at(
+            "mcp__github__create_or_update_file",
+            ws,
+            **repo,
+            branch="trunk",
+            path="a.md",
+            content="a",
+            message="feat: x",
+        ),
+        tool_at(
+            "mcp__github__delete_file",
+            ws,
+            **repo,
+            branch="refs/heads/main",
+            path="a.md",
+            message="chore: x",
+        ),
+    ]
+
+    verdicts = decide(events)
+
+    assert verdicts == [("deny", AGENT_BRANCH_REASON)] * 2 + [
+        ("deny", PUSH_REASON.format(branch)) for branch in ("main", "trunk", "main")
+    ]
+
+
+def test_passes_github_tool_when_clean_or_read_only(ws: Path, decide: Decide) -> None:
+    repo = {"owner": "o", "repo": "r"}
+    events = [
+        tool_at(
+            "mcp__github__create_pull_request",
+            ws,
+            **repo,
+            title="feat: x",
+            head="me/dem-1-x",
+            base="trunk",
+            body="Body\n",
+        ),
+        tool_at("mcp__github__create_branch", ws, **repo, branch="me/dem-1-x", from_branch="main"),
+        tool_at(
+            "mcp__github__push_files", ws, **repo, branch="me/dem-1-x", message="feat: x", files=[]
+        ),
+        tool_at("mcp__github__get_file_contents", ws, **repo, path="a.md", ref="main"),
+        tool_at("mcp__github__list_commits", ws, **repo, sha="claude/x"),
+        tool_at("mcp__github__search_code", ws, query="Generated with Claude Code"),
+        tool_at("mcp__github__pull_request_read", ws, **repo, pullNumber=3, method="get"),
+        tool_at("mcp__web__fetch", ws, url="https://example.com", body=GENERATED),
+    ]
+
+    assert decide(events) == [None] * len(events)
+
+
+def test_denies_merge_when_agent_merges_pull_request(ws: Path, decide: Decide) -> None:
+    repo = {"owner": "o", "repo": "r", "pullNumber": 12}
+    mutation = (
+        "mutation { enablePullRequestAutoMerge(input: {pullRequestId: 1}) { clientMutationId } }"
+    )
+    cases = [
+        (tool_at("mcp__github__merge_pull_request", ws, **repo), "mcp__github__merge_pull_request"),
+        (
+            tool_at("mcp__github__enable_pr_auto_merge", ws, **repo),
+            "mcp__github__enable_pr_auto_merge",
+        ),
+        (bash_at("gh pr merge 12", ws), "gh pr merge"),
+        (bash_at("gh pr merge --auto --squash 12", ws), "gh pr merge"),
+        (bash_at("gh api -X PUT repos/o/r/pulls/12/merge", ws), "gh api repos/o/r/pulls/12/merge"),
+        (
+            bash_at("gh api --method=PUT /repos/o/r/pulls/12/merge -f merge_method=squash", ws),
+            "gh api /repos/o/r/pulls/12/merge",
+        ),
+        (bash_at(f"gh api graphql -f query='{mutation}'", ws), "gh api graphql"),
+        (
+            bash_at("gh api -X POST repos/o/r/merges -f base=trunk -f head=me/dem-1-x", ws),
+            "gh api repos/o/r/merges",
+        ),
+    ]
+
+    verdicts = decide([event for event, _ in cases])
+
+    assert verdicts == [("deny", MERGE_REASON.format(shown)) for _, shown in cases]
+
+
+def test_denies_gh_api_when_field_breaks_change_flow(ws: Path, decide: Decide) -> None:
+    put(ws / "body.md", GENERATED)
+    contents = "gh api -X PUT repos/o/r/contents/a.md -f content=eA== "
+    cases = [
+        (
+            "gh api -X POST repos/o/r/pulls -f title=x -f body='Body. Generated with Claude Code'",
+            PR_REASON,
+        ),
+        (
+            "gh api repos/o/r/pulls -F body=@body.md -f title=x -f head=me/dem-1-x -f base=trunk",
+            HELD_BY.format(PR_REASON, "body.md"),
+        ),
+        (
+            contents + "-f message='x\n\nCo-Authored-By: Claude <c@x.io>' -f branch=me/x",
+            COMMIT_REASON,
+        ),
+        (
+            "gh api -X POST repos/o/r/pulls -f title=x -f head=claude/x -f base=trunk",
+            AGENT_BRANCH_REASON,
+        ),
+        (
+            "gh api -X POST repos/o/r/git/refs -f ref=refs/heads/claude/x -f sha=a1",
+            AGENT_BRANCH_REASON,
+        ),
+        (contents + "-f message=x -f branch=trunk", PUSH_REASON.format("trunk")),
+        ("gh api -X PATCH repos/o/r/git/refs/heads/main -f sha=a1", PUSH_REASON.format("main")),
+        ("gh api --method DELETE repos/o/r/git/refs/heads/trunk", PUSH_REASON.format("trunk")),
+    ]
+
+    verdicts = decide([bash_at(command, ws) for command, _ in cases])
+
+    assert verdicts == [("deny", reason) for _, reason in cases]
+
+
+def test_passes_gh_api_when_read_or_clean(ws: Path, decide: Decide) -> None:
+    commands = [
+        "gh api repos/o/r/pulls/12",
+        "gh api repos/o/r/pulls/12/merge",
+        "gh api -X GET repos/o/r/git/refs/heads/main",
+        "gh api repos/o/r/pulls -f title=x -f body='Body' -f head=me/dem-1-x -f base=trunk",
+        "gh api repos/o/r/pulls/12/reviews --input review.json",
+        "gh api repos/o/r/pulls --jq '.[] | select(.body | test(\"Generated with Claude\"))'",
+        "gh api graphql -f query='query { viewer { login } }'",
+        "gh pr view 12",
+    ]
+
+    assert decide([bash_at(command, ws) for command in commands]) == [None] * len(commands)
