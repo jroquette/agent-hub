@@ -262,7 +262,7 @@ def test_cleans_up_and_allows_retry_when_failure_in_git_or_gh(
 def test_refuses_actions_when_hub_read_only(
     open_composed: Any, propose: Any, hub_world: Any
 ) -> None:
-    app = open_composed(brain_changes=hub_world.changes(AGENT_HUB_IN_CONTAINER="1"))
+    app = open_composed(signed_in=True, brain_changes=hub_world.changes(AGENT_HUB_IN_CONTAINER="1"))
     assert (
         app.client.post(
             "/api/v1/hubs",

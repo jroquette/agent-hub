@@ -97,6 +97,8 @@ from agent_hub.storage.event_store import SqliteEventStore, open_event_store
 COMPOSED_PORT = 7420
 COMPOSED_URL = f"http://127.0.0.1:{COMPOSED_PORT}"
 COMPOSED_NOW = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
+# The launch token of a signed-in composed app (``open_composed(signed_in=True)``); synthetic.
+COMPOSED_TOKEN = "synthetic-composed-launch-token-0123456789abcd"  # noqa: S105 -- synthetic
 # The pin a synthetic hub carries and the version the composed app runs: the CLI's, so the
 # doctor rules that compare them agree with ``hub doctor``.
 RUNNING_VERSION = version("agent-hub-cli")
@@ -160,18 +162,26 @@ def open_composed(
     """Opens ``build_app`` on the temp paths; ``build_app`` keywords may be overridden.
 
     The app's background tickers are ``manual_tickers``, which ``Composed.refresh()`` and
-    ``Composed.warm()`` drive.
+    ``Composed.warm()`` drive. ``signed_in`` gives the app a launch token and its client the
+    cookie, as the owner's page holds it: the owner's writes (the Hub config writes, the hub
+    actions, the learning decisions) need it.
     """
     clients: list[TestClient] = []
     stores: list[SqliteEventStore] = []
 
-    def opened(settings: ApiSettings = composed_settings, **options: Any) -> Composed:
+    def opened(
+        settings: ApiSettings = composed_settings, *, signed_in: bool = False, **options: Any
+    ) -> Composed:
+        if signed_in:
+            settings = replace(settings, session_token=COMPOSED_TOKEN)
         app = build_app(
             settings,
             **({"projects_root": projects_root, "web_dist": web_dist} | manual_tickers | options),
         )
         client = TestClient(app, base_url=COMPOSED_URL, raise_server_exceptions=False)
         client.__enter__()
+        if signed_in:
+            client.cookies.set(cookie_name(settings.port), COMPOSED_TOKEN)
         clients.append(client)
         store = open_event_store(settings.db_path)
         stores.append(store)
@@ -625,8 +635,9 @@ HOOK_SENT_AT = "2026-10-11T11:58:00.000Z"
 
 @pytest.fixture
 def world_app(open_composed: Callable[..., Composed], hub_world: HubWorld) -> Composed:
-    """The composed app acting on ``hub_world`` through ``hub_git``, with the hub registered."""
-    composed = open_composed(brain_changes=hub_world.changes())
+    """The composed app acting on ``hub_world`` through ``hub_git``, with the hub registered;
+    signed in, as the owner's page that decides learnings is."""
+    composed = open_composed(signed_in=True, brain_changes=hub_world.changes())
     registered = composed.client.post(
         "/api/v1/hubs",
         json={"path": str(hub_world.hub)},

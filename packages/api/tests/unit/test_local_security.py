@@ -592,12 +592,14 @@ PLAYGROUND_HUB_WRITES = (
 CHECK_RUN = "/api/v1/features/demo/demo-feature/acs/AC-7.1/check-runs"
 
 
-# AC-PG-23.3, AC-PG-37.1: platform-sync, doctor-fix and the local config write take the hub
-# registry's checks.
+# AC-PG-23.3, AC-PG-37.1: platform-sync, doctor-fix and the config writes need this server's
+# exact Origin; since AGH-699 (audit C-2) as owner writes, strict and behind the launch cookie,
+# no longer with the hub registry's Origin check alone, which any local process can pass.
 @pytest.mark.parametrize(("method", "path"), PLAYGROUND_HUB_WRITES)
-def test_marks_hub_registry_write_when_playground_hub_write(method: str, path: str) -> None:
-    assert is_hub_registry_write(method, path)
-    assert not is_strict_write(method, path)
+def test_marks_strict_owner_write_when_playground_hub_write(method: str, path: str) -> None:
+    assert is_owner_write(method, path)
+    assert is_strict_write(method, path)
+    assert not is_hub_registry_write(method, path)
 
 
 # AC-PG-23.3, AC-PG-37.1: only those exact method and path shapes are marked.
@@ -657,7 +659,8 @@ def test_refuses_playground_hub_write_when_fetch_site_cross_site(
     assert response.json()["title"] == "Forbidden fetch site"
 
 
-# AC-PG-23.3: the hub POSTs need a JSON body; the local config PUT is checked by origin only.
+# AC-PG-23.3: the hub POSTs need a JSON body (since AGH-699 the local config PUT does too, as
+# every owner write but a DELETE).
 @pytest.mark.parametrize(
     ("method", "path", "status"),
     [
