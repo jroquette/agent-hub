@@ -307,6 +307,24 @@ below asks where the owner has a legitimate use for the call, and denies where t
   `rm`, `mv`, `cp`, `truncate`, `ln` target) of a feature eval, `brain/features/<slug>/evals/<name>`, asks when the
   name is `owner-signoff[-rN]` or its new text (Write's content, Edit's and MultiEdit's new strings, the Bash command)
   holds a `provenance: owner` line. Only hub web writes the owner's verdict; an eval with `provenance: agent` passes.
+- **Calls, not text**: the rules below read a Bash command as calls: its simple commands, words unquoted as bash does
+  (`'…'`, `"…"`, `$'…'`, backslashes, a `#` comment, redirections left out), in one linear pass. A word holding `$` or
+  a backtick outside single quotes is an expansion the guard cannot read. The folder of each call starts at the
+  event's `cwd` and follows `cd`, `pushd` and `git -C`; after `popd` or an expanded `cd`, a read that needs it asks.
+- **Message files** (rule `ai_attribution`, deny): `git commit|tag|merge -F/--file` and `gh pr
+  create|edit|comment|review -F/--body-file` read the file they name (at most 1 MiB, regular files only) when the call
+  runs, so a body file written earlier is checked when it is used; a file the same command writes (a redirect target)
+  was checked as the command's text. A file tool's write of a file named like a message (`pr.md`, `<name>-pr.md`,
+  `body.md`, `msg.txt`, …) holding attribution is denied at once. A message on stdin (`-`), behind an expansion, or
+  in a file that cannot be read asks (`message_unchecked`). `git merge` and `gh pr comment|review` text is checked
+  inline too.
+- **Bare push** (rule `push_protected_branch`, deny): `git push` with no refspec, or only `HEAD` or `@`, sends the
+  branch checked out where it runs (`git symbolic-ref --short HEAD`, 2 s): a protected branch denies, a branch that
+  cannot be told (detached, no repo, an unknown folder) asks (`push_branch_unknown`). `--tags` and `--all` are not
+  read as a bare push.
+- **Skipped hooks** (rules `no_verify`, `hooks_path`, ask): `--no-verify` on `git commit` (and its `-n`), `push` or
+  `merge`, and `core.hooksPath` set through `git -c`, `--config-env`, an assignment such as `GIT_CONFIG_PARAMETERS`,
+  or `git config` (set, `--unset`); reading it passes.
 
 ## Decisions
 

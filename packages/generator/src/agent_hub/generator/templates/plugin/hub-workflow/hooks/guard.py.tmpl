@@ -5,7 +5,11 @@ deny  = hard block (secrets (guard.secret_env_files added, guard.readable_env_fi
         (with guard.infra: a production marker anywhere, or a part or one of its calls (also split at a single
         &, $( ), backticks, <( ), ( ), { }) with no allowed environment outside a ` #` comment and not a
         local-only form; without it: the fixed infra rule; both see a redirection glued to the tool word,
-        aws>/dev/null; values in their reasons are escaped and capped), AI attribution in commits/PRs/branches,
+        aws>/dev/null; values in their reasons are escaped and capped), AI attribution in commits/PRs/branches
+        (in the command, in a message file a git commit|tag|merge -F/--file or a gh pr create|edit|comment|review
+        -F/--body-file names, read when the call runs unless the same command writes it, or in a file tool's
+        write of a message file: pr.md, <name>-pr.md, body.md, msg.txt and the like), a bare push (no refspec,
+        or HEAD or @) from a protected branch (git symbolic-ref where the call runs, followed through cd and -C),
         editing .git internals, network to guard.deny_hosts, reading or changing paths in guard.deny_paths,
         from a file tool or any Bash token; first of all, a blocked word (guard.blocked_words of hub.json,
         hub.local.json and $HUB_CONFIG together, ignoring ASCII case, no letter beside it) in the Bash
@@ -41,7 +45,10 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         writing an owner sign-off record (brain/features/<slug>/evals/owner-signoff[-rN], or an eval whose new
         text says provenance: owner; from Write, Edit, MultiEdit or a Bash write),
         a mutating hub env (add, set, remove, service add|remove; list and show pass) or hub repo
-        (add, set, remove; list passes),
+        (add, set, remove; list passes), git hooks skipped (--no-verify on commit, push or merge, commit's
+        -n, core.hooksPath set by -c, --config-env, an assignment or git config), a message file that cannot
+        be read (stdin, an expansion, unreadable, not regular, over 1 MiB), a bare push whose branch cannot
+        be told,
         with HUB_RUN_ENVIRONMENT naming a declared environment of access read or production (an agent
         node of a workflow that declares it), a Bash command naming one of its endpoints' hosts or
         resources, or a WebFetch of a URL on one of its hosts (environment_endpoint, after the env-file
@@ -56,7 +63,8 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         env file is declared)
 Project values (default branch, tracker team, guard lists) come from hub.json. The branch prefix of a deny's
 hint is the developer's: hub.local.json, else hub.json, else the local part of git config user.email plus `/`
-(git runs only on that deny); with none, the hint has no prefix. A list entry `@hub/<path>` is <path> in the hub that holds this file; with no such hub (plugin cache) it is skipped.
+(git runs only on that deny); with none, the hint has no prefix. Besides, git runs (2 s each) only for a
+bare push, to read the branch it sends. A list entry `@hub/<path>` is <path> in the hub that holds this file; with no such hub (plugin cache) it is skipped.
 Then, for Bash and the file tools (EXTENSION_TOOLS) and unless the verdict is deny (final), the project's extension plugin/<project>/hooks/project_guard.py
 of the hub that holds this file (never one found from $CLAUDE_PROJECT_DIR, the cwd or the tool input;
 none in the plugin cache) runs in a child, project_guard_runner.py's main in a fork of this hook (no
@@ -1080,7 +1088,8 @@ def check_infra(cmd: str, cfg: Config) -> Verdict:
     return None
 
 
-def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
+def check_bash(cmd: str, cfg: Config | None = None, cwd: str | None = None) -> Verdict:
+    """The Bash rules on cmd, run from cwd (None: the process's own folder)."""
     cfg = cfg or Config()
     c = cmd.replace("\\\n", " ")
     # longest first, so release/2 is named before release
@@ -1091,7 +1100,7 @@ def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
         return "deny", "force-push is not allowed; push a new commit (or a merge) instead"
     push = "push" in c and re.search(GIT + rf"push\b[^;&|\n]*(\s(origin\s+)?(?P<plain>{branches})\b|:(refs/heads/)?(?P<ref>{branches})\b)", c)
     if push:
-        return "deny", f"pushing to {push.group('plain') or push.group('ref')} is not allowed; open a PR from a {_branch_hint(cfg)} branch"
+        return "deny", PUSH_REASON.format(push.group("plain") or push.group("ref"), _branch_hint(cfg))
     if ("curl" in c or "wget" in c) and re.search(r"\b(curl|wget)\b[^|;&\n]*\|\s*(sudo\s+)?(ba|z|da)?sh\b", c):
         return "deny", "curl|sh is not allowed; download, inspect, then run explicitly"
     host = denied_host(c, cfg)
@@ -1102,7 +1111,10 @@ def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
     infra = check_infra(cmd, cfg)
     if infra and infra[0] == "deny":
         return infra
-    return tighten(infra, _after_infra(c, cfg))
+    verdict = tighten(infra, _after_infra(c, cfg))
+    if verdict and verdict[0] == "deny":
+        return verdict
+    return tighten(verdict, check_change_flow(cmd, cfg, cwd))
 
 
 def _after_infra(c: str, cfg: Config) -> Verdict:
@@ -1117,10 +1129,10 @@ def _after_infra(c: str, cfg: Config) -> Verdict:
             tok = found.lstrip("<").strip("'\"")
             if _secret_path(tok, cfg):
                 return "deny", SECRET_READ_REASON.format(tok)
-    if "git" in c and re.search(r"\bgit\s+(commit|tag)\b", c) and AI_ATTRIBUTION.search(c):
-        return "deny", "commits carry no AI attribution (no Co-Authored-By AI, no 'Generated with', no 🤖)"
-    if "gh" in c and re.search(r"\bgh\s+pr\s+(create|edit)\b", c) and AI_ATTRIBUTION.search(c):
-        return "deny", "PR text carries no AI attribution"
+    if "git" in c and re.search(r"\bgit\s+(commit|tag|merge)\b", c) and AI_ATTRIBUTION.search(c):
+        return "deny", COMMIT_ATTRIBUTION_REASON
+    if "gh" in c and re.search(r"\bgh\s+pr\s+(create|edit|comment|review)\b", c) and AI_ATTRIBUTION.search(c):
+        return "deny", PR_ATTRIBUTION_REASON
     if "claude/" in c and re.search(r"\b(checkout\s+-b|switch\s+-c|branch(\s+-\w+)*|worktree\s+add\b[^;&|\n]*-b)\s+['\"]?claude/", c):
         return "deny", f"branches are {_branch_hint(cfg)}, never claude/..."
     if ".git" in c and (re.search(r"\b(rm|mv|cp|ln|truncate)\b[^;&|\n]*(^|[\s/'\"])\.git(/|\s|$|['\"])", c)
@@ -1174,6 +1186,375 @@ def _after_infra(c: str, cfg: Config) -> Verdict:
     return None
 
 
+# The change flow (the hub's rules 1 and 2) as the calls of a command show it: what a commit's or a
+# PR's message file holds, the branch a bare push sends, git hooks skipped. A call is the words of
+# one simple command, read as bash reads quotes, backslashes and comments, one regex match per
+# piece, so a command is read in one linear pass; a word that holds `$` or a backtick outside
+# single quotes is an expansion the guard cannot read.
+COMMIT_ATTRIBUTION_REASON = "commits carry no AI attribution (no Co-Authored-By AI, no 'Generated with', no 🤖)"
+PR_ATTRIBUTION_REASON = "PR text carries no AI attribution"
+HELD_BY_REASON = "{}: {} holds it"
+MESSAGE_UNCHECKED_REASON = "message not checked for AI attribution: {} ({}); confirm"
+MESSAGE_FILE_REASON = "commits and PR text carry no AI attribution: {} is a commit or PR message file and holds it"
+NO_VERIFY_REASON = "`git {} {}` skips the repo's git hooks (pre-commit, commit-msg, pre-push); confirm"
+HOOKS_PATH_REASON = "core.hooksPath changes which git hooks run; confirm"
+PUSH_REASON = "pushing to {} is not allowed; open a PR from a {} branch"
+PUSH_UNKNOWN_REASON = ("the branch this `git push` sends cannot be told (no branch checked out there, or a folder the "
+                       "guard cannot read); confirm it is not a protected branch")
+# A file tool's commit or PR message file, by name: pr.md, <ticket>-pr.md, body.md, msg.txt and the like.
+MESSAGE_FILE = LazyPattern(r"(?:^|[-_.])(?:pr|body|msg|message)\.(?:md|txt)$", re.I)
+CHANGE_FLOW_WORDS = LazyPattern(r"\b(?:git|gh)\b")
+SHELL_PIECE = LazyPattern(
+    r"[ \t\r\f\v]+|\\\n|[\n;&|()<>]|'[^']*'?|\$'[^'\\]*(?:\\[\s\S][^'\\]*)*'?|\"[^\"\\]*(?:\\[\s\S][^\"\\]*)*\"?"
+    r"|\\[\s\S]?|[$`]|[^\s;&|()<>'\"\\$`]+|[\s\S]"
+)
+SHELL_DQ_ESCAPE = LazyPattern(r"\\([$`\"\\\n])")
+SHELL_CALL_END = "\n;&|()"
+CALL_PREFIX_WORDS = INFRA_PREFIX_WORDS | {"{", "!", "exec", "nohup"}
+ENV_VALUE_OPTIONS = INFRA_ENV_VALUE | {"-u", "--unset"}
+GIT_READ_TIMEOUT = 2  # seconds for one git read: the branch a bare push sends
+# git's own options that take the next word as their value, and those that move where it runs.
+GIT_VALUE_OPTIONS = frozenset(("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--super-prefix"))
+GIT_LOCATION_OPTIONS = ("--git-dir", "--work-tree")
+# Per subcommand: its short options that take a value (the rest of the word, or the next word),
+# those whose value can only be glued to them, and its long options that may take the next word.
+GIT_ARGUMENTS = {
+    "commit": ("mFCct", "Su", frozenset(("--message", "--file", "--reuse-message", "--reedit-message", "--fixup",
+                                         "--squash", "--author", "--date", "--template", "--cleanup", "--trailer",
+                                         "--pathspec-from-file"))),
+    "tag": ("mFu", "n", frozenset(("--message", "--file", "--local-user", "--cleanup", "--sort", "--format",
+                                   "--contains", "--no-contains", "--merged", "--no-merged", "--points-at",
+                                   "--trailer"))),
+    "merge": ("mFsX", "S", frozenset(("--message", "--file", "--strategy", "--strategy-option", "--into-name",
+                                      "--cleanup"))),
+    "push": ("o", "", frozenset(("--repo", "--push-option", "--receive-pack", "--exec"))),
+}
+NO_VERIFY = {"commit": ("--no-verify", "-n"), "merge": ("--no-verify",), "push": ("--no-verify",)}
+HOOKS_PATH_EDITS = frozenset(("--unset", "--unset-all", "--replace-all", "--add", "set", "unset"))
+# gh pr's verbs that take a body file, with their short options that take a value.
+GH_PR_ARGUMENTS = {"create": "tbFBHalmprRT", "edit": "tbFBR", "comment": "bFR", "review": "bFR"}
+GH_LONG_VALUES = frozenset((
+    "--title", "--body", "--body-file", "--base", "--head", "--assignee", "--label", "--milestone", "--project",
+    "--reviewer", "--repo", "--template", "--add-assignee", "--remove-assignee", "--add-label", "--remove-label",
+    "--add-project", "--remove-project", "--add-reviewer", "--remove-reviewer",
+))
+
+
+def _dq_unescaped(found: re.Match[str]) -> str:
+    """A backslash escape inside double quotes as bash reads it (a backslash-newline joins lines)."""
+    return "" if found.group(1) == "\n" else found.group(1)
+
+
+def _shell_calls(cmd: str) -> tuple[list[list[tuple[str, bool]]], set[str]]:
+    """cmd's calls, each its words as (text, whether it holds an expansion) with quotes removed as
+    bash removes them and redirections left out, and the words redirections write to. A `#` at a
+    word's start comments to the line's end; a call ends at a newline, `;`, `&`, `|`, `(` or `)`,
+    but a `&` or `|` right after `<` or `>`, or a `&` before `>`, is the redirection's."""
+    calls: list[list[tuple[str, bool]]] = []
+    targets: set[str] = set()
+    words: list[tuple[str, bool]] = []
+    parts: list[str] = []
+    expanded = started = redirect = False
+    pos = 0
+    while pos <= len(cmd):
+        piece = SHELL_PIECE.match(cmd, pos) if pos < len(cmd) else None
+        text = piece.group(0) if piece else "\n"  # the end of cmd ends its last word and call
+        pos = piece.end() if piece else pos + 1
+        first = text[0]
+        if text == "\\\n":
+            continue
+        if first in "<>" and started and not redirect and "".join(parts).isdigit():
+            parts, started = [], False  # the fd of `2>`
+        if first in " \t\r\f\v<>" or first in SHELL_CALL_END:
+            if first in "&|" and redirect and not started:
+                continue  # `>&2`, `>|`: still the redirection
+            if first == "&" and cmd.startswith(">", pos):
+                continue  # `&>file`: the `>` starts the redirection
+            if started:
+                word = "".join(parts)
+                if redirect:
+                    targets.add(word)
+                    redirect = False
+                else:
+                    words.append((word, expanded))
+            parts, expanded, started = [], False, False
+            if first in "<>":
+                redirect = True
+            elif first in SHELL_CALL_END:
+                redirect = False
+                if words:
+                    calls.append(words)
+                words = []
+        elif first == "#" and not started:
+            end = cmd.find("\n", pos - len(text))
+            pos = len(cmd) if end < 0 else end
+        else:
+            started = True
+            closed = len(text) > 1 and text[-1] == first
+            if first == "'":
+                parts.append(text[1:-1] if closed else text[1:])
+            elif text.startswith("$'"):
+                parts.append(text[2:-1] if len(text) > 2 and text[-1] == "'" else text[2:])
+            elif first == '"':
+                inner = text[1:-1] if closed else text[1:]
+                plain = SHELL_DQ_ESCAPE.sub("", inner)
+                expanded = expanded or "$" in plain or "`" in plain
+                parts.append(SHELL_DQ_ESCAPE.sub(_dq_unescaped, inner))
+            elif first == "\\":
+                parts.append(text[1:])
+            else:
+                expanded = expanded or first in "$`"
+                parts.append(text)
+    return calls, targets
+
+
+def _program(words: list[tuple[str, bool]]) -> tuple[int, dict[str, str]]:
+    """The index of a call's program word, after its assignments, keywords (`if`, `then`, `{`, `!`)
+    and wrappers (`command`, `exec`, `time`, `env` and env's options), and the variables it sets."""
+    env: dict[str, str] = {}
+    at = 0
+    while at < len(words):
+        text = words[at][0]
+        name = INFRA_ASSIGNMENT.match(text)
+        if name:
+            env[text[: name.end()].rstrip("+=")] = text[name.end():]
+        elif text.rsplit("/", 1)[-1] == "env":
+            while at + 1 < len(words) and words[at + 1][0].startswith("-"):
+                at += 2 if words[at + 1][0] in ENV_VALUE_OPTIONS else 1
+        elif text not in CALL_PREFIX_WORDS:
+            break
+        at += 1
+    return at, env
+
+
+def _moved(here: str | None, args: list[tuple[str, bool]]) -> str | None:
+    """The folder a `cd` or `pushd` with args moves to from here; None when it cannot be told."""
+    operands = [word for word in args if word[0] == "-" or not word[0].startswith("-")]
+    if here is None or (operands and (operands[0][1] or operands[0][0] == "-")):
+        return None
+    return os.path.normpath(os.path.join(here, os.path.expanduser(operands[0][0] if operands else "~")))
+
+
+def _parsed(
+    args: list[tuple[str, bool]], values: str, optional: str = "", long_values: frozenset = frozenset()
+) -> tuple[list[tuple[str, tuple[str, bool] | None]], list[tuple[str, bool]]]:
+    """A subcommand's options, as (name, (value, expanded) or None), and its operands: `--x=v`, or
+    `--x v` for an option of long_values; short options clustered, one of values taking the rest of
+    its word or the next word, one of optional only the rest of its word; `--` ends the options."""
+    options: list[tuple[str, tuple[str, bool] | None]] = []
+    operands: list[tuple[str, bool]] = []
+    at = 0
+    while at < len(args):
+        text, expanded = args[at]
+        at += 1
+        if text == "--":
+            operands.extend(args[at:])
+            break
+        if text.startswith("--"):
+            name, eq, value = text.partition("=")
+            if eq:
+                options.append((name, (value, expanded)))
+            elif name in long_values and at < len(args):
+                options.append((name, args[at]))
+                at += 1
+            else:
+                options.append((name, None))
+        elif text.startswith("-") and len(text) > 1:
+            for index in range(1, len(text)):
+                letter, rest = text[index], text[index + 1:]
+                if letter in values and not rest and at < len(args):
+                    options.append(("-" + letter, args[at]))
+                    at += 1
+                elif letter in values or letter in optional:
+                    options.append(("-" + letter, (rest, expanded) if rest else None))
+                else:
+                    options.append(("-" + letter, None))
+                    continue
+                break
+        else:
+            operands.append((text, expanded))
+    return options, operands
+
+
+def _git_command(words: list[tuple[str, bool]], at: int) -> tuple[list[tuple[str, tuple[str, bool]]], int]:
+    """git's own options from words[at] on, as (name, (value, expanded)) (`--x=v` split; a flag's
+    value is ""), and the index of its subcommand (len(words) when there is none)."""
+    options: list[tuple[str, tuple[str, bool]]] = []
+    while at < len(words) and words[at][0].startswith("-"):
+        text, expanded = words[at]
+        name, eq, value = text.partition("=")
+        if text.startswith("--") and eq:
+            options.append((name, (value, expanded)))
+        elif text in GIT_VALUE_OPTIONS and at + 1 < len(words):
+            at += 1
+            options.append((text, words[at]))
+        else:
+            options.append((text, ("", expanded)))
+        at += 1
+    return options, at
+
+
+def _git_folder(here: str | None, options: list[tuple[str, tuple[str, bool]]]) -> str | None:
+    """The folder git runs in: here, moved by each -C; None when one cannot be told."""
+    for name, (value, expanded) in options:
+        if name == "-C":
+            if here is None or expanded:
+                return None
+            here = os.path.normpath(os.path.join(here, os.path.expanduser(value)))
+    return here
+
+
+def _git_read(args: list[str], folder: str | None, options: list[tuple[str, tuple[str, bool]]],
+              env: dict[str, str]) -> tuple[int, str] | None:
+    """(git's exit code, its stdout) for `git <location options> <args>` run in folder, with the
+    call's own variables; None when it cannot run (no folder, an expanded location, no git, the
+    timeout)."""
+    location = [f"{name}={value}" for name, (value, expanded) in options if name in GIT_LOCATION_OPTIONS]
+    if folder is None or any(expanded for name, (_, expanded) in options if name in GIT_LOCATION_OPTIONS):
+        return None
+    import subprocess  # here, not at the top: a call with no git read never loads it
+
+    try:
+        done = subprocess.run(["git", *location, *args], cwd=folder, env={**os.environ, **env}, capture_output=True,
+                              stdin=subprocess.DEVNULL, timeout=GIT_READ_TIMEOUT)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    return done.returncode, done.stdout.decode("utf-8", "replace")
+
+
+def _message_text(path: str) -> tuple[str | None, str | None]:
+    """(a message file's text, None), or (None, why it cannot be read): a file that is not regular
+    is never opened for reading (a FIFO would block), and at most BLOCKED_FILE_CAP + 1 bytes are read."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    except (OSError, ValueError):
+        return None, "cannot be read"
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None, "not a regular file"
+        data = _read_capped(fd)
+    except OSError:
+        return None, "cannot be read"
+    finally:
+        os.close(fd)
+    if len(data) > BLOCKED_FILE_CAP:
+        return None, "over 1 MiB"
+    return data.decode("utf-8", "replace"), None
+
+
+def _message_files(files: list[tuple[str, bool]], folder: str | None, targets: set[str], reason: str) -> Verdict:
+    """A deny when a message file holds AI attribution; an ask when one cannot be read (stdin, an
+    expansion, a folder that cannot be told, a file that is unreadable, not regular or over 1 MiB).
+    A file the same command writes is skipped: its text was read as the command's."""
+    verdict: Verdict = None
+    for path, expanded in files:
+        if path == "-":
+            cause = "stdin"
+        elif expanded:
+            cause = "a shell expansion"
+        elif path in targets:
+            continue
+        elif folder is None and not os.path.isabs(os.path.expanduser(path)):
+            cause = "a folder the guard cannot read"
+        else:
+            text, cause = _message_text(os.path.join(folder or "", os.path.expanduser(path)))
+            if text is not None and AI_ATTRIBUTION.search(text):
+                return "deny", HELD_BY_REASON.format(reason, _infra_value(path))
+        if cause and verdict is None:
+            verdict = "ask", MESSAGE_UNCHECKED_REASON.format(_infra_value(path), cause)
+    return verdict
+
+
+def _hooks_path_set(args: list[tuple[str, bool]]) -> Verdict:
+    """An ask when `git config` sets or unsets core.hooksPath (reading it passes)."""
+    words = [text.lower() for text, _ in args]
+    if "core.hookspath" not in words:
+        return None
+    at = words.index("core.hookspath")
+    later = [word for word in words[at + 1:] if not word.startswith("-")]
+    return ("ask", HOOKS_PATH_REASON) if later or HOOKS_PATH_EDITS.intersection(words) else None
+
+
+def _bare_push(flags: list[tuple[str, tuple[str, bool] | None]], operands: list[tuple[str, bool]],
+               folder: str | None, options: list[tuple[str, tuple[str, bool]]], env: dict[str, str],
+               cfg: Config) -> Verdict:
+    """For a push that sends the branch checked out (no refspec, or only `HEAD` or `@`): a deny when
+    that branch is protected, an ask when it cannot be told; else None."""
+    if {name for name, _ in flags} & {"--tags", "--all", "--branches", "--mirror"}:
+        return None
+    if any(spec not in ("HEAD", "@") for spec, _ in operands[1:]):
+        return None
+    read = _git_read(["symbolic-ref", "--quiet", "--short", "HEAD"], folder, options, env)
+    branch = read[1].strip() if read and read[0] == 0 else ""
+    if not branch:
+        return "ask", PUSH_UNKNOWN_REASON
+    return ("deny", PUSH_REASON.format(branch, _branch_hint(cfg))) if branch in cfg.protected_branches else None
+
+
+def _git_call(words: list[tuple[str, bool]], at: int, env: dict[str, str], here: str | None, cfg: Config,
+              targets: set[str]) -> Verdict:
+    """The change-flow rules on one git call (words[at] is git)."""
+    options, sub_at = _git_command(words, at + 1)
+    hooks = any(name in ("-c", "--config-env") and value.lower().startswith("core.hookspath")
+                for name, (value, _) in options) or any("core.hookspath" in value.lower() for value in env.values())
+    verdict: Verdict = ("ask", HOOKS_PATH_REASON) if hooks else None
+    if sub_at >= len(words):
+        return verdict
+    sub, args = words[sub_at][0], words[sub_at + 1:]
+    if sub == "config":
+        return tighten(verdict, _hooks_path_set(args))
+    if sub not in GIT_ARGUMENTS:
+        return verdict
+    flags, operands = _parsed(args, *GIT_ARGUMENTS[sub])
+    skipped = next((name for name, _ in flags if name in NO_VERIFY.get(sub, ())), None)
+    if skipped:
+        verdict = tighten(verdict, ("ask", NO_VERIFY_REASON.format(sub, skipped)))
+    folder = _git_folder(here, options)
+    if sub == "push":
+        return verdict if verdict and verdict[0] == "deny" else tighten(verdict, _bare_push(flags, operands, folder, options, env, cfg))
+    files = [value for name, value in flags if name in ("-F", "--file") and value is not None]
+    return tighten(verdict, _message_files(files, folder, targets, COMMIT_ATTRIBUTION_REASON))
+
+
+def _gh_call(words: list[tuple[str, bool]], at: int, here: str | None, targets: set[str]) -> Verdict:
+    """The change-flow rules on one gh call (words[at] is gh)."""
+    args = words[at + 1:]
+    if len(args) >= 2 and args[0][0] == "pr" and args[1][0] in GH_PR_ARGUMENTS:
+        flags, _ = _parsed(args[2:], GH_PR_ARGUMENTS[args[1][0]], "", GH_LONG_VALUES)
+        files = [value for name, value in flags if name in ("-F", "--body-file") and value is not None]
+        return _message_files(files, here, targets, PR_ATTRIBUTION_REASON)
+    return None
+
+
+def check_change_flow(cmd: str, cfg: Config, cwd: str | None = None) -> Verdict:
+    """The change-flow rules on each git and gh call of cmd, in order, run from cwd (None: the
+    process's own folder), the folder followed through `cd` and `pushd` (one it cannot tell, after
+    an expansion or `popd`, makes a later read ask): the first deny, else the first ask."""
+    if not CHANGE_FLOW_WORDS.search(cmd):
+        return None
+    calls, targets = _shell_calls(cmd)
+    here: str | None = cwd or os.getcwd()
+    verdict: Verdict = None
+    for words in calls:
+        at, env = _program(words)
+        if at >= len(words) or words[at][1]:
+            continue
+        program = words[at][0].rsplit("/", 1)[-1]
+        found: Verdict = None
+        if program in ("cd", "pushd"):
+            here = _moved(here, words[at + 1:])
+        elif program == "popd":
+            here = None
+        elif program == "git":
+            found = _git_call(words, at, env, here, cfg, targets)
+        elif program == "gh":
+            found = _gh_call(words, at, here, targets)
+        if found and found[0] == "deny":
+            return found
+        verdict = verdict or found
+    return verdict
+
+
 def _assert_count(s: str) -> int:
     return len(re.findall(r"\bassert\b|\bexpect\(|\bpytest\.raises\b|\.assert_\w+\(|\.assert[A-Z]\w*\(|\bself\.fail\(", s or ""))
 
@@ -1217,6 +1598,8 @@ def check_file(tool: str, ti: dict, cfg: Config | None = None) -> Verdict:
         return None
     if re.search(r"(^|/)\.git(/|$)", path):
         return "deny", ".git is git's own state (a worktree's .git file links it to the repo); use git commands, never edit it directly"
+    if MESSAGE_FILE.search(os.path.basename(path)) and AI_ATTRIBUTION.search(_new_text(tool, ti)):
+        return "deny", MESSAGE_FILE_REASON.format(path)
     rel = guard_file(path, cfg)
     if rel:
         return "ask", GUARD_FILE_REASON.format(path, rel)
@@ -2081,7 +2464,7 @@ def decide(data: dict, cfg: Config, environ: dict | None = None) -> Verdict:
         return env_file
     blocked = tighten(tighten(blocked, env_file), check_environment_endpoint(tool, ti, cfg, environ))
     if tool == "Bash":
-        return tighten(blocked, check_bash(_str(ti.get("command")), cfg))
+        return tighten(blocked, check_bash(_str(ti.get("command")), cfg, cwd))
     return tighten(blocked, check_file(tool, ti, cfg))
 
 
@@ -2328,7 +2711,11 @@ RULE_IDS = (
     ("docker_volumes", LazyPattern(r"^removing docker volumes")),
     ("infra_commands", LazyPattern(r"^infrastructure commands")),
     ("secret_read", LazyPattern(r"^reading secret file ")),
-    ("ai_attribution", LazyPattern(r"^(commits|PR text) carr(y|ies) no AI attribution")),
+    ("ai_attribution", LazyPattern(r"^(commits|PR text|commits and PR text) carr(y|ies) no AI attribution")),
+    ("message_unchecked", LazyPattern(r"^message not checked for AI attribution: ")),
+    ("no_verify", LazyPattern(r"^`git \w+ (?:-n|--no-verify)` skips the repo's git hooks")),
+    ("hooks_path", LazyPattern(r"^core\.hooksPath changes which git hooks run")),
+    ("push_branch_unknown", LazyPattern(r"^the branch this `git push` sends cannot be told")),
     ("agent_branch", LazyPattern(r"^branches are \S*, never claude/")),
     ("git_internals", LazyPattern(r"^\.git is git's own state")),
     ("test_bash_edit", LazyPattern(r"^deleting or sed-editing tests")),
