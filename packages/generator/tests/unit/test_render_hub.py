@@ -4191,8 +4191,17 @@ def test_writes_empty_file_when_gitkeep_or_project_rules_rendered(
 
 
 # Spec AC-4.7 (D5, Q-5, Q-11), AGH-16 D2 (E14): the managed `.claude/settings.json` is the rules
-# base: the base denies and sandbox, nothing more.
-SETTINGS_KEYS = ["$schema", "attribution", "hooks", "includeCoAuthoredBy", "permissions", "sandbox"]
+# base: the base denies and sandbox, nothing more. ADR 0057 adds `enabledMcpjsonServers`, which
+# enables the `hub` server of `.mcp.json`.
+SETTINGS_KEYS = [
+    "$schema",
+    "attribution",
+    "enabledMcpjsonServers",
+    "hooks",
+    "includeCoAuthoredBy",
+    "permissions",
+    "sandbox",
+]
 SETTINGS_SCHEMA = "https://json.schemastore.org/claude-code-settings.json"
 SETTINGS_ALLOW = ["Bash(git status *)", "Bash(git diff *)", "Bash(git log *)", "Bash(git show *)"]
 # AGH-114: what `/onboard propose` runs headless with no prompt, from its skill text. The hash
@@ -4357,6 +4366,7 @@ def test_holds_rules_base_only_when_settings_rendered(
     assert settings["$schema"] == SETTINGS_SCHEMA
     assert settings["attribution"] == {"commit": "", "pr": ""}
     assert settings["includeCoAuthoredBy"] is False
+    assert settings["enabledMcpjsonServers"] == ["hub"]
     assert settings["permissions"] == {
         "allow": [*SETTINGS_ALLOW, *onboard_propose_allow(config_name)],
         "deny": settings_deny(config_name),

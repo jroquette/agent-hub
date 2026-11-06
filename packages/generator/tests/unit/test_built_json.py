@@ -347,6 +347,18 @@ def test_renders_repos_in_config_order_when_repos_reordered() -> None:
     assert settings["permissions"]["additionalDirectories"] == ["../zeta", "../alpha"]
 
 
+def test_lists_hub_in_enabled_mcp_servers_when_settings_built(demo_config: HubConfig) -> None:
+    # ADR 0057: the managed settings enable the one server `.mcp.json` declares, by its name.
+    settings = managed_settings(demo_config)
+    servers = mcp_config(demo_config)
+    assert isinstance(settings, dict)
+    assert isinstance(servers, dict)
+    assert isinstance(servers["mcpServers"], dict)
+
+    assert settings["enabledMcpjsonServers"] == ["hub"]
+    assert settings["enabledMcpjsonServers"] == list(servers["mcpServers"])
+
+
 def test_equals_managed_hooks_when_base_block_read(demo_config: HubConfig) -> None:
     # Spec AC-11.12 (Q-14): hub doctor's settings.weakening compares against this block: the value
     # the managed settings embed; reading it renders nothing.
