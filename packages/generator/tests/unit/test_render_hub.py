@@ -1099,7 +1099,8 @@ FUNCTION_IMPORTS = {
         "import tempfile",  # to run the extension
         "from event_sensor import send_decision",  # on a deny or an ask
     ],
-    "plugin/hub-workflow/hooks/event_sensor.py": ["import socket"],  # when it sends
+    # when it sends; when it spools (test_event_sensor_spool.py)
+    "plugin/hub-workflow/hooks/event_sensor.py": ["import socket", "import fcntl"],
     "plugin/hub-workflow/hooks/hubhooks.py": ["import subprocess", "import subprocess"],  # git
     "plugin/hub-workflow/hooks/pre_tool_use.py": ["import guard", "import event_sensor"],
 }

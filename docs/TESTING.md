@@ -122,7 +122,9 @@ call allowed is SessionStart's detached refresh running `uvx … hub brief --wri
 commands. The hooks file gives each case its own `TMPDIR`, since some hooks keep state there. A characterization
 case compares a hook's or script's exit code, stdout, stderr, files and calls to fake tools with
 `packages/generator/tests/integration/golden/<file>/<case>.golden`, stored byte-exact (`-text` in `.gitattributes`).
-`GOLDEN_UPDATE=1` rewrites the goldens (refused under `CI`; review and commit the diff) and `GOLDEN_KEEP=1` keeps each
+The files are those under the case's root, less the harness's own `bin/`, `log/` and `state/` (the case's
+`XDG_STATE_HOME`, where the sensor spools what the event server did not take, so a case reads the same with the
+server up or down). `GOLDEN_UPDATE=1` rewrites the goldens (refused under `CI`; review and commit the diff) and `GOLDEN_KEEP=1` keeps each
 case's temporary root and prints its path. The `hub init` golden,
 `packages/cli/tests/integration/golden/init/demo.hub.lock`, is the synthetic `demo` init's `hub.lock` with
 `platform_version` as `<VERSION>` and every hash kept, so a template change shows as a reviewed hash diff; it is `-text`

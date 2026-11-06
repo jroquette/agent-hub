@@ -150,7 +150,16 @@ MultiEdit edit's `old_string`/`new_string` to `<key>_lines`, a Write under `brai
 `AGENT_HUB_STEP`, `AGENT_HUB_ATTEMPT`, each null when out of bounds) and POSTs it to `/api/v1/events/hooks` of
 `AGENT_HUB_WEB_URL` (default `http://127.0.0.1:7420`; only plain `http` to `127.0.0.1`, `[::1]` or `localhost`, any other
 URL turns it off without opening a socket) within 0.5 s. An envelope over 1 MiB, an input that is not a JSON object or
-no hub found sends nothing; it never prints and always exits 0. After deciding, and after printing its decision, the
+no hub found sends nothing; it never prints and always exits 0. An envelope the server does not take (refused, no
+answer in time, no time left, or a 5xx answer) goes to the hook spool (AGH-699): one line, the exact POST body,
+appended to `hook-spool.jsonl` in `$XDG_STATE_HOME/agent-hub/` (absolute only), else `$HOME/.local/state/agent-hub/`
+(absolute only; with neither, nothing is kept), never inside a hub or a repo, since its command text is redacted only
+at import. The folder is made with mode 0700; each file is opened by name in that folder with `O_NOFOLLOW` and used
+only when it is a regular file of this user, set to 0600. Each write holds an `flock` on `hook-spool.lock`, taken
+within 0.2 s or the envelope is dropped. A spool over 8 MiB (`MAX_SPOOL_BYTES`) loses its oldest lines down to 6 MiB
+(`SPOOL_KEEP_BYTES`), written to `hook-spool.trim` then renamed over it, and its first line `{"dropped": n}` adds those
+lines to the count an earlier trim wrote. Any failure there is silent, the exit code stays 0, and the hook's time is
+the send's deadline plus the lock wait and a few writes. After deciding, and after printing its decision, the
 guard sends a deny or an ask (`decision: {by: guard, kind, rule}`, `rule` a stable id read from the reason, e.g.
 `push_protected_branch`, `ask_before_edit`) and the Stop gate a block (`{by: stop_gate, kind: block, command,
 exit_code}`) through the sensor's `send_decision`, bounded the same way; their output and exit codes do not change

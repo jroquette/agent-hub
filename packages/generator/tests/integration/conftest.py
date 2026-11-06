@@ -429,8 +429,10 @@ GOLDEN_SUFFIX = ".golden"
 HEADER = re.compile(rb"--- ([a-z]+) \((0|[1-9][0-9]{0,17}) bytes\) ---\n")
 TRACEBACK_HEAD = b"Traceback (most recent call last):"
 NO_FINAL_NEWLINE = "\\ no newline at end of file"
-# ``<ROOT>/bin`` (fakes and their answers) and ``<ROOT>/log`` (calls) belong to the harness.
-FS_EXCLUDED_TOP = frozenset({"bin", "log"})
+# ``<ROOT>/bin`` (fakes and their answers) and ``<ROOT>/log`` (calls) belong to the harness, and
+# so does ``<ROOT>/state`` (``XDG_STATE_HOME``, where the sensor spools what the event server did
+# not take): a case's streams are the same with the server up or down.
+FS_EXCLUDED_TOP = frozenset({"bin", "log", "state"})
 FS_EXCLUDED_ANYWHERE = frozenset({".git", "__pycache__"})
 UPDATE_HINT = (
     f"Update: {UPDATE_VARIABLE}=1 uv run --locked --all-packages pytest -m integration "
@@ -757,8 +759,8 @@ def golden() -> GoldenHarness:
 # ``commands.py`` and the run part of ``harness.py``. A case's ``<ROOT>`` is ``tmp_path/root``
 # (nested, never directly under the temp folder, whose other hubs the hooks' workspace scan would
 # find): ``ws/demo-hub`` (hub copy), ``ws/<repo>``, ``origins/<repo>.git``, ``home/`` (``HOME``),
-# ``bin/`` (fakes), ``log/``, ``elsewhere/``. Its child scripts are written from the string
-# constants below to ``tmp_path/support``, outside ``<ROOT>``.
+# ``bin/`` (fakes), ``log/``, ``state/`` (``XDG_STATE_HOME``), ``elsewhere/``. Its child scripts
+# are written from the string constants below to ``tmp_path/support``, outside ``<ROOT>``.
 
 FIXED = 1768473000  # 2026-01-15T10:30:00Z: the frozen instant, also written into SITECUSTOMIZE
 # The only entry of a case child's PYTHONPATH, so ``site`` imports it in every Python child and
@@ -1073,6 +1075,7 @@ class CaseWorkspace:
             "PATH": os.pathsep.join([str(root / "bin"), *SYSTEM_PATH]),
             "HOME": str(home),
             "XDG_CONFIG_HOME": str(home / ".config"),
+            "XDG_STATE_HOME": str(root / "state"),
             "TZ": "UTC",
             "PYTHONUTF8": "1",
             "PYTHONHASHSEED": "0",

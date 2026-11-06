@@ -19,6 +19,16 @@ http to 127.0.0.1, [::1] or localhost (no user, path or query) turns the sensor 
 is opened. An envelope over MAX_BODY_BYTES, an input that is not a JSON object, or no hub found
 sends nothing. The sensor never prints, never decides anything, and exits 0 whatever happens.
 The guard and the Stop gate send their decisions through send_decision (fail open as well).
+
+An envelope the server did not take (nothing listens, no answer in time, no time left, or a 5xx
+answer) is appended as one line, the exact POST body, to the spool: SPOOL_FILE in
+$XDG_STATE_HOME/agent-hub, else $HOME/.local/state/agent-hub (each only when absolute; with
+neither, nothing is kept), outside every hub and repo, since the command text in it is redacted
+only when `hub web` or `hub collect --spool` imports it. The folder is made with mode 0700, the
+files are 0600 and owned by this user, and neither is ever opened through a link. Every writer
+holds an flock on SPOOL_LOCK (waiting at most SPOOL_LOCK_WAIT seconds, else the envelope is
+dropped); a spool over MAX_SPOOL_BYTES loses its oldest lines down to SPOOL_KEEP_BYTES, and its
+first line {"dropped": n} counts every line dropped so far (written to SPOOL_TRIM, then renamed).
 """
 
 from __future__ import annotations
@@ -26,6 +36,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 import sys
 import time
 from datetime import datetime, timezone
@@ -48,6 +59,17 @@ HOOKS_PATH = "/api/v1/events/hooks"
 LOOPBACK_HOSTS = ("127.0.0.1", "::1", "localhost")
 MAX_STEP = 40
 MAX_ATTEMPT = 99
+# The spool of the envelopes the server did not take (see the module docstring).
+SPOOL_FOLDER = "agent-hub"
+SPOOL_FILE = "hook-spool.jsonl"
+SPOOL_LOCK = "hook-spool.lock"
+SPOOL_TRIM = "hook-spool.trim"
+MAX_SPOOL_BYTES = 8 * 1024 * 1024
+SPOOL_KEEP_BYTES = 6 * 1024 * 1024
+SPOOL_LOCK_WAIT = 0.2  # seconds
+SPOOL_LOCK_RETRY = 0.005  # seconds between two tries of the lock
+# Only a regular file the sensor opens is used; a FIFO swapped in cannot block the open.
+OPEN_FLAGS = os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
 # What reduce_hook keeps of content; the control plane's hook mapper reads these keys.
 FILE_TOOLS = ("Write", "Edit", "MultiEdit")
 STRING_KEYS = ("old_string", "new_string")
@@ -220,21 +242,33 @@ def build_envelope(hook: dict, decision: dict | None = None) -> dict | None:
 
 
 def post_envelope(envelope: dict, timeout: float = TIMEOUT) -> None:
-    """POST envelope to the event server within timeout seconds; any failure is silent.
+    """POST envelope to the event server within timeout seconds; when the server does not take
+    it, append it to the spool. Any failure is silent.
 
-    The request is written on a plain socket as http.client wrote it (the same Host, the body's
-    type and length), with Connection: close, and one read of at most 4 KiB takes the answer.
-    With no time left (timeout 0 or less) nothing is sent."""
+    With the sensor turned off (endpoint) or a body over MAX_BODY_BYTES nothing is sent or kept.
+    With no time left (timeout 0 or less) nothing is sent and the envelope is spooled."""
     try:
-        if timeout <= 0:
-            return
-        deadline = time.monotonic() + timeout
         target = endpoint()
         if target is None:
             return
         body = json.dumps(envelope, allow_nan=False).encode("ascii")
         if len(body) > MAX_BODY_BYTES:
             return
+        if not deliver(target, body, timeout):
+            spool(body)
+    except Exception:  # unencodable, or the spool failed: the sensor fails open
+        return
+
+
+def deliver(target: tuple[str, int], body: bytes, timeout: float) -> bool:
+    """Whether the server answered body's POST within timeout seconds with a status under 500.
+
+    The request is written on a plain socket as http.client wrote it (the same Host, the body's
+    type and length), with Connection: close, and one read of at most 4 KiB takes the answer."""
+    try:
+        if timeout <= 0:
+            return False
+        deadline = time.monotonic() + timeout
         host, port = target
         # http.client's Host: an IPv6 address in brackets, and the port unless it is http's 80.
         name = f"[{host}]" if ":" in host else host
@@ -248,16 +282,146 @@ def post_envelope(envelope: dict, timeout: float = TIMEOUT) -> None:
         with socket.create_connection(target, timeout=deadline - time.monotonic()) as connection:
             left = deadline - time.monotonic()
             if left <= 0:
-                return
+                return False
             connection.settimeout(left)
             connection.sendall(head.encode("ascii") + body)
             left = deadline - time.monotonic()
             if left <= 0:
-                return
+                return False
             connection.settimeout(left)
-            connection.recv(4096)
-    except Exception:  # down, slow, refused, unencodable: the sensor fails open
+            answer = connection.recv(4096)
+    except Exception:  # down, slow, refused: the envelope goes to the spool
+        return False
+    # "HTTP/1.1 503 ...": the status's first digit is the tenth byte.
+    return answer.startswith(b"HTTP/") and answer[9:10] != b"5"
+
+
+def spool_folder() -> str | None:
+    """$XDG_STATE_HOME/agent-hub, else $HOME/.local/state/agent-hub, each only when absolute."""
+    state = os.environ.get("XDG_STATE_HOME", "")
+    if os.path.isabs(state):
+        return os.path.join(state, SPOOL_FOLDER)
+    home = os.environ.get("HOME", "")
+    if os.path.isabs(home):
+        return os.path.join(home, ".local", "state", SPOOL_FOLDER)
+    return None
+
+
+def spool(body: bytes) -> None:
+    """Append body as one line to the spool, under its lock (see the module docstring)."""
+    folder = spool_folder()
+    if folder is None:
         return
+    os.makedirs(folder, mode=0o700, exist_ok=True)
+    directory = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | OPEN_FLAGS)
+    try:
+        info = os.fstat(directory)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+            return
+        import fcntl  # here, not at the top: only a spooled envelope takes the lock
+
+        lock = open_private(directory, SPOOL_LOCK, os.O_RDWR | os.O_CREAT)
+        try:
+            if not take_lock(fcntl, lock):
+                return
+            if append_line(directory, body) > MAX_SPOOL_BYTES:
+                trim(directory)
+        finally:
+            os.close(lock)  # releases the lock
+    finally:
+        os.close(directory)
+
+
+def open_private(directory: int, name: str, flags: int) -> int:
+    """name in the spool folder, opened with flags but never through a link: a regular file of
+    this user, set to mode 0600 when it was not; OSError otherwise."""
+    descriptor = os.open(name, flags | OPEN_FLAGS, 0o600, dir_fd=directory)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            raise OSError(f"{name}: not a regular file of this user")
+        if stat.S_IMODE(info.st_mode) != 0o600:
+            os.fchmod(descriptor, 0o600)
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
+def take_lock(fcntl, lock: int) -> bool:
+    """Whether the exclusive lock on lock was taken within SPOOL_LOCK_WAIT seconds."""
+    deadline = time.monotonic() + SPOOL_LOCK_WAIT
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(SPOOL_LOCK_RETRY)
+
+
+def write_all(descriptor: int, data: bytes) -> None:
+    written = 0
+    while written < len(data):
+        written += os.write(descriptor, data[written:])
+
+
+def append_line(directory: int, body: bytes) -> int:
+    """Append body and a newline to the spool; the spool's size after it."""
+    descriptor = open_private(directory, SPOOL_FILE, os.O_WRONLY | os.O_APPEND | os.O_CREAT)
+    try:
+        write_all(descriptor, body + b"\n")
+        return os.fstat(descriptor).st_size
+    finally:
+        os.close(descriptor)
+
+
+def dropped_count(line: bytes) -> int | None:
+    """n when line is the spool's count {"dropped": n}, else None."""
+    try:
+        value = json.loads(line)
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(value, dict) or list(value) != ["dropped"]:
+        return None
+    count = value["dropped"]
+    is_count = isinstance(count, int) and not isinstance(count, bool) and count >= 0
+    return count if is_count else None
+
+
+def trim(directory: int) -> None:
+    """Drop the spool's oldest lines until the rest holds at most SPOOL_KEEP_BYTES; the first
+    line {"dropped": n} adds them to the count an earlier trim wrote."""
+    descriptor = open_private(directory, SPOOL_FILE, os.O_RDONLY)
+    try:
+        chunks = []
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    finally:
+        os.close(descriptor)
+    lines = b"".join(chunks).split(b"\n")
+    if lines and not lines[-1]:
+        lines.pop()
+    dropped = dropped_count(lines[0]) if lines else None
+    if dropped is not None:
+        lines = lines[1:]
+    dropped = dropped or 0
+    size = sum(len(line) + 1 for line in lines)
+    first = 0
+    while first < len(lines) and size > SPOOL_KEEP_BYTES:
+        size -= len(lines[first]) + 1
+        first += 1
+    count = json.dumps({"dropped": dropped + first}).encode("ascii")
+    trimmed = open_private(directory, SPOOL_TRIM, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+    try:
+        write_all(trimmed, b"\n".join([count, *lines[first:]]) + b"\n")
+    finally:
+        os.close(trimmed)
+    os.replace(SPOOL_TRIM, SPOOL_FILE, src_dir_fd=directory, dst_dir_fd=directory)
 
 
 def send_decision(hook: dict, decision: dict) -> None:
