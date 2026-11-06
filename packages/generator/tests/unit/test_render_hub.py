@@ -3043,6 +3043,7 @@ def run_pre_commit_entry(
 # AGH-16 D3/D4: the workflow's steps, in order; a step is the list item at the job's step indent.
 CI_STEP_START = "      - "
 CREDENTIAL_STEP = "Platform read credential"
+AUTHORSHIP_STEP = "Authorship"
 GOLDEN_STEP = "Golden (hub sync --check)"
 MAKE_CHECK_STEP = "make check"
 READ_REFERENCE = "secrets.AGENT_HUB_READ_TOKEN"
@@ -3090,6 +3091,7 @@ class TestCiWorkflow:
         steps = re.findall(r"^\s+- (?:uses|name|run): .*$", ci, re.MULTILINE)
         assert [step.strip() for step in steps] == [
             "- uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1",
+            f"- name: {AUTHORSHIP_STEP}",
             "- uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0",
             f"- name: {CREDENTIAL_STEP}",
             f"- name: {GOLDEN_STEP}",
@@ -3146,6 +3148,39 @@ class TestCiWorkflow:
 
         assert uses
         assert [line for line in uses if not PINNED_USES.match(line)] == []
+
+    # AGH-4 / AGH-699 C-9: the authorship step runs on pull requests only, again when one is
+    # edited, over the whole history the checkout fetched.
+    @pytest.mark.parametrize("config_name", ["demo", "variant"])
+    def test_checks_authorship_on_pull_requests_when_ci_rendered(
+        self, config_name: str, request: pytest.FixtureRequest
+    ) -> None:
+        ci = text_of(request.getfixturevalue(f"{config_name}_config"), ".github/workflows/ci.yml")
+
+        triggers = ci[ci.index("\non:\n") : ci.index("\npermissions:")]
+        pull_request = triggers[triggers.index("  pull_request:\n") : triggers.index("  push:\n")]
+        authorship = ci_step(ci, AUTHORSHIP_STEP)
+        checkout = ci_steps(ci)[0]
+
+        assert "    types: [opened, synchronize, reopened, edited]\n" in pull_request
+        assert "        if: github.event_name == 'pull_request'\n" in authorship
+        assert "python3 -I -S -c '" in run_block(authorship)
+        assert "${{" not in authorship
+        assert "          persist-credentials: false\n" in checkout
+        assert "          fetch-depth: 0\n" in checkout
+
+    def test_matches_guard_pattern_when_authorship_step_rendered(
+        self, demo_config: HubConfig
+    ) -> None:
+        ci = text_of(demo_config, ".github/workflows/ci.yml")
+        guard = text_of(demo_config, GUARD_HOOK)
+
+        step = re.findall(r'^\s+ATTRIBUTION = re\.compile\(r"(.*)", re\.I\)$', ci, re.MULTILINE)
+        hook = re.findall(r'^AI_ATTRIBUTION = LazyPattern\(r"(.*)", re\.I\)$', guard, re.MULTILINE)
+
+        # The step spells the robot emoji as an escape (its run block stays ASCII).
+        assert [pattern.replace("\\U0001f916", "\U0001f916") for pattern in step] == hook
+        assert len(hook) == 1
 
 
 # AGH-46 D-agents: the two branch mentions of AGENTS.md, as rendered before the repo key existed.
