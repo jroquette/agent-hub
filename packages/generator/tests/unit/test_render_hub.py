@@ -3044,6 +3044,7 @@ def run_pre_commit_entry(
 CI_STEP_START = "      - "
 CREDENTIAL_STEP = "Platform read credential"
 AUTHORSHIP_STEP = "Authorship"
+REPOS_STEP = "Repos beside the hub"
 GOLDEN_STEP = "Golden (hub sync --check)"
 MAKE_CHECK_STEP = "make check"
 READ_REFERENCE = "secrets.AGENT_HUB_READ_TOKEN"
@@ -3094,6 +3095,7 @@ class TestCiWorkflow:
             f"- name: {AUTHORSHIP_STEP}",
             "- uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0",
             f"- name: {CREDENTIAL_STEP}",
+            f"- name: {REPOS_STEP}",
             f"- name: {GOLDEN_STEP}",
             f"- name: {MAKE_CHECK_STEP}",
         ]
@@ -3101,7 +3103,8 @@ class TestCiWorkflow:
         assert "run: make check" in ci
         assert not re.search(r"(?:version: \"?|@)latest", ci)
         assert "@main" not in ci
-        assert re.findall(r"secrets\.\w*", ci) == [READ_REFERENCE]
+        # AGH-699 A-13: the one read secret, in the credential step and the repos step.
+        assert re.findall(r"secrets\.\w*", ci) == [READ_REFERENCE, READ_REFERENCE]
         jobs = ci[ci.index("\njobs:\n") :]
         assert re.findall(r"^  ([a-z][a-z0-9-]*):$", jobs, re.MULTILINE) == ["check"]
 
@@ -3129,14 +3132,42 @@ class TestCiWorkflow:
 
         credential = ci_step(ci, CREDENTIAL_STEP)
         block = run_block(credential)
+        repos = ci_step(ci, REPOS_STEP)
+        repos_block = run_block(repos)
 
-        assert ci.count("secrets.") == 1
-        assert f"        env:\n          TOKEN: ${{{{ {READ_REFERENCE} }}}}\n" in credential
-        # The token reaches git only through the job's environment, set by the run block.
+        # AGH-699 A-13: the repos step reads the same secret, in its own env only.
+        assert ci.count("secrets.") == 2
+        for step in (credential, repos):
+            assert f"        env:\n          TOKEN: ${{{{ {READ_REFERENCE} }}}}\n" in step
+        # The token reaches git only through the job's environment, set by the credential block,
+        # and, for the repos' clones, through the repos step's own environment.
         assert "x-access-token" in block
-        assert "x-access-token" not in ci.replace(block, "")
+        assert "x-access-token" in repos_block
+        assert "x-access-token" not in ci.replace(block, "").replace(repos_block, "")
         assert '>> "$GITHUB_ENV"' in block
+        assert "GITHUB_ENV" not in repos_block
         assert "--dangerously-skip-permissions" not in ci
+
+    # AGH-699 A-13: each repo of hub.json at ../<dir>, where hub doctor's repo rules read it,
+    # before the golden step and make check.
+    @pytest.mark.parametrize("config_name", ["demo", "variant"])
+    def test_clones_repos_beside_hub_before_make_check_when_ci_rendered(
+        self, config_name: str, request: pytest.FixtureRequest
+    ) -> None:
+        ci = text_of(request.getfixturevalue(f"{config_name}_config"), ".github/workflows/ci.yml")
+
+        steps = ci_steps(ci)
+        repos = ci_step(ci, REPOS_STEP)
+        block = run_block(repos)
+
+        assert steps.index(ci_step(ci, CREDENTIAL_STEP)) < steps.index(repos)
+        assert steps.index(repos) < steps.index(ci_step(ci, GOLDEN_STEP))
+        assert (
+            'git clone --quiet --depth 1 --branch "$branch" "https://github.com/$github.git"'
+            ' "../$dir"'
+        ) in block
+        assert "export GIT_TERMINAL_PROMPT=0\n" in block
+        assert "if:" not in repos
 
     @pytest.mark.parametrize("config_name", ["demo", "variant"])
     def test_pins_actions_by_sha_when_ci_rendered(
