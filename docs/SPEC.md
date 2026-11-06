@@ -1206,6 +1206,11 @@ Continuity between sessions comes from the brain and the summaries, not from rer
 - Agents reach it through `hub mcp`, a stdio MCP server that `hub sync` declares in the hub's `.mcp.json`: `search`
   (always with path and snippet), `read` (brain and docs only) and `propose` (a hub pull request through `hub_git`
   on `<prefix>learning-propose-<slug>`, never the default branch). The app repos get no MCP configuration, so direction 2 holds.
+- `hub mcp` sends server instructions on connect: search the brain for the task's topic in 2 to 4 key words before planning,
+  `read` what matters, weigh `kind` and `status`, file learnings with `propose`, and fall back to `./hub search`
+  without the tools. The hub's `AGENTS.md` and `/kickoff`, `/implement` and `/feature` say the same. The managed
+  settings enable the `hub` server (`enabledMcpjsonServers`), which takes effect once the folder is trusted
+  ([ADR 0057](adr/0057-managed-settings-enable-hub-mcp.md)).
 - Out of scope: hosting, Postgres, accounts, sharing transcripts, embeddings. A move to hosted later replaces only where
   the index is stored.
 
