@@ -11,6 +11,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-11-06
+
 ### Added
 
 - `hub web` Learnings: decide several learnings in one hub pull request (AGH-687).
@@ -1631,7 +1633,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.31.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.32.0...HEAD
+[0.32.0]: https://github.com/jroquette/agent-hub/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/jroquette/agent-hub/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/jroquette/agent-hub/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/jroquette/agent-hub/compare/v0.28.0...v0.29.0
