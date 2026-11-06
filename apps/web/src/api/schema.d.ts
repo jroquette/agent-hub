@@ -671,6 +671,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/features/{project}/{slug}/mockups/{name}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Ux Mockup
+     * @description One UX design's visual mockup (``ux-*.html`` of the feature folder) as text; 404 for any
+     *     other name, a missing file, a link or one over 1 MiB.
+     */
+    get: operations["get_ux_mockup_api_v1_features__project___slug__mockups__name__get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/features/{project}/{slug}/owner-signoff": {
     parameters: {
       query?: never;
@@ -3934,7 +3955,8 @@ export interface components {
      * FeatureDetail
      * @description A feature with its acceptance criteria rows, its records (D3) and every eval; ``plan``
      *     (None without ``plan.md``) and ``acceptance_eval`` (None before one exists), whose verdict is
-     *     the header's ``verdict``; ``change_requests`` by number; ``cost`` what its sessions cost
+     *     the header's ``verdict``; ``ux_designs`` the screens designed for it, by file name;
+     *     ``change_requests`` by number; ``cost`` what its sessions cost
      *     (None when the events are not read).
      */
     FeatureDetail: {
@@ -3989,6 +4011,11 @@ export interface components {
        */
       sources_missing: components["schemas"]["EventSource"][];
       tickets_source: components["schemas"]["TicketsSource"];
+      /**
+       * Ux Designs
+       * @default []
+       */
+      ux_designs: components["schemas"]["UxDesignView"][];
       verdict: components["schemas"]["Verdict"] | null;
       /** Verdict Line */
       verdict_line: string | null;
@@ -8507,6 +8534,47 @@ export interface components {
     /** Format: date-time */
     UtcTimestamp: string;
     /**
+     * UxDesignView
+     * @description One ``ux-*.md`` of a feature folder, read from its head: ``path`` is relative to the hub's
+     *     ``brain/`` (the brain note route reads it), ``screen`` and ``change`` (``new`` or ``change``)
+     *     come from its frontmatter or else its file name, ``title`` is its first ``# `` heading, and
+     *     ``approved`` says its frontmatter reads ``status: approved``. ``mockup`` names the
+     *     ``ux-*.html`` beside it with the same stem (its visual mockup), None without one.
+     */
+    UxDesignView: {
+      /** Approved */
+      approved: boolean;
+      /** Change */
+      change: string;
+      /** Mockup */
+      mockup?: string | null;
+      /** Path */
+      path: string;
+      /** Screen */
+      screen: string;
+      /** Title */
+      title: string;
+    };
+    /**
+     * UxMockup
+     * @description One UX design's visual mockup (``ux-*.html`` of a feature folder) as text: hub web shows
+     *     it in a sandboxed frame, without scripts or network.
+     */
+    UxMockup: {
+      /** Html */
+      html: string;
+      /** Name */
+      name: string;
+      /** Project */
+      project: string;
+      /** Sha256 */
+      sha256: string;
+      /** Size */
+      size: number;
+      /** Slug */
+      slug: string;
+    };
+    /**
      * ValidateRequest
      * @description A scenario document to check: its pack and the document as the builder holds it.
      */
@@ -10386,6 +10454,48 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ChangeRequestView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_ux_mockup_api_v1_features__project___slug__mockups__name__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        slug: string;
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["UxMockup"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

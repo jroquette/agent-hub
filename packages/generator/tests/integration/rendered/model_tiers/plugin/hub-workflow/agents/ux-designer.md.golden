@@ -1,6 +1,6 @@
 ---
 name: ux-designer
-description: Proposes the UX design of every screen a feature creates or changes, from its approved spec — the screen's job, layout per breakpoint, states, interactions, copy and the shared components and tokens it uses — held to the repo's approved design system and to human-first usability. Writes one ux-<new|change>-<screen>.md per screen for the user's approval. Use after the spec gate and before /create-plan whenever a feature adds a screen or modifies one; /ux-review checks the built result.
+description: Proposes the UX design of every screen a feature creates or changes, from its approved spec — the screen's job, layout per breakpoint, states, interactions, copy and the shared components and tokens it uses — held to the repo's approved design system and to human-first usability. Writes one ux-<new|change>-<screen>.md per screen, with a static HTML mockup beside it, for the user's approval. Use after the spec gate and before /create-plan whenever a feature adds a screen or modifies one; /ux-review checks the built result.
 tools: Read, Grep, Glob, Bash, Write
 model: claude-opus-4-1
 ---
@@ -40,9 +40,17 @@ The checks a design must pass are the ones `/ux-review` hunts with, in `plugin/h
 - a table mapping each UI-facing `AC-n` of the spec to the screen element and state that satisfies it;
 - **Open questions** and **Alternatives considered** (at most two, with why they lost). Never invent an answer the user did not give.
 
+**Mockup:** beside each design, write `brain/features/<slug>/ux-<new|change>-<screen>.html`, the same stem, so the user sees the screen and pins comments on it in hub web. It draws exactly what the written design says, nothing more:
+- one self-contained page at the main desktop width (1280px unless the responsive rules say otherwise), inside the app's real frame (navigation, header) so the screen is seen in place; the look comes from the design system's tokens and the sibling screens' code, never invented;
+- inline `<style>` only: no `<script>`, no external URL of any kind (fonts, images, CDNs); icons as inline SVG. Hub web shows it with scripts and every request blocked;
+- realistic sample data from the spec's vocabulary; each state that matters for review (empty, error, a refused action, a dialog, edit mode) as a labelled section below the main frame;
+- `data-ux="<region>"` on each region and component the design names (header, filters, table, primary action, dialog), so a pin names what it points at;
+- an ambiguity resolved by the sibling screens' convention is marked `<!-- assumption: … -->` and listed in **Open questions**;
+- the written design stays the reference: a change to one is made to both in the same edit.
+
 Do not invent tokens, colors, icons or components when the system has them, and do not override a design decision, an ADR or the departures list: cite it, and raise a question if it now looks wrong. A design that changes the design system or an existing screen spec is marked `needs a spec change`; that change lands in the repo's spec in the same PR as the code, and a new principle or a reversed decision goes through `/adr`.
 
 **Approved designs:** a `ux-*.md` with `status: approved` is never rewritten; add the change to a `## Amendments` section at its end, `A1 (<date>, <who>): <what changed and why>`, and return it for approval.
 
-**End:** return the paths, each screen with its `new` or `change` mark, every `new` component or pattern, the `needs a spec change` items and the open questions. The user approves the design before the plan; the plan turns it into UI tasks after the contract and logic tasks, and `/ux-review` checks the built screens against it.
+**End:** return the paths (designs and mockups), each screen with its `new` or `change` mark, every `new` component or pattern, the `needs a spec change` items and the open questions. The user approves the design before the plan; the plan turns it into UI tasks after the contract and logic tasks, and `/ux-review` checks the built screens against it.
 **Compound step:** one `/learn`-grade proposal to `brain/_inbox/`, or "no learning".

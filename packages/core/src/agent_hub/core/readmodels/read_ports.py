@@ -12,7 +12,7 @@ from agent_hub.core.approvals.approval import Approval
 from agent_hub.core.brain.brain_note import BrainNote, BrainTree
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.events.event import EventType
-from agent_hub.core.features.feature_view import FeatureCost, FeatureDetail, FeatureView
+from agent_hub.core.features.feature_view import FeatureCost, FeatureDetail, FeatureView, UxMockup
 from agent_hub.core.features.ticket_view import FeatureTickets, TicketRecords
 from agent_hub.core.hub_config.config_view import HubConfigView
 from agent_hub.core.hubs.finding_view import DoctorFindings
@@ -209,6 +209,10 @@ class HubReadModels(Protocol):
 
     def get_feature(self, project: str, slug: str) -> FeatureDetail:
         """One feature with its acceptance criteria."""
+        ...
+
+    def ux_mockup(self, project: str, slug: str, name: str) -> UxMockup:
+        """One UX design's mockup of a feature; ``EntityNotFoundError`` when it cannot be served."""
         ...
 
     def feature_tickets(self, project: str, slug: str) -> FeatureTickets:

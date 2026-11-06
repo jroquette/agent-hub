@@ -336,7 +336,7 @@
     "plugin/hub-workflow/agents/ux-designer.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "1e3c59a6e24456f152c648e2239968433827592d29fadeb142176d944b7ed278"
+      "sha256": "eee7b9c45495fda3e66ae433bc87dcadfd4bc53b5b9bab82531bac8b101b5ebf"
     },
     "plugin/hub-workflow/hooks/event_sensor.py": {
       "executable": true,

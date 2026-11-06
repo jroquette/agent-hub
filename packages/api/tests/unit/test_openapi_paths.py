@@ -22,6 +22,7 @@ from agent_hub.api.openapi_paths import (
     SKILL_PATHS,
     TICKET_FLOW_PATHS,
     TICKET_PATHS,
+    UX_MOCKUP_PATHS,
     WORKFLOW_PATHS,
     document_paths,
 )
@@ -391,6 +392,7 @@ def test_lists_scenario_paths_when_document_built(api_settings: ApiSettings) -> 
         | DISCOVERY_PATHS
         | SCENARIO_PATHS
         | SCREEN_PATHS
+        | UX_MOCKUP_PATHS
     )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
@@ -409,6 +411,12 @@ SCREEN_SPEC_PATHS = {
 def test_lists_screen_paths_when_document_built(api_settings: ApiSettings) -> None:
     assert SCREEN_PATHS == SCREEN_SPEC_PATHS
     assert SCREEN_PATHS <= SERVED_PATHS
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
+def test_lists_ux_mockup_path_when_document_built(api_settings: ApiSettings) -> None:
+    assert {("get", "/api/v1/features/{project}/{slug}/mockups/{name}")} == UX_MOCKUP_PATHS
+    assert UX_MOCKUP_PATHS <= SERVED_PATHS
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
 

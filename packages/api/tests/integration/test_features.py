@@ -241,3 +241,32 @@ def test_reads_no_tracker_when_features_listed(
     assert (tickets.status_code, tickets.json()["source"]) == (200, "linear")
     assert [item["tickets_source"] for item in cold + warm] == ["plan", "linear", "linear"]
     assert (calls_cold, calls_tickets, reader.count) == (0, 1, 1)
+
+
+def test_serves_ux_mockup_beside_its_design_when_html_present(
+    composed: Any, make_hub: Callable[..., Path]
+) -> None:
+    hub = make_hub()
+    _feature(
+        hub,
+        "designed",
+        {
+            "spec.md": SPEC,
+            "ux-new-orders.md": "---\nstatus: approved\nscreen: orders\n---\n# Orders\n",
+            "ux-new-orders.html": "<main data-ux='table'>Orders</main>",
+        },
+    )
+    composed.client.post(
+        "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+    )
+
+    detail = composed.client.get("/api/v1/features/demo/designed").json()
+    mockup = composed.client.get("/api/v1/features/demo/designed/mockups/ux-new-orders.html")
+    refused = composed.client.get("/api/v1/features/demo/designed/mockups/spec.md")
+    missing = composed.client.get("/api/v1/features/demo/designed/mockups/ux-new-gone.html")
+
+    assert [d["mockup"] for d in detail["ux_designs"]] == ["ux-new-orders.html"]
+    assert mockup.status_code == 200, mockup.text
+    assert mockup.json()["html"] == "<main data-ux='table'>Orders</main>"
+    assert refused.status_code == 400
+    assert missing.status_code == 404

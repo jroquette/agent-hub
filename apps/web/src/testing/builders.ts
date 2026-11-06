@@ -883,6 +883,21 @@ export function aFeatureDetail(
     plan: null,
     acceptance_eval: null,
     change_requests: [],
+    ux_designs: [],
+    ...overrides,
+  };
+}
+
+/** One UX design of `control-plane`: the approved new Overview screen. */
+export function aUxDesign(
+  overrides: Partial<Schemas["UxDesignView"]> = {},
+): Schemas["UxDesignView"] {
+  return {
+    path: "features/control-plane/ux-new-overview.md",
+    screen: "overview",
+    change: "new",
+    title: "Overview",
+    approved: true,
     ...overrides,
   };
 }

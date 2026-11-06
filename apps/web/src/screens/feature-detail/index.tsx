@@ -31,6 +31,8 @@ import { FeatureLabel } from "../features/FeatureChip";
 import { FeatureNameField, RenameButton, useFeatureNames } from "../features/names";
 import { PHASES, VERDICT_STATUS } from "../features/parts";
 import { ApproveRecord, sessionName } from "./ApproveRecord";
+import { DesignsTab, pickDesign } from "./DesignsTab";
+import { MOCKUP_WIDTH } from "./MockupView";
 import { QuestionsLink } from "./QuestionsBlock";
 import { NoteView } from "../brain/NoteView";
 import { NotFoundBody } from "../not-found";
@@ -82,7 +84,7 @@ type FeaturePhase = components["schemas"]["FeaturePhase"];
  */
 const PHASE_TAB: Record<FeaturePhase, string> = {
   spec: "spec",
-  ux_design: "spec",
+  ux_design: "designs",
   research: "research",
   plan: "plan",
   tickets: "tickets",
@@ -97,7 +99,13 @@ const STEP_TAB: Record<FeaturePhase, string> = { ...PHASE_TAB, acceptance: "eval
 /** The tab of `?doc=`: a record, `eval`, `tickets` or Criteria (`acs`); else the phase's tab. */
 function tabOf(doc: string | null, phase: FeaturePhase | undefined): string {
   if (doc === "issues") return "tickets"; // the old Issues tab's deep links (AC-136.28)
-  if (doc === "acs" || doc === "eval" || doc === "tickets" || (doc !== null && RECORDS[doc])) {
+  if (
+    doc === "acs" ||
+    doc === "eval" ||
+    doc === "tickets" ||
+    doc === "designs" ||
+    (doc !== null && RECORDS[doc])
+  ) {
     return doc;
   }
   return phase ? PHASE_TAB[phase] : "acs";
@@ -269,12 +277,32 @@ function Loading() {
 
 const TAB_LABEL: Readonly<Record<string, string>> = {
   spec: "spec",
+  designs: "UX designs",
   research: "research",
   plan: "plan",
   eval: "eval",
   acs: "acceptance criteria",
   tickets: "ticket plan",
 };
+
+/** One-click review questions on the UX design open in the Designs tab. */
+const DESIGN_STARTERS = [
+  {
+    label: "Walk me through this screen",
+    message:
+      "Walk me through this screen as its user would use it: what they see first, the one action that matters, and what happens after it. Point at the parts of the wireframe as you go.",
+  },
+  {
+    label: "What is not settled?",
+    message:
+      "Which decisions in this design are not settled or rest on an assumption? List each with the alternative you rejected and why.",
+  },
+  {
+    label: "What would you cut?",
+    message:
+      "Critique this design against its sibling screens in the repo: what is more than the ticket asks for, and what would you cut?",
+  },
+];
 
 /**
  * What the Discuss panel talks about on this screen: one conversation per feature, opened with the
@@ -286,9 +314,11 @@ function featureDiscussTarget(
   tab: string,
   evalPath: string | undefined,
   owner: AgentSession | null,
+  designPath?: string,
 ): DiscussTarget | null {
   if (!detail) return null;
   const folder = `brain/features/${detail.slug}`;
+  const design = designPath ? detail.ux_designs.find((d) => d.path === designPath) : undefined;
   const record = detail.records.find((r) => r.name === RECORDS[tab]?.name && r.present);
   const path = record
     ? `brain/${record.path}`
@@ -296,11 +326,14 @@ function featureDiscussTarget(
       ? `${folder}/features.json`
       : tab === "eval" && evalPath
         ? `brain/${evalPath}`
-        : null;
+        : tab === "designs" && designPath
+          ? `brain/${designPath}`
+          : null;
   const files = [
     ...detail.records.filter((r) => r.present).map((r) => `brain/${r.path}`),
     `${folder}/features.json`,
     ...detail.evals.map((e) => `brain/${e.path}`),
+    ...detail.ux_designs.map((d) => `brain/${d.path}`),
   ];
   const open = detail.ac_rows.filter((ac) => !ac.passes);
   const describe = (ac: AcRow) => `${ac.id}${ac.manual ? " (owner step)" : ""}: ${ac.description}`;
@@ -312,14 +345,16 @@ function featureDiscussTarget(
     path,
     openOnArrive: true,
     ownerSession: owner ? { id: owner.id, name: sessionName(owner) } : null,
-    starters: record
-      ? [
-          {
-            label: `Write the human summary of ${record.name}`,
-            message: summaryRequest(detail.slug, record.name),
-          },
-        ]
-      : undefined,
+    starters: design
+      ? DESIGN_STARTERS
+      : record
+        ? [
+            {
+              label: `Write the human summary of ${record.name}`,
+              message: summaryRequest(detail.slug, record.name),
+            },
+          ]
+        : undefined,
     brief: [
       `The whole feature record lives in \`${folder}/\`. Before answering, read all of it: ${[...new Set(files)].join(", ")}.`,
       detail.problem ? `The problem it solves: ${detail.problem}` : "",
@@ -329,6 +364,9 @@ function featureDiscussTarget(
         : "",
       detail.issues.length ? `Its Linear tickets: ${ticketIds(detail.issues).join(", ")}.` : "",
       `I am looking at its ${TAB_LABEL[tab] ?? tab} tab.`,
+      design?.mockup
+        ? `The design on screen has a visual mockup, \`${folder}/${design.mockup}\` (static HTML drawn ${String(MOCKUP_WIDTH)} px wide, no scripts, no external requests): my pins name points on it in its pixels. When I ask for a change to this screen, change both the written design and its mockup, and keep them saying the same thing.`
+        : "",
       "When a change touches several records (spec, plan, criteria), keep them consistent with each other.",
     ]
       .filter(Boolean)
@@ -647,7 +685,16 @@ export function FeatureDetailScreen() {
   );
   const selectedEval = pickEval(feature.data?.evals ?? [], params.get("eval"));
   const owner = useFeatureSession(project, slug);
-  useDiscussTarget(featureDiscussTarget(feature.data, tab, selectedEval?.path, owner));
+  const selectedDesign = pickDesign(feature.data?.ux_designs ?? [], params.get("design"));
+  useDiscussTarget(
+    featureDiscussTarget(
+      feature.data,
+      tab,
+      selectedEval?.path,
+      owner,
+      tab === "designs" ? selectedDesign?.path : undefined,
+    ),
+  );
 
   if (feature.isError) {
     if (feature.error.status === 404) {
@@ -709,8 +756,13 @@ export function FeatureDetailScreen() {
   };
   // In the order the workflow writes them: the planner writes the criteria and the ticket plan
   // (features.json) once the plan is approved, and the eval comes last.
+  const records = Object.entries(RECORDS).map(([id, meta]) => ({ id, label: meta?.label ?? id }));
+  const designsTab = { id: "designs", label: "UX designs", count: detail.ux_designs.length };
   const tabs = [
-    ...Object.entries(RECORDS).map(([id, meta]) => ({ id, label: meta?.label ?? id })),
+    // The UX designs come right after the spec, as the golden path does.
+    ...(detail.ux_designs.length > 0 || tab === "designs"
+      ? [records[0], designsTab, ...records.slice(1)].filter((t) => t !== undefined)
+      : records),
     {
       id: "acs",
       label: "Acceptance criteria",
@@ -757,6 +809,25 @@ export function FeatureDetailScreen() {
             (current) => {
               const next = new URLSearchParams(current);
               next.set("eval", delivery);
+              return next;
+            },
+            { replace: true },
+          );
+        }}
+      />
+    );
+  } else if (tab === "designs") {
+    body = (
+      <DesignsTab
+        project={detail.project}
+        slug={detail.slug}
+        designs={detail.ux_designs}
+        selected={selectedDesign}
+        onSelect={(screen) => {
+          setParams(
+            (current) => {
+              const next = new URLSearchParams(current);
+              next.set("design", screen);
               return next;
             },
             { replace: true },

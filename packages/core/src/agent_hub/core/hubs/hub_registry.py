@@ -169,6 +169,13 @@ class HubFileReader(Protocol):
         such folder (absent, hidden, a link)."""
         ...
 
+    def read_feature_mockup(
+        self, hub_path: str, slug: str, name: str, *, max_bytes: int
+    ) -> bytes | UnreadHubFile:
+        """The bytes of ``brain/features/<slug>/<name>`` (a name ``is_ux_mockup_name`` accepts),
+        or why not: no link followed, a regular file of at most ``max_bytes``."""
+        ...
+
     def brain_tree(self, hub_path: str) -> BrainListing:
         """The ``.md`` notes under ``brain/`` (no ``auto/``, no hidden name, no link followed)."""
         ...

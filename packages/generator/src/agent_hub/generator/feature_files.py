@@ -82,9 +82,11 @@ from agent_hub.core.features.feature_status import (
     RECORD_FILES,
     SPEC,
     UX_HEAD_BYTES,
+    UX_MOCKUP_SUFFIX,
     UX_PREFIX,
     FeatureFolder,
     RecordHead,
+    is_ux_mockup_name,
 )
 from agent_hub.core.features.review_output_checks import is_review_round
 from agent_hub.core.features.ticket_records import (
@@ -102,6 +104,7 @@ from agent_hub.core.features.ticket_records import (
     OutcomeFile,
     TicketFiles,
 )
+from agent_hub.core.hubs.hub_registry import UnreadHubFile
 from agent_hub.core.regular_files import read_regular
 
 MAX_FEATURE_FOLDERS: Final = 500
@@ -217,6 +220,7 @@ def _read_folder(
             folder, REVIEWS_FOLDER, cap=MAX_REVIEW_FILES, size=REVIEW_HEAD_BYTES, meter=meter
         )
         ux_designs, ux_skipped = _ux_heads(folder, meter)
+        ux_mockups = _ux_mockups(folder)
         requests, requests_skipped = _heads(
             folder,
             CHANGE_REQUESTS_FOLDER,
@@ -243,6 +247,7 @@ def _read_folder(
         plan_too_large=too_large,
         ux_designs=ux_designs,
         ux_skipped=ux_skipped,
+        ux_mockups=ux_mockups,
         review_round_tickets=rounds,
         ticket_folders=ticket_folders,
         ticket_folders_skipped=tickets_skipped,
@@ -278,6 +283,44 @@ def _ux_heads(folder: int, meter: _Meter) -> tuple[tuple[RecordHead, ...], int]:
         return (), 0
     heads = tuple(_record_head(folder, name, size=UX_HEAD_BYTES, meter=meter) for name in names)
     return heads, skipped
+
+
+def _ux_mockups(folder: int) -> tuple[str, ...]:
+    """The names of the slug folder's own ``ux-*.html`` mockups, listed only (never read)."""
+    try:
+        names, _ = _record_names(folder, MAX_UX_FILES, prefix=UX_PREFIX, suffix=UX_MOCKUP_SUFFIX)
+    except OSError:
+        return ()
+    return tuple(name for name in names if is_ux_mockup_name(name))
+
+
+def read_feature_mockup(
+    hub_root: Path, slug: str, name: str, *, max_bytes: int
+) -> bytes | UnreadHubFile:
+    """The bytes of the feature folder's mockup ``name``, a regular file of at most
+    ``max_bytes`` reached without following a link, or why not."""
+    missing = UnreadHubFile(message="cannot read: missing", is_missing=True, kind="missing")
+    if not is_ux_mockup_name(name) or not slug or slug.startswith(".") or "/" in slug:
+        return missing
+    with _features_folder(hub_root) as features:
+        if features is None:
+            return missing
+        try:
+            folder = os.open(slug, _FOLDER_FLAGS, dir_fd=features)
+        except OSError:
+            return missing
+        try:
+            read = read_regular(folder, name, limit=max_bytes + 1)
+        finally:
+            os.close(folder)
+    if read is None:
+        return missing
+    if isinstance(read, str):
+        return UnreadHubFile(message=f"cannot read: {read}", is_missing=False, kind="not_regular")
+    if len(read) > max_bytes:
+        message = f"cannot read: over {max_bytes} bytes"
+        return UnreadHubFile(message=message, is_missing=False, kind="too_large")
+    return read
 
 
 def _tickets(
@@ -420,23 +463,27 @@ def _is_utf8(name: str) -> bool:
     return True
 
 
-def _record_names(folder: int, cap: int, *, prefix: str = "") -> tuple[list[str], int]:
+def _record_names(
+    folder: int, cap: int, *, prefix: str = "", suffix: str = NOTE_SUFFIX
+) -> tuple[list[str], int]:
     """The first ``cap`` ``.md`` names of ``folder`` not hidden (and starting with ``prefix``),
     sorted, and how many others were left out (over the cap, or not UTF-8). At most ``cap``
     names are held while listing."""
     left_out = [0]
     with os.scandir(folder) as found:
-        kept = heapq.nsmallest(cap, _notes(found, left_out, prefix))
+        kept = heapq.nsmallest(cap, _notes(found, left_out, prefix=prefix, suffix=suffix))
     listed = left_out[0]
     return kept, listed - len(kept)
 
 
-def _notes(entries: Iterable[os.DirEntry[str]], counted: list[int], prefix: str) -> Iterator[str]:
+def _notes(
+    entries: Iterable[os.DirEntry[str]], counted: list[int], *, prefix: str, suffix: str
+) -> Iterator[str]:
     """The UTF-8 ``.md`` names not hidden of ``entries`` that start with ``prefix``;
     ``counted[0]`` counts every such name, UTF-8 or not."""
     for entry in entries:
         note = entry.name
-        if note.startswith(".") or not note.startswith(prefix) or not note.endswith(NOTE_SUFFIX):
+        if note.startswith(".") or not note.startswith(prefix) or not note.endswith(suffix):
             continue
         counted[0] += 1
         if _is_utf8(note):

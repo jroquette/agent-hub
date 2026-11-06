@@ -20,6 +20,7 @@ import "../screens/feature-detail/ticket-panel.css";
 import "../screens/features/names.css";
 import "../screens/feature-detail/summary.css";
 import "../screens/feature-detail/questions.css";
+import "../screens/feature-detail/designs.css";
 import "../shell/discuss.css";
 import "../shell/RouteError.css";
 import "../screens/hub-config/hub-config.css";
