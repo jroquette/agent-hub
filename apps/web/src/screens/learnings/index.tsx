@@ -28,6 +28,7 @@ import {
   isExternal,
   LearningDetail,
   LearningStateBadge,
+  RESOLVED_ELSEWHERE,
   stateOf,
   Title,
 } from "./LearningDetail";
@@ -38,6 +39,7 @@ import {
   filterLearnings,
   filtersFromParams,
   hasFilters,
+  isResolvedElsewhere,
   MAX_QUERY_CHARS,
   NO_FILTERS,
   PROVENANCES,
@@ -91,7 +93,9 @@ function QueueRow({
 }) {
   const ext = isExternal(l);
   const state = stateOf(l);
-  const blocked = blockedReason(l);
+  const resolved = isResolvedElsewhere(l);
+  // Triaged outside the app is not "blocked": its state badge and line say what happened.
+  const blocked = resolved ? null : blockedReason(l);
   // The learning Claude is on (or stopped on) stands out from the rest of the queue.
   const active = review.verdict === "reviewing" || review.verdict === "waiting";
   const edge = active
@@ -137,6 +141,10 @@ function QueueRow({
           <span className="ah-small ah-muted" style={clamp(1)} title={l.summary}>
             {l.summary}
           </span>
+        ) : resolved ? (
+          <span className="ah-small ah-subtle" style={clamp(1)} title={RESOLVED_ELSEWHERE}>
+            {RESOLVED_ELSEWHERE}
+          </span>
         ) : (
           !blocked && (
             <span className="ah-small ah-subtle" style={{ ...clamp(1), fontStyle: "italic" }}>
@@ -165,7 +173,8 @@ const PROVENANCE_LABEL: Record<Provenance, string> = {
   "agent-from-external": "Agent, from external",
 };
 
-/** The queue's quick views: every proposal, the ones decidable here, the blocked ones. */
+/** The queue's quick views: every proposal still to decide, the ones decidable here, the blocked
+ * ones, and the ones resolved outside the app (hidden from the others). */
 type QuickView = "all" | Readiness;
 const quickViewOf = (filters: LearningFilters): QuickView =>
   filters.readiness.length === 1 ? (filters.readiness[0] ?? "all") : "all";
@@ -230,8 +239,18 @@ function LearningFiltersBar({
             {
               id: "blocked",
               label: `Blocked · ${String(counts.readiness.blocked)}`,
-              title: "Proposals that cannot be decided here (their note is missing, ...)",
+              title: "Proposals that cannot be decided here (their note cannot be read, ...)",
             },
+            ...(counts.readiness.resolved > 0 || view === "resolved"
+              ? [
+                  {
+                    id: "resolved",
+                    label: `Resolved elsewhere · ${String(counts.readiness.resolved)}`,
+                    title:
+                      "Proposals triaged outside the app: their note is no longer in the hub's inbox",
+                  },
+                ]
+              : []),
           ]}
         />
       )}
@@ -357,6 +376,9 @@ export function LearningsScreen() {
     if (next) select(next.id);
   };
   const count = learnings.data?.total_estimate ?? rows.length;
+  // What is left to decide: one per note, without what was resolved outside the app.
+  const pending = facetCounts(all, NO_FILTERS).readiness;
+  const toDecide = pending.ready + pending.blocked;
   // A triage session runs in one hub: the picked project, the scope, or the only one listed.
   const triageProject =
     filters.project ?? scope ?? (projects.size === 1 ? ([...projects][0] ?? null) : null);
@@ -488,7 +510,11 @@ export function LearningsScreen() {
               selected={selectedId ? [selectedId] : []}
               maxHeight={640}
               empty={
-                <div className="ah-pad ah-small ah-muted">No learnings match these filters.</div>
+                <div className="ah-pad ah-small ah-muted">
+                  {!hasFilters(filters) && status === "proposed" && pending.resolved > 0
+                    ? `Nothing left to decide: ${String(pending.resolved)} resolved outside the app.`
+                    : "No learnings match these filters."}
+                </div>
               }
               scrollLabel="Learnings"
               onRowClick={(l) => {
@@ -500,7 +526,7 @@ export function LearningsScreen() {
                   label: `Learnings · ${
                     learnings.isPending
                       ? "…"
-                      : hasFilters(filters)
+                      : hasFilters(filters) || rows.length !== count
                         ? `${String(rows.length)} of ${String(count)}`
                         : String(count)
                   } ${status}`,
@@ -587,7 +613,7 @@ export function LearningsScreen() {
               id: "learnings",
               label: "Learnings",
               icon: "sprout",
-              count: status === "proposed" && learnings.isSuccess ? count : undefined,
+              count: status === "proposed" && learnings.isSuccess ? toDecide : undefined,
             },
           ]}
         />

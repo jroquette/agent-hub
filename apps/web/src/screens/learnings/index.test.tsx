@@ -264,6 +264,7 @@ describe("LearningsScreen", () => {
       id: "l-gone",
       text: "Proposal: a note nobody pushed",
       proposed_at: at(10),
+      note_path: "brain/_inbox/nobody-pushed.md",
       summary: null,
       note_unavailable: "Note not in the hub checkout",
       actions_unavailable: "Note not in the hub checkout",
@@ -290,6 +291,71 @@ describe("LearningsScreen", () => {
       expect(within(table).queryByText(/Retry flaky CI/)).not.toBeInTheDocument();
     });
     expect(within(table).getByText(/a note nobody pushed/)).toBeInTheDocument();
+  });
+
+  const RESOLVED = "Resolved outside the app: the note is no longer in the inbox";
+  const resolved = aLearning({
+    id: "l-merged",
+    text: "A gotcha merged into another note by hand",
+    proposed_at: at(5),
+    note_path: "brain/_inbox/merged-by-hand.md",
+    summary: null,
+    state: "resolved_elsewhere",
+    note_unavailable: null,
+    actions_unavailable: RESOLVED,
+  });
+  const twice = aLearning({ ...resolved, id: "l-merged-again", proposed_at: at(6) });
+  const openResolved = (path = "/knowledge/learnings") =>
+    open(
+      {
+        "/api/v1/learnings": aPage([resolved, twice, older]),
+        "/api/v1/learnings/l-merged": aLearningDetail({ ...resolved, note: null }),
+      },
+      path,
+    );
+
+  it("hides what was resolved outside the app and counts it once in its own view", async () => {
+    openResolved();
+
+    const table = await screen.findByRole("table", { name: "Proposed learnings" });
+    await within(table).findByText("Retry flaky CI before calling a run failed");
+    expect(within(table).queryByText(/merged into another note/)).not.toBeInTheDocument();
+    const decision = screen.getByRole("group", { name: "Decision" });
+    expect(within(decision).getByRole("button", { name: "All · 1" })).toBeVisible();
+    const view = within(decision).getByRole("button", { name: "Resolved elsewhere · 1" });
+
+    await userEvent.click(view);
+    const [row, again] = (await within(table).findAllByText(/merged into another note/)).map(
+      (title) => title.closest("tr"),
+    );
+    if (!row || !again) throw new Error("expected both proposals of the note");
+    expect(within(row).getByText(RESOLVED)).toBeVisible();
+    expect(within(row).getByText("Resolved elsewhere")).toBeVisible();
+    expect(within(row).queryByText("Blocked")).not.toBeInTheDocument();
+    expect(within(table).queryByText(/Retry flaky CI/)).not.toBeInTheDocument();
+  });
+
+  it("disables accept and reject on a learning resolved outside the app", async () => {
+    openResolved("/knowledge/learnings?readiness=resolved");
+
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+    await within(detail).findByText("Nothing to decide here.");
+    for (const name of ["Accept", "Reject"]) {
+      const button = within(detail).getByRole("button", { name });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute("title", RESOLVED);
+    }
+    const note = within(detail).getByRole("region", { name: "Note" });
+    expect(within(note).getByText(RESOLVED)).toBeVisible();
+    expect(within(note).getByText("brain/_inbox/merged-by-hand.md")).toBeVisible();
+  });
+
+  it("has no serious a11y violations in the resolved view (a11y)", async () => {
+    const { container } = openResolved("/knowledge/learnings?readiness=resolved");
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+    await within(detail).findByText("Nothing to decide here.");
+
+    expect(await seriousViolations(container)).toEqual([]);
   });
 
   it("keeps the status in the URL", async () => {

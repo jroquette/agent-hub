@@ -24,6 +24,7 @@ const ROWS = [
     project: "storefront",
     provenance: "agent",
     text: "Guard env files",
+    note_path: "brain/_inbox/guard-env-files.md",
     actions_unavailable: "Note not in the hub checkout",
   }),
   aLearning({ id: "c", project: "agent-hub", provenance: "agent", text: "Run the web gates" }),
@@ -100,7 +101,46 @@ describe("filterLearnings facets", () => {
       "agent-from-code": 1,
       "agent-from-external": 0,
     });
-    expect(counts.readiness).toEqual({ ready: 1, blocked: 1 });
+    expect(counts.readiness).toEqual({ ready: 1, blocked: 1, resolved: 0 });
+  });
+
+  it("hides what was resolved outside the app until its view is picked", () => {
+    const resolved = aLearning({
+      id: "r",
+      note_path: "brain/_inbox/merged-by-hand.md",
+      state: "resolved_elsewhere",
+      actions_unavailable: "Resolved outside the app: the note is no longer in the inbox",
+    });
+    const rows = [...ROWS, resolved];
+
+    expect(ids(filterLearnings(rows, NO_FILTERS))).toEqual(["a", "b", "c"]);
+    expect(ids(filterLearnings(rows, { ...NO_FILTERS, readiness: ["resolved"] }))).toEqual(["r"]);
+    expect(ids(filterLearnings(rows, { ...NO_FILTERS, readiness: ["blocked"] }))).toEqual(["b"]);
+    expect(facetCounts(rows, NO_FILTERS).readiness).toEqual({ ready: 2, blocked: 1, resolved: 1 });
+  });
+
+  it("counts proposals of the same note once", () => {
+    const note = "brain/_inbox/one-note.md";
+    const rows = [
+      aLearning({ id: "s1", project: "p", note_path: note }),
+      aLearning({ id: "s2", project: "p", note_path: note }),
+      aLearning({ id: "o", project: "other", note_path: note }),
+      aLearning({
+        id: "g1",
+        project: "p",
+        note_path: "brain/_inbox/gone.md",
+        state: "resolved_elsewhere",
+      }),
+      aLearning({
+        id: "g2",
+        project: "p",
+        note_path: "brain/_inbox/gone.md",
+        state: "resolved_elsewhere",
+      }),
+    ];
+
+    expect(facetCounts(rows, NO_FILTERS).readiness).toEqual({ ready: 2, blocked: 0, resolved: 1 });
+    expect(ids(filterLearnings(rows, NO_FILTERS))).toEqual(["s1", "s2", "o"]);
   });
 
   it("keeps the learnings Claude recommends when the Claude facet is picked", () => {

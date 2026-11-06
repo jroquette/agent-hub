@@ -32,6 +32,7 @@ from agent_hub.core.learnings.learning_ports import (
 )
 from agent_hub.core.learnings.read_learnings import (
     HUB_NOT_REGISTERED,
+    RESOLVED_ELSEWHERE,
     ReadLearnings,
     UnavailableHub,
 )
@@ -326,15 +327,21 @@ def test_refuses_when_hub_read_only(
     assert setup.decisions() == []
 
 
-def test_refuses_when_note_not_readable_in_checkout() -> None:
+def test_refuses_and_stores_nothing_when_note_resolved_elsewhere() -> None:
     setup = Setup()
     setup.store.append([_proposal("gone", "toolu_9")])
 
-    with pytest.raises(LearningConflictError) as refused:
+    with pytest.raises(LearningConflictError) as accepted:
         setup.decide().accept("toolu_9", target="learnings/")
+    with pytest.raises(LearningConflictError) as batched:
+        setup.decide().decide_batch(
+            [LearningDecision(learning_id="toolu_9", action="reject", reason="Merged by hand")]
+        )
 
-    assert refused.value.reason == "Note not in the hub checkout"
+    assert accepted.value.reason == RESOLVED_ELSEWHERE
+    assert batched.value.reason == RESOLVED_ELSEWHERE
     assert setup.port.calls == []
+    assert setup.decisions() == []
 
 
 class _ReentrantChanges(InMemoryBrainChangeRequests):

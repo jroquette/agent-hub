@@ -450,6 +450,16 @@ most 512 characters. It keeps the learnings whose note is that one, in either st
 (newest proposal first) and pages; a path the note route refuses (under `auto/`, `..`, not `.md`) answers 400 naming
 `brain_path`.
 
+A proposed learning's `state` is `resolved_elsewhere` when its inbox note (`note_path`) is gone from a hub checkout
+whose `brain/` reads fine: it was triaged outside the app (merged into another note, deleted). The state is derived on
+every read and never stored; `status` stays `proposed` and no `learning.accepted` or `learning.rejected` event is
+written. Such a learning has no `summary` and no `note_unavailable` (that field keeps naming real read failures: a note
+too large, not a regular file, unreadable, or a `brain/` that cannot be read at all), and its `actions_unavailable` is
+"Resolved outside the app: the note is no longer in the inbox"; accept, reject and a batch holding it answer 409
+`learning_conflict` with that reason. The global stream's `learnings_proposed` count counts one per inbox note
+(proposals of the same note from several sessions are one decision); it reads no file, so it still counts a note
+resolved elsewhere.
+
 Problems: a `q` with no letter or digit (`!!!`, `(`) → 400 naming `q` with the reason `the query has no words`; a `q`,
 `kind` or `limit` out of its bounds → 400 naming the parameter; the query is never echoed. A backlinks `path` the
 brain rules refuse → 400 "Invalid brain path"; one under `auto/` → 404 "Brain note not found", as the note route
