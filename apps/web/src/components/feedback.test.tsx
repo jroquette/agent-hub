@@ -1,6 +1,7 @@
 import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { startTransition, useLayoutEffect, useState } from "react";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { seriousViolations } from "../testing/axe";
 import {
@@ -8,6 +9,7 @@ import {
   ConfirmDialog,
   EmptyState,
   ProblemError,
+  SKELETON_DELAY_MS,
   Skeleton,
   Toast,
   useSkeleton,
@@ -54,6 +56,46 @@ describe("Skeleton", () => {
       vi.advanceTimersByTime(1);
     });
     expect(result.current).toBe(false);
+  });
+
+  it("never covers a page drawn once loading ended, however late the delay's timer runs (useSkeleton)", async () => {
+    // AGH-659: on a loaded machine the commit that ends the loading can end past the delay,
+    // before React runs the effects that clear its timer; the timer then ran first and put the
+    // skeleton over the page just drawn, for 300 ms (the app's hub gate test saw it).
+    const actEnvironment = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    const previous = actEnvironment.IS_REACT_ACT_ENVIRONMENT;
+    onTestFinished(() => {
+      actEnvironment.IS_REACT_ACT_ENVIRONMENT = previous;
+    });
+    let finish: () => void = () => undefined;
+    function Page() {
+      const [pending, setPending] = useState(true);
+      finish = () => {
+        startTransition(() => {
+          setPending(false);
+        });
+      };
+      const skeleton = useSkeleton(pending);
+      useLayoutEffect(() => {
+        if (pending) return;
+        // A slow commit: it ends past the delay.
+        const end = performance.now() + SKELETON_DELAY_MS + 50;
+        while (performance.now() < end) {
+          // Busy, as a loaded machine is.
+        }
+      }, [pending]);
+      return <p>{skeleton ? "Skeleton" : pending ? "Loading" : "Page"}</p>;
+    }
+    render(<Page />);
+
+    // Outside act, as the router's own updates are: React runs the effects after the commit.
+    actEnvironment.IS_REACT_ACT_ENVIRONMENT = false;
+    finish();
+    expect(await screen.findByText("Page")).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(screen.queryByText("Skeleton")).toBeNull();
+    expect(screen.getByText("Page")).toBeInTheDocument();
   });
 });
 
