@@ -582,8 +582,8 @@
   max-height: 70vh;
 }
 
-/* v6 review: the toolbar keeps one row below 1600 (Describe and Chat show their icon only); below
- * 1440 the left column hides while a step is open, so the list keeps its width. */
+/* v6 review: the toolbar keeps one row below 1600 (Describe and Chat show their icon only). Below
+ * 1920 the left column is a rail (builder.css), so the list keeps its width at every width. */
 @media (max-width: 1599px) {
   .sb-compact .ah-btn {
     font-size: 0;

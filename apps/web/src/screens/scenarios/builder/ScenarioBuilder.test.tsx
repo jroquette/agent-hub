@@ -386,7 +386,6 @@ function actionsWith(overrides: Parameters<typeof aScenarioAction>[0]) {
   };
 }
 
-/** The scenario with its steps (and anything else of its document) as given. */
 /** A step's full editor in the side panel. A Run an action or a Wait until opens in place in
  * Blocks; its panel opens on asking ("Edit all in the panel"), so that is asked first. */
 async function inPanel(user: ReturnType<typeof userEvent.setup>, name: string | RegExp) {
@@ -395,6 +394,7 @@ async function inPanel(user: ReturnType<typeof userEvent.setup>, name: string | 
   return screen.findByRole("region", { name });
 }
 
+/** The scenario with its steps (and anything else of its document) as given. */
 function detailWith(changes: Record<string, unknown>, environments?: unknown[]) {
   return aScenarioDetail({
     document: { ...document, ...changes },
@@ -4659,5 +4659,129 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.paste('{"event_type":"POLL_QUOTE"}');
     await user.click(within(values).getByRole("button", { name: "Done" }));
     expect(within(values).getByLabelText("body, as JSON")).toHaveTextContent('"POLL_QUOTE"');
+  });
+
+  it("scenario builder's open check shows a condition it cannot put in words as written, with its panel edit", async () => {
+    const user = userEvent.setup();
+    renderBuilder({
+      [DETAIL]: detailWith({
+        nodes: [
+          document.nodes[0],
+          { ...document.nodes[1], until_when: "len($self.output.items) > 2" },
+        ],
+      }),
+    });
+    const check = await screen.findByRole("treeitem", { name: /^Step 2, Wait until/ });
+    await user.click(check);
+    const open = within(check).getByRole("group", { name: "Step 2 settings" });
+    const done = within(open).getByRole("region", { name: "Done when" });
+    expect(done).toHaveTextContent("len($self.output.items) > 2");
+    expect(
+      within(done).getByText("Shown as written: the builder cannot put it in words."),
+    ).toBeInTheDocument();
+    await user.click(within(done).getByRole("button", { name: "Edit the condition in the panel" }));
+    expect(
+      await screen.findByRole("region", { name: /^Inspector: Wait until / }),
+    ).toBeInTheDocument();
+  });
+
+  it("scenario builder's open check says it needs a condition when it has none", async () => {
+    const user = userEvent.setup();
+    renderBuilder({
+      [DETAIL]: detailWith({
+        nodes: [document.nodes[0], { ...document.nodes[1], until_when: "" }],
+      }),
+    });
+    const check = await screen.findByRole("treeitem", { name: /^Step 2, Wait until/ });
+    await user.click(check);
+    const open = within(check).getByRole("group", { name: "Step 2 settings" });
+    expect(within(open).getByRole("region", { name: "Done when" })).toHaveTextContent(
+      "Needs a condition",
+    );
+  });
+
+  it("scenario builder's open check shows its or groups and says how its checks count is worked out", async () => {
+    const user = userEvent.setup();
+    renderBuilder({
+      [DETAIL]: detailWith({
+        nodes: [
+          document.nodes[0],
+          {
+            ...document.nodes[1],
+            until_when: "$self.output.status == 'ON_HOLD' || $self.output.status == 'DONE'",
+          },
+        ],
+      }),
+    });
+    const check = await screen.findByRole("treeitem", { name: /^Step 2, Wait until/ });
+    await user.click(check);
+    const open = within(check).getByRole("group", { name: "Step 2 settings" });
+    const done = within(open).getByRole("region", { name: "Done when" });
+    expect(done).toHaveTextContent(/statusisON_HOLD.*or.*statusisDONE/);
+    expect(within(done).getByText("or")).toBeInTheDocument();
+    const how = within(open).getByRole("region", { name: "How often" });
+    expect(within(how).getByTitle("Worked out: 5 min ÷ 10 s")).toHaveTextContent(
+      "at most 30 checks",
+    );
+  });
+
+  it("scenario builder's open check offers only actions that read", async () => {
+    const user = userEvent.setup();
+    renderBuilder();
+    const check = await screen.findByRole("treeitem", { name: CHECK });
+    await user.click(check);
+    const open = within(check).getByRole("group", { name: "Step 2 settings" });
+    const picker = within(open).getByRole("combobox", { name: "Action of step 2" });
+    const offered = within(picker)
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+    expect(offered).toEqual(["Choose an action", "get-order-by-ref"]);
+    // A Run an action offers every action.
+    const fetch = screen.getByRole("treeitem", { name: FETCH });
+    await user.click(fetch);
+    const any = within(fetch).getByRole("combobox", { name: "Action of step 1" });
+    expect(
+      within(any)
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual(["Choose an action", "send-queue-message", "get-order-by-ref"]);
+  });
+
+  it("scenario builder's open step counts the values from earlier that need a look in More details", async () => {
+    const user = userEvent.setup();
+    renderBuilder({
+      [DETAIL]: detailWith({
+        nodes: [
+          { ...document.nodes[0], with: { ref: "$INPUTS.unknown_ref", seen: "$CTX.never_kept" } },
+          document.nodes[1],
+        ],
+      }),
+    });
+    const fetch = await screen.findByRole("treeitem", { name: FETCH });
+    await user.click(fetch);
+    const open = within(fetch).getByRole("group", { name: "Step 1 settings" });
+    expect(within(open).getByText("More details").closest("summary")).toHaveTextContent(
+      "2 to check",
+    );
+  });
+
+  it("scenario builder's open step opens its body's editor with Enter on the code", async () => {
+    const user = userEvent.setup();
+    renderBuilder({
+      [DETAIL]: detailWith({
+        nodes: [
+          { ...document.nodes[0], with: { body: '{"event_type":"FETCH_ORDERS"}' } },
+          document.nodes[1],
+        ],
+      }),
+    });
+    const fetch = await screen.findByRole("treeitem", { name: FETCH });
+    await user.click(fetch);
+    const values = within(fetch).getByRole("region", { name: "Values for this step" });
+    act(() => {
+      within(values).getByLabelText("body, as JSON").focus();
+    });
+    await user.keyboard("{Enter}");
+    expect(within(values).getByRole("textbox", { name: "Edit body as JSON" })).toHaveFocus();
   });
 });

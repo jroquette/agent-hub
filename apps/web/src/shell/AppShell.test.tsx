@@ -73,6 +73,15 @@ describe("AppShell", () => {
     expect(screen.getByRole("main")).toBeInTheDocument();
   });
 
+  it("names the browser tab from the shell, after the screen it shows", async () => {
+    document.title = "stale";
+    renderWithApi(<AppShell />, { routes });
+
+    await waitFor(() => {
+      expect(document.title).toMatch(/agent-hub$/);
+    });
+  });
+
   it("AC-40 makes two requests when it mounts: the shell read and the stream", async () => {
     window.localStorage.clear();
     const { calls } = renderWithApi(<AppShell />, {
@@ -457,6 +466,53 @@ describe("AppShell", () => {
     // The page no longer asks: the sidebar is as the person left it.
     fireEvent.click(screen.getByRole("button", { name: "Leave" }));
     expect(document.querySelector(".ah-shell")).not.toHaveAttribute("data-collapsed");
+  });
+
+  it("expands on the first click while a page asks for the width over a stored collapsed choice", () => {
+    window.localStorage.clear();
+    window.localStorage.setItem("ah.sidebar.collapsed", "1");
+    function Wide() {
+      const { compactSidebar } = useShell();
+      const [on, setOn] = useState(true);
+      useEffect(() => {
+        compactSidebar(on);
+        return () => {
+          compactSidebar(false);
+        };
+      }, [on, compactSidebar]);
+      return (
+        <button
+          type="button"
+          onClick={() => {
+            setOn(false);
+          }}
+        >
+          Leave
+        </button>
+      );
+    }
+    renderWithApi(
+      <AppShell>
+        <Wide />
+      </AppShell>,
+      { routes },
+    );
+    expect(document.querySelector(".ah-shell")).toHaveAttribute("data-collapsed", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
+    expect(document.querySelector(".ah-shell")).not.toHaveAttribute("data-collapsed");
+    expect(window.localStorage.getItem("ah.sidebar.collapsed")).toBe("1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(document.querySelector(".ah-shell")).toHaveAttribute("data-collapsed", "true");
+    expect(window.localStorage.getItem("ah.sidebar.collapsed")).toBe("1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
+    // The page no longer asks: the stored collapsed choice applies again.
+    fireEvent.click(screen.getByRole("button", { name: "Leave" }));
+    expect(document.querySelector(".ah-shell")).toHaveAttribute("data-collapsed", "true");
+    expect(window.localStorage.getItem("ah.sidebar.collapsed")).toBe("1");
+    window.localStorage.clear();
   });
 
   it("cycles the theme from the top bar", () => {

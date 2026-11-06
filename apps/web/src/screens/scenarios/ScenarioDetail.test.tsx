@@ -1,4 +1,5 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { useState, type ReactNode } from "react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,6 +20,7 @@ import {
   aScenarioPlanRow,
   aScenarioRunRef,
   aScenarioSummary,
+  aShellView,
   aTreeDocument,
   at,
   renderWithApi,
@@ -29,6 +31,7 @@ import {
   testQueryClient,
   type ApiRoutes,
 } from "../../testing/builders";
+import { AppShell } from "../../shell/AppShell";
 import { DiscussProvider, useDiscuss } from "../../shell/discuss";
 import { ScenarioDetailScreen, ScenariosScreen } from ".";
 import { codeText } from "../../testing/text";
@@ -1494,6 +1497,91 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
       expect(
         screen.getByText("A scenario run of it is in progress. Let it end or cancel it first."),
       ).toBeInTheDocument();
+    });
+  });
+
+  describe("app sidebar", () => {
+    it("scenarios detail folds the app sidebar to its rail below 1920 px, and gives it back at a wide width", async () => {
+      // A laptop's width, which the test then widens: no (min-width: 1920px) at first.
+      let wide = false;
+      const listeners = new Set<() => void>();
+      vi.stubGlobal("matchMedia", (query: string) => ({
+        get matches() {
+          return query === "(min-width: 1920px)" ? wide : false;
+        },
+        media: query,
+        addEventListener: (_: string, listener: () => void) => {
+          listeners.add(listener);
+        },
+        removeEventListener: (_: string, listener: () => void) => {
+          listeners.delete(listener);
+        },
+      }));
+      renderWithApi(
+        <AppShell>
+          <ScenarioDetailScreen />
+        </AppShell>,
+        {
+          routes: { ...routes, "/api/v1/screens/shell": aShellView() },
+          path: PATH,
+          route: "/scenarios/:project/:name",
+        },
+      );
+      await screen.findByRole("form", { name: "Run order-lifecycle" });
+      const shell = document.querySelector(".ah-shell");
+      expect(shell).toHaveAttribute("data-collapsed", "true");
+      // The person's own choice is not stored by the page's request.
+      expect(window.localStorage.getItem("ah.sidebar.collapsed")).toBeNull();
+
+      act(() => {
+        wide = true;
+        for (const listener of listeners) listener();
+      });
+      expect(shell).not.toHaveAttribute("data-collapsed");
+    });
+
+    it("scenarios detail gives the app sidebar back when the page is left", async () => {
+      vi.stubGlobal("matchMedia", (query: string) => ({
+        matches: false,
+        media: query,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }));
+      function Leave({ children }: { children: ReactNode }) {
+        const [shown, setShown] = useState(true);
+        return (
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                setShown(false);
+              }}
+            >
+              Leave the page
+            </button>
+            {shown && children}
+          </>
+        );
+      }
+      const user = userEvent.setup();
+      renderWithApi(
+        <AppShell>
+          <Leave>
+            <ScenarioDetailScreen />
+          </Leave>
+        </AppShell>,
+        {
+          routes: { ...routes, "/api/v1/screens/shell": aShellView() },
+          path: PATH,
+          route: "/scenarios/:project/:name",
+        },
+      );
+      await screen.findByRole("form", { name: "Run order-lifecycle" });
+      const shell = document.querySelector(".ah-shell");
+      expect(shell).toHaveAttribute("data-collapsed", "true");
+
+      await user.click(screen.getByRole("button", { name: "Leave the page" }));
+      expect(shell).not.toHaveAttribute("data-collapsed");
     });
   });
 

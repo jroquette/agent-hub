@@ -147,6 +147,10 @@ function ShellLayout({ children }: { children?: ReactNode }) {
   const discussWidth = useDiscussWidth();
 
   const [compact, setCompact] = useState(false);
+  // The top bar's toggle expanded the sidebar for this visit over a page's request (or over a
+  // stored collapsed choice while a page asks), without storing it.
+  const [visitExpanded, setVisitExpanded] = useState(false);
+  const collapsed = !visitExpanded && (preferences.sidebarCollapsed || compact);
   const actions = useMemo<ShellActions>(
     () => ({
       openPalette: (query = "") => {
@@ -157,6 +161,7 @@ function ShellLayout({ children }: { children?: ReactNode }) {
       },
       compactSidebar: (on: boolean) => {
         setCompact(on);
+        if (!on) setVisitExpanded(false);
       },
     }),
     [],
@@ -183,7 +188,7 @@ function ShellLayout({ children }: { children?: ReactNode }) {
     <ShellContext.Provider value={actions}>
       <div
         className="ah-shell"
-        data-collapsed={preferences.sidebarCollapsed || compact || undefined}
+        data-collapsed={collapsed || undefined}
         data-discuss={discuss.open || undefined}
         style={discussWidth.style}
       >
@@ -202,10 +207,11 @@ function ShellLayout({ children }: { children?: ReactNode }) {
           scope={scope}
           onScope={setScope}
           health={health}
-          sidebarCollapsed={preferences.sidebarCollapsed || compact}
+          sidebarCollapsed={collapsed}
           onToggleSidebar={() => {
             // A page that asked for the width: expand it for this visit, the stored choice kept.
-            if (compact) setCompact(false);
+            if (compact && collapsed) setVisitExpanded(true);
+            else if (visitExpanded) setVisitExpanded(false);
             else preferences.setSidebarCollapsed(!preferences.sidebarCollapsed);
           }}
           onPalette={() => {
