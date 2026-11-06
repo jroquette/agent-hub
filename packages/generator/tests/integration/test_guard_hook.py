@@ -4113,9 +4113,18 @@ UNCHECKED_REASON = "blocked words not checked: {}; confirm this call"
 CONFIG_CAUSE = "{} cannot be used (fix it: docs/design/environments.md)"
 # AM-7: the longest command text the rule scans, as a literal (1 MiB).
 BLOCKED_TEXT_CAP = 1_048_576
+# The guard's clock in the harnesses below: it never moves, so a verdict never depends on how
+# loaded the machine is (AGH-522). The scan's budget is still spent by a seam of -1 s, and a
+# clock that moves per look (DECIDE_CLOCK) drives the deadline's own tests.
+FROZEN_CLOCK = """
+class FrozenClock:
+    monotonic = staticmethod(lambda: 0.0)
+guard.time = FrozenClock
+"""
 # argv: hub, a file of [event, environ] pairs (JSON), and seams (JSON: guard name -> value, set
-# before deciding). Prints decide's verdict for each pair.
-DECIDE = """
+# before deciding). Prints decide's verdict for each pair, on the frozen clock.
+DECIDE = (
+    """
 import json
 from pathlib import Path
 import guard
@@ -4124,10 +4133,13 @@ hub, calls, seams = Path(sys.argv[1]), sys.argv[2], json.loads(sys.argv[3])
 with open(calls, encoding="utf-8") as fh:
     calls = json.load(fh)
 for name, value in seams.items():
-    setattr(guard, name, value)
+    setattr(guard, name, value)"""
+    + FROZEN_CLOCK
+    + """
 cfg = load_config(hub)
 print(json.dumps([guard.decide(event, cfg, environ) for event, environ in calls]))
 """
+)
 
 type Decide = Callable[..., list[tuple[str, str] | None]]
 
@@ -5369,10 +5381,10 @@ def test_keeps_deny_when_runner_too_slow_for_scan_budget(
     event = at(read_call("demo-api/config/app.json"), ws)
 
     verdicts = decide([(event, None)], seams={"BLOCKED_SCAN_BUDGET": 0})
-    opened, _ = decide_opens([(event, None)], seams={"BLOCKED_SCAN_BUDGET": 0})
+    verdicts_opening, _ = decide_opens([(event, None)], seams={"BLOCKED_SCAN_BUDGET": 0})
 
     denied = blocked_word("prod", "the contents of demo-api/config/app.json")
-    assert (verdicts, opened) == ([denied], [denied])
+    assert (verdicts, verdicts_opening) == ([denied], [denied])
 
 
 def test_passes_read_when_contents_or_name_not_listed(decide: Decide, blocked_hub: Path) -> None:
@@ -5408,8 +5420,10 @@ def test_denies_read_when_readable_env_file_holds_word(decide: Decide, blocked_h
 
 
 # argv: hub, a file of [event, environ] pairs, seams, and the file names whose os.open raises
-# PermissionError. Prints {"verdicts": decide's verdicts, "opened": every path os.open was given}.
-DECIDE_OPENS = """
+# PermissionError. Prints {"verdicts": decide's verdicts, "opened": every path os.open was given},
+# on the frozen clock.
+DECIDE_OPENS = (
+    """
 import json
 import os
 from pathlib import Path
@@ -5420,7 +5434,9 @@ seams, refused = json.loads(sys.argv[3]), json.loads(sys.argv[4])
 with open(calls, encoding="utf-8") as fh:
     calls = json.load(fh)
 for name, value in seams.items():
-    setattr(guard, name, value)
+    setattr(guard, name, value)"""
+    + FROZEN_CLOCK
+    + """
 cfg = load_config(hub)
 opened = []
 real_open = os.open
@@ -5434,6 +5450,7 @@ verdicts = [guard.decide(event, cfg, environ) for event, environ in calls]
 os.open = real_open
 print(json.dumps({"verdicts": verdicts, "opened": opened}))
 """
+)
 
 type DecideOpens = Callable[..., tuple[list[tuple[str, str] | None], list[str]]]
 
