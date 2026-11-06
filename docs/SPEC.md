@@ -557,7 +557,8 @@ accepting and rejecting a learning are the exception below.
 The server is local only: loopback bind, `Host` and `Origin` checks, a path holding a control character refused
 before any other check, 1 MiB request bodies (160 MiB for
 `POST /agent-sessions` and `POST /agent-sessions/{id}/messages`, which may carry up to ten images and ten PDF or
-text files attached in the chat), no CORS, and a CSP that keeps the app on its own origin.
+text files attached in the chat), no CORS, and a CSP that keeps the app on its own origin (a UX mockup's own page
+keeps a narrower one: inline styles and `data:` only, no script, no request; AGH-687).
 It reaches the network in two documented cases only: the learning decisions' explicit
 pull request ([ADR 0024](adr/0024-learning-actions-from-the-app.md)), and a read-only, server-side read of Linear's
 GraphQL API for a feature's tickets, only when `LINEAR_API_KEY` is set where `hub web` runs
@@ -589,13 +590,20 @@ them. The approved UI design and the departures from it are in
   accepted`; reject archives it under `brain/_inbox/_archive/` with the reason. Nothing is written to a default
   branch, nothing is forced, and the user's checkout is never touched. This is the server's first network exception:
   on that explicit action, `git` and `gh` reach the hub's `origin` and GitHub with the user's own credentials. In the
-  container image every hub is read-only and the actions are disabled with that reason.
-- **Features and Brain.** Feature detail renders the feature's records (spec, research, plan, eval) and its ACs with
+  container image every hub is read-only and the actions are disabled with that reason. Since AGH-687 `hub web` can
+  also decide up to 50 learnings of one project in one hub pull request (`POST /api/v1/learnings/decisions`): one
+  commit on `<prefix>learning-triage-<stamp>`, one event per learning naming that pull request, and the batch refused
+  as a whole when any decision is.
+- **Features and Brain.** Feature detail renders the feature's records (spec, research, plan, eval) and its UX
+  designs, each with its HTML mockup when it has one (`ux-*.html`, read-only, AGH-687), and its ACs with
   verification and evidence, and its tracker issues from `features.json` → `linear` (the source of truth, which `/feature`
   fills once it creates the issues) and the spec's frontmatter `linear:`; a per-project Brain browser lists the hub's `brain/` notes (never `brain/auto/`) and
   renders any one, with links between notes inside the app. Notes are read on request, at most 256 KiB, through one
   path rule (no `..`, no absolute path, no link, regular `.md` files under `<hub>/brain` only) and rendered with raw
-  HTML off and a URL allow-list.
+  HTML off and a URL allow-list. A mockup is read alone, on request, through its own rule
+  (`GET /api/v1/features/{project}/{slug}/mockups/{name}`): a name `ux-*.html` in the feature folder's top level, a
+  slug that is one folder name, no link followed, a regular file of at most 1 MiB; anything else is a 404 (a name
+  that is not `ux-*.html`, a 400). It is shown in a sandboxed frame, without scripts or network.
 
 **Ticket planning (AGH-136, built).** A feature's phases now match what was delivered, and its tickets show their
 Linear status ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md), records in
@@ -902,6 +910,21 @@ change; the live-session limit is [ADR 0042](adr/0042-no-live-session-limit-in-t
 - **Toolkit** holds Workflows as a tab (`/workflows` redirects), with kind tabs, a filter toolbar and Your drafts;
   **Hub config** shows one view of the values agents use and who set each. Generated hubs' `/feature` has
   implementers change files with Edit or Write only.
+
+**Playground delivery 3 (AGH-687, built).** What the owner validated in the playground (snapshot `20261106T092037Z`),
+as one change:
+
+- **Session review**: with code changed in more than one repository, the Code tab shows one repository at a time on
+  request, each named by its folder (never by a logical or), with its own files, pull request, progress and code and
+  tests split ([agent-sessions.md](design/agent-sessions.md), AC-687.1.x).
+- **Scenario builder**: one editor at a time. A selected step opens in place with its essentials and the rest under
+  More details; its full editor opens in the side panel only on request. A Wait until reads as a poll. Below 1920 px
+  the builder's left column is a rail, and the app sidebar folds to its rail on that page only.
+- **Learnings**: marks kept in the browser, sent as one hub pull request per project (above).
+- **Feature detail**: a UX designs tab with each design's HTML mockup and comments pinned on it; the `ux-designer`
+  agent writes the mockup beside each design. A done Context step links to the ticket's context brief.
+- **Shell**: each browser tab is named after its screen, `<screen> · <project> · agent-hub` (the project only on a
+  project's route, a repeated part dropped), and the app has a favicon.
 
 ## Data sources and event model
 

@@ -11,6 +11,56 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- `hub web` Learnings: decide several learnings in one hub pull request (AGH-687).
+  - The accept and reject dialogs offer "Mark to accept" or "Mark to reject" beside "Open pull request". Marks are
+    kept in this browser, and the queue row shows "Marked: accept" or "Marked: reject". After a mark, the queue moves
+    to the next learning that can be decided and is not marked yet.
+  - A bar above the queue counts the marks. "Review and open PR" lists them by project, each project with its own
+    "Open pull request" (at most 50 learnings per pull request). Deciding a marked learning on its own drops its mark.
+  - `POST /api/v1/learnings/decisions` takes 1 to 50 accepts and rejects of one project. It opens one pull request on
+    `<branch_prefix>learning-triage-<stamp>`, whose one commit moves and archives every note, and stores one
+    `learning.accepted` or `learning.rejected` event per learning, each naming that pull request. When any decision is
+    refused, the whole batch is refused and nothing is pushed or stored. It is a strict write, like accept and reject.
+- `hub web` feature page: a "UX designs" tab, right after Spec, shows each screen the feature designs, one at a time
+  (`?doc=designs&design=<file>`) (AGH-687).
+  - A design with an HTML mockup opens on it; "Written design" (`?view=spec`) shows the `ux-*.md` instead. The mockup
+    is drawn 1280 px wide, fitted to the column or at its actual size, with no scripts and no network.
+  - "Comment on a point" drops numbered pins on the mockup that go into the next Discuss message, and the Discuss
+    panel offers review questions for the design.
+  - `GET /api/v1/features/{project}/{slug}/mockups/{name}` reads one `ux-*.html` mockup as JSON, and
+    `GET …/mockups/{name}/page` serves it as a page with a policy of its own (inline styles only), which the tab
+    frames. A name that is not `ux-*.html` is a 400; a missing file, a link or a file over 1 MiB is a 404.
+    `FeatureDetail.ux_designs` lists each design with its `mockup`.
+- `hub web` session review: when a session changed code in more than one repository, the Code tab can show one
+  repository at a time ("All repos n", then each repository by its folder name). Picked, the tab lists only that
+  repository's files, its pull request, its progress and its code and tests counts. A file a card in the chat opens
+  still shows when it is in another repository (AGH-687).
+- `hub web`: each browser tab is named after its screen (`<screen> · <project> · agent-hub`), and the app has the
+  agent-hub favicon (AGH-687).
+
+### Changed
+
+- The `hub web` scenario builder edits one step at a time, in place (AGH-687).
+  - An open step shows what matters, with the rest under "More details". Its action is chosen on the step, the code
+    it runs sits under its action, and its body is edited as JSON by clicking it. "Edit all in the panel" opens the
+    side panel, and the step then reads "Editing in the panel"; Esc closes the panel first.
+  - An open Wait until reads as a poll: Done when lists its conditions, How often gives "every … · up to … · at most
+    N checks", each editable in place, and it offers only actions that read.
+  - Below 1920 px the left column is a rail of three buttons (Blocks, Variables, Actions) that opens the column over
+    the list, and the app sidebar folds to its rail on the scenario page only. The sidebar's toggle expands it for the
+    visit without changing your stored choice.
+- A done Context step in a ticket's panel links to the ticket's context brief in Brain instead of saying "Not reached"
+  (AGH-687).
+- The `ux-designer` agent also writes a static HTML mockup, `ux-<new|change>-<screen>.html`, beside each design. Run
+  `hub sync` after bumping `platform.version` to get it (AGH-687).
+
+### Fixed
+
+- `hub web` scenario builder: a service input's kind always matches its service. Choosing another kind empties the
+  field and lists that kind's services, and Undo brings the service back (AGH-687).
+
 ## [0.31.0] - 2026-11-05
 
 ### Added

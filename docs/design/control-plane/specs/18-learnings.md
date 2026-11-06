@@ -94,6 +94,24 @@ header.
   ("Goes in", "Needs changes", "Leave out", "Reviewing now", "Queued", "Needs you", "No verdict"), and the detail
   opens with it at the top ("Claude's recommendation · you decide", or what Claude is doing with it now). A
   finished run gives no verdict to the learnings it never reached.
+- **Triage marks** (AGH-687, validated in the playground snapshot `20261106T092037Z`). On a proposal that can be
+  decided, the accept and reject dialogs add "Mark to accept" / "Mark to reject" beside "Open pull request" ("Deciding
+  several? Mark this one instead: every marked learning goes into one triage pull request you open from the list.").
+  A mark is kept in this browser, never sent until asked. The detail then shows "Marked to accept" (to its target,
+  "with your edit" when edited) or "Marked to reject" (its reason), "It goes into the triage pull request with the
+  other marked learnings." and Unmark; the dialog opens again to change it. The queue row shows a "Marked: accept" or
+  "Marked: reject" badge, and after a mark the queue selects the next learning down that can be decided and is not
+  marked (it stays put when there is none). Accepting or rejecting a marked learning on its own drops its mark.
+  - On Proposed only, a bar "Marked learnings" above the queue reads "{n} marked" and "{a} accept · {r} reject", with
+    Clear and "Review and open PR".
+  - "Review and open PR" opens the dialog "Open the triage pull request": the marks by project (alphabetical), each
+    with its counts, its learnings (each opens its detail; Unmark), and its own "Open pull request" ("Opening pull
+    request…" while it runs; disabled over 50, "At most 50 per pull request"). One project's pull request is
+    `POST /api/v1/learnings/decisions` ([API.md](../../../API.md#learning-decisions)): opened, its marks clear and
+    the dialog says "Pull request opened for {project} · {n} learnings" with its link; refused, the marks stay and an
+    alert says "Could not open the pull request." with the reason and "Nothing was pushed; fix or unmark that
+    learning and try again." Tab stays in the dialog; Escape and Close close it, except while a pull request is being
+    opened.
 
 ## Acceptance criteria
 
@@ -123,3 +141,8 @@ header.
 | AC-272.22 | Given a queue over several projects, when triage is offered, then it asks for one project | `triage.test.tsx` "asks for one project when the queue spans several" |
 | AC-272.23 | Given a running triage, when the queue shows, then each row carries Claude's verdict or where the review stands (current, queued, needs you), the Claude facet filters by it, and a finished run gives no verdict to learnings it never reviewed | `triage.test.tsx` "shows Claude's verdict on each row and filters by it", "marks the learnings behind the current one as queued and says when Claude needs you", "gives no verdict to the learnings a finished session never reviewed"; `filters.test.ts` "keeps the learnings Claude recommends when the Claude facet is picked" |
 | AC-393.14 | Given a learning with `source_session_id` `s1`, `source_event_id` `e1`, a pull request, accepted and in the brain at `brain/learnings/web-gates.md`, when the detail renders, then the trail shows Session, Proposal, Decision and Note in order, linking to `/sessions/s1`, the session at event `e1`, the PR (new tab) and the note, the path reading `brain/` once (also with `brain_path` `learnings/web-gates.md`); `accepted_pr_open` → the Note step is text with the "once merged" sentence; no `pr_url` → "Accepted outside the app"; no session → "No source session recorded."; a rejected learning has no Note step; axe finds no serious or critical violation | `LearningDetail.test.tsx` "trail: …" and "trail has no serious a11y violations (a11y)"; `status.test.tsx` "ProvenanceLineage …" |
+| AC-687.3.1 | Given a proposal that can be decided, when the owner marks it to accept (with an edited target or body) or to reject (with a reason) in the dialog, then no pull request opens, the mark is kept in this browser and shown on the detail with Unmark, and the dialog opens again to change it | `LearningDetail.test.tsx` "marks an accept to the edited target without opening a pull request", "marks a reject with its reason and offers it again to change", "unmarks a marked learning" |
+| AC-687.3.2 | Given a marked learning, when it is accepted or rejected on its own, then its mark is dropped | `LearningDetail.test.tsx` "drops the mark when the marked learning is decided on its own" |
+| AC-687.3.3 | Given a mark, when it is made, then the queue row is badged and the next decidable unmarked learning is selected, or the selection stays when none follows; the bar shows on Proposed only | `index.test.tsx` "LearningsScreen triage marks" |
+| AC-687.3.4 | Given marks, when the owner opens the dialog and a project's pull request, then one `POST /learnings/decisions` carries that project's marks (an accept's edited body included), the marks clear and the PR is linked; refused, the marks stay and the conflict is named; marks group by project alphabetically, over 50 are refused; Tab stays inside, Escape closes | `TriageBatch.test.tsx` |
+| AC-687.3.5 | Given 1 to 50 decisions of one project, when they are sent, then one PR with one commit on `<prefix>learning-triage-<stamp>` applies them all and one event per learning names it; any refused decision (already decided, twice, two projects, one destination, read-only hub, a destination taken, the branch on `origin`) refuses the batch, nothing pushed or stored; a foreign or missing Origin is 403 and a body that is not JSON 415 | `test_decide_learning.py` (`…_when_batched`, `test_refuses_batch_…`), `test_brain_change_requests.py` (core and hub_git), `brain_change_requests_contract.py`, `routes/test_learnings.py`, `test_learning_actions.py`, `test_local_security.py` |

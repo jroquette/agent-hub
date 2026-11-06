@@ -1,6 +1,6 @@
 # Features
 
-**Phase:** P2 (read-only) · **Routes:** `/features`, `/features/new` (AGH-420, Screen 3), `/features/{project}/{slug}` (params `doc=spec|plan|research|eval|issues` (as built: `tickets`, see Departures), `ac=AC-48.21`, `phase=`; as built also `eval=`, `tickets=table`, `ticket=<id>` and `step=<step>`, see Departures (AGH-326, AGH-330)) · **Answers:** "Where is each feature on the golden path, and is it really done?"
+**Phase:** P2 (read-only) · **Routes:** `/features`, `/features/new` (AGH-420, Screen 3), `/features/{project}/{slug}` (params `doc=spec|plan|research|eval|issues` (as built: `tickets`, see Departures), `ac=AC-48.21`, `phase=`; as built also `eval=`, `tickets=table`, `ticket=<id>` and `step=<step>`, see Departures (AGH-326, AGH-330); as built also `doc=designs`, `design=<file>` and `view=spec`, see Departures (AGH-687)) · **Answers:** "Where is each feature on the golden path, and is it really done?"
 
 This section holds three screens: the **Features list**, **Feature detail** and **New feature** (AGH-420). A feature is a folder `brain/features/<slug>/` in the hub with `spec.md`, `research.md`, `plan.md`, `features.json`, `issues.md` and `eval.md`. The app only reads these files; editing a feature record stays a human act in a hub PR (principle 2).
 
@@ -145,9 +145,9 @@ otherwise, this list wins. Each item is an acceptance criterion.
   steps after it do not move.
 - **AC-268.15 Opening tab.** Given a feature without `?doc=`, when it opens, then it opens where its work is: the
   record being written (Spec, Research, Plan), Tickets while it is built and reviewed, Criteria once it is evaluated
-  or shipped.
+  or shipped. Since AC-687.4.2, a feature in UX design opens on UX designs.
 - **AC-268.16 Steps open tabs.** Given the golden path, when a step is chosen, then the tab holding its evidence opens
-  (Evaluate opens Eval).
+  (Evaluate opens Eval). Since AC-687.4.2, the UX design step opens UX designs.
 - **AC-268.17 Header chips** (superseded by AC-425.5). Given the feature's tickets, then each header chip shows the id with its Linear status
   and the title on hover; the "PR —" placeholder is gone while GitHub is not connected.
 - **AC-268.18 Sessions by issue.** Given `GET /sessions?issue=<id>` (any case), then it lists the sessions about that
@@ -654,6 +654,46 @@ otherwise, this list wins.
   panel show as a modal layer over the app, kept in `?flow=full` so a reload keeps it; focus moves to Exit, Tab stays
   inside (skipping controls taken out of the tab order), Escape closes the ticket panel first and then exits, and
   focus returns to what opened it.
+
+## Departures (AGH-687, the playground's v0.31 work)
+
+Built after the owner validated these in the playground (snapshot `20261106T092037Z`); where the sections above say
+otherwise, this list wins. Records: [feature-records.md](../../feature-records.md) (`ux-*.md` and `ux-*.html`);
+routes: [API.md](../../../API.md#feature-detail) (`ux_designs`, the mockup routes).
+
+**UX designs tab**
+
+- **AC-687.4.1 The tab.** Given a feature folder with top-level `ux-*.md` designs, then the feature page has a "UX
+  designs" tab with their count, right after Spec (`?doc=designs`); without designs the tab is left out, and
+  `?doc=designs` shows the empty state "No UX designs yet." with what the ux-designer agent writes.
+- **AC-687.4.2 Where it opens.** Given a feature in the UX design phase and no `?doc=`, then it opens on UX designs;
+  the golden path's UX design step opens that tab.
+- **AC-687.4.3 One screen at a time.** Given the tab, then a line says "{n} screens · {a} approved" and how to
+  discuss a design; a list "Designed screens" names each design (its title, `new` or `change`, its screen, a check
+  when approved) and the chosen one shows its `brain/` path, an Approved or Draft badge and Open in Brain. Picking one
+  writes its file name to `?design=` (`ux-new-orders`), so two designs of one screen can each be chosen; a `?design=`
+  holding a screen name (older links) still opens that screen's design, else the first one.
+- **AC-687.4.4 Mockup or written design.** Given a design with a same-stem `ux-*.html`, then it opens on the mockup,
+  and a switch "Show the design" offers Mockup and Written design (`?view=spec`, the `ux-*.md` as a Brain note);
+  without a mockup only the written design shows.
+- **AC-687.4.5 The mockup.** Given the mockup, then it is drawn 1280 px wide in a frame of its own page
+  (`…/mockups/{name}/page`, sandboxed, no scripts, no request), scaled to fit the column from its first load, with
+  Actual size / Fit to width; while it loads a skeleton shows, and a read that fails shows the problem with Try again.
+- **AC-687.4.6 Pins.** Given "Comment on a point", then each click on the mockup drops a numbered pin that goes into
+  the next Discuss message, naming its point in the mockup's pixels and what is drawn there; the button reads "Click
+  the mockup to drop a pin · Esc to stop", and Esc stops it.
+- **AC-687.4.7 Discuss.** Given a design open in the tab, then the Discuss panel offers its review starters ("Walk me
+  through this screen", "What is not settled?", "What would you cut?"), reads every design with the other records,
+  and, when it has a mockup, tells Claude to change both the written design and its mockup.
+
+Tests: `DesignsTab.test.tsx`; `test_features.py` (unit and integration), `test_hub_read_models.py`,
+`test_feature_files.py`, `test_local_security.py`.
+
+**Ticket panel**
+
+- **AC-687.5.1 Context brief.** Given a ticket whose Context step is done, then the step's card links "Open the
+  context brief in Brain" (`features/<slug>/tickets/<id>/brief.md`) instead of saying "Not reached".
+  Test: `TicketPanel.test.tsx` "links a done Context step to the ticket's context brief in Brain".
 
 ## Screen 1: Features list
 

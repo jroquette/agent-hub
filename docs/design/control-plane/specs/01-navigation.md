@@ -70,6 +70,7 @@ Every screen carries its phase. A screen tagged P3 or P4 is not shown in the sid
 ├ /features/new                     New feature (brief + attachments → Discuss)      P2
 └ /features/:project/:slug          Feature detail                                   P2
     ?doc=spec|plan|research|eval&ac=:acId
+    as built (AGH-687) also ?doc=…|acs|tickets|designs&design=:file&view=spec
 
 /tickets?project=&q=&kind=          Tickets list (AGH-426, specs/20-tickets.md)      P2 read-only · Start ticket
 /tickets/:project/:issue            Ticket page (AGH-521, specs/20-tickets.md)       P2 read-only
@@ -142,6 +143,12 @@ Route rules:
   sidebar 240 (56 collapsed)
 ```
 
+Tab title (AGH-687): the browser tab reads `<screen> · <project> · agent-hub` ("Sessions · agent-hub",
+"Environments · demo-api · agent-hub"). The screen part is the screen's heading, else the breadcrumb's current page,
+read again as data arrives and on each navigation; the project part shows only on `/projects/:project/*` routes; an
+empty or repeated part is dropped. The shell sets it in one place (`DocumentTitle`); screens never set
+`document.title` themselves. `index.html` carries the agent-hub favicon.
+
 `AppShell` places `Sidebar` (width token `sidebar` 240px, `sidebar-collapsed` 56px, `z-sidebar`) and `TopBar` (height `topbar` 48px, `z-sidebar`). The collector-offline `Banner` sits below the top bar at `z-banner` and pushes content down (never overlays it). Page gutter `space-8` at ≥1440 px, `space-6` below.
 
 ## Sidebar
@@ -211,6 +218,12 @@ Badge rules:
 - The accessible name includes the count: "Approvals, 2 waiting".
 
 Collapse: the `IconButton` `panel-left-close` at the bottom toggles collapse; `[` is not used (reserved for tabs). Default collapsed below 1360 px; the choice persists in local storage `ah.sidebar.collapsed`.
+
+A page's request (AGH-687): a page that needs the width (the scenario page below 1920 px, 23-scenarios AC-687.2.7)
+asks the shell to fold the sidebar to its rail while it shows; the stored `ah.sidebar.collapsed` choice is kept for
+the other pages and is not written. On that page the top bar's toggle expands the sidebar for the visit, on the first
+click even when the stored choice is collapsed, without storing it; a second click folds it again. Leaving the page,
+or the page no longer asking (1920 px and wider), gives the person's own choice back.
 
 - **Look (AGH-422).** The sidebar's rows take the chat's vocabulary: 36 px soft rounded rows (`radius-xl`) at 14 px,
   the current page filled with `surface-turn` (its icon accent) instead of an outline, group titles at 12 px, and no
@@ -402,6 +415,7 @@ Every entity, tab, filter and selected item is addressable. The URL is the sourc
 | Skill detail | `/projects/agent-hub/skills/skill/hub-workflow/feature` | `kind/source/name`; `source` is the folder (`claude` for `.claude/`, `settings` / `settings-project` for hooks) |
 | Feature AC | `/features/agent-hub/layered-memory?ac=AC-48.21` | |
 | Feature ticket panel | `/features/agent-hub/layered-memory?doc=tickets&ticket=AGH-48` | `step=` keeps the open step (AGH-330) |
+| Feature UX design | `/features/agent-hub/layered-memory?doc=designs&design=ux-new-orders&view=spec` | `design=` is the design's file name without `.md` (a screen name still opens its design), `view=spec` the written design instead of the mockup; written with `replace` (AGH-687) |
 | Metrics chart | `/metrics?metric=failure-stage&period=30d&group_by=step` | |
 | Health finding | `/health?project=agent-hub&finding=:id` | |
 | Lists with filters | `/sessions?agent=hub-workflow:evaluator&outcome=error&from=2026-10-01` | |

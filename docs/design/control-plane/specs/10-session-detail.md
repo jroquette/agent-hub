@@ -259,6 +259,10 @@ Every event row has:
 - Read-only files show "Read only · no changes" and the read events, no diff.
 - Expired transcript: tree and counts remain; the diff pane shows `ExpiredContent` "Diff content expired on 2026-11-10. The file list and change counts remain." with link to the PR files on GitHub when a PR exists ("See the change in PR #69").
 - Data: `GET /sessions/{id}/files`, `GET /sessions/{id}/files/diff?path=&repo=`.
+- As built (AGH-687): a driven session's review drawer shows changed code of several repositories together or one
+  repository at a time, each named by its folder, with its own pull request, progress and code and tests split
+  ([agent-sessions.md](../../agent-sessions.md#session-review-one-repository-at-a-time-agh-687), AC-687.1.1 to
+  AC-687.1.5). Where this tab says "grouped by repo", that pick wins.
 
 ## Decisions tab (P3)
 
