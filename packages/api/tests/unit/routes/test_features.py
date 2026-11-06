@@ -7,11 +7,12 @@ from typing import Any
 import pytest
 
 from agent_hub.api.change_request_files import HubDecisionWriter
+from agent_hub.api.local_security import CONTENT_SECURITY_POLICY, UX_MOCKUP_PAGE_POLICY
 from agent_hub.api.owner_signoff_files import HubEvalWriter, ProjectHubPaths
 from agent_hub.api.rfc9457 import owner_signoff_problem
 from agent_hub.core.features.change_request_decision import DecideChangeRequest
 from agent_hub.core.features.feature_status import FeatureFolder
-from agent_hub.core.features.feature_view import AcRow, FeatureCost, FeatureDetail
+from agent_hub.core.features.feature_view import AcRow, FeatureCost, FeatureDetail, UxMockup
 from agent_hub.core.features.owner_signoff import OwnerSignOffError, SignOffOwnerSteps
 from agent_hub.core.projects.project_views import ProjectDetail, TrackerView
 from agent_hub.core.readmodels.filters import Scope
@@ -48,6 +49,68 @@ def test_maps_detail_when_feature_requested(wired: Any) -> None:
     response = wired.client.get("/api/v1/features/demo/demo-feature")
 
     assert response.json()["ac_rows"][0]["id"] == "AC-1"
+
+
+MOCKUP_KEY = ("demo", "demo-feature", "ux-new-a.html")
+MOCKUP_URL = "/api/v1/features/demo/demo-feature/mockups/ux-new-a.html"
+
+
+def _mockup() -> UxMockup:
+    html = "<style>p{color:red}</style><p data-ux='list'>Orders</p>"
+    return UxMockup(
+        project="demo",
+        slug="demo-feature",
+        name="ux-new-a.html",
+        html=html,
+        size=len(html.encode()),
+        sha256="0" * 64,
+    )
+
+
+def test_serves_mockup_text_when_port_answers(wired: Any) -> None:
+    wired.hubs.mockups[MOCKUP_KEY] = _mockup()
+
+    response = wired.client.get(MOCKUP_URL)
+
+    assert response.status_code == 200
+    assert response.json() == _mockup().model_dump(mode="json")
+    assert wired.hubs.calls == [("ux_mockup", MOCKUP_KEY)]
+
+
+def test_serves_mockup_page_with_own_policy_when_port_answers(wired: Any) -> None:
+    wired.hubs.mockups[MOCKUP_KEY] = _mockup()
+
+    response = wired.client.get(f"{MOCKUP_URL}/page")
+
+    assert response.status_code == 200
+    assert response.text == _mockup().html
+    assert response.headers["content-type"] == "text/html; charset=utf-8"
+    assert response.headers["content-security-policy"] == UX_MOCKUP_PAGE_POLICY
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize("suffix", ["", "/page"])
+@pytest.mark.parametrize("name", ["spec.md", "ux-new-a.md", "x.html"])
+def test_refuses_mockup_without_reading_when_name_not_ux_html(
+    wired: Any, name: str, suffix: str
+) -> None:
+    response = wired.client.get(f"/api/v1/features/demo/demo-feature/mockups/{name}{suffix}")
+
+    assert response.status_code == 400
+    assert response.headers["content-type"] == "application/problem+json"
+    assert wired.hubs.calls == []
+
+
+@pytest.mark.parametrize("suffix", ["", "/page"])
+def test_answers_not_found_problem_when_mockup_unknown(wired: Any, suffix: str) -> None:
+    response = wired.client.get(f"{MOCKUP_URL}{suffix}")
+
+    assert response.status_code == 404
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json()["status"] == 404
+    assert response.headers["content-security-policy"] == CONTENT_SECURITY_POLICY
+    assert wired.hubs.calls == [("ux_mockup", MOCKUP_KEY)]
 
 
 def test_adds_feature_cost_when_feature_requested(wired: Any) -> None:

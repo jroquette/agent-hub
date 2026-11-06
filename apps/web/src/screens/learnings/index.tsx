@@ -54,6 +54,8 @@ import { MAX_TRIAGE_BATCH } from "./review";
 import { triageCandidates, useClaudeVerdicts, useTriage, type ClaudeReview } from "./triage";
 import { CLAUDE_LABEL, ClaudeReviewBadge } from "./ClaudeReviewBadge";
 import { TriageProgress } from "./TriageProgress";
+import { StagedBadge, TriageBatchBar } from "./TriageBatch";
+import { stagedOrNone, useStagedDecisions, type StagedDecision } from "./staged";
 
 type Learning = components["schemas"]["Learning"];
 
@@ -78,7 +80,15 @@ const clamp = (lines: number): CSSProperties => ({
   whiteSpace: "normal",
 });
 
-function QueueRow({ l, review }: { l: Learning; review: ClaudeReview }) {
+function QueueRow({
+  l,
+  review,
+  staged,
+}: {
+  l: Learning;
+  review: ClaudeReview;
+  staged: StagedDecision | null;
+}) {
   const ext = isExternal(l);
   const state = stateOf(l);
   const blocked = blockedReason(l);
@@ -135,6 +145,7 @@ function QueueRow({ l, review }: { l: Learning; review: ClaudeReview }) {
           )
         )}
         <span className="ah-row ah-wrap" style={{ gap: 6 }}>
+          {staged && <StagedBadge decision={staged} />}
           <ClaudeReviewBadge review={review} />
           {blocked && <StatusBadge status="blocked" label={blocked} />}
           {state !== "proposed" && <LearningStateBadge state={state} />}
@@ -321,6 +332,7 @@ export function LearningsScreen() {
       (a.proposed_at ?? "").localeCompare(b.proposed_at ?? ""),
   );
   const blockedCount = rows.filter((l) => blockedReason(l) !== null).length;
+  const staged = useStagedDecisions();
   const { learningId } = useParams();
   // `/knowledge/learnings/:learningId` (a link to one proposal) and `?learning=` both pick it.
   const chosen = params.get("learning") ?? learningId ?? null;
@@ -335,6 +347,14 @@ export function LearningsScreen() {
       },
       { replace: true },
     );
+  };
+  // After a mark, the next learning down the queue that is decidable and not marked yet.
+  const selectNextAfter = (id: string) => {
+    const from = rows.findIndex((l) => l.id === id);
+    const next = rows
+      .slice(from + 1)
+      .find((l) => blockedReason(l) === null && staged[l.id] === undefined && l.id !== id);
+    if (next) select(next.id);
   };
   const count = learnings.data?.total_estimate ?? rows.length;
   // A triage session runs in one hub: the picked project, the scope, or the only one listed.
@@ -444,6 +464,11 @@ export function LearningsScreen() {
               )}
             </div>
           )}
+          {status === "proposed" && (
+            <div style={{ padding: "10px 16px 0 32px" }}>
+              <TriageBatchBar onSelect={select} />
+            </div>
+          )}
           {claude.sources}
           <div className="ah-row ah-wrap" style={{ gap: 6, padding: "12px 16px 10px 32px" }}>
             <span className="ah-small ah-subtle">
@@ -479,7 +504,13 @@ export function LearningsScreen() {
                         ? `${String(rows.length)} of ${String(count)}`
                         : String(count)
                   } ${status}`,
-                  render: (l) => <QueueRow l={l} review={claude.reviewOf(l)} />,
+                  render: (l) => (
+                    <QueueRow
+                      l={l}
+                      review={claude.reviewOf(l)}
+                      staged={stagedOrNone(staged, l.id)}
+                    />
+                  ),
                 },
                 {
                   id: "age",
@@ -511,6 +542,7 @@ export function LearningsScreen() {
               claude={claude.reviewOf({ id: selectedId })}
               now={now}
               onDecide={select}
+              onMarked={selectNextAfter}
             />
           )}
         </div>

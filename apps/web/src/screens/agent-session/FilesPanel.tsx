@@ -39,7 +39,14 @@ import {
 import { commonDir, type ChangedFile, type FileChange } from "./model";
 import { useRepoCommitDiff } from "./queries";
 import { writtenText } from "./netDiff";
-import { isDiscarded, repoState, type FileCommit, type RepoChanges } from "./repoChanges";
+import {
+  isDiscarded,
+  repoName,
+  repoOf,
+  repoState,
+  type FileCommit,
+  type RepoChanges,
+} from "./repoChanges";
 import { shortSha } from "../feature-detail/acEvidence";
 
 /** The drawer's tabs: one per kind of file, then the files that ended as they began. */
@@ -991,6 +998,8 @@ export function FilesPanel({
   const [picked, setPicked] = useState<string | null>(initialPath);
   const [tab, setTab] = useState<FilesTab | null>(null);
   const [split, setSplit] = useState<CodeSplit>(readCodeSplit);
+  // The repository the code tab shows (its root), or null for all of them.
+  const [repoPick, setRepoPick] = useState<string | null>(null);
   // Opened on a file, the keyboard goes to that file; else to the drawer's heading.
   const [focusFile, setFocusFile] = useState(initialPath !== null);
   useEffect(() => {
@@ -1025,13 +1034,48 @@ export function FilesPanel({
       : fileKind(pickedFile.path)
     : null;
   const kind = kinds.find((group) => group.kind === (pickedKind ?? tab)) ?? kinds[0];
+  // With code in more than one repository, the code tab shows one of them at a time on demand,
+  // each with its own files and progress: what to review for each pull request.
+  const byRepo = useMemo(() => {
+    if (kind?.kind !== "code") return [];
+    return (repos ?? [])
+      .map((repo) => ({
+        repo,
+        files: kind.files.filter((file) => repoOf(file.path, repos)?.root === repo.root),
+      }))
+      .filter((group) => group.files.length > 0);
+  }, [kind, repos]);
+  const canPickRepo = byRepo.length > 1;
+  // A picked file (a card in the conversation) shows even when it is in another repository.
+  const pickedRepo = canPickRepo && picked !== null ? (repoOf(picked, repos)?.root ?? null) : null;
+  // A picked code file outside every repository shows with all of them; the pick comes back after.
+  const pickedOutside =
+    canPickRepo &&
+    picked !== null &&
+    pickedRepo === null &&
+    (kind?.files.some((file) => file.path === picked) ?? false);
+  const repoShown =
+    !canPickRepo || pickedOutside
+      ? null
+      : repoPick !== null && pickedRepo !== null && pickedRepo !== repoPick
+        ? pickedRepo
+        : byRepo.some((group) => group.repo.root === repoPick)
+          ? repoPick
+          : null;
+  const inRepo = useMemo(
+    () =>
+      repoShown === null
+        ? (kind?.files ?? [])
+        : (byRepo.find((group) => group.repo.root === repoShown)?.files ?? []),
+    [kind, byRepo, repoShown],
+  );
   // The code tab can show its tests apart: only when it has both tests and other code.
-  const testCount = kind?.kind === "code" ? kind.files.filter((f) => isTestFile(f.path)).length : 0;
-  const sourceCount = kind?.kind === "code" ? kind.files.length - testCount : 0;
+  const testCount = kind?.kind === "code" ? inRepo.filter((f) => isTestFile(f.path)).length : 0;
+  const sourceCount = kind?.kind === "code" ? inRepo.length - testCount : 0;
   const canSplit = testCount > 0 && sourceCount > 0;
   // A picked file (a card in the conversation) shows even when the split hides its side.
   const pickedSide: CodeSplit | null =
-    canSplit && picked !== null && kind?.files.some((file) => file.path === picked)
+    canSplit && picked !== null && inRepo.some((file) => file.path === picked)
       ? isTestFile(picked)
         ? "tests"
         : "source"
@@ -1042,10 +1086,9 @@ export function FilesPanel({
       ? pickedSide
       : split;
   const shown = useMemo(() => {
-    const all = kind?.files ?? [];
-    if (side === "all") return all;
-    return all.filter((file) => isTestFile(file.path) === (side === "tests"));
-  }, [kind, side]);
+    if (side === "all") return inRepo;
+    return inRepo.filter((file) => isTestFile(file.path) === (side === "tests"));
+  }, [inRepo, side]);
 
   const root = useMemo(() => commonDir(shown.map((file) => file.path)), [shown]);
   // One file alone keeps its folder in view: the root is then its parent's parent.
@@ -1154,7 +1197,33 @@ export function FilesPanel({
             </div>
           )}
           {(kind?.kind ?? "code") === "code" && repos && repos.length > 0 && (
-            <RepoList repos={repos} />
+            <RepoList
+              repos={repoShown === null ? repos : repos.filter((repo) => repo.root === repoShown)}
+            />
+          )}
+          {canPickRepo && (
+            <div className="as-files-codesplit ah-small">
+              <SegmentedControl
+                label="Show the code of one repository"
+                value={repoShown ?? "all"}
+                onChange={(id) => {
+                  setRepoPick(id === "all" ? null : id);
+                  setPicked(null);
+                }}
+                options={[
+                  {
+                    id: "all",
+                    label: `All repos ${String(kind?.files.length ?? 0)}`,
+                    title: "The code of every repository together",
+                  },
+                  ...byRepo.map(({ repo, files: inIt }) => ({
+                    id: repo.root,
+                    label: `${repoName(repo)} ${String(inIt.length)}`,
+                    title: `Only ${repo.label}${repo.branch ? ` (${repo.branch})` : ""}: what its pull request has`,
+                  })),
+                ]}
+              />
+            </div>
           )}
           {canSplit && (
             <div className="as-files-codesplit ah-small">

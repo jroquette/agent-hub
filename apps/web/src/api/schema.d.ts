@@ -671,6 +671,50 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/features/{project}/{slug}/mockups/{name}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Ux Mockup
+     * @description One UX design's visual mockup (``ux-*.html`` of the feature folder) as text; 400 for any
+     *     other name, 404 for a missing file, a link or one over 1 MiB.
+     */
+    get: operations["get_ux_mockup_api_v1_features__project___slug__mockups__name__get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/features/{project}/{slug}/mockups/{name}/page": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Ux Mockup Page
+     * @description The same mockup served as its own page, which hub web frames: ``text/html`` with a policy
+     *     of its own that allows its inline styles and ``data:`` images, fonts and media, and nothing
+     *     else (no script, no request, framed only by hub web); the same 400 and 404 as the JSON
+     *     read.
+     */
+    get: operations["get_ux_mockup_page_api_v1_features__project___slug__mockups__name__page_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/features/{project}/{slug}/owner-signoff": {
     parameters: {
       query?: never;
@@ -845,6 +889,27 @@ export interface paths {
     get: operations["list_learnings_api_v1_learnings_get"];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/learnings/decisions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Decide Learnings
+     * @description Open one hub PR that applies every decision (accepts and rejects of one project) in one
+     *     commit; refused as a whole when any decision is. Nothing changes until it is merged.
+     */
+    post: operations["decide_learnings_api_v1_learnings_decisions_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -3454,6 +3519,15 @@ export interface components {
       /** Reason */
       reason: string;
     };
+    /**
+     * DecidedLearning
+     * @description Where one learning of a triage batch now is.
+     */
+    DecidedLearning: {
+      /** Learning Id */
+      learning_id: string;
+      state: components["schemas"]["LearningState"];
+    };
     /** DecisionEntry */
     DecisionEntry: {
       /** Approver */
@@ -3904,7 +3978,8 @@ export interface components {
      * FeatureDetail
      * @description A feature with its acceptance criteria rows, its records (D3) and every eval; ``plan``
      *     (None without ``plan.md``) and ``acceptance_eval`` (None before one exists), whose verdict is
-     *     the header's ``verdict``; ``change_requests`` by number; ``cost`` what its sessions cost
+     *     the header's ``verdict``; ``ux_designs`` the screens designed for it, by file name;
+     *     ``change_requests`` by number; ``cost`` what its sessions cost
      *     (None when the events are not read).
      */
     FeatureDetail: {
@@ -3959,6 +4034,11 @@ export interface components {
        */
       sources_missing: components["schemas"]["EventSource"][];
       tickets_source: components["schemas"]["TicketsSource"];
+      /**
+       * Ux Designs
+       * @default []
+       */
+      ux_designs: components["schemas"]["UxDesignView"][];
       verdict: components["schemas"]["Verdict"] | null;
       /** Verdict Line */
       verdict_line: string | null;
@@ -4795,6 +4875,52 @@ export interface components {
       /** Pr Url */
       pr_url: string;
       state: components["schemas"]["LearningState"];
+    };
+    /**
+     * LearningBatchResult
+     * @description What a triage batch did: the one pull request it opened, its branch, and each learning.
+     */
+    LearningBatchResult: {
+      /** Branch */
+      branch: string;
+      /** Decided */
+      decided: components["schemas"]["DecidedLearning"][];
+      /** Pr Url */
+      pr_url: string;
+    };
+    /**
+     * LearningDecisionItem
+     * @description One decision of ``POST /learnings/decisions``: an accept with its ``target`` (and the
+     *     optional edited ``note_body``) or a reject with its ``reason``.
+     */
+    LearningDecisionItem: {
+      /**
+       * Action
+       * @enum {string}
+       */
+      action: "accept" | "reject";
+      /** Learning Id */
+      learning_id: string;
+      /** Note Body */
+      note_body?: string | null;
+      /**
+       * Reason
+       * @default
+       */
+      reason: string;
+      /**
+       * Target
+       * @default
+       */
+      target: string;
+    };
+    /**
+     * LearningDecisionsBody
+     * @description ``POST /learnings/decisions``: 1 to 50 decisions of one project, sent as one hub PR.
+     */
+    LearningDecisionsBody: {
+      /** Decisions */
+      decisions: components["schemas"]["LearningDecisionItem"][];
     };
     /**
      * LearningDetail
@@ -8431,6 +8557,47 @@ export interface components {
     /** Format: date-time */
     UtcTimestamp: string;
     /**
+     * UxDesignView
+     * @description One ``ux-*.md`` of a feature folder, read from its head: ``path`` is relative to the hub's
+     *     ``brain/`` (the brain note route reads it), ``screen`` and ``change`` (``new`` or ``change``)
+     *     come from its frontmatter or else its file name, ``title`` is its first ``# `` heading, and
+     *     ``approved`` says its frontmatter reads ``status: approved``. ``mockup`` names the
+     *     ``ux-*.html`` beside it with the same stem (its visual mockup), None without one.
+     */
+    UxDesignView: {
+      /** Approved */
+      approved: boolean;
+      /** Change */
+      change: string;
+      /** Mockup */
+      mockup?: string | null;
+      /** Path */
+      path: string;
+      /** Screen */
+      screen: string;
+      /** Title */
+      title: string;
+    };
+    /**
+     * UxMockup
+     * @description One UX design's visual mockup (``ux-*.html`` of a feature folder) as text: hub web shows
+     *     it in a sandboxed frame, without scripts or network.
+     */
+    UxMockup: {
+      /** Html */
+      html: string;
+      /** Name */
+      name: string;
+      /** Project */
+      project: string;
+      /** Sha256 */
+      sha256: string;
+      /** Size */
+      size: number;
+      /** Slug */
+      slug: string;
+    };
+    /**
      * ValidateRequest
      * @description A scenario document to check: its pack and the document as the builder holds it.
      */
@@ -10332,6 +10499,90 @@ export interface operations {
       };
     };
   };
+  get_ux_mockup_api_v1_features__project___slug__mockups__name__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        slug: string;
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["UxMockup"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_ux_mockup_page_api_v1_features__project___slug__mockups__name__page_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        slug: string;
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The mockup's own page */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "text/html": string;
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
   sign_off_owner_steps_api_v1_features__project___slug__owner_signoff_post: {
     parameters: {
       query?: never;
@@ -10688,6 +10939,84 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["Page_Learning_"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  decide_learnings_api_v1_learnings_decisions_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["LearningDecisionsBody"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LearningBatchResult"];
+        };
+      };
+      /** @description Already decided, target refused, note not on the default branch, or actions unavailable for this hub */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description The body is not application/json */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Could not open the pull request */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description The action passed its 60 s deadline */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

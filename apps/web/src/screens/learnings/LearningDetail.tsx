@@ -41,6 +41,7 @@ import { ClaudeReviewNotice } from "./ClaudeReviewBadge";
 import { ReviewPanel } from "./ReviewPanel";
 import type { ClaudeReview } from "./triage";
 import { useDecideLearning, useHubRepo, useLearning, type LearningActionResult } from "./queries";
+import { stageDecision, unstageDecisions, useStagedDecisions } from "./staged";
 
 type Learning = components["schemas"]["Learning"];
 type LearningDetailView = components["schemas"]["LearningDetail"];
@@ -149,7 +150,7 @@ function Section({
   );
 }
 
-function PullRequestLink({ url }: { url: string }) {
+export function PullRequestLink({ url }: { url: string }) {
   const href = safeHref(url);
   if (href === null) return <span className="ah-mono ah-small">{url}</span>;
   return (
@@ -645,18 +646,21 @@ export interface LearningDetailProps {
    * while the decision moves it out of the list it was picked from.
    */
   onDecide?: ((id: string) => void) | undefined;
+  /** Called when this learning is marked for the triage pull request, so the screen can move on. */
+  onMarked?: ((id: string) => void) | undefined;
   /** Claude's review of this learning, from the screen's triage state. */
   claude?: ClaudeReview | undefined;
 }
 
 /** One learning: its note, source, target and the accept/reject actions (AC-201.29). */
-export function LearningDetail({ id, row, now, onDecide, claude }: LearningDetailProps) {
+export function LearningDetail({ id, row, now, onDecide, onMarked, claude }: LearningDetailProps) {
   const query = useLearning(id);
   const detail = query.data;
   const l: Learning | undefined = detail ?? row;
   const hubRepo = useHubRepo(l?.project ?? null);
   const decide = useDecideLearning(id);
   const draft = useNoteDraft(id);
+  const staged = useStagedDecisions()[id];
   const [deciding, setDeciding] = useState<DecideAction | null>(null);
   const [edited, setEdited] = useState<string | null>(null);
   const [result, setResult] = useState<LearningActionResult | null>(null);
@@ -715,7 +719,8 @@ export function LearningDetail({ id, row, now, onDecide, claude }: LearningDetai
   const state = result?.state ?? stateOf(l);
   const prUrl = result?.pr_url ?? l.pr_url ?? null;
   const blocked = l.actions_unavailable ?? (result ? PR_OPEN : BLOCKED_BY_STATE[state]) ?? null;
-  const target = edited ?? detail?.suggested_target ?? "";
+  const stagedTarget = staged?.action === "accept" ? staged.target : undefined;
+  const target = edited ?? stagedTarget ?? detail?.suggested_target ?? "";
   const canDecide = blocked === null && detail !== undefined;
   const original = detail?.note?.markdown;
   const noteBody =
@@ -739,9 +744,23 @@ export function LearningDetail({ id, row, now, onDecide, claude }: LearningDetai
           }
           setDeciding(null);
           draft.discard();
+          // Decided on its own: a mark left behind would send it again in the project's batch,
+          // which the server refuses as a whole.
+          unstageDecisions([id]);
         },
       },
     );
+  };
+
+  const mark = (reason: string) => {
+    stageDecision(
+      id,
+      deciding === "accept"
+        ? { action: "accept", project: l.project, title: l.text, target: target.trim() }
+        : { action: "reject", project: l.project, title: l.text, reason },
+    );
+    setDeciding(null);
+    onMarked?.(id);
   };
 
   return (
@@ -895,6 +914,53 @@ export function LearningDetail({ id, row, now, onDecide, claude }: LearningDetai
             </span>
           </div>
         )}
+        {staged && canDecide && !result && (
+          <div
+            role="status"
+            className="ah-row"
+            style={{
+              gap: 8,
+              alignItems: "flex-start",
+              marginBottom: 10,
+              padding: "8px 12px",
+              borderRadius: 8,
+              border: "1px solid var(--border)",
+              borderLeft: `3px solid ${staged.action === "accept" ? "var(--done)" : "var(--failed)"}`,
+            }}
+          >
+            <span className="ah-stack ah-grow" style={{ gap: 2, minWidth: 0 }}>
+              <b style={{ fontWeight: 600 }}>
+                {staged.action === "accept" ? "Marked to accept" : "Marked to reject"}
+              </b>
+              <span className="ah-small ah-muted" style={{ overflowWrap: "anywhere" }}>
+                {staged.action === "accept" ? (
+                  <>
+                    to{" "}
+                    <span className="ah-mono">
+                      {BRAIN_PREFIX}
+                      {staged.target}
+                    </span>
+                    {noteBody !== undefined && ", with your edit"}
+                  </>
+                ) : (
+                  staged.reason
+                )}
+              </span>
+              <span className="ah-small ah-subtle">
+                It goes into the triage pull request with the other marked learnings.
+              </span>
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                unstageDecisions([id]);
+              }}
+            >
+              Unmark
+            </Button>
+          </div>
+        )}
         <div className="ah-row" style={{ gap: 8 }}>
           <Button
             variant="primary"
@@ -946,6 +1012,8 @@ export function LearningDetail({ id, row, now, onDecide, claude }: LearningDetai
           edited={noteBody !== undefined}
           pending={decide.isPending}
           error={decide.error}
+          initialReason={staged?.action === "reject" ? staged.reason : undefined}
+          onMark={mark}
           onConfirm={confirm}
           onCancel={() => {
             setDeciding(null);

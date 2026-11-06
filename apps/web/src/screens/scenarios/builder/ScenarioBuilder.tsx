@@ -329,6 +329,10 @@ export function ScenarioBuilder({
   });
   const { setOpen } = useDiscuss();
   const [selected, setSelected] = useState<string | null>(null);
+  // One editor at a time: a step that opens in place (Run an action, Wait until) shows its full
+  // editor in the side panel only when asked for ("Edit all in the panel", or a link to one of
+  // its fields); then the open step folds, so the same fields never show twice.
+  const [panelFor, setPanelFor] = useState<string | null>(null);
   const [view, setView] = useState<View>("blocks");
   const [inserting, setInserting] = useState<{
     target: InsertTarget;
@@ -679,6 +683,16 @@ export function ScenarioBuilder({
   };
 
   const selectedItem = selected ? findItem(allItems, selected) : null;
+  // The selected step opens in place in Blocks (a Run an action or a Wait until): its side panel
+  // shows only when asked for.
+  const opensInPlace =
+    view === "blocks" &&
+    !underReview &&
+    selectedItem?.kind === "block" &&
+    (selectedItem.node.type === "action" || selectedItem.node.type === "expect");
+  const inPanel = panelFor !== null && panelFor === selected;
+  // Another step selected: the panel asked for the last one is not reopened for it later.
+  if (panelFor !== null && panelFor !== selected) setPanelFor(null);
   const serialized: BuilderDocument = tree
     ? document
     : { ...document, nodes: [...nodesOf(main), ...kept] };
@@ -898,7 +912,8 @@ export function ScenarioBuilder({
           }}
           footer={stepButtons(key)}
           onClose={() => {
-            setSelected(null);
+            if (opensInPlace) setPanelFor(null);
+            else setSelected(null);
           }}
         />
       );
@@ -1195,6 +1210,28 @@ export function ScenarioBuilder({
   // an Undo toast), Alt+↑/↓ moves it in its list, ⌘D duplicates it, ⌘Z/⇧⌘Z undo and redo, ⌘S
   // saves, Esc clears the selection. Under review, a selected row is the proposal's: the block
   // keys leave the draft as it is.
+  // jsdom has no matchMedia: tests see the wide layout.
+  const railed = !useMediaQuery("(min-width: 1920px)", true);
+  const [leftOpen, setLeftOpen] = useState(false);
+  const leftOver = useRef<HTMLElement>(null);
+  // Focus follows the column over the list: into its tab when it opens, back to its rail button
+  // when it closes (never left on the page's body).
+  const [railBack, setRailBack] = useState<{ tab: string } | null>(null);
+  const closeLeft = () => {
+    setLeftOpen(false);
+    setRailBack({ tab: leftTab });
+  };
+  useEffect(() => {
+    if (!leftOpen) return;
+    leftOver.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus();
+  }, [leftOpen, leftTab]);
+  useEffect(() => {
+    if (railBack === null) return;
+    globalThis.document
+      .querySelector<HTMLElement>(`[data-rail="${CSS.escape(railBack.tab)}"]`)
+      ?.focus();
+  }, [railBack]);
+
   const onKeys = (event: KeyboardEvent) => {
     const target = event.target as HTMLElement;
     if (!bodyRef.current?.contains(target) && target !== window.document.body) return;
@@ -1212,9 +1249,14 @@ export function ScenarioBuilder({
       else draft.undo();
       return;
     }
+    if (event.key === "Escape" && leftOpen) {
+      closeLeft();
+      return;
+    }
     if (!selected) return;
     if (event.key === "Escape") {
-      setSelected(null);
+      if (panelFor === selected) setPanelFor(null);
+      else setSelected(null);
       return;
     }
     if (underReview) return;
@@ -1631,6 +1673,8 @@ export function ScenarioBuilder({
     };
     const move = (moving: PointerEvent) => {
       if (!moved && Math.hypot(moving.clientX - origin.x, moving.clientY - origin.y) < 4) return;
+      // Over the list, the column gets out of the way of the drop.
+      if (!moved) setLeftOpen(false);
       moved = true;
       target = inList(moving.clientX)
         ? nearestGap(listScroll.current, moving.clientY, undefined, kind)
@@ -1642,6 +1686,7 @@ export function ScenarioBuilder({
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       setPaletteDrag(null);
+      setLeftOpen(false);
       if (!moved) addAtEnd(made);
       else if (target) {
         placeAt([made], target);
@@ -1730,6 +1775,138 @@ export function ScenarioBuilder({
           Delete {rowNoun}
         </MenuItem>
       </div>
+    </>
+  );
+
+  // The left column (Blocks, Variables, Actions): a column on a wide screen; below 1920 px a
+  // narrow rail of its three tabs, each opening the column over the list, so the blocks keep
+  // the width (one editor at a time leaves the right column to the run panel).
+  const leftContent = (
+    <>
+      <Tabs
+        label="Left column"
+        value={leftTab}
+        onChange={(id) => {
+          setLeftTab(id === "actions" ? "actions" : id === "variables" ? "variables" : "blocks");
+        }}
+        tabs={[
+          { id: "blocks", label: "Blocks" },
+          { id: "variables", label: "Variables" },
+          { id: "actions", label: "Actions", count: items.length },
+        ]}
+      />
+      {leftTab === "blocks" ? (
+        <BlocksTab
+          library={items}
+          pack={scenario.pack}
+          taken={taken}
+          where={
+            tree && selected && stageOf(selected)?.key === selected
+              ? `at the end of stage ${selected}`
+              : selected && locate(main, selected)
+                ? `after step ${numbersNow.get(selected) ?? selected}`
+                : "at the end"
+          }
+          locked={underReview}
+          onAdd={addAtEnd}
+          onPress={pressBlock}
+          stages={
+            tree
+              ? {
+                  names: main.flatMap((item) => (item.kind === "stage" ? [item.name] : [])),
+                  where: stageOf(selected)
+                    ? `after stage ${stageOf(selected)?.key ?? ""}`
+                    : "at the end",
+                }
+              : null
+          }
+        />
+      ) : leftTab === "variables" ? (
+        variablesPanel
+      ) : (
+        <ActionsTab
+          library={items}
+          libraryError={library.isError}
+          usage={actionUsage}
+          onOpen={(item, opener) => {
+            actionOpener.current = opener;
+            setActionPanel(item.action.ref);
+          }}
+          onNewAction={() => {
+            setNewAction({ node: null, readOnly: false });
+          }}
+          onAskAction={() => {
+            setAskingAction({ step: null, readOnly: false });
+          }}
+        />
+      )}
+    </>
+  );
+  const railTabs = [
+    { id: "blocks", label: "Blocks", icon: "puzzle" },
+    { id: "variables", label: "Variables", icon: "flag" },
+    { id: "actions", label: `Actions, ${String(items.length)}`, icon: "play" },
+  ] as const;
+  const leftColumn = !railed ? (
+    <aside className="sb-left" aria-label="Blocks, variables and actions">
+      {leftContent}
+    </aside>
+  ) : (
+    <>
+      <div className="sb-rail" role="toolbar" aria-label="Left column" aria-orientation="vertical">
+        {railTabs.map((tab) => (
+          <IconButton
+            key={tab.id}
+            icon={tab.icon}
+            label={tab.label}
+            data-rail={tab.id}
+            aria-expanded={leftOpen && leftTab === tab.id}
+            aria-controls="sb-left-over"
+            onClick={() => {
+              if (leftOpen && leftTab === tab.id) closeLeft();
+              else {
+                setLeftTab(tab.id);
+                setLeftOpen(true);
+              }
+            }}
+          />
+        ))}
+      </div>
+      {leftOpen && (
+        <>
+          <div
+            className="sb-rail-scrim"
+            aria-hidden
+            onPointerDown={() => {
+              closeLeft();
+            }}
+          />
+          {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Esc closes it */}
+          <aside
+            id="sb-left-over"
+            ref={leftOver}
+            className="sb-left sb-left-over"
+            aria-label="Blocks, variables and actions"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.stopPropagation();
+                closeLeft();
+              }
+            }}
+          >
+            <IconButton
+              icon="x"
+              size="sm"
+              label="Close Blocks, variables and actions"
+              className="sb-left-close"
+              onClick={() => {
+                closeLeft();
+              }}
+            />
+            {leftContent}
+          </aside>
+        </>
+      )}
     </>
   );
 
@@ -2270,72 +2447,16 @@ export function ScenarioBuilder({
             </Button>
           }
         >
-          Your unsaved changes came back from this browser. Save them, or discard them to see the
-          file.
+          Your unsaved changes came back from this browser.
         </Banner>
       )}
-      <div className="sb-body" data-panel="open" ref={bodyRef}>
-        <aside className="sb-left" aria-label="Blocks, variables and actions">
-          <Tabs
-            label="Left column"
-            value={leftTab}
-            onChange={(id) => {
-              setLeftTab(
-                id === "actions" ? "actions" : id === "variables" ? "variables" : "blocks",
-              );
-            }}
-            tabs={[
-              { id: "blocks", label: "Blocks" },
-              { id: "variables", label: "Variables" },
-              { id: "actions", label: "Actions", count: items.length },
-            ]}
-          />
-          {leftTab === "blocks" ? (
-            <BlocksTab
-              library={items}
-              pack={scenario.pack}
-              taken={taken}
-              where={
-                tree && selected && stageOf(selected)?.key === selected
-                  ? `at the end of stage ${selected}`
-                  : selected && locate(main, selected)
-                    ? `after step ${numbersNow.get(selected) ?? selected}`
-                    : "at the end"
-              }
-              locked={underReview}
-              onAdd={addAtEnd}
-              onPress={pressBlock}
-              stages={
-                tree
-                  ? {
-                      names: main.flatMap((item) => (item.kind === "stage" ? [item.name] : [])),
-                      where: stageOf(selected)
-                        ? `after stage ${stageOf(selected)?.key ?? ""}`
-                        : "at the end",
-                    }
-                  : null
-              }
-            />
-          ) : leftTab === "variables" ? (
-            variablesPanel
-          ) : (
-            <ActionsTab
-              library={items}
-              libraryError={library.isError}
-              usage={actionUsage}
-              onOpen={(item, opener) => {
-                actionOpener.current = opener;
-                setActionPanel(item.action.ref);
-              }}
-              onNewAction={() => {
-                setNewAction({ node: null, readOnly: false });
-              }}
-              onAskAction={() => {
-                setAskingAction({ step: null, readOnly: false });
-              }}
-            />
-          )}
-        </aside>
+      <div
+        className="sb-body"
+        data-panel="open"
+        data-left={railed ? "rail" : undefined}
+        ref={bodyRef}
+      >
+        {leftColumn}
         <div className="sb-stage">
           {view === "blocks" && (
             <StepList
@@ -2413,6 +2534,7 @@ export function ScenarioBuilder({
                   node: item.step,
                 })),
                 services: serviceOptions,
+                library: items,
               }}
               current={shownRun.current}
               breakpoints={
@@ -2424,6 +2546,18 @@ export function ScenarioBuilder({
                     }
                   : null
               }
+              mode={mode}
+              inPanel={inPanel ? selected : null}
+              onOpenPanel={
+                reviewProgram
+                  ? undefined
+                  : (id) => {
+                      setSettings(false);
+                      setSelected(id);
+                      setPanelFor(id);
+                      setStepTab("settings");
+                    }
+              }
               onEditNode={reviewProgram ? undefined : editNode}
               onEditField={
                 reviewProgram
@@ -2432,6 +2566,7 @@ export function ScenarioBuilder({
                       // The panel's Settings, at that value's field.
                       setSettings(false);
                       setSelected(id);
+                      setPanelFor(id);
                       setStepTab("settings");
                       requestAnimationFrame(() => {
                         const panel = globalThis.document.querySelector<HTMLElement>(
@@ -2581,7 +2716,7 @@ export function ScenarioBuilder({
             </div>
           )}
         </div>
-        {reviewPanel ?? inspector ?? runPanel}
+        {reviewPanel ?? (opensInPlace && !inPanel ? null : inspector) ?? runPanel}
       </div>
       {migrating && (
         <MigrateDialog

@@ -357,7 +357,8 @@ blocks (`version: 2`, the `hub init` example among them) as its stages (Version 
 - **AC-521.13.2 Left column.** Given the builder, then its left column has a Blocks tab (the default), a Variables tab
   listing every value by where it comes from (set in the scenario, the chosen environment's values, kept values) and
   an Actions tab with the hub's actions, which previews an action, adds it, and makes or edits actions. Below 1440 px
-  the column gives way while a step is open; below 1600 px Describe and Chat show their icon only.
+  the column gives way while a step is open; below 1600 px Describe and Chat show their icon only. Since AGH-687
+  (AC-687.2.6) the column is a rail below 1920 px, and the columns narrow below 1600 px.
 - **AC-521.13.3 Environment in view.** Given the environment bar under the toolbar, then the chosen environment is kept
   in `?env=`, its values fill the Variables tab and the Start row asks for nothing it gives, and plans run there; a
   plan made before the last change says so. Since AGH-596 the environment bar is the run bar (§ Departures (AGH-596)),
@@ -399,7 +400,7 @@ blocks (`version: 2`, the `hub init` example among them) as its stages (Version 
 
 The owner validated these in the playground (snapshot `3df1fa457`, on v0.26.0). A selected action or check step opens
 in place, under its title, as one group named "Step N settings" (`ServicePicker.tsx` and `OpenStep.tsx` cite this
-section).
+section). The sketch below is the AGH-596 step; Departures (AGH-687), after Service inputs, win over it.
 
 ```
  1.1  (play) Send the order                                      Changes data
@@ -498,6 +499,69 @@ builder it is picked, never typed, the same way in the open step and in the side
   "Needs a value" and counts on the group. It never repeats the action's own words about the input.
 - **AC-596.4.9 / AC-596.3.18 Not declared.** A value that names no declared service shows with "not declared in
   <env>" and an icon.
+
+#### Departures (AGH-687, one editor at a time)
+
+The owner validated these in the playground (snapshot `20261106T092037Z`); where The open step and Service inputs
+above say otherwise, this list wins.
+
+```
+ 1.2  (clock) Wait until the order is paid                       Reads
+      Reads one order from the orders API.                         (pencil) Edit all in the panel
+      [Draft action] commit it in Before you start
+      Reads with the action
+        Reads       [get-order ▾] · Python
+                    Only an action that reads can wait: it runs again on every check.
+        > Show the code it runs
+      Done when
+        <$CTX.status>        is  paid
+        or
+        <$CTX.refunded>      is set
+        (pencil) Edit the condition in the panel
+      How often
+        Checks      every [10 s] · up to [5 min] · at most 30 checks
+      Values for this step
+        order_id    <$CTX.order_id>
+      > More details   (!) 1 to check
+          If it never holds   Regression: after 5 min the scenario run fails here.
+          Values from earlier ...
+```
+
+- **AC-687.2.1 One editor at a time.** Given a selected action or check step, then it opens in place and nothing else
+  opens; its full editor opens in the side panel only on "Edit all in the panel" (or a link to one of its fields),
+  and the row then folds to "Editing in the panel". Esc closes the panel first, then lets the step go.
+- **AC-687.2.2 Essentials first.** Given an open step, then it shows its action (and, for a check, Done when and How
+  often), Values for this step and Keeps for later steps; If it never holds and Values from earlier fold under "More
+  details", whose summary counts what needs a look ("N to check") or names what it holds.
+- **AC-687.2.3 Action on the step.** Given an open step on an editable scenario, then its action is chosen there
+  ("Action of step N"), with its runtime; the code it runs folds under the action. A Wait until offers only actions
+  that read ("Only an action that reads can wait: it runs again on every check.").
+- **AC-687.2.4 Body in place.** Given a JSON body, then a click on its code (or Enter on it) opens its JSON editor in
+  place, checked as you type, as AC-521.13.7.
+- **AC-687.2.5 A Wait until reads as a poll.** Given an open Wait until, then Done when lists its conditions row by
+  row ("and" within a group, "or" between groups; a condition the builder cannot put in words is shown as written,
+  with "Edit the condition in the panel"; none says "Needs a condition"); How often reads "every … · up to … · at
+  most N checks", each value editable in place, the count's working on hover ("Worked out: 5 min ÷ 10 s"); If it
+  never holds follows the run bar's mode (Regression fails the step, Interactive pauses for a read-only agent).
+- **AC-687.2.6 A rail below 1920 px.** Given a window below 1920 px, then the left column (Blocks, Variables,
+  Actions) is a vertical rail of three buttons (`aria-expanded`); one opens the column over the list with a scrim over
+  the list only, focus moves into its tab and back to its button when it closes, and Esc (or the scrim, or Close)
+  closes it before anything else. The columns narrow below 1600 px. At 1920 px and wider the column stands as drawn.
+- **AC-687.2.7 A compact top.** Given the scenario page below 1920 px, then the app sidebar folds to its rail while the
+  page shows (01-navigation § Sidebar: a page's request); the restored-changes banner is one line, "Your unsaved
+  changes came back from this browser." with Discard them.
+- **AC-687.2.8 Draft action.** Given a draft action, then the open step shows a "Draft action" badge and "commit it in
+  Before you start", which links to the run panel's commands.
+- **AC-687.2.9 Service kind.** Given a service input with a service picked, when another kind is chosen, then the
+  field empties and lists that kind's services; Undo brings the service back (AC-596.4.11 / .12: the kind never
+  disagrees with the picked service).
+
+Tests: `ScenarioBuilder.test.tsx` "scenario builder's open check …", "… shows one editor at a time …", "… left column
+is a rail below 1920 px …", "… changes a step's action and edits its body on the step itself", "… open step counts
+the values from earlier …", "… opens its body's editor with Enter on the code", "… says which values it still needs
+and that its action is a draft", "… picks where a step sends from the environment's services, by search";
+`ScenarioDetail.test.tsx` "app sidebar"; `AppShell.test.tsx` "folds the sidebar while a page asks for the width …",
+"expands on the first click while a page asks …".
 
 #### Version 2 in the builder (AGH-517)
 
@@ -766,7 +830,8 @@ Timeline
 
 Built: at 1280 and wider nothing hides on the detail, and the chat and the options sit side by side. The Scenarios
 list hides its Steps column below 1280 px, and its last run's time below 1100 px (AC-596.1.13). The detail's columns
-narrow below 1600 px, and below 1440 px the left column gives way while a step is open (AC-521.13.2). On a tablet
+narrow below 1600 px; below 1920 px the left column is a rail that opens over the list, and the app sidebar folds to
+its rail on the scenario page (AC-687.2.6, AC-687.2.7; [01-navigation.md](01-navigation.md#sidebar)). On a tablet
 (768–1279) the detail plans but Start's place in the run bar says "Starting a scenario run needs a desktop screen."
 
 Not built yet (AGH-458), the target:

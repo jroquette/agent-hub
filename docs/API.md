@@ -26,7 +26,9 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
 - The document lists only routes this build serves: no route for a later phase exists in it. Its paths are Phase 2's
   (`P2_PATHS` in `agent_hub/api/openapi_paths.py`) plus the five AGH-201 added (`CLARITY_PATHS`):
   `GET /sessions/{session_id}/problems`, `POST /learnings/{learning_id}/accept`, `POST /learnings/{learning_id}/reject`,
-  `GET /projects/{project}/brain` and `GET /projects/{project}/brain/note?path=…`, and the one AGH-136 added
+  `GET /projects/{project}/brain` and `GET /projects/{project}/brain/note?path=…`, with the batch of learning
+  decisions AGH-687 added to them, `POST /learnings/decisions` ([Learning decisions](#learning-decisions)), and the
+  one AGH-136 added
   (`TICKET_PATHS`): `GET /features/{project}/{slug}/tickets` ([Feature tickets](#feature-tickets)), and the three
   AGH-164 added (`SKILL_PATHS`, all GET): `/projects/{project}/skills`, `/projects/{project}/skills/{kind}/{source}/{name}`
   and `/projects/{project}/skills/{kind}/{source}/{name}/files/{file_id}`, with `/skill-usage` that AGH-482 added to
@@ -56,7 +58,9 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   `/projects/{project}/knowledge/search` and `/projects/{project}/brain/backlinks` ([Knowledge](#knowledge)), and the
   screen reads AGH-623 added (`SCREEN_PATHS`, all GET): `/screens/shell`, `/screens/portfolio`,
   `/screens/project-overview/{project}`, `/screens/sessions` and `/screens/session-detail/{session_id}`
-  ([Screen reads](#screen-reads)). A test fails on any other path.
+  ([Screen reads](#screen-reads)), and the two AGH-687 added (`UX_MOCKUP_PATHS`, both GET):
+  `/features/{project}/{slug}/mockups/{name}` and `/features/{project}/{slug}/mockups/{name}/page`
+  ([Feature detail](#feature-detail)). A test fails on any other path.
 - A field kept only for compatibility is marked `deprecated` in the document and stays until `/api/v2`: a session's
   and a live tile's `agent` (read `label` and `actors`) and a learning's `target` (read `note_path`).
 
@@ -104,7 +108,9 @@ Errors are RFC 9457 Problem Details, with media type `application/problem+json`:
 - The learning decisions ([Learning decisions](#learning-decisions)): every refusal is a 409 whose extension members
   `code` and `reason` say why, nothing pushed or stored. `code` is `learning_conflict` (already decided, with
   `pr_url` when its PR is known; another action running for the hub; no reason to reject; a target the brain rules
-  refuse), `change_request_conflict` (the note is neither on `origin/<default branch>` nor in the hub checkout
+  refuse; for the batch also a learning decided twice, decisions of more than one project, or two decisions moving
+  notes to the same place, and the whole batch is refused when any one decision is), `change_request_conflict` (the
+  note is neither on `origin/<default branch>` nor in the hub checkout
   ([ADR 0037](adr/0037-learning-decisions-unpushed-notes-and-edits.md)), the destination or the branch
   exists, `origin` is not the hub repo), `push_refused` (the push guard refused the branch) or `hub_read_only`
   (actions unavailable for this hub, title "Learning actions unavailable", the same reason the learning's
@@ -203,7 +209,8 @@ the same operation behaves the same from every entry point ([ARCHITECTURE.md](AR
 - Nested paths only for ownership (`/api/v1/sessions/{session_id}/events`). Methods keep their HTTP meaning: `GET`
   reads, `POST` creates or triggers an action (`POST /api/v1/hubs`, `POST /api/v1/events/hooks`), `PATCH` updates part
   of a resource, `DELETE` removes it. The only writes are registering and removing a hub, posting hook envelopes,
-  since AGH-201 the two learning decisions, since AGH-165 the agent-session commands, since AGH-297 the restore
+  since AGH-201 the two learning decisions (since AGH-687 also their batch), since AGH-165 the agent-session
+  commands, since AGH-297 the restore
   of an item's version, the first route that writes into a hub's working tree, and since AGH-298 the Studio's Publish
   of a draft (see Skills). Since AGH-296 the
   Toolkit and Workflows `GET`s also record item versions in agent-hub's database (never in the hub, see Skills), and
@@ -380,13 +387,37 @@ They are actions, not resources, a deliberate exception to "resources are nouns"
   temporary clone, pushed without force, and the PR waits for the user to merge it.
 - **Branch name exception.** The branch is `<branch_prefix>learning-<accept|reject>-<note slug>` (e.g.
   `roquettejh/learning-accept-testing-x`): a learning has no tracker issue, so the `<team>-<n>-<desc>` rule of
-  [CONTRIBUTING.md](CONTRIBUTING.md) does not apply to these branches only. The push guard refuses any other name.
+  [CONTRIBUTING.md](CONTRIBUTING.md) does not apply to these branches only. The push guard refuses a name outside
+  `<branch_prefix>learning-`; the batch's `<branch_prefix>learning-triage-<stamp>` (below) is within it.
 - The PR title is `Accept learning: <title>` or `Reject learning: <title>` (redacted, at most 72 characters); its body
   names the move, says when the note was edited in agent-hub, quotes the note's first paragraph (the edited one when
   there is an edit; redacted, 200) and, for a reject, the reason. An edited accept writes the new body after the kept
   frontmatter in the same commit. The commit is
   authored as the hub's author (ADR 0016) with no trailer.
 - A decision is idempotent by the learning's state: a second call answers 409 with the PR already open.
+
+`POST /api/v1/learnings/decisions` (AGH-687) decides several learnings of one project in one pull request. Its body
+is `{"decisions": [...]}`, 1 to 50 items (`MAX_BATCH_CHANGES`; none or more is 422), each
+`{"learning_id", "action": "accept" | "reject", "target", "reason", "note_body"}`: an accept takes its `target` and
+an optional `note_body`, a reject its `reason`, each bounded and checked as on the single routes above (a field the
+item does not know is 422). It answers 201 with
+`{"pr_url": "…", "branch": "…", "decided": [{"learning_id": "…", "state": "accepted_pr_open" | "rejected_pr_open"}]}`.
+
+- The branch is new, `<branch_prefix>learning-triage-<stamp>` (`<stamp>` is the UTC time, `YYYYMMDD-HHMMSS`); one
+  commit, `docs(brain): triage <n> learnings`, moves every accepted note into the brain (with its edit, if any) and
+  archives every rejected one with its reason; the PR's title is `Triage learnings: <a> accepted, <r> rejected` (a
+  zero count left out) and its body lists each learning with its move, its edit and its reason. The commit is
+  authored as the hub's author with no trailer.
+- It stores one `learning.accepted` or `learning.rejected` event per learning, each naming that pull request.
+- It is refused as a whole, nothing pushed or stored, when any decision is: a learning unknown (404), already decided
+  or refused as a single decision would be, the same learning twice, learnings of more than one project, two notes
+  moved to the same place (409 `learning_conflict`), a note missing, a destination taken or the branch already on
+  `origin` (409 `change_request_conflict`), or a read-only hub (409 `hub_read_only`). A failed git or `gh` step and
+  the deadline answer as on the single routes; when `gh` fails after the push, the pushed branch is deleted.
+- Retried after the pull request opened but its events could not be stored, it opens a second pull request on a new
+  stamp; the first stays open (a known limit).
+- **Branch name exception.** `learning-triage-<stamp>` falls under the exception above: it sits under the push
+  guard's `<branch_prefix>learning-` and never adopts an existing branch.
 
 ## Knowledge
 
@@ -483,6 +514,11 @@ acceptance criteria rows, the records and every eval, it carries:
   `POST /approvals/{approval_id}/decision` and the run writes the records; with `decidable_here`, through
   [the decision route](#plan-change-requests) below; with neither, the run is live and asks at its gate when it
   gets there (P8, A5).
+- `ux_designs` (AGH-687): the folder's own top-level `ux-*.md` designs, in name order (at most 50, as
+  [feature-records.md](design/feature-records.md) reads them), each with `path` (relative to the hub's `brain/`),
+  `screen` and `change` (`new` or `change`; from its frontmatter, else from its file name
+  `ux-<new|change>-<screen>.md`), `title` (its first `# ` heading, else the screen), `approved` (its frontmatter reads
+  `status: approved`) and `mockup`: the `ux-*.html` beside it with the same stem, listed but not read here, or `null`.
 - `ac_rows[].signed_off` (AGH-425): `true` when the AC does not pass in `features.json` but its latest evals are all
   the owner's SHIP (`provenance: owner`): the owner checked it by hand. It counts as passing in `acs.passing` (here
   and in the list) and is no longer counted under `acs.owner_steps`.
@@ -492,6 +528,20 @@ acceptance criteria rows, the records and every eval, it carries:
 ACs, with no tickets, and answers 409, writing nothing, for an unknown or withdrawn AC, for `acs` together with
 `delivery`, for `done` over an AC whose latest eval is NO-SHIP, when the note would not rank newer than an eval
 naming one of them (undated, or dated at or after now), and when not every eval was read. An empty list is 422.
+
+`GET /api/v1/features/{project}/{slug}/mockups/{name}` (AGH-687) reads one UX design's mockup as a `UxMockup`:
+`project`, `slug`, `name`, `html` (the file as UTF-8 text), `size` (bytes) and `sha256`. `name` must match
+`^ux-[A-Za-z0-9][A-Za-z0-9._-]*\.html$` and be at most 200 characters, else 400 naming it, before anything is read.
+An unknown project or feature, a slug that is not one plain folder name, a missing file, a link (no link is followed,
+the feature's folder included), a file that is not regular or one over 1 MiB (`MAX_UX_MOCKUP_BYTES`) is one 404. It
+only reads.
+
+`GET /api/v1/features/{project}/{slug}/mockups/{name}/page` serves the same file as its own page, `text/html`, with
+the same 400 and 404 (as JSON problems), for hub web to frame. Its `Content-Security-Policy` is its own:
+`default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:; base-uri 'none';
+form-action 'none'; frame-ancestors 'self'`. The mockup's inline styles and `data:` images, fonts and media load;
+no script runs, nothing is fetched, no form is sent, and only hub web may frame it. hub web frames it with
+`sandbox="allow-same-origin"` (scripts off).
 
 ## Feature tickets
 
@@ -1144,7 +1194,10 @@ any other check: the router's `$` also matches before a trailing newline, so `�
 while the checks below, which match the whole path, would not apply) and a `POST` or `DELETE` whose `Origin` is not
 its own (403); it sends no
 CORS headers, `Cache-Control: no-store` on `/api`, and a CSP that limits scripts, styles, fonts and connections to
-`'self'`. The web app requests no other host; Linear is read by the server only ([Feature tickets](#feature-tickets)).
+`'self'`. One path keeps a CSP of its own: a UX mockup's page (`…/mockups/{name}/page`, [Feature
+detail](#feature-detail)), only when its route sent that policy; `nosniff`, `no-referrer` and `no-store` still
+apply to it. The web app requests no other host; Linear is read by the server only
+([Feature tickets](#feature-tickets)).
 A `GET` with a foreign `Origin` is served, the knowledge `GET`s included: their only write is the sync of derived
 index rows, which a foreign page can trigger but whose answer it cannot read ([Knowledge](#knowledge), AGH-393 AM-2).
 The agent-session routes add a cookie and stricter Origin rules ([Agent sessions](#agent-sessions)), and the workflow
@@ -1158,7 +1211,8 @@ the Publish, the scenario builder's save, proposal dismiss and action writes (AG
 minted and the hubs are mounted read-only) a restore, a publish or a scenario builder write (a migrate and a delete
 included) answers 409 `hub_read_only` before the cookie is checked, and a run write or the values read 404 `run-control-off`.
 
-The two learning decisions, which reach the network, the four workflow run commands and a workflow gate's decision,
+The learning decisions (accept, reject and, since AGH-687, their batch), which reach the network, the four workflow
+run commands and a workflow gate's decision,
 which start or stop processes, and the two restores and the Publish (`ITEM_WRITES`), which write into a hub's tree,
 take a strict rule
 on top (`STRICT_WRITES` in `agent_hub/api/local_security.py`), checked before the route runs, so a refused request

@@ -532,6 +532,14 @@ function StepDetail({
           <>Not recorded: tickets picked up before /implement have no context brief or preflight.</>
         );
       }
+      if (step.name === "context" && step.state === "done") {
+        // Context is done because the brief exists: send the reader to it, as Review does.
+        return (
+          <Link to={brainRoute(project, `features/${slug}/tickets/${id}/brief.md`)}>
+            Open the context brief in Brain
+          </Link>
+        );
+      }
       return <>{step.state === "pending" ? NOT_REACHED : unsaid(step.meta ?? NOT_REACHED)}</>;
     case "implement":
       return (

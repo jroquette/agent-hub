@@ -24,6 +24,11 @@ export interface DecideDialogProps {
   error: ApiProblem | null;
   /** Called with the trimmed reason (empty for an accept). */
   onConfirm: (reason: string) => void;
+  /** When given, the dialog also offers to mark the learning for the triage pull request (which
+   * carries every marked learning) instead of opening its own; called with the trimmed reason. */
+  onMark?: ((reason: string) => void) | undefined;
+  /** The reason a reject starts with (changing a marked reject). */
+  initialReason?: string | undefined;
   onCancel: () => void;
 }
 
@@ -89,9 +94,11 @@ export function DecideDialog({
   pending,
   error,
   onConfirm,
+  onMark,
+  initialReason = "",
   onCancel,
 }: DecideDialogProps) {
-  const [reason, setReason] = useState("");
+  const [reason, setReason] = useState(initialReason);
   const titleId = useId();
   const textId = useId();
   const reasonId = useId();
@@ -200,6 +207,12 @@ export function DecideDialog({
               </span>
             </div>
           )}
+          {onMark && (
+            <p className="ah-small ah-subtle" style={{ margin: 0 }}>
+              Deciding several? Mark this one instead: every marked learning goes into one triage
+              pull request you open from the list.
+            </p>
+          )}
           {pending && (
             <span role="status" className="ah-small">
               Opening the pull request in {repoName(hubRepo)}… This can take up to a minute.
@@ -211,6 +224,17 @@ export function DecideDialog({
           <Button disabled={pending} onClick={onCancel}>
             Cancel
           </Button>
+          {onMark && (
+            <Button
+              icon="bookmark"
+              disabled={!ready}
+              onClick={() => {
+                onMark(trimmed);
+              }}
+            >
+              {action === "accept" ? "Mark to accept" : "Mark to reject"}
+            </Button>
+          )}
           <Button
             variant={action === "accept" ? "primary" : "danger"}
             disabled={!ready}

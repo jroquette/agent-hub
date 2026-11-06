@@ -38,7 +38,11 @@ from agent_hub.generator.brain_files import (
     read_brain_file,
 )
 from agent_hub.generator.doctor_snapshot import build_doctor_snapshot, read_lock
-from agent_hub.generator.feature_files import read_feature_folder, read_feature_folders
+from agent_hub.generator.feature_files import (
+    read_feature_folder,
+    read_feature_folders,
+    read_feature_mockup,
+)
 from agent_hub.generator.hub_config_files import UnreadFile, read_file_bytes, read_local_json
 from agent_hub.generator.skill_files import list_skill_sources, read_skill_file
 from agent_hub.generator.unit_files import read_unit
@@ -164,6 +168,12 @@ class HubFileSystem:
     def read_brain_file(self, hub_path: str, path: str, *, max_bytes: int) -> bytes | UnreadHubFile:
         """The bytes of ``brain/<path>``, a regular file of at most ``max_bytes``, or why not."""
         return read_brain_file(Path(hub_path), path, max_bytes=max_bytes)
+
+    def read_feature_mockup(
+        self, hub_path: str, slug: str, name: str, *, max_bytes: int
+    ) -> bytes | UnreadHubFile:
+        """The bytes of the feature folder's UX mockup ``name``, or why not."""
+        return read_feature_mockup(Path(hub_path), slug, name, max_bytes=max_bytes)
 
     def brain_file_size(self, hub_path: str, path: str) -> int | None:
         """The size of the regular file ``brain/<path>``; None when absent, a link or unreadable."""

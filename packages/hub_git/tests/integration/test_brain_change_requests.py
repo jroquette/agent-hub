@@ -11,6 +11,7 @@ import pytest
 from agent_hub.core.brain.frontmatter import split_frontmatter
 from agent_hub.core.learnings.brain_change_requests import (
     BrainChange,
+    BrainChangeBatch,
     ChangeRequestConflictError,
     ChangeRequestFailedError,
     CommitAuthor,
@@ -171,6 +172,78 @@ def test_succeeds_when_retried_after_failure(git_world: GitWorld, origin: GitBra
 
     assert result.branch == change.branch
     assert len(origin.pull_requests()) == 1
+
+
+OTHER_NOTE = "brain/_inbox/other-y.md"
+OTHER_TEXT = "---\ntype: learning\nstatus: proposed\n---\n# Other y\n\nAn older note.\n"
+BATCH_BRANCH = "demo/learning-triage-20261012-123000"
+
+
+def _batch(world: GitWorld) -> BrainChangeBatch:
+    """Accept ``NOTE`` and reject ``OTHER_NOTE`` in one commit."""
+    rejection = _rejection(world).model_copy(
+        update={"note": "_inbox/other-y.md", "destination": "_inbox/_archive/other-y.md"}
+    )
+    return BrainChangeBatch(
+        hub_path=str(world.hub),
+        hub_repo=HUB_REPO,
+        default_branch=DEFAULT_BRANCH,
+        branch_prefix="demo/",
+        slug="20261012-123000",
+        changes=(_change(world), rejection),
+        author=AUTHOR,
+        title="Triage learnings: 1 accepted, 1 rejected",
+        body="- Accept Testing x\n- Reject Other y\n",
+        commit_message="docs(brain): triage 2 learnings",
+    )
+
+
+def test_deletes_pushed_branch_when_gh_fails_for_batch(
+    git_world: GitWorld, origin: GitBrainOrigin
+) -> None:
+    origin.put_on_default(OTHER_NOTE, OTHER_TEXT)
+    batch = _batch(git_world)
+    git_world.switch("fail")
+
+    with pytest.raises(ChangeRequestFailedError) as failed:
+        git_world.adapter().decide_batch(batch)
+
+    assert failed.value.step == "pr"
+    assert BATCH_BRANCH not in origin.branch_names()
+    assert origin.pull_requests() == ()
+    assert not list((git_world.root / "temp").iterdir())
+    git_world.switch("fail", on=False)
+
+    result = git_world.adapter().decide_batch(batch)
+
+    assert result.branch == BATCH_BRANCH
+    assert len(origin.pull_requests()) == 1
+
+
+def test_adds_checkout_notes_when_batch_never_pushed(
+    git_world: GitWorld, brain_origin: GitBrainOrigin
+) -> None:
+    inbox = git_world.hub / "brain" / "_inbox"
+    inbox.mkdir(parents=True)
+    (inbox / "testing-x.md").write_text(NOTE_TEXT)
+    (inbox / "other-y.md").write_text(OTHER_TEXT)
+    before = git_world.snapshot()
+
+    git_world.adapter().decide_batch(_batch(git_world))
+
+    count = git_world.origin_git(
+        "rev-list", "--count", f"refs/heads/main..refs/heads/{BATCH_BRANCH}"
+    )
+    assert count.stdout.strip() == "1"
+    moved = brain_origin.file_on(BATCH_BRANCH, "brain/learnings/testing-x.md")
+    assert moved is not None
+    assert moved.endswith("# Testing x\n\nRun it first.\n")
+    archived = brain_origin.file_on(BATCH_BRANCH, "brain/_inbox/_archive/other-y.md")
+    assert archived is not None
+    assert split_frontmatter(archived).fields["rejected_reason"] == "Duplicate of y"
+    assert brain_origin.file_on(BATCH_BRANCH, NOTE) is None
+    assert brain_origin.file_on(BATCH_BRANCH, OTHER_NOTE) is None
+    assert git_world.snapshot() == before
 
 
 def test_adopts_open_pull_request_when_branch_exists(

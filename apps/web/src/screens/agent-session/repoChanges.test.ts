@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { changedFiles, type ToolView } from "./model";
 import {
   isDiscarded,
+  repoName,
+  repoOf,
   repoSummary,
   repoState,
   withRepoChanges,
@@ -138,6 +140,35 @@ describe("withRepoChanges", () => {
   it("keeps the session's files as they are without a repository git compared", () => {
     expect(withRepoChanges(own, undefined)).toEqual(own);
     expect(withRepoChanges(own, [repo({ base: null, files: [] })])).toEqual(own);
+  });
+});
+
+describe("repoOf", () => {
+  const outer = repo({ root: "/ws", label: "ws" });
+  const nested = repo({ root: "/ws/ui/wt", label: "ui/wt" });
+
+  it("finds the deepest repository holding the path, in any order", () => {
+    expect(repoOf("/ws/ui/wt/a.ts", [outer, nested])?.root).toBe("/ws/ui/wt");
+    expect(repoOf("/ws/ui/wt/a.ts", [nested, outer])?.root).toBe("/ws/ui/wt");
+  });
+
+  it("finds no repository for a path next to its root, not inside it", () => {
+    expect(repoOf("/ws/ui/wt2/a.ts", [nested])).toBeUndefined();
+  });
+
+  it("finds no repository without repositories", () => {
+    expect(repoOf("/ws/ui/wt/a.ts", undefined)).toBeUndefined();
+  });
+});
+
+describe("repoName", () => {
+  it("names a repository by its folder, without the worktree after it", () => {
+    expect(repoName(repo({ label: "demo-web" }))).toBe("demo-web");
+    expect(repoName(repo({ label: "demo-web/wt" }))).toBe("demo-web");
+  });
+
+  it("keeps a label that starts with a slash as it is", () => {
+    expect(repoName(repo({ label: "/x" }))).toBe("/x");
   });
 });
 

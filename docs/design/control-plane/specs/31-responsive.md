@@ -6,9 +6,12 @@ Desktop first. The design targets 1440 px, must be fully usable on a 1280×800 l
 | Name | Width | Support | Shell | Page gutter |
 |---|---|---|---|---|
 | Wide | ≥ 1600 px | Full | `Sidebar` expanded (`sidebar` 240 px); side panels dock | `space-8` (32 px) |
-| Desktop / laptop | 1280–1599 px | Full | Expanded ≥ 1360; collapsed to icons (`sidebar-collapsed` 56 px) below 1360 by default (user can pin open) | `space-6` (24 px) |
+| Desktop / laptop | 1280–1599 px | Full | Expanded ≥ 1360; collapsed to icons (`sidebar-collapsed` 56 px) below 1360 by default (user can pin open); the scenario page folds it below 1920 px while it shows, without changing the stored choice (AGH-687, [01-navigation.md](01-navigation.md#sidebar)) | `space-6` (24 px) |
 | Tablet | 768–1279 px | Best effort (read, no editing) | Sidebar hidden behind a menu button in `TopBar`; opens as overlay with `scrim` | `space-4` (16 px) |
 | Mobile glance | < 768 px | Glance screens only: Live sessions, Approvals, Session header | Bottom tab bar (Live · Approvals · Needs you) replaces sidebar | 16 px side gutter |
+
+The Wide row too: below 1920 px the scenario page asks for the sidebar's rail and its builder's left column is a rail
+(AGH-687, [23-scenarios.md](23-scenarios.md#responsive)).
 
 Rules everywhere: no horizontal page scroll at any width (wide tables scroll inside their own container with a sticky first column); targets stay ≥ 24 × 24 (`control-sm`); text never below `caption` 12 px; density switches to compact automatically at < 900 px height only if the user has not chosen one.
 

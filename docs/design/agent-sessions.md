@@ -559,6 +559,28 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
 - **AC-424.10** Given the OpenAPI document, when it is built, then the route is listed with the agent-session paths,
   the third repo-changes read, behind the same access check as the others.
 
+### Session review: one repository at a time (AGH-687)
+
+Validated in the playground (snapshot `20261106T092037Z`). For a picked repository, AC-687.1.2 narrows AC-377.22 (the
+repository list) and AC-424.1 (the code and tests split); those ACs still hold with `All repos`.
+
+- **AC-687.1.1** Given the Code tab holds code of two or more repositories, when it shows, then a control "Show the
+  code of one repository" offers `All repos n` first (the default), then `<name> n` for each repository with code in
+  the tab. `<name>` is the repository's folder, without the worktree after it (`demo-web`, not `demo-web/wt`), never a
+  logical or; its hover title is `Only <label> (<branch>): what its pull request has`. The pick lasts while the drawer
+  is open; it is not stored.
+- **AC-687.1.2** Given a repository is picked, when the Code tab shows, then the file list, its progress, the
+  repository list (only that repository and its pull request) and the `All/Code/Tests` split count only that
+  repository; the split is not offered when that repository has no tests, or only tests.
+- **AC-687.1.3** Given a repository is picked, when a card in the conversation opens a file of another repository,
+  then the tab shows that file's repository with the file open; when it opens a code file outside every repository,
+  then the tab shows `All repos` with the file open. The pick comes back once the file is closed.
+- **AC-687.1.4** Given a repository is picked from the control, when it changes, then the open file is closed.
+- **AC-687.1.5** Given the code is in one repository only, when the Code tab shows, then there is no control.
+
+Tests: `FilesPanel.test.tsx` "FilesPanel (one repository at a time)" (AC-687.1.1 to .5); `repoChanges.test.ts`
+`repoOf` and `repoName`.
+
 ### Chat: opening, answers, links and the slash menu (AGH-379)
 
 **Chat (agent session)**

@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -8,13 +8,23 @@ from agent_hub.core.events.event import Event, EventSource, EventType
 from agent_hub.core.events.event_store import AppendResult
 from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.learnings.brain_change_requests import (
+    MAX_BATCH_CHANGES,
     BrainChange,
+    BrainChangeBatch,
     ChangeRequestFailedError,
     ChangeRequestResult,
     CommitAuthor,
 )
-from agent_hub.core.learnings.decide_learning import DecideLearning
-from agent_hub.core.learnings.learning import LearningState
+from agent_hub.core.learnings.decide_learning import (
+    BATCH_DESTINATIONS,
+    BATCH_EMPTY,
+    BATCH_PROJECTS,
+    BATCH_REPEATED,
+    BATCH_TOO_LARGE,
+    REASON_REQUIRED,
+    DecideLearning,
+)
+from agent_hub.core.learnings.learning import LearningDecision, LearningState
 from agent_hub.core.learnings.learning_ports import (
     HubReadOnlyError,
     LearningConflictError,
@@ -393,3 +403,154 @@ def test_adopts_opened_pull_request_when_retried_after_ingest_failed() -> None:
     assert len(setup.origin.pull_requests()) == 1
     [event] = setup.decisions()
     assert event.payload["pr_url"] == result.pr_url
+
+
+def _two_notes() -> Setup:
+    return Setup(notes={"testing-x": NOTE_TEXT, "other-y": NOTE_TEXT.replace("Testing x", "Y")})
+
+
+def test_opens_one_change_and_stores_event_per_learning_when_batched() -> None:
+    setup = _two_notes()
+
+    result = setup.decide().decide_batch(
+        [
+            LearningDecision(learning_id="toolu_1", action="accept", target="learnings/"),
+            LearningDecision(learning_id="toolu_2", action="reject", reason="Duplicate"),
+        ]
+    )
+
+    branch = "demo/learning-triage-20261012-123000"
+    assert (result.pr_url, result.branch) == ("https://github.com/acme/demo-hub/pull/1", branch)
+    assert [(d.learning_id, d.state) for d in result.decided] == [
+        ("toolu_1", LearningState.ACCEPTED_PR_OPEN),
+        ("toolu_2", LearningState.REJECTED_PR_OPEN),
+    ]
+    [batch] = setup.port.calls
+    assert isinstance(batch, BrainChangeBatch)
+    assert batch.title == "Triage learnings: 1 accepted, 1 rejected"
+    assert "Reason: Duplicate" in batch.body
+    assert setup.origin.file_on(branch, "brain/learnings/testing-x.md") is not None
+    assert setup.origin.file_on(branch, "brain/_inbox/_archive/other-y.md") is not None
+    events = setup.decisions()
+    assert [e.type for e in events] == [EventType.LEARNING_ACCEPTED, EventType.LEARNING_REJECTED]
+    assert {e.payload["pr_url"] for e in events} == {result.pr_url}
+    assert {e.payload["branch"] for e in events} == {branch}
+
+
+def test_refuses_batch_and_stores_nothing_when_one_already_decided() -> None:
+    setup = _two_notes()
+    setup.decide().reject("toolu_2", reason="No")
+
+    with pytest.raises(LearningConflictError):
+        setup.decide().decide_batch(
+            [
+                LearningDecision(learning_id="toolu_1", action="accept", target="learnings/"),
+                LearningDecision(learning_id="toolu_2", action="accept", target="learnings/"),
+            ]
+        )
+
+    assert len(setup.port.calls) == 1
+    assert len(setup.decisions()) == 1
+
+
+@pytest.mark.parametrize(
+    ("decisions", "reason"),
+    [
+        ([], BATCH_EMPTY),
+        (
+            [
+                LearningDecision(learning_id="toolu_1", action="reject", reason="a"),
+                LearningDecision(learning_id="toolu_1", action="reject", reason="b"),
+            ],
+            BATCH_REPEATED,
+        ),
+        (
+            [
+                LearningDecision(learning_id="toolu_1", action="accept", target="learnings/x.md"),
+                LearningDecision(learning_id="toolu_2", action="accept", target="learnings/x.md"),
+            ],
+            BATCH_DESTINATIONS,
+        ),
+        ([LearningDecision(learning_id="toolu_1", action="reject")], REASON_REQUIRED),
+        (
+            [
+                LearningDecision(learning_id="toolu_1", action="reject", reason="a"),
+                LearningDecision(learning_id="toolu_9", action="reject", reason="b"),
+            ],
+            BATCH_PROJECTS,
+        ),
+        (
+            [
+                LearningDecision(learning_id=f"toolu_{n}", action="reject", reason="a")
+                for n in range(MAX_BATCH_CHANGES + 1)
+            ],
+            BATCH_TOO_LARGE,
+        ),
+    ],
+)
+def test_refuses_batch_when_decisions_do_not_fit(
+    decisions: list[LearningDecision], reason: str
+) -> None:
+    setup = _two_notes()
+    # A learning of another project, for the one-project rule.
+    setup.store.append([_proposal("elsewhere", "toolu_9").model_copy(update={"project": "other"})])
+
+    with pytest.raises(LearningConflictError) as raised:
+        setup.decide().decide_batch(decisions)
+
+    assert raised.value.reason == reason
+    assert setup.port.calls == []
+    assert setup.decisions() == []
+
+
+def test_refuses_batch_and_stores_nothing_when_hub_read_only() -> None:
+    origin = FakeBrainOrigin()
+    setup = Setup(
+        notes={"testing-x": NOTE_TEXT, "other-y": NOTE_TEXT.replace("Testing x", "Y")},
+        origin=origin,
+        changes=InMemoryBrainChangeRequests(origin, unavailable="Hub is read-only here"),
+    )
+
+    with pytest.raises(HubReadOnlyError) as refused:
+        setup.decide().decide_batch(
+            [
+                LearningDecision(learning_id="toolu_1", action="accept", target="learnings/"),
+                LearningDecision(learning_id="toolu_2", action="reject", reason="Duplicate"),
+            ]
+        )
+
+    assert refused.value.reason == "Hub is read-only here"
+    assert setup.port.calls == []
+    assert setup.decisions() == []
+
+
+def test_opens_second_pull_request_when_batch_retried_after_ingest_failed() -> None:
+    """Pins a known limit: unlike a single decision, a batch whose PR opened but whose events
+    failed to store does not adopt that PR when retried. Its branch is stamped to the second,
+    so the retry pushes a new branch and opens a second PR; the first one stays open."""
+    setup = _two_notes()
+    clock = iter([NOW, NOW + timedelta(seconds=1)])
+    decide = DecideLearning(
+        setup.reads(),
+        _FlakyIngest(setup.store),
+        setup.port,
+        hub_of=lambda project: setup.hub,
+        today=lambda: next(clock),
+    )
+    decisions = [
+        LearningDecision(learning_id="toolu_1", action="accept", target="learnings/"),
+        LearningDecision(learning_id="toolu_2", action="reject", reason="Duplicate"),
+    ]
+
+    with pytest.raises(OSError, match="event store unavailable"):
+        decide.decide_batch(decisions)
+    assert setup.decisions() == []
+
+    result = decide.decide_batch(decisions)
+
+    assert result.pr_url == "https://github.com/acme/demo-hub/pull/2"
+    assert [pr.head for pr in setup.origin.pull_requests()] == [
+        "demo/learning-triage-20261012-123000",
+        "demo/learning-triage-20261012-123001",
+    ]
+    assert {e.payload["pr_url"] for e in setup.decisions()} == {result.pr_url}

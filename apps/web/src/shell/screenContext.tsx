@@ -73,7 +73,7 @@ export function screenDiscussTarget({
 }
 
 /** The current screen's heading, re-read while the screen renders (data arrives after the route). */
-function useScreenTitle(pathname: string): string | null {
+export function useScreenTitle(pathname: string): string | null {
   const [title, setTitle] = useState<string | null>(null);
   useEffect(() => {
     const main = mainColumn();

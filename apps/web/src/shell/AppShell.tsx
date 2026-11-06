@@ -18,6 +18,7 @@ import { DiscussProvider, useDiscuss } from "./discuss";
 import { DiscussPanel, useDiscussWidth } from "./DiscussPanel";
 import { DiscussSelection } from "./DiscussSelection";
 import { ScreenDiscussFallback } from "./screenContext";
+import { DocumentTitle } from "./DocumentTitle";
 import { GlobalStreamProvider, useGlobalStream } from "./GlobalStream";
 import { GO, armGoSequence, clearGoSequence, goSequencePending, typingIn } from "./goSequence";
 import { OfflineBanner } from "./OfflineBanner";
@@ -32,11 +33,15 @@ interface ShellActions {
   /** Opens the command palette, optionally with a query (the 404 page's "Search with Ctrl K"). */
   openPalette: (query?: string) => void;
   openShortcuts: () => void;
+  /** A page that needs the width asks for the sidebar collapsed while it is shown; the person's
+   * own choice (preferences) is left as it is. */
+  compactSidebar: (on: boolean) => void;
 }
 
 const ShellContext = createContext<ShellActions>({
   openPalette: () => undefined,
   openShortcuts: () => undefined,
+  compactSidebar: () => undefined,
 });
 
 export function useShell(): ShellActions {
@@ -141,6 +146,11 @@ function ShellLayout({ children }: { children?: ReactNode }) {
   const discuss = useDiscuss();
   const discussWidth = useDiscussWidth();
 
+  const [compact, setCompact] = useState(false);
+  // The top bar's toggle expanded the sidebar for this visit over a page's request (or over a
+  // stored collapsed choice while a page asks), without storing it.
+  const [visitExpanded, setVisitExpanded] = useState(false);
+  const collapsed = !visitExpanded && (preferences.sidebarCollapsed || compact);
   const actions = useMemo<ShellActions>(
     () => ({
       openPalette: (query = "") => {
@@ -148,6 +158,10 @@ function ShellLayout({ children }: { children?: ReactNode }) {
       },
       openShortcuts: () => {
         setSheet(true);
+      },
+      compactSidebar: (on: boolean) => {
+        setCompact(on);
+        if (!on) setVisitExpanded(false);
       },
     }),
     [],
@@ -174,7 +188,7 @@ function ShellLayout({ children }: { children?: ReactNode }) {
     <ShellContext.Provider value={actions}>
       <div
         className="ah-shell"
-        data-collapsed={preferences.sidebarCollapsed || undefined}
+        data-collapsed={collapsed || undefined}
         data-discuss={discuss.open || undefined}
         style={discussWidth.style}
       >
@@ -193,9 +207,12 @@ function ShellLayout({ children }: { children?: ReactNode }) {
           scope={scope}
           onScope={setScope}
           health={health}
-          sidebarCollapsed={preferences.sidebarCollapsed}
+          sidebarCollapsed={collapsed}
           onToggleSidebar={() => {
-            preferences.setSidebarCollapsed(!preferences.sidebarCollapsed);
+            // A page that asked for the width: expand it for this visit, the stored choice kept.
+            if (compact && collapsed) setVisitExpanded(true);
+            else if (visitExpanded) setVisitExpanded(false);
+            else preferences.setSidebarCollapsed(!preferences.sidebarCollapsed);
           }}
           onPalette={() => {
             actions.openPalette();
@@ -208,6 +225,7 @@ function ShellLayout({ children }: { children?: ReactNode }) {
         <DiscussPanel resize={discussWidth} />
         <DiscussSelection />
         {discuss.open && <ScreenDiscussFallback />}
+        <DocumentTitle />
       </div>
       {palette && (
         <CommandPalette onClose={closeAll} initialQuery={palette.query} project={scope} />

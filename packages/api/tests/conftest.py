@@ -29,7 +29,12 @@ from agent_hub.core.brain.brain_note import BrainNote, BrainTree
 from agent_hub.core.events.event import Event, EventType
 from agent_hub.core.events.event_query import EventPage, EventQuery
 from agent_hub.core.events.stored_event import StoredEvent
-from agent_hub.core.features.feature_view import FeatureCost, FeatureDetail, FeatureView
+from agent_hub.core.features.feature_view import (
+    FeatureCost,
+    FeatureDetail,
+    FeatureView,
+    UxMockup,
+)
 from agent_hub.core.features.ticket_view import FeatureTickets, TicketRecords
 from agent_hub.core.hub_config.config_view import HubConfigView
 from agent_hub.core.hubs.finding_view import DoctorFindings, FindingView
@@ -38,8 +43,11 @@ from agent_hub.core.ingestion.hook_envelope import HookEnvelope
 from agent_hub.core.ingestion.ingestion_ports import HookMapping
 from agent_hub.core.ingestion.ingestion_status import IngestionCounters
 from agent_hub.core.learnings.learning import (
+    DecidedLearning,
     Learning,
     LearningActionResult,
+    LearningBatchResult,
+    LearningDecision,
     LearningDetail,
     LearningState,
 )
@@ -276,6 +284,7 @@ class FakeHubReadModels:
     repos: dict[str, list[RepoView]] = field(default_factory=dict)
     configs: dict[str, HubConfigView] = field(default_factory=dict)
     features: list[FeatureDetail] = field(default_factory=list)
+    mockups: dict[tuple[str, str, str], UxMockup] = field(default_factory=dict)
     tickets: dict[str, FeatureTickets] = field(default_factory=dict)
     ticket_views: dict[str, TicketRecords] = field(default_factory=dict)
     findings: list[FindingView] = field(default_factory=list)
@@ -340,6 +349,11 @@ class FakeHubReadModels:
         self._call("get_feature", (project, slug))
         by_key = {f"{item.project}/{item.slug}": item for item in self.features}
         return _found(by_key, "feature", f"{project}/{slug}")
+
+    def ux_mockup(self, project: str, slug: str, name: str) -> UxMockup:
+        self._call("ux_mockup", (project, slug, name))
+        by_key = {"/".join(key): mockup for key, mockup in self.mockups.items()}
+        return _found(by_key, "ux mockup", f"{project}/{slug}/{name}")
 
     def feature_tickets(self, project: str, slug: str) -> FeatureTickets:
         self._call("feature_tickets", (project, slug))
@@ -437,6 +451,25 @@ class FakeLearningDecisions:
 
     def reject(self, learning_id: str, *, reason: str) -> LearningActionResult:
         return self._decide("reject", learning_id, reason, state=LearningState.REJECTED_PR_OPEN)
+
+    def decide_batch(self, decisions: Sequence[LearningDecision]) -> LearningBatchResult:
+        for d in decisions:
+            self.calls.append(("batch-" + d.action, d.learning_id, d.target or d.reason))
+        if self.failure is not None:
+            raise self.failure
+        return LearningBatchResult(
+            pr_url="https://github.com/acme/demo-hub/pull/2",
+            branch="demo/learning-triage-20261012-123000",
+            decided=tuple(
+                DecidedLearning(
+                    learning_id=d.learning_id,
+                    state=LearningState.ACCEPTED_PR_OPEN
+                    if d.action == "accept"
+                    else LearningState.REJECTED_PR_OPEN,
+                )
+                for d in decisions
+            ),
+        )
 
     def _decide(
         self, action: str, learning_id: str, value: str, *, state: LearningState

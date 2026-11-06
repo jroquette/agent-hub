@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import { useNavigate, useParams } from "react-router";
 
 import { Banner, Button, ProblemError, Skeleton, Tooltip } from "../../components";
@@ -59,9 +58,6 @@ export function EnvironmentsScreen() {
     brief: BRIEF,
     starters: STARTERS,
   });
-  useEffect(() => {
-    document.title = `Environments · ${project}`;
-  }, [project]);
 
   const view = config.data;
   const origin = { returnTo: environmentsPage(project), returnLabel: "Environments" };

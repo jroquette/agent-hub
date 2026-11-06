@@ -221,3 +221,68 @@ def test_passes_note_filter_when_brain_path_given(wired: Any) -> None:
     assert wired.events.calls == [
         ("list_learnings", LearningFilter(brain_path="learnings/web-gates.md"))
     ]
+
+
+BATCH = "/api/v1/learnings/decisions"
+ONE_REJECT = {"learning_id": "learning-1", "action": "reject", "reason": "Duplicate"}
+
+
+def test_opens_one_pull_request_when_decisions_batched(wired: Any) -> None:
+    wired.wire(learning_decisions=wired.decisions)
+
+    response = wired.client.post(
+        BATCH,
+        json={
+            "decisions": [
+                {"learning_id": "learning-1", "action": "accept", "target": "learnings/"},
+                ONE_REJECT | {"learning_id": "learning-2"},
+            ]
+        },
+        headers=OWN_ORIGIN,
+    )
+
+    assert response.status_code == 201
+    assert response.json()["pr_url"] == "https://github.com/acme/demo-hub/pull/2"
+    assert wired.decisions.calls == [
+        ("batch-accept", "learning-1", "learnings/"),
+        ("batch-reject", "learning-2", "Duplicate"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (LearningConflictError("A learning is decided twice"), "learning_conflict"),
+        (HubReadOnlyError("Hub is read-only here"), "hub_read_only"),
+    ],
+)
+def test_answers_conflict_when_batch_refused(wired: Any, error: Exception, code: str) -> None:
+    wired.decisions.failure = error
+    wired.wire(learning_decisions=wired.decisions)
+
+    response = wired.client.post(BATCH, json={"decisions": [ONE_REJECT]}, headers=OWN_ORIGIN)
+
+    assert response.status_code == 409
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json()["code"] == code
+
+
+@pytest.mark.parametrize(
+    "decisions",
+    [
+        pytest.param([], id="empty"),
+        pytest.param(
+            [ONE_REJECT | {"learning_id": f"learning-{n}"} for n in range(51)], id="too_many"
+        ),
+        pytest.param([ONE_REJECT | {"action": "snooze"}], id="unknown_action"),
+    ],
+)
+def test_rejects_batch_body_when_decisions_do_not_validate(
+    wired: Any, decisions: list[dict[str, str]]
+) -> None:
+    wired.wire(learning_decisions=wired.decisions)
+
+    response = wired.client.post(BATCH, json={"decisions": decisions}, headers=OWN_ORIGIN)
+
+    assert response.status_code == 422
+    assert wired.decisions.calls == []

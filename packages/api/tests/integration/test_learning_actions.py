@@ -320,3 +320,72 @@ def test_applies_redaction_to_reason_and_pull_request_when_note_holds_secret(
     assert "[redacted: " in served["rejection_reason"]
     assert "FAKEGH" not in logged
     assert str(hub_world.bare) not in logged
+
+
+def test_opens_one_pull_request_for_every_decision_when_batched(
+    world_app: Any, propose: Any, hub_world: Any
+) -> None:
+    kept = propose(world_app, "gate-first.md", NOTE)
+    dropped = propose(world_app, "noise.md", NOTE.replace("Run the gate", "Noise"))
+    main_before = hub_world.head("main")
+    checkout_before = hub_world.snapshot()
+
+    response = world_app.client.post(
+        "/api/v1/learnings/decisions",
+        json={
+            "decisions": [
+                {"learning_id": kept, "action": "accept", "target": "learnings/gotchas/"},
+                {"learning_id": dropped, "action": "reject", "reason": "Not a learning"},
+            ]
+        },
+        headers=ACTION_HEADERS,
+    )
+
+    assert response.status_code == 201, response.text
+    result = response.json()
+    branch = result["branch"]
+    assert branch.startswith("jdoe/learning-triage-")
+    assert result["pr_url"] == f"{PULL_URL_PREFIX}1"
+    assert [d["state"] for d in result["decided"]] == ["accepted_pr_open", "rejected_pr_open"]
+    assert hub_world.head("main") == main_before
+    assert hub_world.origin("rev-list", "--count", f"main..{branch}").stdout.strip() == "1"
+    assert hub_world.file_on(branch, "brain/learnings/gotchas/gate-first.md") is not None
+    archived = hub_world.file_on(branch, "brain/_inbox/_archive/noise.md")
+    assert archived is not None
+    assert "rejected_reason: Not a learning" in archived
+    assert len(_created_pulls(hub_world)) == 1
+    assert {e.payload["pr_url"] for e in _decisions(world_app)} == {result["pr_url"]}
+    assert hub_world.snapshot() == checkout_before
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [pytest.param({}, id="missing"), pytest.param({"Origin": "http://evil.example"}, id="foreign")],
+)
+def test_refuses_batch_when_origin_missing_or_foreign(
+    world_app: Any, propose: Any, headers: dict[str, str]
+) -> None:
+    learning_id = propose(world_app, "gate-first.md", NOTE)
+
+    response = world_app.client.post(
+        "/api/v1/learnings/decisions",
+        json={"decisions": [{"learning_id": learning_id, "action": "reject", "reason": "x"}]},
+        headers=headers,
+    )
+
+    assert response.status_code == 403
+    assert _decisions(world_app) == []
+
+
+def test_refuses_batch_when_body_not_json(world_app: Any, propose: Any) -> None:
+    learning_id = propose(world_app, "gate-first.md", NOTE)
+    body = {"decisions": [{"learning_id": learning_id, "action": "reject", "reason": "x"}]}
+
+    response = world_app.client.post(
+        "/api/v1/learnings/decisions",
+        content=json.dumps(body),
+        headers=ACTION_HEADERS | {"Content-Type": "text/plain"},
+    )
+
+    assert response.status_code == 415
+    assert _decisions(world_app) == []

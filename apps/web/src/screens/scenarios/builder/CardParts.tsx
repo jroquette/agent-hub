@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { Icon, Skeleton, type IconName } from "../../../components";
 import type { ScenarioAction } from "../queries";
 import { pace } from "../story";
-import { conditionWords, text, type BuilderNode } from "./model";
+import { conditionWords, parseCondition, text, type BuilderNode } from "./model";
 
 /* What a step says, shared by the step list and the editor: its title (a name a person reads)
  * and its values drawn as tokens. A value that comes from elsewhere is a value token (icon +
@@ -120,8 +120,17 @@ export function cardTitle(node: BuilderNode, action: ScenarioAction | null): str
       if (action?.description) return firstSentence(action.description);
       return text(node.action) ? `Run ${text(node.action)}` : "Choose what to run";
     }
-    case "expect":
-      return condition ? `Wait until ${conditionWords(condition)}` : "Wait until a state holds";
+    case "expect": {
+      if (!condition) return "Wait until a state holds";
+      // Several conditions make a long title the open step lists anyway (Done when): the first,
+      // then how many more.
+      const rows = parseCondition(condition)?.flat() ?? [];
+      if (rows.length < 2) return `Wait until ${conditionWords(condition)}`;
+      const first = conditionWords(
+        `${rows[0]?.field ?? ""} ${rows[0]?.op ?? "=="} '${rows[0]?.value ?? ""}'`,
+      );
+      return `Wait until ${first} and ${String(rows.length - 1)} more`;
+    }
     case "approval":
       return firstSentence(text(node.message)) || "Do something by hand";
     case "wait":

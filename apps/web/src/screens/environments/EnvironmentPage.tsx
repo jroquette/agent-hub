@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -78,9 +78,6 @@ export function EnvironmentScreen() {
   const capabilities = useAgentCapabilities();
   const unavailable = sessionControlUnavailable(capabilities.error, capabilities.data);
   const blocked = unavailable ? `${unavailable.title}. ${unavailable.detail}` : null;
-  useEffect(() => {
-    document.title = `${name} · Environments · ${project}`;
-  }, [project, name]);
 
   const view = config.data;
   const environment = view?.environments.environments.find((item) => item.name === name);

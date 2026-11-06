@@ -13,6 +13,7 @@ from agent_hub.api.schemas import (
     PROBLEM_RESPONSES,
     AcceptLearningBody,
     CursorParam,
+    LearningDecisionsBody,
     LimitParam,
     ProjectParam,
     RejectLearningBody,
@@ -21,6 +22,8 @@ from agent_hub.core.brain.brain_path import MAX_PATH_CHARS
 from agent_hub.core.learnings.learning import (
     Learning,
     LearningActionResult,
+    LearningBatchResult,
+    LearningDecision,
     LearningDetail,
     LearningStatus,
 )
@@ -54,6 +57,17 @@ def list_learnings(
         brain_path=brain_path,
     )
     return reads.list_learnings(learning_filter)
+
+
+@router.post("/learnings/decisions", status_code=201, responses=LEARNING_ACTION_RESPONSES)
+def decide_learnings(
+    body: LearningDecisionsBody, decisions: LearningDecisionsDep
+) -> LearningBatchResult:
+    """Open one hub PR that applies every decision (accepts and rejects of one project) in one
+    commit; refused as a whole when any decision is. Nothing changes until it is merged."""
+    return decisions.decide_batch(
+        [LearningDecision.model_validate(item.model_dump()) for item in body.decisions]
+    )
 
 
 @router.get("/learnings/{learning_id}")

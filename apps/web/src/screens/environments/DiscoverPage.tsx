@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -32,9 +32,6 @@ export function DiscoverScreen() {
   const [params] = useSearchParams();
   const discovery = params.get("discovery");
   const config = useApi("/api/v1/projects/{project}/config", { path: { project } });
-  useEffect(() => {
-    document.title = `Find services with Claude · ${project}`;
-  }, [project]);
 
   let body;
   if (config.isError)

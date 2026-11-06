@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import { AppLink, ProblemError, Skeleton } from "../../components";
+import { useMediaQuery } from "../../lib/useMediaQuery";
+import { useShell } from "../../shell/AppShell";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { useDiscussTarget } from "../../shell/discuss";
 import { isTree } from "./builder/program";
@@ -95,6 +97,16 @@ function Crumbs({ scenario }: { scenario: ScenarioDetail }) {
 }
 
 function DetailBody({ scenario }: { scenario: ScenarioDetail }) {
+  // Below 1920 px the builder needs the width: the app's sidebar folds to its rail on this page
+  // only (the person's own choice is kept for the other pages).
+  const { compactSidebar } = useShell();
+  const narrow = !useMediaQuery("(min-width: 1920px)", true);
+  useEffect(() => {
+    compactSidebar(narrow);
+    return () => {
+      compactSidebar(false);
+    };
+  }, [narrow, compactSidebar]);
   useScenarioDiscuss(scenario);
   const [params, setParams] = useSearchParams();
   const { rows } = useWaitingRows(scenario.project);

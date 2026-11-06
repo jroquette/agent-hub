@@ -121,6 +121,53 @@ class BrainProposal(BaseModel):
         return self
 
 
+MAX_BATCH_CHANGES: Final = 50
+
+
+class BrainChangeBatch(BaseModel):
+    """Several learning decisions of one hub as one hub change: every ``BrainChange`` in
+    ``changes`` applied in one commit on the new branch ``<branch_prefix>learning-triage-<slug>``,
+    then one PR from it to ``default_branch``.
+
+    Each change keeps its own note, destination, frontmatter and edited body; its own branch,
+    title and body are not used. The changes share the batch's hub, repo and default branch, and
+    no two share a note or a destination. ``title``, ``body`` and ``commit_message`` are the pull
+    request's and the commit's, already redacted.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    hub_path: str = Field(min_length=1)
+    hub_repo: str = Field(min_length=3)
+    default_branch: str = Field(min_length=1)
+    branch_prefix: str
+    slug: str = Field(max_length=MAX_SLUG_CHARS, pattern=_SLUG)
+    changes: tuple[BrainChange, ...] = Field(min_length=1, max_length=MAX_BATCH_CHANGES)
+    author: CommitAuthor
+    title: str = Field(min_length=1)
+    body: str
+    commit_message: str = Field(min_length=1)
+
+    @property
+    def branch(self) -> str:
+        """The new branch the batch is pushed on: ``<branch_prefix>learning-triage-<slug>``,
+        within the push guard's ``<prefix>learning-`` and apart from the single-decision ones."""
+        return f"{self.branch_prefix}learning-triage-{self.slug}"
+
+    @model_validator(mode="after")
+    def _changes_fit_together(self) -> Self:
+        if self.branch == self.default_branch:
+            raise ValueError("branch must not be the default branch")
+        hub = (self.hub_path, self.hub_repo, self.default_branch)
+        if any((c.hub_path, c.hub_repo, c.default_branch) != hub for c in self.changes):
+            raise ValueError("every change must be of the batch's hub")
+        if len({c.note for c in self.changes}) != len(self.changes):
+            raise ValueError("a note is decided twice")
+        if len({c.destination for c in self.changes}) != len(self.changes):
+            raise ValueError("two changes share a destination")
+        return self
+
+
 class ChangeRequestResult(BaseModel):
     """The pull request a change opened and the branch it was pushed on."""
 
@@ -185,6 +232,13 @@ class BrainChangeRequests(Protocol):
 
     def reject(self, change: BrainChange) -> ChangeRequestResult:
         """Push a branch that archives the note with the reason and open its PR."""
+        ...
+
+    def decide_batch(self, batch: BrainChangeBatch) -> ChangeRequestResult:
+        """Push a new branch whose single commit applies every change of ``batch`` (moves the
+        accepted notes into the brain, archives the rejected ones) and open its one PR. Refused
+        as a whole (``ChangeRequestConflictError``, nothing pushed) when any change is: a note in
+        neither place, a destination taken, the branch already on ``origin``."""
         ...
 
     def propose(self, proposal: BrainProposal) -> ChangeRequestResult:

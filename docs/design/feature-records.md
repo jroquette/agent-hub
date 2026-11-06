@@ -63,7 +63,7 @@ together they cover every AC (two-level-flows AC-1.6, AGH-323). The owner's sign
 (`evals/owner-signoff[-rN].md`, `provenance: owner`) lists the ACs it signs off, never `all`, so it is never the
 acceptance eval (Amendment A3).
 
-### `brief.md` and `ux-*.md`
+### `brief.md`, `ux-*.md` and `ux-*.html`
 
 `brief.md` (the `/feature` intake brief) is checked present, never read; it has no tab of its own. The folder's own
 `ux-*.md` files (top level only, not in subfolders) are the UX designs: at most 50 are read in name order, each up to
@@ -71,6 +71,18 @@ acceptance eval (Amendment A3).
 frontmatter counts as a draft; more than 50 of them makes the UX design step `unknown`: an unread design could be a
 draft (AGH-325). Only screen designs use the `ux-` prefix at a feature folder's top level: a review or a note must
 not, since every top-level `ux-*.md` counts as a design.
+
+Feature detail (AGH-687) shows each design as `ux_designs[]`: its screen and `change` from its frontmatter (`screen`,
+`change`), else from its file name `ux-<new|change>-<screen>.md`, its title from its first `# ` heading, `approved`
+from `status: approved`. A design's visual mockup is the top-level `ux-*.html` with the same stem
+(`ux-new-orders.md` → `ux-new-orders.html`), which the `ux-designer` agent writes beside it: a static page, inline
+styles only, no script and no external URL. Listing the folder only names the mockups (at most 50, by name, never
+read) and matches each to its design by stem. A mockup is read alone, on request
+(`GET /api/v1/features/{project}/{slug}/mockups/{name}`, [API.md](../API.md#feature-detail)): its name must be
+`ux-<letter or digit>[letters, digits, ., _, -]*.html` (else 400), in the feature folder's top level, the slug one
+folder name (not hidden, no `/`, no NUL), the folder opened without following a link, the file regular and at most
+1 MiB (`MAX_UX_MOCKUP_BYTES`); anything else is a 404. The written design stays the reference: the mockup only draws
+it, and a change to one is made to both.
 
 ### `plan.md`
 
