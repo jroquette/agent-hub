@@ -452,6 +452,41 @@ def test_states_git_read_limits_when_constants_read(
     assert run_python(hook_python, GIT_LIMITS, path=ws / "demo-hub" / HOOKS) == [2, 4]
 
 
+# Hostile commands: one command reads at most 8 message files, each at most 1 MiB (past them a
+# file asks), and a long cluster of short options is read once, letter by letter, so a command of
+# many calls or a huge word gets its verdict well inside the hook's 10 s.
+MESSAGE_LIMITS = """
+import json
+import guard
+print(json.dumps([guard.MESSAGE_READS_CAP, guard.BLOCKED_FILE_CAP]))
+"""
+
+
+def test_states_message_read_limits_when_constants_read(
+    ws: Path, *, hook_python: str, run_python: Callable[..., Any]
+) -> None:
+    assert run_python(hook_python, MESSAGE_LIMITS, path=ws / "demo-hub" / HOOKS) == [8, 1 << 20]
+
+
+def test_asks_when_command_names_too_many_message_files(ws: Path, decide: Decide) -> None:
+    app = git_repo(ws / "app", "me/dem-1-x", "me@example.com")
+    put(app / "body.md", "Body\n")
+    eight = "; ".join(["gh pr comment 3 -F body.md"] * 8)
+
+    verdicts = decide([bash_at(eight, app), bash_at(eight + "; gh pr comment 4 -F body.md", app)])
+
+    cause = "over 8 message files in one command"
+    assert verdicts == [None, ("ask", UNCHECKED_REASON.format("body.md", cause))]
+
+
+def test_reads_option_cluster_once_when_word_is_huge(ws: Path, decide: Decide) -> None:
+    """A 4 MiB cluster of short options: copying the rest of the word for each letter copies 8 TiB
+    (1 MiB took 22 s here), far past the child's 60 s; read once, it takes about a second."""
+    app = git_repo(ws / "app", "me/dem-1-x", "me@example.com")
+
+    assert decide([bash_at("git commit -" + "a" * (4 << 20) + " -m x", app)]) == [None]
+
+
 # X-1: a GitHub MCP tool (`mcp__<server naming github>__<method>`) and `gh api` get the
 # attribution rule on their title, body and message fields, the `claude/` rule on their branch,
 # head and ref fields, and the protected-branch rule on what they write; and merging a pull
