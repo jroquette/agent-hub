@@ -876,8 +876,17 @@ describe("FilesPanel (one repository at a time)", () => {
     );
     expect(rows()).toHaveLength(3);
 
+    const files = screen.getByRole("navigation", { name: "Files" });
+    const page = within(files)
+      .getAllByRole("button")
+      .find((button) => button.dataset.filePath === "/ws/ui/wt/src/page.tsx");
+    await userEvent.click(page ?? files);
+    expect(screen.getByRole("region", { name: /page\.tsx$/ })).toBeInTheDocument();
+
     await userEvent.click(within(pick).getByRole("button", { name: "api 1" }));
     expect(rows()).toEqual(["/ws/api/wt/app/service.py"]);
+    // Picking a repository closes the file that was open in another one.
+    expect(screen.queryByRole("region", { name: /page\.tsx$/ })).toBeNull();
     expect(screen.getByText("0 of 1 viewed")).toBeInTheDocument();
     const listed = screen.getByRole("list", { name: "Repositories" });
     expect(within(listed).getByRole("link", { name: /PR #8/ })).toBeInTheDocument();
@@ -887,7 +896,58 @@ describe("FilesPanel (one repository at a time)", () => {
 
     await userEvent.click(within(pick).getByRole("button", { name: "ui 2" }));
     expect(rows()).toEqual(["/ws/ui/wt/src/page.tsx", "/ws/ui/wt/src/page.test.tsx"]);
-    expect(screen.getByRole("group", { name: "Show the code and its tests" })).toBeInTheDocument();
+    const split = screen.getByRole("group", { name: "Show the code and its tests" });
+    expect(within(split).getByRole("button", { name: "All 2" })).toBeInTheDocument();
+    expect(within(split).getByRole("button", { name: "Code 1" })).toBeInTheDocument();
+    expect(within(split).getByRole("button", { name: "Tests 1" })).toBeInTheDocument();
+  });
+
+  it("shows the repository of a file a card opens when another repository is picked", async () => {
+    const props = {
+      files: filesOf(TWO_REPOS),
+      sessionId: "s1",
+      onClose: vi.fn(),
+      repos: REPOS,
+    };
+    const { rerender } = render(<FilesPanel {...props} />);
+    const pick = screen.getByRole("group", { name: "Show the code of one repository" });
+    await userEvent.click(within(pick).getByRole("button", { name: "api 1" }));
+
+    rerender(<FilesPanel {...props} initialPath="/ws/ui/wt/src/page.tsx" pickNonce={1} />);
+
+    expect(within(pick).getByRole("button", { name: "ui 2" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    // The file shows among the ui files only: one of 2.
+    const file = screen.getByRole("region", { name: /page\.tsx$/ });
+    expect(within(file).getByText(/^\d\/2$/)).toBeInTheDocument();
+  });
+
+  it("shows every repository when a card opens a code file outside all of them", async () => {
+    const props = {
+      files: filesOf([
+        ...TWO_REPOS,
+        tool("r4", "Write", { file_path: "/ws/hub/scripts/tool.py", content: "z = 1" }),
+      ]),
+      sessionId: "s1",
+      onClose: vi.fn(),
+      repos: REPOS,
+    };
+    const { rerender } = render(<FilesPanel {...props} />);
+    const pick = screen.getByRole("group", { name: "Show the code of one repository" });
+    await userEvent.click(within(pick).getByRole("button", { name: "api 1" }));
+    expect(rows()).toEqual(["/ws/api/wt/app/service.py"]);
+
+    rerender(<FilesPanel {...props} initialPath="/ws/hub/scripts/tool.py" pickNonce={1} />);
+
+    expect(within(pick).getByRole("button", { name: "All repos 4" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    // The file shows among the code of every repository: one of 4.
+    const file = screen.getByRole("region", { name: /tool\.py$/ });
+    expect(within(file).getByText(/^\d\/4$/)).toBeInTheDocument();
   });
 
   it("offers no pick with code in one repository only", () => {

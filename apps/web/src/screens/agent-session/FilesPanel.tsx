@@ -1048,13 +1048,20 @@ export function FilesPanel({
   const canPickRepo = byRepo.length > 1;
   // A picked file (a card in the conversation) shows even when it is in another repository.
   const pickedRepo = canPickRepo && picked !== null ? (repoOf(picked, repos)?.root ?? null) : null;
-  const repoShown = !canPickRepo
-    ? null
-    : repoPick !== null && pickedRepo !== null && pickedRepo !== repoPick
-      ? pickedRepo
-      : byRepo.some((group) => group.repo.root === repoPick)
-        ? repoPick
-        : null;
+  // A picked code file outside every repository shows with all of them; the pick comes back after.
+  const pickedOutside =
+    canPickRepo &&
+    picked !== null &&
+    pickedRepo === null &&
+    (kind?.files.some((file) => file.path === picked) ?? false);
+  const repoShown =
+    !canPickRepo || pickedOutside
+      ? null
+      : repoPick !== null && pickedRepo !== null && pickedRepo !== repoPick
+        ? pickedRepo
+        : byRepo.some((group) => group.repo.root === repoPick)
+          ? repoPick
+          : null;
   const inRepo = useMemo(
     () =>
       repoShown === null
