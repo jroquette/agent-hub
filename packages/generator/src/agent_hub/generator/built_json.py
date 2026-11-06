@@ -138,7 +138,8 @@ def managed_settings(config: HubConfig) -> JsonValue:
     denies (secret reads, force pushes and pushes to a protected branch, infra tools (``terraform``,
     ``aws``; left to the guard when ``hub.json`` sets ``guard.infra``), ``ssh``, a bare ``sh`` or
     ``bash``), the repos as additional directories (``../<dir>``, in ``hub.json``
-    order) and the base sandbox (AGH-16 D2, E14). Project settings
+    order), the base sandbox (AGH-16 D2, E14) and the ``hub`` MCP server enabled
+    (``enabledMcpjsonServers``; effective once the folder is trusted, ADR 0057). Project settings
     (marketplace, plugins, extra sandbox hosts, ``env``, skill overrides) come from the seeded
     ``settings.project.json``, which may also override the sandbox's scalars.
     """
@@ -146,6 +147,7 @@ def managed_settings(config: HubConfig) -> JsonValue:
         "$schema": _SETTINGS_SCHEMA,
         "attribution": {"commit": "", "pr": ""},
         "includeCoAuthoredBy": False,
+        "enabledMcpjsonServers": [_MCP_SERVER],
         "hooks": base_hooks_block(),
         "permissions": {
             "allow": [
