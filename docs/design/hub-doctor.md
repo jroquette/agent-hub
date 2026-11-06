@@ -30,7 +30,9 @@ block, built by the templates package installed with the running CLI, so doctor 
 (`settings.weakening`). A third, read only when a repo rule (`brain.leak`, `links.dead`, `repos.agents`, `repos.ui_paths`) is selected, is
 the files of each `repos[].dir` checkout at `../<dir>`: a missing or non-folder `../<dir>` gives one `info`, a checkout
 that cannot be listed one `error` (its cause), both at `../<dir>` on the first selected repo rule by id, never retuned;
-the repo rules skip both. A linked `../<dir>` is resolved once to its real path. A root with no `.git` entry, a hub
+the repo rules skip both. The hub's CI clones each repo there before `make check` (the repos step,
+[hub-adopt.md](hub-adopt.md#in-the-hubs-ci)), so the repo rules run in CI too. A linked `../<dir>` is resolved once to
+its real path. A root with no `.git` entry, a hub
 inside a larger repository included, is walked, skipping `.git` and nested repositories. A root with a `.git` entry is
 listed with `git ls-files -z --cached --others --exclude-standard`, and git must name the root as the work-tree top;
 `HubFiles.listed_by_git` says whether git made the listing. Git missing, failing, timing out or naming another top is a

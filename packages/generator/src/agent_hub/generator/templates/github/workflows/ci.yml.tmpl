@@ -141,6 +141,55 @@ jobs:
             printf '%s\n' "GIT_CONFIG_KEY_1=url.$hub.insteadOf"
             printf '%s\n' "GIT_CONFIG_VALUE_1=$hub"
           } >> "$GITHUB_ENV"
+      # The hub's repos (hub.json → repos, read when the step runs), each cloned read-only at its
+      # default branch into ../<dir> beside the hub, where hub doctor's repo rules (brain.leak,
+      # links.dead) read it: without them doctor skips those rules with an info and make check
+      # passes. With AGENT_HUB_READ_TOKEN set (it then needs read-only Contents on the private
+      # repos too), each clone's GitHub URL maps to one carrying the token, through git config in
+      # this step's own environment only: never an argument, a file or the job's environment. A
+      # token outside GitHub's [A-Za-z0-9_], a repos entry without the model's shape (never echoed)
+      # or a repo that cannot be cloned fails the step.
+      - name: Repos beside the hub
+        env:
+          TOKEN: ${{ secrets.AGENT_HUB_READ_TOKEN }}
+        run: |
+          case $TOKEN in
+            *[!A-Za-z0-9_]*) echo "AGENT_HUB_READ_TOKEN: unexpected characters" >&2; exit 1 ;;
+          esac
+          repos=$(python3 -I -S -c '
+          import json, re, sys
+          SEGMENT = "[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*"
+          SHAPES = (SEGMENT, SEGMENT + "/" + SEGMENT, SEGMENT + "(?:/" + SEGMENT + ")*")
+          try:
+              with open("hub.json", encoding="utf-8") as stream:
+                  document = json.load(stream)
+          except (OSError, ValueError, RecursionError):  # RecursionError: nesting too deep
+              sys.exit("Repos beside the hub: cannot read hub.json as JSON")
+          document = document if isinstance(document, dict) else {}
+          project = document.get("project")
+          default = project.get("default_branch", "main") if isinstance(project, dict) else "main"
+          repos = document.get("repos", [])
+          for number, repo in enumerate(repos if isinstance(repos, list) else [None]):
+              repo = repo if isinstance(repo, dict) else {}
+              fields = (repo.get("dir"), repo.get("github"), repo.get("default_branch", default))
+              if not all(isinstance(field, str) and re.fullmatch(shape, field) for field, shape in zip(fields, SHAPES)):
+                  sys.exit("Repos beside the hub: repos[" + str(number) + "] in hub.json needs a dir, an owner/name github and a branch")
+              print(" ".join(fields))
+          ') || exit 1
+          export GIT_TERMINAL_PROMPT=0
+          while read -r dir github branch; do
+            [ -n "$dir" ] || continue
+            if [ -n "$TOKEN" ]; then
+              export GIT_CONFIG_COUNT=1
+              export GIT_CONFIG_KEY_0="url.https://x-access-token:${TOKEN}@github.com/${github}.insteadOf"
+              export GIT_CONFIG_VALUE_0="https://github.com/${github}"
+            fi
+            git clone --quiet --depth 1 --branch "$branch" "https://github.com/$github.git" "../$dir" || {
+              echo "Repos beside the hub: cannot clone $github ($branch) into ../$dir; AGENT_HUB_READ_TOKEN needs read access to it" >&2
+              exit 1
+            }
+            echo "Repos beside the hub: cloned $github ($branch) into ../$dir"
+          done <<< "$repos"
       - name: Golden (hub sync --check)
         run: ./hub sync --check
       - name: make check

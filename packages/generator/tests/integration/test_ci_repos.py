@@ -189,11 +189,20 @@ def test_maps_each_repo_to_token_in_step_environment_when_token_given(
 
     assert completed.returncode == 0, completed.stderr
     calls = workspace.git_log.read_text(encoding="utf-8")
-    for github in ("acme/demo-api", "acme/demo-web"):
-        assert (
-            f"GIT_CONFIG_KEY_0=url.https://x-access-token:{TOKEN}@github.com/{github}.insteadOf\n"
-            f"GIT_CONFIG_VALUE_0=https://github.com/{github}\n"
-        ) in calls
+    # Each clone's call, with the GIT_CONFIG_* pair it ran with (one repo's mapping at a time).
+    clones = [
+        [line for line in call.splitlines()[1:] if not line.startswith("GIT_CONFIG_NOSYSTEM")]
+        for call in calls.split("argv: ")
+        if call.startswith("clone ")
+    ]
+    assert clones == [
+        [
+            "GIT_CONFIG_COUNT=1",
+            f"GIT_CONFIG_KEY_0=url.https://x-access-token:{TOKEN}@github.com/{github}.insteadOf",
+            f"GIT_CONFIG_VALUE_0=https://github.com/{github}",
+        ]
+        for github in ("acme/demo-api", "acme/demo-web")
+    ]
     # Only git's environment carries the token: no argument, no output.
     assert [line for line in calls.splitlines() if line.startswith("argv:") and TOKEN in line] == []
     assert TOKEN not in completed.stdout + completed.stderr
