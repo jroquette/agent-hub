@@ -110,7 +110,8 @@ Values are never secrets: a secret-shaped one is refused like any string here, a
 - **Order:** the rule runs first on every surface; a deny is final (the project extension does not run) and wins over
   any `access` and any `guard.infra.allow` match. It never opens a secret file, by any case or link: it keeps the
   secret-file reason (this rule gives it then), unless its path or the command holds a word. `prod_markers` is unchanged.
-  On the input tools the blocked-word rule is the only rule, and the project extension does not run.
+  On the input tools the blocked-word rule is the only rule, but for a GitHub MCP tool's change-flow rules
+  ([hub-generator.md](hub-generator.md), AGH-699), and the project extension does not run.
 - **Bounds:** regular files only (`O_NONBLOCK`, `S_ISREG`), as latin-1; 1 MiB per command or file, 64 listed files
   and 4 MiB per call, 1 MiB of keys and strings and 50,000 values (objects, arrays, keys and scalars) per tool input,
   300 ms (checked per folder entry and per value) in all. Over one, or not regular: **ask** `blocked words not
@@ -265,7 +266,8 @@ and the input tools: MCP tools (`mcp__*`), WebSearch, Task, Agent and SendMessag
 4. Not checked: files a program opens without the command naming them from the cwd (`python sync.py` reading
    `config/app.json`, `find … -exec cat`, `cd dir && cat file`, `$PWD` or a variable in a path, `git show REV:path`);
    tool output; obfuscation (`$'\x70rod'`); Grep's search regex and edit contents.
-5. On the input tools only the blocked-word rule runs: `deny_hosts` (a listed host in an MCP input passes),
+5. On the input tools only the blocked-word rule runs (and, on a GitHub MCP tool, the change-flow rules of
+   [hub-generator.md](hub-generator.md)): `deny_hosts` (a listed host in an MCP input passes),
    `deny_paths`, `guard.infra` and the secret-file rule do not; a path in an MCP input is text, never opened (AGH-372).
 6. Skill, TodoWrite, ExitPlanMode and AskUserQuestion are not checked (AGH-373).
 7. The tool name is not scanned, nor the MCP server's name: `mcp__prod-db__query` with a clean input passes (AGH-373).

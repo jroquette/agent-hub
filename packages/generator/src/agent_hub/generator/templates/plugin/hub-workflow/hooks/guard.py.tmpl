@@ -25,7 +25,14 @@ deny  = hard block (secrets (guard.secret_env_files added, guard.readable_env_fi
         Bash token (braces and globs expanded; not after ls, test, [, stat) reads; a secret file, by any case
         or link, is never opened, so it keeps the secret-file reason), or in any key or string value of the
         input of an input tool (WebSearch, Task, Agent, SendMessage, mcp__*; walked in order, the tool name
-        not scanned; the only rule these tools get)
+        not scanned; the only rule these tools get but for a GitHub MCP tool's, below)
+      the change flow on GitHub: merging a pull request (gh pr merge, gh api PUT|POST pulls/<n>/merge or
+        POST merges, a graphql mergePullRequest or enablePullRequestAutoMerge, and the GitHub MCP tools'
+        merge_pull_request and enable_pr_auto_merge: an mcp__ tool whose server's name holds github); and
+        on such a tool's top-level fields or gh api's -f/-F fields (a -F @file read as a message file):
+        AI attribution in a title, body, message, commit_message or commit_title, and on a call that writes
+        (not get_*, list_*, search_*, *_read; gh api not GET) a claude/ branch, head, ref or new_branch,
+        or a protected branch in branch (or gh api's git/refs/heads/<branch>)
       right after it, a declared env file (credentials.env_file of an environment or an endpoint, in
         hub.json, hub.local.json or $HUB_CONFIG; in every session, HUB_RUN_ENVIRONMENT or not): a file tool
         on it (its path from the event's cwd, by real path, so a link or `..` is caught), a Grep on it or
@@ -1140,7 +1147,7 @@ def _after_infra(c: str, cfg: Config) -> Verdict:
     if "gh" in c and re.search(r"\bgh\s+pr\s+(create|edit|comment|review)\b", c) and AI_ATTRIBUTION.search(c):
         return "deny", PR_ATTRIBUTION_REASON
     if "claude/" in c and re.search(r"\b(checkout\s+-b|switch\s+-c|branch(\s+-\w+)*|worktree\s+add\b[^;&|\n]*-b)\s+['\"]?claude/", c):
-        return "deny", f"branches are {_branch_hint(cfg)}, never claude/..."
+        return "deny", AGENT_BRANCH_REASON.format(_branch_hint(cfg))
     if ".git" in c and (re.search(r"\b(rm|mv|cp|ln|truncate)\b[^;&|\n]*(^|[\s/'\"])\.git(/|\s|$|['\"])", c)
                         or re.search(r">>?\s*(\S*/)?\.git(/|\s|$)", c)):
         return "deny", ".git is git's own state (a worktree's .git file links it to the repo); use git commands, never edit it directly"
@@ -1261,6 +1268,24 @@ GH_LONG_VALUES = frozenset((
     "--reviewer", "--repo", "--template", "--add-assignee", "--remove-assignee", "--add-label", "--remove-label",
     "--add-project", "--remove-project", "--add-reviewer", "--remove-reviewer",
 ))
+# GitHub through gh api or a GitHub MCP tool (an `mcp__` tool whose server names github): the
+# fields whose text is a PR's or a commit's, those that name a branch, the MCP methods that merge,
+# and gh api's endpoints that merge or write a branch; the user merges every PR.
+MERGE_REASON = "merging is the user's step: the user merges every PR; leave `{}` to them"
+AGENT_BRANCH_REASON = "branches are {}, never claude/..."
+GITHUB_TEXT_FIELDS = {"title": PR_ATTRIBUTION_REASON, "body": PR_ATTRIBUTION_REASON,
+                      "message": COMMIT_ATTRIBUTION_REASON, "commit_message": COMMIT_ATTRIBUTION_REASON,
+                      "commit_title": COMMIT_ATTRIBUTION_REASON}
+GITHUB_BRANCH_FIELDS = ("branch", "head", "ref", "new_branch")
+GITHUB_MERGE_METHODS = ("merge_pull_request", "enable_pr_auto_merge")
+GITHUB_READ_METHODS = ("get_", "list_", "search_")
+GH_API_SHORT_VALUES = "XfFHqtp"
+GH_API_LONG_VALUES = frozenset(("--method", "--raw-field", "--field", "--header", "--jq", "--template", "--input",
+                                "--preview", "--hostname", "--cache"))
+GH_API_FIELD_OPTIONS = ("-f", "-F", "--raw-field", "--field")
+GH_API_MERGE = LazyPattern(r"(?:^|/)(?:pulls/[^/]+/merge|merges)/?\Z")
+GH_API_BRANCH_REF = "git/refs/heads/"
+GH_API_GRAPHQL_MERGE = LazyPattern(r"\b(?:mergePullRequest|enablePullRequestAutoMerge)\b")
 
 
 def _dq_unescaped(found: re.Match[str]) -> str:
@@ -1632,13 +1657,86 @@ def _git_call(words: list[tuple[str, bool]], at: int, env: dict[str, str | None]
     return tighten(verdict, _identity(sub, flags, folder, options, env, cfg, reads))
 
 
-def _gh_call(words: list[tuple[str, bool]], at: int, here: str | None, targets: set[str]) -> Verdict:
+def _branch_name(value: str) -> str:
+    """A branch field's branch: refs/heads/ dropped."""
+    value = value.strip()
+    return value[len("refs/heads/"):] if value.startswith("refs/heads/") else value
+
+
+def _github_fields(fields: list[tuple[str, str]], writes: bool, cfg: Config) -> Verdict:
+    """The rules on a GitHub call's (name, value) fields: AI attribution in a title, body or
+    message; and, on a call that writes, a `claude/` branch, head or ref, or a protected branch."""
+    for name, value in fields:
+        reason = GITHUB_TEXT_FIELDS.get(name)
+        if reason and AI_ATTRIBUTION.search(value):
+            return "deny", reason
+        branch = _branch_name(value)
+        if writes and name in GITHUB_BRANCH_FIELDS and branch.startswith("claude/"):
+            return "deny", AGENT_BRANCH_REASON.format(_branch_hint(cfg))
+        if writes and name == "branch" and branch in cfg.protected_branches:
+            return "deny", PUSH_REASON.format(branch, _branch_hint(cfg))
+    return None
+
+
+def check_github_tool(tool: str, ti: dict, cfg: Config) -> Verdict:
+    """The change-flow rules on a GitHub MCP tool (an mcp__ tool whose server's name holds github,
+    any case): a merge or auto-merge denies; then _github_fields on its top-level fields, as a call
+    that writes unless the method reads (get_, list_, search_, *_read); any other tool: None."""
+    server, _, method = tool[len(MCP_PREFIX):].rpartition("__")
+    if not tool.startswith(MCP_PREFIX) or "github" not in server.lower():
+        return None
+    if method in GITHUB_MERGE_METHODS:
+        return "deny", MERGE_REASON.format(_infra_value(tool, _code_escaped))
+    writes = not (method.startswith(GITHUB_READ_METHODS) or method.endswith("_read"))
+    return _github_fields([(name, value) for name, value in ti.items() if isinstance(value, str)], writes, cfg)
+
+
+def _gh_api(args: list[tuple[str, bool]], here: str | None, targets: set[str], cfg: Config) -> Verdict:
+    """The change-flow rules on a gh api call: a merge (PUT or POST on pulls/<n>/merge, POST on merges,
+    a graphql mergePullRequest or enablePullRequestAutoMerge) denies; then _github_fields on its -f/-F
+    fields (a -F value `@file` read as a message file), and a write to git/refs/heads/<protected>.
+    The method is -X/--method, else POST with fields or --input, else GET."""
+    flags, operands = _parsed(args, GH_API_SHORT_VALUES, "", GH_API_LONG_VALUES)
+    endpoint = operands[0][0] if operands else ""
+    methods = [value[0].upper() for name, value in flags if name in ("-X", "--method") and value is not None]
+    fields = [(name, value) for name, value in flags if name in GH_API_FIELD_OPTIONS and value is not None]
+    method = methods[-1] if methods else "POST" if fields or any(name == "--input" for name, _ in flags) else "GET"
+    shown = _infra_value(f"gh api {endpoint}", _code_escaped)
+    if endpoint == "graphql":
+        if any(GH_API_GRAPHQL_MERGE.search(text) for _, (text, _) in fields):
+            return "deny", MERGE_REASON.format(shown)
+    elif method != "GET" and GH_API_MERGE.search(endpoint):
+        return "deny", MERGE_REASON.format(shown)
+    named: list[tuple[str, str]] = []
+    verdict: Verdict = None
+    for option, (text, expanded) in fields:
+        key, _, value = text.partition("=")
+        name = key.rstrip("]").rsplit("[", 1)[-1]  # `body`, or the last key of `comments[][body]`
+        reason = GITHUB_TEXT_FIELDS.get(name)
+        if reason and option in ("-F", "--field") and value.startswith("@"):
+            verdict = tighten(verdict, _message_files([(value[1:], expanded)], here, targets, reason))
+        else:
+            named.append((name, value))
+    writes = method != "GET"
+    at = endpoint.find(GH_API_BRANCH_REF)
+    if writes and at >= 0 and (at == 0 or endpoint[at - 1] == "/"):
+        named.append(("branch", endpoint[at + len(GH_API_BRANCH_REF):].split("?", 1)[0].rstrip("/")))
+    if verdict and verdict[0] == "deny":
+        return verdict
+    return tighten(verdict, _github_fields(named, writes, cfg))
+
+
+def _gh_call(words: list[tuple[str, bool]], at: int, here: str | None, targets: set[str], cfg: Config) -> Verdict:
     """The change-flow rules on one gh call (words[at] is gh)."""
     args = words[at + 1:]
+    if len(args) >= 2 and args[0][0] == "pr" and args[1][0] == "merge":
+        return "deny", MERGE_REASON.format("gh pr merge")
     if len(args) >= 2 and args[0][0] == "pr" and args[1][0] in GH_PR_ARGUMENTS:
         flags, _ = _parsed(args[2:], GH_PR_ARGUMENTS[args[1][0]], "", GH_LONG_VALUES)
         files = [value for name, value in flags if name in ("-F", "--body-file") and value is not None]
         return _message_files(files, here, targets, PR_ATTRIBUTION_REASON)
+    if args and args[0][0] == "api":
+        return _gh_api(args[1:], here, targets, cfg)
     return None
 
 
@@ -1672,7 +1770,7 @@ def check_change_flow(cmd: str, cfg: Config, cwd: str | None = None) -> Verdict:
         elif program == "git":
             found = _git_call(words, at, {**exported, **env}, here, cfg, targets, reads)
         elif program == "gh":
-            found = _gh_call(words, at, here, targets)
+            found = _gh_call(words, at, here, targets, cfg)
         if found and found[0] == "deny":
             return found
         verdict = verdict or found
@@ -2581,8 +2679,8 @@ def decide(data: dict, cfg: Config, environ: dict | None = None) -> Verdict:
     blocked = check_blocked(tool, ti, cfg, environ, cwd=cwd)
     if blocked and blocked[0] == "deny":
         return blocked
-    if _input_tool(tool):  # D-tools: the blocked-word rule is the only rule on an input tool
-        return blocked
+    if _input_tool(tool):  # D-tools: only the blocked-word rule, and a GitHub MCP tool's change-flow rules
+        return tighten(blocked, check_github_tool(tool, ti, cfg))
     env_file = check_env_file(tool, ti, cfg, cwd=cwd)
     if env_file and env_file[0] == "deny":
         return env_file
@@ -2841,6 +2939,7 @@ RULE_IDS = (
     ("hooks_path", LazyPattern(r"^core\.hooksPath changes which git hooks run")),
     ("push_branch_unknown", LazyPattern(r"^the branch this `git push` sends cannot be told")),
     ("commit_identity", LazyPattern(r"^commit identity( not checked)?: ")),
+    ("pr_merge", LazyPattern(r"^merging is the user's step")),
     ("agent_branch", LazyPattern(r"^branches are \S*, never claude/")),
     ("git_internals", LazyPattern(r"^\.git is git's own state")),
     ("test_bash_edit", LazyPattern(r"^deleting or sed-editing tests")),

@@ -331,6 +331,18 @@ below asks where the owner has a legitimate use for the call, and denies where t
   told or an `--author` with no `<email>` asks; no email anywhere passes (git refuses or makes one up), as does a hub
   that sets none. A command makes at most four git reads (bare push and identity together), so they fit the hook's
   10 s; this is the commit-time half of rule 1, the CI author check its server-side half.
+- **GitHub calls** (rules `ai_attribution`, `agent_branch`, `push_protected_branch`, deny): a GitHub MCP tool (an
+  `mcp__` tool whose server's name holds `github`, so `mcp__github__*` and a plugin's `mcp__plugin_github_github__*`)
+  is no longer checked for blocked words alone, and `gh api` is read call by call. AI attribution in a `title`,
+  `body`, `message`, `commit_message` or `commit_title` (a tool's top-level field, or a `gh api -f/-F` field, the last
+  key of `comments[][body]` too, with `-F body=@file` read as a message file) is denied; on a call that writes (an MCP
+  method other than `get_*`, `list_*`, `search_*`, `*_read`; a `gh api` method other than GET), a `claude/` branch in
+  `branch`, `head`, `ref` or `new_branch`, and a protected branch in `branch` (or `gh api … git/refs/heads/<branch>`)
+  are denied. `gh api --input <file>` is not read.
+- **Merges** (rule `pr_merge`, deny): the user merges every PR (rule 2), and branch protection cannot tell an agent
+  from the owner, since both use the owner's credentials. So `gh pr merge` (`--auto` too), `gh api` PUT or POST on
+  `pulls/<n>/merge`, POST on `merges`, a `graphql` `mergePullRequest` or `enablePullRequestAutoMerge`, and the MCP
+  `merge_pull_request` and `enable_pr_auto_merge` are denied; reading whether a PR is merged passes.
 - **Skipped hooks** (rules `no_verify`, `hooks_path`, ask): `--no-verify` on `git commit` (and its `-n`), `push` or
   `merge`, and `core.hooksPath` set through `git -c`, `--config-env`, an assignment such as `GIT_CONFIG_PARAMETERS`,
   or `git config` (set, `--unset`); reading it passes.

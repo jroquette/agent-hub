@@ -322,7 +322,11 @@ today), and the CLI's model and the hooks' stdlib reader accept it in the same c
 endpoints on `hub.json`'s repos (`repos: [{dir, services}]`), a stricter `access` and their own `values` on a committed
 environment (`write` → `ask` → `read`; values win per key) and the three `guard.blocked_words*` lists; any other key is an error, and nothing in it can relax a
 guard: it adds blocked words, never removes them, and only tightens access. Commits are authored by the developer running the session, and cloud setup writes `HUB_AUTHOR_NAME`/`HUB_AUTHOR_EMAIL`
-repo-local, never global, only when `hub.json` holds no author.
+repo-local, never global, only when `hub.json` holds no author. When `hub.local.json` or `hub.json` sets
+`project.author_email`, the guard hook denies an agent's `git commit`, annotated `git tag` or `git merge` that would
+record another author, committer or tagger email; it also reads commit and PR message files for AI attribution, denies
+merging a pull request (the user merges every PR) and checks `gh api` and the GitHub MCP tools for attribution,
+`claude/` branches and writes to a protected branch ([design/hub-generator.md](design/hub-generator.md), AGH-699).
 
 **The infra guard.** With `guard.infra`, the guard hook checks a Bash command only when it names a covered tool: the
 tool's word (case-sensitive) followed by an argument, by a redirection glued to it (`aws>/dev/null s3 ls`), by a
@@ -421,7 +425,8 @@ names above, of `STAGE`, `SLS_STAGE`, `ENV`, `ENVIRONMENT`, `APP_ENV`, `NODE_ENV
 `AWS_ENDPOINT_URL`, of every declared `credentials.env` name and of every `guard.blocked_words_env` name, where a match
 denies every Bash call of the session; the path fields of every file tool (`file_path`, `notebook_path`, `path`,
 Grep's `glob`, Glob's `pattern`, WebFetch's `url`); every key and string value of the input of MCP tools (`mcp__*`),
-WebSearch, Task, Agent and SendMessage (the tool name is not scanned; only this rule runs on them); and the contents
+WebSearch, Task, Agent and SendMessage (the tool name is not scanned; only this rule runs on them, but for a GitHub MCP
+tool's change-flow rules); and the contents
 of `.env*` files and of files a `guard.blocked_words_files` glob matches, read through Read, Grep (a directory is
 walked) and every Bash token that names one (glob tokens expanded; not `ls`, `test`, `[` or `stat`). The rule runs
 first on every surface: its deny is final and wins over any declared `access` and any `guard.infra.allow` match, and
@@ -439,7 +444,7 @@ boundary: the boundary is which credentials the agent's machine holds. The guard
 Edit, Write, MultiEdit, NotebookEdit, WebFetch, WebSearch, Task, Agent and SendMessage and MCP tools (matcher
 `^(Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch|Task|Agent|SendMessage)$|^mcp__`).
 Accepted limits: false positives; the other guard rules do not reach the input tools (a `deny_hosts` host in their
-input passes); Skill, TodoWrite, ExitPlanMode and AskUserQuestion and tool names are not checked; nor are files a
+input passes), but for a GitHub MCP tool's change-flow rules; Skill, TodoWrite, ExitPlanMode and AskUserQuestion and tool names are not checked; nor are files a
 program opens without the command naming them (`python sync.py` reading `config/app.json`, `find … -exec cat`), tool
 output, obfuscation past the three views, Grep's search regex and edit contents; a recorded guard event carries the
 input tools' input whole; variables a SessionStart hook exports through `$CLAUDE_ENV_FILE` are not seen.
