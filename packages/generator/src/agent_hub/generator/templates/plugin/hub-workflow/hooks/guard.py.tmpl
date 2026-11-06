@@ -6,7 +6,7 @@ deny  = hard block (secrets (guard.secret_env_files added, guard.readable_env_fi
         &, $( ), backticks, <( ), ( ), { }) with no allowed environment outside a ` #` comment and not a
         local-only form; without it: the fixed infra rule; both see a redirection glued to the tool word,
         aws>/dev/null; values in their reasons are escaped and capped), AI attribution in commits/PRs/branches
-        (in the command, in a message file a git commit|tag|merge -F/--file or a gh pr create|edit|comment|review
+        (ai_attributed, linear in the text; in the command, in a message file a git commit|tag|merge -F/--file or a gh pr create|edit|comment|review
         -F/--body-file names, read when the call runs unless the same command writes it, or in a file tool's
         write of a message file: pr.md, <name>-pr.md, body.md, msg.txt and the like), a bare push (no refspec,
         or HEAD or @) from a protected branch (git symbolic-ref where the call runs, followed through cd and -C),
@@ -26,13 +26,6 @@ deny  = hard block (secrets (guard.secret_env_files added, guard.readable_env_fi
         or link, is never opened, so it keeps the secret-file reason), or in any key or string value of the
         input of an input tool (WebSearch, Task, Agent, SendMessage, mcp__*; walked in order, the tool name
         not scanned; the only rule these tools get but for a GitHub MCP tool's, below)
-      the change flow on GitHub: merging a pull request (gh pr merge, gh api PUT|POST pulls/<n>/merge or
-        POST merges, a graphql mergePullRequest or enablePullRequestAutoMerge, and the GitHub MCP tools'
-        merge_pull_request and enable_pr_auto_merge: an mcp__ tool whose server's name holds github); and
-        on such a tool's top-level fields or gh api's -f/-F fields (a -F @file read as a message file):
-        AI attribution in a title, body, message, commit_message or commit_title, and on a call that writes
-        (not get_*, list_*, search_*, *_read; gh api not GET) a claude/ branch, head, ref or new_branch,
-        or a protected branch in branch (or gh api's git/refs/heads/<branch>)
       right after it, a declared env file (credentials.env_file of an environment or an endpoint, in
         hub.json, hub.local.json or $HUB_CONFIG; in every session, HUB_RUN_ENVIRONMENT or not): a file tool
         on it (its path from the event's cwd, by real path, so a link or `..` is caught), a Grep on it or
@@ -40,6 +33,13 @@ deny  = hard block (secrets (guard.secret_env_files added, guard.readable_env_fi
         whose pattern can reach it, or a Bash command or WebFetch URL
         naming it (its file name as a whole word, in the command's views; a Bash token, braces and globs
         expanded, or a file:// URL whose real path is it); the reason names the environment only
+      the change flow on GitHub: merging a pull request (gh pr merge, gh api PUT|POST pulls/<n>/merge or
+        POST merges, a graphql mergePullRequest or enablePullRequestAutoMerge, and the GitHub MCP tools'
+        merge_pull_request and enable_pr_auto_merge: an mcp__ tool whose server's name holds github); and
+        on such a tool's top-level fields or gh api's -f/-F fields (a -F @file read as a message file):
+        AI attribution in a title, body, message, commit_message or commit_title, and on a call that writes
+        (not get_*, list_*, search_*, *_read; gh api not GET) a claude/ branch, head, ref or new_branch,
+        or a protected branch in branch (or gh api's git/refs/heads/<branch>)
 ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an allowed environment, anywhere
         after the tool (aws's s3 … rm and cloudformation … deploy too, quoted or not); with guard.infra, a
         command it would let through that holds a character other than ASCII letters, digits, space, tab,
@@ -136,7 +136,13 @@ if TYPE_CHECKING:
 NON_SECRET_ENV = {".env.example", ".env.development", ".env.staging", ".env.test", ".env.sample", ".env.template"}
 KEY_FILE = LazyPattern(r"\.(pem|key|p12|pfx)$")  # never released, whatever a list says
 SECRET_FILE = LazyPattern(r"(^|/)(\.env(\.[\w.-]+)?|[^/]*\.(pem|key|p12|pfx)|id_(rsa|ed25519)[^/]*)$")
-AI_ATTRIBUTION = LazyPattern(r"co-authored-by:\s*[^\n]*(claude|anthropic|openai|copilot|\bai\b)|generated with \[?claude|🤖", re.I)
+# AI attribution: what `co-authored-by:\s*[^\n]*(claude|anthropic|openai|copilot|\bai\b)|generated with
+# \[?claude|🤖` finds, ignoring case, found by ai_attributed in time linear in the text (as core's
+# carries_ai_attribution): the pattern rescans a line from each co-author tag, here each tag's line is
+# searched once.
+AI_GENERATED = LazyPattern(r"generated with \[?claude|🤖", re.I)
+AI_TAG = LazyPattern(r"co-authored-by:\s*", re.I)
+AI_CO_AUTHOR = LazyPattern(r"claude|anthropic|openai|copilot|\bai\b", re.I)
 SECRET_TOKEN = LazyPattern(
     r"(?<![\w-])[<'\"]?(\S*/)?(\.env(\.[\w.-]+)?|[\w.-]+\.(pem|key|p12|pfx)|id_(rsa|ed25519|ecdsa)[\w.-]*)(?=[\s'\";|&)<>]|$)"
 )
@@ -351,6 +357,23 @@ def _edits(ti: dict) -> list[dict]:
     """MultiEdit's edits: a list of objects, other items (and a non-list) dropped."""
     edits = ti.get("edits")
     return [e for e in edits if isinstance(e, dict)] if isinstance(edits, list) else []
+
+
+def ai_attributed(text: str) -> bool:
+    """Whether text carries AI attribution (AI_GENERATED, or an AI named on the line where a co-author
+    tag's blanks end); a later tag whose line was already searched adds nothing."""
+    if AI_GENERATED.search(text):
+        return True
+    searched_to = -1
+    for tag in AI_TAG.finditer(text):
+        end = text.find("\n", tag.end())
+        end = len(text) if end < 0 else end
+        if end <= searched_to:
+            continue
+        if AI_CO_AUTHOR.search(text, tag.end(), end):
+            return True
+        searched_to = end
+    return False
 
 
 def _new_text(tool: str, ti: dict) -> str:
@@ -1144,9 +1167,9 @@ def _after_infra(c: str, cfg: Config) -> Verdict:
             tok = found.lstrip("<").strip("'\"")
             if _secret_path(tok, cfg):
                 return "deny", SECRET_READ_REASON.format(tok)
-    if "git" in c and re.search(r"\bgit\s+(commit|tag|merge)\b", c) and AI_ATTRIBUTION.search(c):
+    if "git" in c and re.search(r"\bgit\s+(commit|tag|merge)\b", c) and ai_attributed(c):
         return "deny", COMMIT_ATTRIBUTION_REASON
-    if "gh" in c and re.search(r"\bgh\s+pr\s+(create|edit|comment|review)\b", c) and AI_ATTRIBUTION.search(c):
+    if "gh" in c and re.search(r"\bgh\s+pr\s+(create|edit|comment|review)\b", c) and ai_attributed(c):
         return "deny", PR_ATTRIBUTION_REASON
     if "claude/" in c and re.search(r"\b(checkout\s+-b|switch\s+-c|branch(\s+-\w+)*|worktree\s+add\b[^;&|\n]*-b)\s+['\"]?claude/", c):
         return "deny", AGENT_BRANCH_REASON.format(_branch_hint(cfg))
@@ -1535,7 +1558,7 @@ def _message_files(files: list[tuple[str, bool]], folder: str | None, targets: s
             cause = "a folder the guard cannot read"
         else:
             text, cause = _message_text(os.path.join(folder or "", os.path.expanduser(path)))
-            if text is not None and AI_ATTRIBUTION.search(text):
+            if text is not None and ai_attributed(text):
                 return "deny", HELD_BY_REASON.format(reason, _infra_value(path))
         if cause and verdict is None:
             verdict = "ask", MESSAGE_UNCHECKED_REASON.format(_infra_value(path), cause)
@@ -1687,7 +1710,7 @@ def _github_fields(fields: list[tuple[str, str]], writes: bool, cfg: Config) -> 
     message; and, on a call that writes, a `claude/` branch, head or ref, or a protected branch."""
     for name, value in fields:
         reason = GITHUB_TEXT_FIELDS.get(name)
-        if reason and AI_ATTRIBUTION.search(value):
+        if reason and ai_attributed(value):
             return "deny", reason
         branch = _branch_name(value)
         if writes and name in GITHUB_BRANCH_FIELDS and branch.startswith("claude/"):
@@ -1853,7 +1876,7 @@ def check_file(tool: str, ti: dict, cfg: Config | None = None) -> Verdict:
         return None
     if re.search(r"(^|/)\.git(/|$)", path):
         return "deny", ".git is git's own state (a worktree's .git file links it to the repo); use git commands, never edit it directly"
-    if MESSAGE_FILE.search(os.path.basename(path)) and AI_ATTRIBUTION.search(_new_text(tool, ti)):
+    if MESSAGE_FILE.search(os.path.basename(path)) and ai_attributed(_new_text(tool, ti)):
         return "deny", MESSAGE_FILE_REASON.format(path)
     rel = guard_file(path, cfg)
     if rel:

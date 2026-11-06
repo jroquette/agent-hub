@@ -1,11 +1,11 @@
 """The marks of AI attribution (hub ``AGENTS.md`` rule 1): an AI co-author trailer, a "Generated
 with Claude" line, the robot emoji.
 
-The same marks as the hub guard's ``AI_ATTRIBUTION`` (generator's ``guard.py.tmpl``, a stdlib hook
-that cannot import this), ``co-authored-by:\\s*[^\\n]*(claude|anthropic|openai|copilot|\\bai\\b)|
-generated with \\[?claude|🤖`` ignoring case, found in time linear in the text: the guard's
-``\\s*[^\\n]*`` rescans the rest of a line from each tag and each blank, so here each tag's line is
-searched once.
+The same marks, by the same search, as the hub guard's ``ai_attributed`` (generator's
+``guard.py.tmpl``, a stdlib hook that cannot import this): what the pattern
+``co-authored-by:\\s*[^\\n]*(claude|anthropic|openai|copilot|\\bai\\b)|`` ``generated with
+\\[?claude|🤖`` finds, ignoring case, in time linear in the text: the pattern's ``\\s*[^\\n]*``
+rescans the rest of a line from each tag and each blank, so here each tag's line is searched once.
 """
 
 import re
