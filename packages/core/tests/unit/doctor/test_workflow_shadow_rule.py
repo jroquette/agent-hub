@@ -70,3 +70,30 @@ def test_warns_with_compare_fix_when_shadow_differs_from_builtin(
         "brain-care/ at the platform's tag v0.2.0 and merge what you need, or delete"
         " workflows/brain-care/ to run the built-in"
     )
+
+
+def test_points_fix_at_workflow_file_when_override_in_another_pack(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    # Deleting the hub pack would drop the hub's other workflows in it.
+    mine = WorkflowShadow(
+        name="inbox",
+        path="workflows/mine/inbox.yaml",
+        pack="workflows/mine",
+        builtin_pack="brain-care",
+        identical=False,
+    )
+    snapshot = replace(snapshot_of(), workflow_shadows=(mine,))
+
+    (found,) = WORKFLOWS_SHADOW.check(snapshot)
+
+    assert (found.path, found.severity) == ("workflows/mine/inbox.yaml", Severity.WARNING)
+    assert found.message == (
+        "overrides the built-in workflow inbox of the built-in brain-care pack of this release"
+        " (0.2.0) from another pack, workflows/mine/"
+    )
+    assert found.fix == (
+        "compare workflows/mine/inbox.yaml with packages/core/src/agent_hub/core/workflows/"
+        "builtin/brain-care/ at the platform's tag v0.2.0 and merge what you need, or delete"
+        " workflows/mine/inbox.yaml to run the built-in"
+    )
