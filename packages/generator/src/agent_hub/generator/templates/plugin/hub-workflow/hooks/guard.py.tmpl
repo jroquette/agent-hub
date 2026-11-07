@@ -12,7 +12,8 @@ deny  = hard block (secrets (guard.secret_env_files added, guard.readable_env_fi
         when the call runs, or, when the same command writes it (by its normalized path) with > from its own
         text (echo, printf, cat of a here-document or here-string), that text; or in a file tool's
         write of a message file: pr.md, <name>-pr.md, body.md, msg.txt and the like), a bare push (no refspec,
-        or HEAD or @) from a protected branch (git symbolic-ref where the call runs, followed through cd and -C),
+        or HEAD or @) from a protected branch (git symbolic-ref where the call runs, followed through cd and -C;
+        a subshell's end restores the folder and variables from where it began),
         a git commit, annotated tag or merge that would record an author, committer or tagger email (from
         --author, GIT_AUTHOR_EMAIL or GIT_COMMITTER_EMAIL of the call, an export or the session, git -c or
         --config-env, git config where it runs, EMAIL) other than the hub's project.author_email (hub.local.json, else
@@ -1300,7 +1301,7 @@ def _single_call(cmd: str) -> tuple[list[str], list[tuple[str, bool, bool]]] | N
     expansion, glob, brace or numeric escape (EVAL_HIDDEN); None otherwise."""
     if EVAL_HIDDEN.search(cmd):
         return None
-    calls, _, writes = _shell_calls(cmd)
+    calls, _, writes, _ = _shell_calls(cmd)
     return ([text for text, _ in calls[0]], writes) if len(calls) == 1 else None
 
 
@@ -1333,7 +1334,7 @@ def _bash_eval_write(tok: str, single: tuple[list[str], list[tuple[str, bool, bo
 def _call_write_targets(cmd: str) -> list[str]:
     """The files cmd's calls (_shell_calls, so a `;` inside quotes splits nothing) may write: their
     redirect targets, and the words after tee, rm, mv, cp, truncate, ln or a sed with -i."""
-    calls, _, writes = _shell_calls(cmd)
+    calls, _, writes, _ = _shell_calls(cmd)
     found = [target for target, _, _ in writes]
     for words in calls:
         at = _program(words)[0]
@@ -1637,12 +1638,14 @@ def _skip_bodies(cmd: str, pos: int, heredocs: list[tuple[str, bool, bool, _Call
     return min(pos, len(cmd))
 
 
-def _shell_calls(cmd: str) -> tuple[list[list[tuple[str, bool]]], dict[str, bool], list[tuple[str, bool, bool]]]:
+def _shell_calls(cmd: str) -> tuple[list[list[tuple[str, bool]]], dict[str, bool], list[tuple[str, bool, bool]],
+                                    list[tuple[int, int]]]:
     """cmd's calls, each its words as (text, whether it holds an expansion) with quotes removed as
     bash removes them and redirections left out, and the files output redirections (`>`, `>>`,
     `&>`) write to, each with whether every write puts only text of the command there (_from_text,
     no append); then each write, in order, as (file, whether it appends, whether its call's output
-    is only text of the command). A `#` at a word's start comments to the line's end; a call ends at a newline, `;`,
+    is only text of the command); then, for each call, the subshells (`(`, `$(`, `<(`; not `((`)
+    that closed and then opened since the call before it. A `#` at a word's start comments to the line's end; a call ends at a newline, `;`,
     `&`, `|`, `(` or `)`, but a `&` or `|` right after `<` or `>`, or a `&` before `>`, is the
     redirection's; inside arithmetic (`((`…`))`, `$((`…`))`) `<` and `>` only part words. A
     here-document's body (from the line after its `<<` to its delimiter) is the text of its call,
@@ -1658,6 +1661,8 @@ def _shell_calls(cmd: str) -> tuple[list[list[tuple[str, bool]]], dict[str, bool
     redirect = ""  # the redirection operator whose word comes next
     operator_end = -1  # where the last `<` or `>` ended: one right after it extends the operator
     arithmetic, open_end = 0, -1  # the open parentheses of arithmetic, and where the last `(` ended
+    scopes: list[tuple[int, int]] = []  # per call: (subshells closed, then opened, since the call before)
+    closes = opens = 0
     call = _Call()
     heredocs: list[tuple[str, bool, bool, _Call]] = []  # (delimiter, `<<-`, quoted, its call) of this line
     line_heredocs = 0  # how many of them the current call added
@@ -1669,11 +1674,16 @@ def _shell_calls(cmd: str) -> tuple[list[list[tuple[str, bool]]], dict[str, bool
         first = text[0]
         if text == "\\\n":
             continue
+        subshell = 0  # 1: a `(` opens a subshell; -1: a `)` closes one; -2: `((`, the `(` before opened none
         if first == "(":
-            arithmetic = arithmetic + 1 if arithmetic else 2 if start == open_end else 0
+            glued, was = start == open_end, arithmetic
+            arithmetic = arithmetic + 1 if arithmetic else 2 if glued else 0
             open_end = pos
+            subshell = 0 if was else -2 if glued else 1
         elif first == ")" and arithmetic:
             arithmetic -= 1
+        elif first == ")":
+            subshell = -1
         elif first in "<>" and arithmetic:
             first = " "  # a comparison or a shift, not a redirection
         if first in "<>" and started and not redirect and "".join(parts).isdigit():
@@ -1714,6 +1724,12 @@ def _shell_calls(cmd: str) -> tuple[list[list[tuple[str, bool]]], dict[str, bool
                     keep_bodies, line_heredocs = keep_bodies or runs, len(heredocs)
                 if words:
                     calls.append(words)
+                    scopes.append((closes, opens))
+                    closes = opens = 0
+                if subshell == -1 and not opens:
+                    closes += 1
+                else:
+                    opens = max(0, opens + (1 if subshell == 1 else -1 if subshell else 0))
                 words, call = [], _Call()
                 if first == "\n" and heredocs:
                     end = _skip_bodies(cmd, pos, heredocs) if skipping and not keep_bodies else None
@@ -1747,7 +1763,7 @@ def _shell_calls(cmd: str) -> tuple[list[list[tuple[str, bool]]], dict[str, bool
     targets: dict[str, bool] = {}
     for target, append, writer in writes:
         targets[target] = targets.get(target, True) and not append and writer.text
-    return calls, targets, [(target, append, writer.text) for target, append, writer in writes]
+    return calls, targets, [(target, append, writer.text) for target, append, writer in writes], scopes
 
 
 def _program(words: list[tuple[str, bool]]) -> tuple[int, dict[str, str | None]]:
@@ -2297,23 +2313,45 @@ def _gh_call(words: list[tuple[str, bool]], at: int, here: str | None, cfg: Conf
     return _message_files(files + _substituted(bodies), here, PR_ATTRIBUTION_REASON, reads)
 
 
+def _export(exported: dict[str, str | None], values: dict[str, str | None],
+            undo: list[tuple[str, str | None, bool]] | None) -> None:
+    """values set in exported; inside a subshell (undo), each name's value before is logged first,
+    so the subshell's end restores it."""
+    for name, value in values.items():
+        if undo is not None:
+            undo.append((name, exported.get(name), name in exported))
+        exported[name] = value
+
+
 def check_change_flow(cmd: str, cfg: Config, cwd: str | None = None) -> Verdict:
     """The change-flow rules on each git and gh call of cmd, in order, run from cwd (None: the
     process's own folder), the folder followed through `cd` and `pushd` (one it cannot tell, after
     an expansion or `popd`, makes a later read ask), the variables a call sets added to those an
-    `export` or a lone assignment set before it: the first deny, else the first ask."""
+    `export` or a lone assignment set before it; a subshell's end restores the folder and the
+    variables from where it began: the first deny, else the first ask."""
     if not CHANGE_FLOW_WORDS.search(cmd):
         return None
-    calls, targets, _ = _shell_calls(cmd)
+    calls, targets, _, scopes = _shell_calls(cmd)
     here: str | None = cwd or os.getcwd()
     exported: dict[str, str | None] = {}
+    undo: list[tuple[str, str | None, bool]] = []  # variables set inside subshells, as they were
+    begun: list[tuple[str | None, int]] = []  # each open subshell's folder and undo length when it began
     reads = _Reads(targets, cmd)
     verdict: Verdict = None
     read_calls = 0
-    for words in calls:
+    for words, (closes, opens) in zip(calls, scopes):
+        for _ in range(min(closes, len(begun))):
+            here, mark = begun.pop()
+            while len(undo) > mark:
+                name, value, was = undo.pop()
+                if was:
+                    exported[name] = value
+                else:
+                    exported.pop(name, None)
+        begun.extend([(here, len(undo))] * opens)
         at, env = _program(words)
         if at >= len(words):
-            exported.update(env)
+            _export(exported, env, undo if begun else None)
             continue
         if words[at][1]:
             continue
@@ -2327,7 +2365,7 @@ def check_change_flow(cmd: str, cfg: Config, cwd: str | None = None) -> Verdict:
         elif program == "popd":
             here = None
         elif program == "export":
-            exported.update(_program(words[at + 1:])[1])
+            _export(exported, _program(words[at + 1:])[1], undo if begun else None)
         elif program == "git":
             found = _git_call(words, at, {**exported, **env}, here, cfg, reads)
         elif program == "gh":

@@ -326,7 +326,8 @@ below asks where the owner has a legitimate use for the call, and denies where t
   and the wrappers `command`, `exec`, `time`, `nohup`, `env`, `timeout`, `nice` and `sudo` (and their options). A
   here-document's body is its call's text, not calls, unless a call with one on that line holds an interpreter or
   shell word, which runs it, or its delimiter never comes; a `<<` inside arithmetic (`$((1<<2))`) is a shift. The folder of each call starts at the event's `cwd` and follows `cd`, `pushd` and `git
-  -C`; after `popd` or an expanded `cd`, a read that needs it asks. A command with over 64 `git` and `gh` calls asks
+  -C`; after `popd` or an expanded `cd`, a read that needs it asks. A subshell's end (`( … )`, `$( … )`, `<( … )`)
+  restores the folder and the exported variables from where it began; `{ … }` and `(( … ))` are no subshell. A command with over 64 `git` and `gh` calls asks
   (`change_flow_unchecked`), so a hostile command stays linear.
 - **Message files** (rule `ai_attribution`, deny): `git commit|tag|merge -F/--file` and `gh pr
   create|edit|comment|review -F/--body-file` read the file they name (at most 1 MiB, regular files only, at most 8
