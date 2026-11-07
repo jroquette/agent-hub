@@ -647,8 +647,13 @@ def test_stops_git_reads_when_shared_deadline_spent(
 
 # The guard's git reads run the hook's own git with only git's config and location variables of
 # the call: a call that sets PATH, LD_*, DYLD_*, GIT_EXEC_PATH or GIT_TRACE* would run another git
-# (or write a trace) outside the sandbox, so it asks and git is not run.
+# (or write a trace) outside the sandbox, so it asks and git is not run; so does a call that picks
+# git's global or system config (HOME, XDG_CONFIG_HOME, GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM,
+# GIT_CONFIG_NOSYSTEM), whose trace2 targets would make the hook's git write any file.
 GIT_UNSAFE_CAUSE = "the command sets {}, which changes the git that runs"
+GIT_CONFIG_CAUSE = (
+    "the command sets {}, which picks git's global or system config (its trace targets write files)"
+)
 
 
 def test_asks_without_running_git_when_call_sets_unsafe_variable(ws: Path, decide: Decide) -> None:
@@ -684,13 +689,61 @@ def test_asks_without_running_git_when_call_sets_unsafe_variable(ws: Path, decid
     assert not trace.exists()
 
 
+def a_tracing_config(folder: Path, trace: Path) -> Path:
+    """``folder/.gitconfig`` (also ``folder/git/config``) naming trace as every trace2 target."""
+    text = f"[trace2]\n\tnormalTarget = {trace}\n\teventTarget = {trace}\n\tperfTarget = {trace}\n"
+    put(folder / "git" / "config", text)
+    return put(folder / ".gitconfig", text)
+
+
+def test_asks_without_running_git_when_call_picks_global_config(ws: Path, decide: Decide) -> None:
+    app = git_repo(ws / "app", "me/dem-1-x", "me@example.com")
+    trace = ws / "bashrc"
+    planted = a_tracing_config(ws / "planted", trace)
+    cases = [
+        (f"HOME={planted.parent} git push", "HOME", "push"),
+        (f"export XDG_CONFIG_HOME={planted.parent}; git commit -m x", "XDG_CONFIG_HOME", "commit"),
+        (f"GIT_CONFIG_GLOBAL={planted} git commit -m x", "GIT_CONFIG_GLOBAL", "commit"),
+        (f"GIT_CONFIG_SYSTEM={planted} git push origin HEAD", "GIT_CONFIG_SYSTEM", "push"),
+        ("GIT_CONFIG_NOSYSTEM=0 git commit -m x", "GIT_CONFIG_NOSYSTEM", "commit"),
+    ]
+
+    verdicts = decide([bash_at(command, app) for command, _, _ in cases])
+
+    assert verdicts == [
+        (
+            "ask",
+            PUSH_UNREAD_REASON.format(GIT_CONFIG_CAUSE.format(name))
+            if sub == "push"
+            else IDENTITY_UNCHECKED_REASON.format(GIT_CONFIG_CAUSE.format(name), sub),
+        )
+        for _, name, sub in cases
+    ]
+    assert not trace.exists()
+
+
+def test_reads_git_without_trace_when_hook_config_names_trace_target(
+    ws: Path, decide: Decide
+) -> None:
+    """The hook's own git config or environment may name a trace target: its reads trace nothing."""
+    app = git_repo(ws / "app", "me/dem-1-x", "me@example.com")
+    trace = ws / "trace.txt"
+    config = a_tracing_config(ws / "hook-home", trace)
+    env = {"GIT_CONFIG_GLOBAL": str(config), "GIT_TRACE": str(trace), "GIT_TRACE2": str(trace)}
+
+    verdicts = decide([bash_at("git commit -m x", app), bash_at("git push", app)], env=env)
+
+    assert verdicts == [None, None]
+    assert not trace.exists()
+
+
 def test_reads_git_config_from_call_variables_when_git_reads_them(ws: Path, decide: Decide) -> None:
     app = git_repo(ws / "app", "me/dem-1-x")
-    other = put(ws / "other.gitconfig", f"[user]\n\temail = {OTHER}\n")
-    mine = put(ws / "mine.gitconfig", "[user]\n\temail = me@example.com\n")
+    other = f"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.email GIT_CONFIG_VALUE_0={OTHER}"
+    mine = "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.email GIT_CONFIG_VALUE_0=me@example.com"
     events = [
-        bash_at(f"GIT_CONFIG_GLOBAL={other} git commit -m x", app),
-        bash_at(f"GIT_CONFIG_GLOBAL={mine} DEBUG=1 git commit -m x", app),
+        bash_at(f"{other} git commit -m x", app),
+        bash_at(f"{mine} DEBUG=1 git commit -m x", app),
     ]
 
     assert decide(events) == [("deny", IDENTITY_REASON.format("commit", OTHER, "author")), None]
