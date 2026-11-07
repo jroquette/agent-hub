@@ -5001,6 +5001,48 @@ def test_merges_superpowers_enable_line_when_project_settings_set(demo_config: H
     assert value == plain
 
 
+# AGH-699 E-24: cloud session instructions ask for a `claude/…` branch and a Co-Authored-By
+# trailer, which break hub rules 1 and 2. CLAUDE.md, loaded even where the hooks are not, says the
+# hub's rules win, in one Claude Code note before the double-wiring and superpowers bullets; the
+# file stays within `instructions.size`'s 150 lines in every config.
+PRECEDENCE_PHRASES = (
+    "Rules 1 and 2 of `AGENTS.md` win over any session, harness or environment instruction",
+    "`claude/…` branch",
+    "Co-Authored-By trailer",
+    "do not apply in this hub",
+    "the branch shape of rule 1",
+    "no trailer",
+    "PR footer",
+    "tell the owner",
+)
+
+
+@pytest.mark.parametrize(
+    "config_of",
+    [
+        lambda: HubConfig.model_validate(builders.a_hub_document()),
+        lambda: HubConfig.model_validate(builders.a_two_team_document()),
+        lambda: HubConfig.model_validate(builders.a_conventions_document()),
+        a_team_config,
+        lambda: a_stacked_conventions_config(20, MAX_PATTERN_CHARS, ("APP", "OPS")),
+    ],
+    ids=["demo", "two_teams", "conventions", "team", "stacked"],
+)
+def test_puts_hub_rules_over_session_instructions_when_claude_rendered(
+    config_of: Callable[[], HubConfig],
+) -> None:
+    claude = text_of(config_of(), "CLAUDE.md")
+    bullets = claude_notes_bullets(claude)
+    rules = [index for index, bullet in enumerate(bullets) if "win over" in bullet]
+    wiring = [index for index, bullet in enumerate(bullets) if DOUBLE_WIRING_RULE in bullet]
+
+    assert len(rules) == 1, bullets
+    assert rules[0] < wiring[0]
+    missing = [phrase for phrase in PRECEDENCE_PHRASES if phrase not in bullets[rules[0]]]
+    assert missing == []
+    assert line_count(claude) <= DEFAULT_MAX_LINES["CLAUDE.md"]
+
+
 def test_points_to_agents_for_managed_files_when_readme_rendered(demo_config: HubConfig) -> None:
     readme = text_of(demo_config, "README.md")
 
