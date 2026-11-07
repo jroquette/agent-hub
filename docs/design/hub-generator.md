@@ -327,8 +327,8 @@ below asks where the owner has a legitimate use for the call, and denies where t
   here-document's body is its call's text, not calls, unless a call with one on that line holds an interpreter or
   shell word, which runs it, or its delimiter never comes; a `<<` inside arithmetic (`$((1<<2))`) is a shift. The folder of each call starts at the event's `cwd` and follows `cd`, `pushd` and `git
   -C`; after `popd` or an expanded `cd`, a read that needs it asks. A subshell's end (`( … )`, `$( … )`, `<( … )`)
-  restores the folder and the exported variables from where it began; `{ … }` and `(( … ))` are no subshell. A command with over 64 `git` and `gh` calls asks
-  (`change_flow_unchecked`), so a hostile command stays linear.
+  restores the folder and the exported variables from where it began; `{ … }` and `(( … ))` are no subshell. A
+  command with over 64 `git` and `gh` calls asks (`change_flow_unchecked`), so a hostile command stays linear.
 - **Message files** (rule `ai_attribution`, deny): `git commit|tag|merge -F/--file` and `gh pr
   create|edit|comment|review -F/--body-file` read the file they name (at most 1 MiB, regular files only, at most 8
   files per command) when the call runs, so a body file written earlier is checked when it is used; so do a message
@@ -336,8 +336,9 @@ below asks where the owner has a legitimate use for the call, and denies where t
   file. A file the same command writes with `>` from its own text (`echo`, `printf`, `cat` of a here-document or
   here-string, no expansion) is checked as the command's text; one written any other way (`cat` of a file, `>>`, an
   expansion) asks, and a `<` input writes nothing. The written file and the message file are compared by their
-  normalized path from the call's folder (`./pr.md` is `pr.md`). A `--trailer key=value` is read as `key: value`. A file tool's write of a file named like a message (`pr.md`,
-  `<name>-pr.md`, `body.md`, `msg.txt`, …) holding attribution is denied at once. A message on stdin (`-`), behind
+  normalized path from the call's folder (`./pr.md` is `pr.md`). A `--trailer key=value` is read as `key: value`. A
+  file tool's write of a file named like a message (`pr.md`, `<name>-pr.md`, `body.md`, `msg.txt`, …) holding
+  attribution is denied at once. A message on stdin (`-`), behind
   an expansion, or in a file that cannot be read asks (`message_unchecked`). `git merge` and `gh pr comment|review`
   text is checked inline too, as is a call's text when `git`'s options or `gh pr -R` come before the verb.
 - **Bare push** (rule `push_protected_branch`, deny): `git push` with no refspec, or only `HEAD` or `@`, sends the
