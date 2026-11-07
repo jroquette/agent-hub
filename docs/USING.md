@@ -152,6 +152,8 @@ From the hub folder, run the doctor and the sync check. Both write nothing:
 
 `./hub doctor --json` exits `0` (no error finding: go on), `1` (at least one error finding: fix each one its `message` names, then run it again) or `2` (a usage error, or the folder is not a hub: run it from the hub folder).
 
+On a fresh hub it lists one `workflows.shadow` warning for each workflow `hub init` copied into `workflows/`: the copy runs instead of the built-in, and no later release updates it. They do not stop you. Delete each `workflows/<pack>/` you will not change, so the hub runs the built-in (`./hub sync` does not bring it back), and keep the ones you change.
+
 `./hub sync --check` exits `0` (up to date: go on), `4` (changes pending: run `./hub sync`, then check again), `3` (a conflict: show the user the listed paths and the way out it prints) or `1` (an error: fix the named input, such as `hub.json` or `hub.lock`).
 
 Go on only when both exit 0.
