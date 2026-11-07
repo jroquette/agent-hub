@@ -267,7 +267,9 @@ def test_asks_when_message_file_unreadable_or_stdin(ws: Path, decide: Decide) ->
 WRITTEN_CAUSE = "this command writes it from what the guard does not read"
 
 
-def test_checks_message_file_by_how_same_command_writes_it(ws: Path, decide: Decide) -> None:
+def test_checks_message_file_by_its_writer_when_same_command_writes_it(
+    ws: Path, decide: Decide
+) -> None:
     app = git_repo(ws / "app", "me/dem-1-x", "me@example.com")
     put(app / "body.md", GENERATED)
     put(app / "msg.txt", CO_AUTHORED)
