@@ -83,6 +83,33 @@ def test_appends_new_spool_to_taken_when_earlier_take_not_removed(folder: Path) 
     assert not (folder / SPOOL_FILE).exists()
 
 
+def test_leaves_spool_for_next_take_when_appending_it_would_put_taken_over_bound(
+    folder: Path,
+) -> None:
+    _spool(folder, "toolu_1")
+    size = (folder / SPOOL_FILE).stat().st_size
+    spool = HookSpool(folder, max_bytes=size + size // 2)
+    spool.take()
+    _spool(folder, "toolu_2")
+
+    taken = spool.take()
+    assert taken is not None
+    left = (folder / SPOOL_FILE).read_bytes()
+    taken_size = (folder / TAKEN_FILE).stat().st_size
+    spool.remove(taken)
+    later = spool.take()
+
+    assert _ids(taken) == ["toolu_1"]
+    assert left == _line("toolu_2")
+    assert taken_size == size
+    assert later is not None
+    assert _ids(later) == ["toolu_2"]
+
+
+def test_names_taken_file_when_asked(folder: Path) -> None:
+    assert HookSpool(folder).taken_file == folder / TAKEN_FILE
+
+
 def test_removes_taken_when_unchanged_since_read(folder: Path) -> None:
     _spool(folder, "toolu_1")
     spool = HookSpool(folder)

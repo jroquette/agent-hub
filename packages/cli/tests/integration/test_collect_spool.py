@@ -114,8 +114,11 @@ def test_writes_nothing_and_keeps_lines_when_spool_has_bad_line(paths: Paths) ->
     result = _collect(paths)
 
     assert result.exit_code == 1
+    taken = json.dumps(str(paths.folder / "hook-spool.taken.jsonl"))
     assert result.stderr == (
-        "line 2: invalid JSON: Expecting property name enclosed in double quotes\n"
+        f"{taken}: line 2: invalid JSON: Expecting property name enclosed in double quotes\n"
+        f"{taken}: fix or delete the lines above, then run hub collect --spool again "
+        "(hub web skips bad lines when it starts)\n"
     )
     assert not paths.db.exists()
     kept = b"".join((paths.folder / name).read_bytes() for name in paths.left())
