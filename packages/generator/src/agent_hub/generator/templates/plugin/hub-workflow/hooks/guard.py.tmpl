@@ -365,15 +365,16 @@ def _edits(ti: dict) -> list[dict]:
 
 def ai_attributed(text: str) -> bool:
     """Whether text carries AI attribution (AI_GENERATED, or an AI named on the line where a co-author
-    tag's blanks end); a later tag whose line was already searched adds nothing."""
+    tag's blanks end); a later tag whose line was already searched adds nothing, and is skipped
+    before its line's end is looked for."""
     if AI_GENERATED.search(text):
         return True
     searched_to = -1
     for tag in AI_TAG.finditer(text):
+        if tag.end() <= searched_to:  # no newline lies between them: the same line, already searched
+            continue
         end = text.find("\n", tag.end())
         end = len(text) if end < 0 else end
-        if end <= searched_to:
-            continue
         if AI_CO_AUTHOR.search(text, tag.end(), end):
             return True
         searched_to = end
