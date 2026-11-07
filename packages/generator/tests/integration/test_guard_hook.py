@@ -2845,6 +2845,22 @@ def test_asks_when_bash_write_may_leave_eval_saying_owner(
     ]
 
 
+def test_asks_when_bash_copies_into_evals_folder(evaluate: Evaluate, workspace: Path) -> None:
+    """A copy, move or link into a feature's evals folder names the folder, not the eval."""
+    folder = an_eval(workspace, "ac-1.md", AGENT_EVAL).parent
+    calls = {
+        f"{folder}/": f"cp /tmp/a.md {folder}/",
+        str(folder): f"mv -t {folder} /tmp/a.md",
+        "brain/features/x/evals": "ln -s /tmp/a.md brain/features/x/evals",
+    }
+
+    verdicts = evaluate([bash(command) for command in calls.values()])
+
+    assert verdicts == [
+        ("ask", OWNER_UNCHECKED_REASON.format(target, UNSEEN_WRITE_CAUSE)) for target in calls
+    ]
+
+
 def test_passes_when_bash_writes_plain_agent_text_to_eval(
     evaluate: Evaluate, workspace: Path
 ) -> None:
