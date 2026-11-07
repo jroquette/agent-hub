@@ -54,6 +54,7 @@ CREATE_ARGV = (
 VIEW_ARGV = (
     *("gh", "api", "--method", "GET", "repos/acme/demo-api/pulls"),
     *("-f", "head=acme:jdoe/dem-7-x", "-f", "state=open"),
+    *("--jq", "[.[] | {html_url, state}]"),
 )
 CREATED = ChildResult(0, json.dumps({"html_url": PR_URL, "number": 7}).encode(), b"")
 CREATE_GAVE_UP = "gh api POST pulls failed: a pull request for branch already exists\n"

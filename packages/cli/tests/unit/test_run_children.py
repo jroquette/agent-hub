@@ -118,6 +118,7 @@ def test_opens_and_finds_pr_through_rest_api_when_argv_built() -> None:
     assert run.pr_view_argv() == [
         *("gh", "api", "--method", "GET", "repos/acme/demo-web/pulls"),
         *("-f", "head=acme:jdoe/dem-1", "-f", "state=open"),
+        *("--jq", "[.[] | {html_url, state}]"),
     ]
 
 

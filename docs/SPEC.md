@@ -161,7 +161,8 @@ a live run's `failed` record at stage `PICKED`; otherwise (dry run by default: i
 write) it makes the worktree, runs the implementing `claude -p` session (no tracker tool: the issue's text is in its prompt)
 under the hub's hooks (a hooks-only `--settings` file built from the hub's `.claude/settings.json`; when that file or
 a hook script it names is missing or unusable, the run exits 1 before the issue is read, dry or live, AGH-278), its own gate, the push and
-`gh pr create`, and reports through the port (on success, like `hub ship`, it moves the issue to
+the PR, opened through GitHub's REST API (`gh api --method POST repos/<owner>/<repo>/pulls`, the body on stdin; never
+`gh pr`, whose GraphQL a cloud session's proxy refuses, AGH-699), and reports through the port (on success, like `hub ship`, it moves the issue to
 `tracker.states.review`, default `In Review`); records go to the hub's `.agent-runs/` and `brain/_inbox/runs/`. A live
 run is the `issue-to-pr` workflow run through the engine ([ADR 0032](adr/0032-workflow-engine.md), AGH-224): the hub's
 own `workflows/<pack>/issue-to-pr.yaml` when present (it must load, else exit 1, and declare the inputs the run fills,
@@ -189,7 +190,8 @@ commits ahead of origin/<base>)` per repo left out, then runs four phases, each 
 uncommitted tracked change in any worktree, every repo's `check` runs, before any push; each writes its output tails
 to the owner-only `<hub>/.agent-runs/ship/<ISSUE>-<repo>.log` and prints `check passed: <repo>` when it passes; a
 worktree left dirty, or a HEAD or task branch that moved, during the checks stops the ship before any push. (2) Per
-repo, the push (behind `hub run`'s guard), then `gh pr create` (`--draft` when given; the title is the newest commit's
+repo, the push (behind `hub run`'s guard), then the PR opened through GitHub's REST API (`gh api`, as every PR call of
+`hub ship` and `hub run`; a draft when `--draft` is given; the title is the newest commit's
 subject following the repo's conventions), or the PR already open for the branch: `opened: <repo>  <url>` or
 `found: <repo>  <url>`. (3) With two PRs or more, each PR's Related PRs section is made to list the others, its body
 edited through a file and only when that changes it. (4) The tracker writes: the move to the review state, the failed
@@ -197,7 +199,8 @@ label removed when the issue carries it, then one comment listing the PRs. Once 
 line starts with `hub ship: `; a failure in a repo names the repo and what failed, and lists the PRs already open; the
 first tracker write that fails is shown as not confirmed (it may have landed) and the later ones as not done, none
 retried. Run again after a success, `hub ship` finds the open PRs, edits no PR body and posts one more comment.
-`--dry-run` reads the issue and prints the set, then per repo the check, push and `gh pr create` it would run, then
+`--dry-run` reads the issue and prints the set, then per repo the check, push and PR creation it would run (the body
+it would send on stdin shown after the command as `<<< <body>`), then
 each tracker write it would make, with placeholder PR urls (no link edit: the live one depends on the bodies); it runs
 only git reads, writes no file and does not write to the tracker. Usage errors exit 2 before any tracker call, with no
 child run but `git` reads (the hub's main checkout, the git identity a branch prefix may come from); every other

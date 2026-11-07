@@ -16,7 +16,10 @@ Intended differences, left out of the comparison:
 - the ``failed`` record and its ``step.end`` event gain ``failure_kind`` (AGH-179, AGH-224),
   checked apart;
 - the workflow's own record (``.agent-runs/workflows/<run>/``) exists only for ``hub workflow
-  run``; the engine's node events are not sent for issue-to-pr, so the events are ``hub run``'s.
+  run``; the engine's node events are not sent for issue-to-pr, so the events are ``hub run``'s;
+- a PR that could not be opened is diagnosed as ``gh api POST pulls failed:`` where v0.14 said
+  ``gh pr create failed:`` (AGH-699: the PR is opened through GitHub's REST API, as a cloud
+  session's proxy refuses ``gh pr``'s GraphQL); the rest of the diagnosis is compared.
 """
 
 import copy
@@ -45,6 +48,9 @@ type Workspace = Any
 
 KEY_VARIABLE = "LINEAR_API_KEY"
 BRANCH = "jdoe/dem-1"
+# How a failed PR creation is diagnosed now, and how v0.14 diagnosed it (an intended difference).
+REST_CREATE_FAILED = "gh api POST pulls failed:"
+V014_CREATE_FAILED = "gh pr create failed:"
 GOLDEN = Path(__file__).parent / "golden" / "parity"
 FAILED_NODE = frozenset({"error", "gate-fail", "gate-fail-stdout", "pr-fail"})
 SCENARIOS: Mapping[str, tuple[Mapping[str, str], int, str]] = {
@@ -149,6 +155,7 @@ def golden_form(seen: Seen, workspace: Workspace) -> tuple[dict[str, Any], list[
     text = json.dumps(form, sort_keys=True)
     for path in {str(workspace.ws), os.path.realpath(workspace.ws)}:
         text = text.replace(json.dumps(path)[1:-1], "<ws>")
+    text = text.replace(REST_CREATE_FAILED, V014_CREATE_FAILED)
     return json.loads(text), kinds
 
 

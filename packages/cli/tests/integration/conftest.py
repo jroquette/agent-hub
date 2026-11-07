@@ -2171,7 +2171,8 @@ def logged_git(run_workspace: RunWorkspace) -> RunWorkspace:
 # calls (``gh api``; a cloud session's proxy refuses ``gh pr``, which is GraphQL) hub ship makes:
 # ``--method POST repos/<repo>/pulls`` with the fields ``title``, ``head``, ``base`` (``-f``),
 # ``body`` (``-F body=@-``, read from stdin) and ``-F draft=true``; ``--method GET
-# repos/<repo>/pulls -f head=<owner>:<branch> -f state=open``; ``--method GET
+# repos/<repo>/pulls -f head=<owner>:<branch> -f state=open``, with or without ``--jq '[.[] |
+# {html_url, state}]'`` (applied as gh applies it, locally); ``--method GET
 # repos/<repo>/pulls/<n>``; and ``--method PATCH repos/<repo>/pulls/<n> -F body=@<file>``. It
 # prints each PR as the REST API does (``html_url``, ``state`` in lower case, ``body``…) and
 # exits 2 on any other argv. ``FAKE_GH_FAIL`` (``<step>:<repo>,…``, steps ``create``, ``view``,
@@ -2243,9 +2244,14 @@ def by_url(prs, url):
 prs = load()
 if len(argv) < 4 or argv[:2] != ["api", "--method"]:
     refuse()
-method, path, fields = argv[2], argv[3], api_fields(argv[4:])
+# The one filter hub ship asks gh to apply (locally, as gh does): the lookup's url and state.
+jq = argv[-1] if argv[-2:-1] == ["--jq"] else None
+method, path = argv[2], argv[3]
+fields = api_fields(argv[4:-2] if jq is not None else argv[4:])
 pulls = re.fullmatch(r"repos/([^/]+)/([^/]+)/pulls", path)
 one = re.fullmatch(r"repos/([^/]+/[^/]+)/pulls/([0-9]+)", path)
+if jq is not None and (method, jq) != ("GET", "[.[] | {html_url, state}]"):
+    refuse()
 if method == "POST" and pulls and set(fields) - {"draft"} == {"title", "head", "base", "body"}:
     repo, head = pulls.group(1) + "/" + pulls.group(2), fields["head"]
     if fields.get("draft", True) is not True:
@@ -2274,6 +2280,8 @@ elif method == "GET" and pulls and sorted(fields) == ["head", "state"]:
     fails("view", repo)
     found = [serve(pr) for pr in prs
              if (pr["repo"], pr["head"], pr["state"]) == (repo, head, "OPEN")]
+    if jq is not None:
+        found = [{"html_url": pr["html_url"], "state": pr["state"]} for pr in found]
     print(json.dumps(found))
 elif method == "GET" and one and not fields:
     fails("body", one.group(1))

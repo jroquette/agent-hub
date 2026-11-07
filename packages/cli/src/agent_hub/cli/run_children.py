@@ -11,7 +11,9 @@ reads (``AGENT_HUB_RUN_ID``, ``AGENT_HUB_STEP``, ``AGENT_HUB_ATTEMPT``), and the
 task's six ``HUB_*`` variables (``worktree_steps.script_env``).
 A dry run prints each child as ``would run: <argv>   (cwd <folder>)``, each argument shell-quoted,
 or JSON-escaped when it holds a line break or another unprintable character, so tracker text
-cannot write to the terminal.
+cannot write to the terminal; what a child would read on stdin (a PR's body) follows its argv as
+``<<< <text>``, quoted the same way. ``gh`` reaches GitHub through its REST API only (``gh api``):
+a cloud session's proxy refuses ``gh pr``, which is GraphQL.
 The hidden names and ``without`` are defined in ``hidden_env`` and re-exported here.
 """
 
@@ -67,6 +69,12 @@ PUSH_OVERRIDES: Final = (
 )
 _CONFIG_COUNT: Final = "GIT_CONFIG_COUNT"
 _CONFIG_ENTRY: Final = re.compile(r"GIT_CONFIG_(?:KEY|VALUE)_[0-9]+")
+# What the open-PR lookup keeps of each PR GitHub lists.
+OPEN_PULLS_JQ: Final = "[.[] | {html_url, state}]"
+_PULL_URL: Final = re.compile(
+    r"https://github\.com/(?P<owner>[A-Za-z0-9._-]+)/(?P<name>[A-Za-z0-9._-]+)"
+    r"/pull/(?P<number>[1-9][0-9]*)"
+)
 
 
 @functools.cache
@@ -211,13 +219,13 @@ class RunChildren:
     def push_argv(self) -> list[str]:
         return push_command(self.branch)
 
-    def pr_argv(self, *, title: str, body: str) -> list[str]:
+    def pr_argv(self, *, title: str) -> list[str]:
+        """The PR's creation; its body goes on stdin (``pr_create_command``)."""
         return pr_create_command(
             github=self.github,
             base=self.default_branch,
             branch=self.branch,
             title=title,
-            body=body,
             draft=False,
         )
 
@@ -238,31 +246,51 @@ def push_command(branch: str) -> list[str]:
     return ["git", *overrides, "push", "--no-verify", "-u", "origin", branch]
 
 
-def pr_create_command(
-    *, github: str, base: str, branch: str, title: str, body: str, draft: bool
-) -> list[str]:
-    """``gh pr create`` of ``branch`` into ``base`` on ``github``; ``--draft`` last when asked."""
+def pr_create_command(*, github: str, base: str, branch: str, title: str, draft: bool) -> list[str]:
+    """The creation of ``branch``'s PR into ``base`` on ``github`` through GitHub's REST API
+    (``gh api --method POST repos/<github>/pulls``; ``gh pr`` is GraphQL, which a cloud
+    session's proxy refuses). The title, head and base are plain fields (``-f``: never typed or
+    read from a file); the body is read from stdin (``-F body=@-``), so it never sits on the
+    command line and its length is not argv's; ``-F draft=true`` comes last when asked."""
     argv = [
-        *("gh", "pr", "create", "--repo", github, "--base", base),
-        *("--head", branch, "--title", title, "--body", body),
+        *("gh", "api", "--method", "POST", f"repos/{github}/pulls"),
+        *("-f", f"title={title}", "-f", f"head={branch}", "-f", f"base={base}"),
+        *("-F", "body=@-"),
     ]
-    return [*argv, "--draft"] if draft else argv
+    return [*argv, "-F", "draft=true"] if draft else argv
 
 
 def pr_view_command(*, github: str, branch: str) -> list[str]:
-    """The lookup of ``branch``'s PR, by its repo from ``hub.json``, not the worktree's."""
-    return ["gh", "pr", "view", branch, "--repo", github, "--json", "url,state"]
+    """The lookup of ``branch``'s open PR through the REST API (``GET repos/<github>/pulls``,
+    ``head=<owner>:<branch>``, ``state=open``), by its repo from ``hub.json``, not the
+    worktree's. ``gh`` keeps only each PR's ``html_url`` and ``state`` (``--jq``, applied
+    locally): the answer would carry every body otherwise."""
+    owner = github.split("/", 1)[0]
+    return [
+        *("gh", "api", "--method", "GET", f"repos/{github}/pulls"),
+        *("-f", f"head={owner}:{branch}", "-f", "state=open", "--jq", OPEN_PULLS_JQ),
+    ]
 
 
-def pr_body_command(url: str) -> list[str]:
-    """The read of the body of the PR at ``url`` (the url names its repo)."""
-    return ["gh", "pr", "view", url, "--json", "body"]
+def pull_request_path(url: str) -> str | None:
+    """``repos/<owner>/<name>/pulls/<n>``, the REST path of the PR page ``url``
+    (``https://github.com/<owner>/<name>/pull/<n>``), else None."""
+    found = _PULL_URL.fullmatch(url)
+    if found is None or {found["owner"], found["name"]} & {".", ".."}:
+        return None
+    return f"repos/{found['owner']}/{found['name']}/pulls/{found['number']}"
 
 
-def pr_edit_command(url: str, body_file: Path) -> list[str]:
-    """The edit of the PR at ``url``: its body replaced by the text of ``body_file`` (a body
-    can be longer than one argv string may be)."""
-    return ["gh", "pr", "edit", url, "--body-file", str(body_file)]
+def pr_body_command(path: str) -> list[str]:
+    """The read of the PR at the REST ``path`` (``pull_request_path``), its body among its
+    fields."""
+    return ["gh", "api", "--method", "GET", path]
+
+
+def pr_edit_command(path: str, body_file: Path) -> list[str]:
+    """The edit of the PR at the REST ``path``: its body replaced by the text of ``body_file``
+    (``-F body=@<file>``: a body can be longer than one argv string may be)."""
+    return ["gh", "api", "--method", "PATCH", path, "-F", f"body=@{body_file}"]
 
 
 def child_env(environ: Mapping[str, str]) -> dict[str, str]:
@@ -335,5 +363,8 @@ def shown_command(argv: Sequence[str]) -> str:
     )
 
 
-def would_run_line(argv: Sequence[str], *, cwd: Path) -> str:
-    return f"would run: {shown_command(argv)}   (cwd {shown_path(str(cwd))})"
+def would_run_line(argv: Sequence[str], *, cwd: Path, stdin: str | None = None) -> str:
+    """The dry run's line for ``argv`` in ``cwd``; ``stdin``, the text the child would read
+    there, follows as a here-string (``<<< <text>``), quoted as an argument is."""
+    given = "" if stdin is None else f" <<< {shown_command([stdin])}"
+    return f"would run: {shown_command(argv)}{given}   (cwd {shown_path(str(cwd))})"

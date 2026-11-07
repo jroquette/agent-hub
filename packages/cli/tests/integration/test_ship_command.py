@@ -116,10 +116,12 @@ def create_argv(branch: str, *, repo: str = API_GITHUB) -> list[str]:
 
 
 def view_argv(branch: str) -> list[str]:
-    """The REST lookup of ``branch``'s open PR on ``acme/demo-api``."""
+    """The REST lookup of ``branch``'s open PR on ``acme/demo-api``, only each PR's url and
+    state kept."""
     return [
         *("api", "--method", "GET", f"repos/{API_GITHUB}/pulls"),
         *("-f", f"head=acme:{branch}", "-f", "state=open"),
+        *("--jq", "[.[] | {html_url, state}]"),
     ]
 
 
@@ -195,9 +197,7 @@ class TestShipFakes:
         assert again.returncode == 1
         assert url in again.stdout.decode()
         assert viewed.returncode == 0
-        assert [(pr["html_url"], pr["state"]) for pr in json.loads(viewed.stdout)] == [
-            (url, "open")
-        ]
+        assert json.loads(viewed.stdout) == [{"html_url": url, "state": "open"}]
         assert edited.returncode == 0
         assert json.loads(body.stdout)["body"] == "DEM-7 linked"
         assert ship_workspace.prs() == [

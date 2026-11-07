@@ -1322,6 +1322,7 @@ class TestRerun:
             [
                 *("api", "--method", "GET", "repos/acme/demo-api/pulls"),
                 *("-f", "head=acme:jdoe/dem-1", "-f", "state=open"),
+                *("--jq", "[.[] | {html_url, state}]"),
             ]
         ]
         assert [call["argv"][0] for call in run_workspace.calls("gh")] == ["api"] * 3
@@ -1404,6 +1405,7 @@ class TestConventions:
         assert view == [
             *("api", "--method", "GET", "repos/acme/demo-api/pulls"),
             *("-f", "head=acme:feature/dem-1", "-f", "state=open"),
+            *("--jq", "[.[] | {html_url, state}]"),
         ]
 
     def test_fails_worktree_stage_when_worktree_on_other_branch_than_convention(
