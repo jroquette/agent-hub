@@ -1040,8 +1040,12 @@ def demo_web(tree: Path, work: Path) -> Iterator[DemoWeb]:
     api, web = free_port(), free_port()
     api_url, web_url = f"http://127.0.0.1:{api}", f"http://127.0.0.1:{web}"
     server = [sys.executable, "-m", "agent_hub.cli", "web", "--port", str(api)]
-    preview = [npm, "--prefix", str(web_dir), "exec", "--", "vite", "preview"]
-    preview += ["--outDir", str(work / "web"), "--port", str(web), "--strictPort"]
+    # vite itself, not `npm exec`: npm exits on SIGTERM without passing it on, so ending it left
+    # the preview server running after each visual run (AGH-648). Started directly, it stays
+    # in this process's group too, which a kill of the whole run still reaches.
+    vite = web_dir / "node_modules" / ".bin" / "vite"
+    preview = [str(vite), "preview", "--outDir", str(work / "web"), "--port", str(web)]
+    preview += ["--strictPort"]
     preview_env = {**env, "AH_API_TARGET": api_url, "AH_SESSIONS_TARGET": api_url}
     logs = (work / "api.log", work / "preview.log")
     with (
