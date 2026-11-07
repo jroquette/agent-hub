@@ -9,6 +9,8 @@ in-memory one (``ship_tracker``).
 
 import json
 import os
+import pathlib
+import re
 import time
 from collections.abc import Callable
 from typing import Any
@@ -92,36 +94,80 @@ def set_transport(hub: Any, transport: str) -> None:
     (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
 
 
-def fake_gh(ship_workspace: Workspace, *arguments: str) -> ChildResult:
-    """Run the fake ``gh`` with ``arguments`` in the hub, with the test's environment."""
+def fake_gh(ship_workspace: Workspace, *arguments: str, stdin: bytes | None = None) -> ChildResult:
+    """Run the fake ``gh`` with ``arguments`` (and ``stdin``) in the hub, with the test's
+    environment."""
     return run_child(
         [str(ship_workspace.bin / "gh"), *arguments],
         cwd=ship_workspace.workspace.hub,
         env=dict(os.environ),
         timeout=60,
+        stdin=stdin,
     )
 
 
-def create_argv(branch: str, *, body: str = "DEM-7") -> list[str]:
+def create_argv(branch: str, *, repo: str = API_GITHUB) -> list[str]:
+    """The REST create of ``branch``'s PR into ``trunk``, its body read from stdin."""
     return [
-        *("pr", "create", "--repo", API_GITHUB, "--base", "trunk", "--head", branch),
-        *("--title", "feat(api): x (DEM-7)", "--body", body),
+        *("api", "--method", "POST", f"repos/{repo}/pulls"),
+        *("-f", "title=feat(api): x (DEM-7)", "-f", f"head={branch}", "-f", "base=trunk"),
+        *("-F", "body=@-"),
     ]
+
+
+def view_argv(branch: str) -> list[str]:
+    """The REST lookup of ``branch``'s open PR on ``acme/demo-api``."""
+    return [
+        *("api", "--method", "GET", f"repos/{API_GITHUB}/pulls"),
+        *("-f", f"head=acme:{branch}", "-f", "state=open"),
+    ]
+
+
+def pull_path(url: str) -> str:
+    """The REST path of the PR at ``url``: ``repos/<owner>/<name>/pulls/<n>``."""
+    repo, number = url.removeprefix("https://github.com/").split("/pull/")
+    return f"repos/{repo}/pulls/{number}"
+
+
+def read_argv(url: str) -> list[str]:
+    """The REST read of the PR at ``url`` (its body among its fields)."""
+    return ["api", "--method", "GET", pull_path(url)]
+
+
+def edit_argv(url: str, body_file: str) -> list[str]:
+    """The REST edit of the PR at ``url``: its body read from ``body_file``."""
+    return ["api", "--method", "PATCH", pull_path(url), "-F", f"body=@{body_file}"]
+
+
+def is_link_call(argv: list[str]) -> bool:
+    """A body read (``GET …/pulls/<n>``) or edit (``PATCH``) of the link phase."""
+    one_pull = len(argv) > 3 and re.fullmatch(r"repos/.+/pulls/\d+", argv[3]) is not None
+    return argv[:2] == ["api", "--method"] and one_pull and argv[2] in ("GET", "PATCH")
 
 
 class TestShipFakes:
     @pytest.mark.parametrize(
         "arguments",
         [
-            ("pr", "merge", "https://github.com/acme/demo-api/pull/101"),
-            ("pr", "view", "jdoe/dem-7", "--repo", API_GITHUB, "--json", "url,author"),
-            ("pr", "view", "jdoe/dem-7", "--repo", API_GITHUB),
             ("pr", "create", "--repo", API_GITHUB, "--head", "jdoe/dem-7"),
-            ("pr", "edit", "https://github.com/acme/demo-api/pull/101", "--title", "x"),
-            ("api", "repos/acme/demo-api"),
+            ("pr", "view", "jdoe/dem-7", "--repo", API_GITHUB, "--json", "url,state"),
+            ("api", "repos/acme/demo-api/pulls"),
+            ("api", "--method", "DELETE", f"repos/{API_GITHUB}/pulls/101"),
+            ("api", "--method", "GET", f"repos/{API_GITHUB}/pulls", "-f", "head=acme:jdoe/dem-7"),
+            ("api", "--method", "PATCH", f"repos/{API_GITHUB}/pulls/101", "-f", "title=x"),
+            ("api", "--method", "POST", f"repos/{API_GITHUB}/pulls", "-f", "head=jdoe/dem-7"),
             (),
         ],
-        ids=["merge", "unknown-field", "no-json", "create-partial", "edit-title", "api", "none"],
+        ids=[
+            "pr-create",
+            "pr-view",
+            "no-method",
+            "delete",
+            "no-state",
+            "edit-title",
+            "create-partial",
+            "none",
+        ],
     )
     def test_refuses_unknown_argv_when_fake_gh_called(
         self, ship_workspace: Workspace, *, arguments: tuple[str, ...]
@@ -132,23 +178,28 @@ class TestShipFakes:
         assert ship_workspace.prs() == []
         assert [call["argv"] for call in ship_workspace.calls("gh")] == [list(arguments)]
 
-    def test_finds_pr_when_created_before(self, ship_workspace: Workspace) -> None:
-        created = fake_gh(ship_workspace, *create_argv("jdoe/dem-7"))
-        again = fake_gh(ship_workspace, *create_argv("jdoe/dem-7", body="other"))
-        viewed = fake_gh(
-            ship_workspace, "pr", "view", "jdoe/dem-7", "--repo", API_GITHUB, "--json", "url,state"
-        )
+    def test_finds_pr_when_created_before(
+        self, ship_workspace: Workspace, tmp_path: pathlib.Path
+    ) -> None:
+        created = fake_gh(ship_workspace, *create_argv("jdoe/dem-7"), stdin=b"DEM-7")
+        again = fake_gh(ship_workspace, *create_argv("jdoe/dem-7"), stdin=b"other")
+        viewed = fake_gh(ship_workspace, *view_argv("jdoe/dem-7"))
         url = "https://github.com/acme/demo-api/pull/101"
-        edited = fake_gh(ship_workspace, "pr", "edit", url, "--body", "DEM-7 linked")
-        body = fake_gh(ship_workspace, "pr", "view", url, "--json", "body")
+        body_file = tmp_path / "linked.body"
+        body_file.write_text("DEM-7 linked", encoding="utf-8")
+        edited = fake_gh(ship_workspace, *edit_argv(url, str(body_file)))
+        body = fake_gh(ship_workspace, *read_argv(url))
 
-        assert (created.returncode, created.stdout.decode()) == (0, f"{url}\n")
+        assert created.returncode == 0
+        assert json.loads(created.stdout)["html_url"] == url
         assert again.returncode == 1
-        assert url in again.stderr.decode()
+        assert url in again.stdout.decode()
         assert viewed.returncode == 0
-        assert json.loads(viewed.stdout) == {"url": url, "state": "OPEN"}
+        assert [(pr["html_url"], pr["state"]) for pr in json.loads(viewed.stdout)] == [
+            (url, "open")
+        ]
         assert edited.returncode == 0
-        assert json.loads(body.stdout) == {"body": "DEM-7 linked"}
+        assert json.loads(body.stdout)["body"] == "DEM-7 linked"
         assert ship_workspace.prs() == [
             {
                 "repo": API_GITHUB,
@@ -167,15 +218,10 @@ class TestShipFakes:
     ) -> None:
         monkeypatch.setenv("FAKE_GH_FAIL", "create:demo-web,view:demo-api")
 
-        created = fake_gh(ship_workspace, *create_argv("jdoe/dem-7"))
-        viewed = fake_gh(
-            ship_workspace, "pr", "view", "jdoe/dem-7", "--repo", API_GITHUB, "--json", "url,state"
-        )
-        web = [
-            *("pr", "create", "--repo", "acme/demo-web", "--base", "trunk"),
-            *("--head", "jdoe/dem-7", "--title", "t", "--body", "b", "--draft"),
-        ]
-        refused = fake_gh(ship_workspace, *web)
+        created = fake_gh(ship_workspace, *create_argv("jdoe/dem-7"), stdin=b"b")
+        viewed = fake_gh(ship_workspace, *view_argv("jdoe/dem-7"))
+        web = [*create_argv("jdoe/dem-7", repo="acme/demo-web"), "-F", "draft=true"]
+        refused = fake_gh(ship_workspace, *web, stdin=b"b")
 
         assert created.returncode == 0
         assert viewed.returncode == 1
@@ -1027,14 +1073,18 @@ API_PR = "https://github.com/acme/demo-api/pull/101"
 WEB_PR = "https://github.com/acme/demo-web/pull/102"
 ISSUE_URL = "https://linear.app/demo/issue/DEM-7"
 SHIP_BODY = f"DEM-7 {ISSUE_URL}\n\n{RELATED_START}\n## Related PRs\n{RELATED_END}"
+# How a dry run shows the body the create would read from stdin.
+SHOWN_BODY = json.dumps(SHIP_BODY)
 
 
 def create_call(github: str, branch: str, title: str, *, draft: bool = False) -> list[str]:
+    """The REST create hub ship runs: the title, head and base as fields, the body on stdin."""
     argv = [
-        *("gh", "pr", "create", "--repo", github, "--base", "trunk", "--head", branch),
-        *("--title", title, "--body", SHIP_BODY),
+        *("gh", "api", "--method", "POST", f"repos/{github}/pulls"),
+        *("-f", f"title={title}", "-f", f"head={branch}", "-f", "base=trunk"),
+        *("-F", "body=@-"),
     ]
-    return [*argv, "--draft"] if draft else argv
+    return [*argv, "-F", "draft=true"] if draft else argv
 
 
 def shipping_calls(child_calls: Any) -> list[tuple[list[str], Any]]:
@@ -1082,17 +1132,17 @@ class TestShipPrs:
             (create_call(API_GITHUB, "jdoe/dem-7-x", api_title), api),
             (["git", *push_command("jdoe/dem-7")[1:]], web),
             (create_call("acme/demo-web", "jdoe/dem-7", web_title), web),
-            (["gh", "pr", "view", API_PR, "--json", "body"], api),
-            (
-                ["gh", "pr", "edit", API_PR, "--body-file", body_file(ship_workspace, "demo-api")],
-                api,
-            ),
-            (["gh", "pr", "view", WEB_PR, "--json", "body"], web),
-            (
-                ["gh", "pr", "edit", WEB_PR, "--body-file", body_file(ship_workspace, "demo-web")],
-                web,
-            ),
+            (["gh", *read_argv(API_PR)], api),
+            (["gh", *edit_argv(API_PR, body_file(ship_workspace, "demo-api"))], api),
+            (["gh", *read_argv(WEB_PR)], web),
+            (["gh", *edit_argv(WEB_PR, body_file(ship_workspace, "demo-web"))], web),
         ]
+        # The body goes on the create's stdin, never on a command line.
+        create = ["gh", "api", "--method", "POST"]
+        given = [(call.argv[:4], call.stdin) for call in child_calls.calls if call.stdin]
+        assert given == [(create, SHIP_BODY.encode())] * 2
+        creates = [call for call in child_calls.calls if call.argv[:4] == create]
+        assert [call.output_limit for call in creates] == [1_048_576] * 2
         assert [(pr["url"], pr["draft"]) for pr in ship_workspace.prs()] == [
             (API_PR, False),
             (WEB_PR, False),
@@ -1123,8 +1173,8 @@ class TestShipPrs:
 
         assert result.exit_code == 0, result.output
         gh = [call["argv"] for call in ship_workspace.calls("gh")]
-        creates = [argv for argv in gh if argv[:2] == ["pr", "create"]]
-        assert [argv[-1] for argv in creates] == ["--draft", "--draft"]
+        creates = [argv for argv in gh if argv[:3] == ["api", "--method", "POST"]]
+        assert [argv[-2:] for argv in creates] == [["-F", "draft=true"]] * 2
         assert [pr["draft"] for pr in ship_workspace.prs()] == [True, True]
 
     def test_refuses_web_push_when_credential_helper_set(
@@ -1190,15 +1240,16 @@ class TestShipPrs:
         result = ship_live(ship_workspace, run_command, child_calls)
 
         assert result.exit_code == 0, result.output
-        assert [call["argv"][:3] for call in ship_workspace.calls("gh")] == [
-            ["pr", "create", "--repo"],
-            ["pr", "view", "jdoe/dem-7-x"],
-            ["pr", "create", "--repo"],
-            ["pr", "view", found],
-            ["pr", "edit", found],
-            ["pr", "view", WEB_PR],
-            ["pr", "edit", WEB_PR],
+        assert [call["argv"][2:4] for call in ship_workspace.calls("gh")] == [
+            ["POST", "repos/acme/demo-api/pulls"],
+            ["GET", "repos/acme/demo-api/pulls"],
+            ["POST", "repos/acme/demo-web/pulls"],
+            ["GET", pull_path(found)],
+            ["PATCH", pull_path(found)],
+            ["GET", pull_path(WEB_PR)],
+            ["PATCH", pull_path(WEB_PR)],
         ]
+        assert ship_workspace.calls("gh")[1]["argv"] == view_argv("jdoe/dem-7-x")
         assert [pr["url"] for pr in ship_workspace.prs()] == [found, WEB_PR]
         assert result.stdout.splitlines()[-2:] == [
             f"found: demo-api  {found}",
@@ -1223,7 +1274,7 @@ class TestShipPrs:
 
         assert result.exit_code == 1, result.output
         assert (
-            "hub ship: demo-api: pull request failed: gh pr create failed:"
+            "hub ship: demo-api: pull request failed: gh api POST pulls failed:"
             " gh (fake): synthetic create failure"
         ) in result.stderr.splitlines()
         assert [call.cwd.name for call in pushes(child_calls)] == ["dem-7-x"]
@@ -1329,7 +1380,7 @@ def assert_unlinked(ship_workspace: Workspace, tracker: Any) -> None:
     """No PR body read or edited, no tracker write."""
     gh = [call["argv"] for call in ship_workspace.calls("gh")]
     assert gh != []
-    assert [argv for argv in gh if argv[:2] == ["pr", "edit"] or "body" in argv] == []
+    assert [argv for argv in gh if is_link_call(argv)] == []
     assert tracker.calls == [("get_issue", ISSUE)]
 
 
@@ -1375,7 +1426,7 @@ class TestShipPartial:
 
         assert result.exit_code == 1, result.output
         assert result.stderr.splitlines()[-3:] == [
-            "hub ship: demo-web: pull request failed: gh pr create failed:"
+            "hub ship: demo-web: pull request failed: gh api POST pulls failed:"
             " gh (fake): synthetic create failure",
             f"hub ship: PR open: {API_PR}",
             NOT_LINKED,
@@ -1422,7 +1473,7 @@ class TestShipPartial:
 
 
 def body_file(ship_workspace: Workspace, repo: str) -> str:
-    """The body file ``gh pr edit --body-file`` gets for ``repo``."""
+    """The body file the REST edit reads for ``repo`` (``-F body=@<file>``)."""
     return str(log_path(ship_workspace, repo).with_suffix(".body"))
 
 
@@ -1434,11 +1485,7 @@ def linked_body(*urls: str, before: str = f"DEM-7 {ISSUE_URL}\n\n") -> str:
 
 def link_calls(ship_workspace: Workspace) -> list[list[str]]:
     """The ``gh`` calls of the link phase: each body read and each edit."""
-    return [
-        call["argv"]
-        for call in ship_workspace.calls("gh")
-        if call["argv"][:2] == ["pr", "edit"] or call["argv"][-2:] == ["--json", "body"]
-    ]
+    return [call["argv"] for call in ship_workspace.calls("gh") if is_link_call(call["argv"])]
 
 
 @pytest.mark.usefixtures("with_key")
@@ -1458,10 +1505,10 @@ class TestShipLinks:
 
         assert result.exit_code == 0, result.output
         assert link_calls(ship_workspace) == [
-            ["pr", "view", API_PR, "--json", "body"],
-            ["pr", "edit", API_PR, "--body-file", body_file(ship_workspace, "demo-api")],
-            ["pr", "view", WEB_PR, "--json", "body"],
-            ["pr", "edit", WEB_PR, "--body-file", body_file(ship_workspace, "demo-web")],
+            read_argv(API_PR),
+            edit_argv(API_PR, body_file(ship_workspace, "demo-api")),
+            read_argv(WEB_PR),
+            edit_argv(WEB_PR, body_file(ship_workspace, "demo-web")),
         ]
         assert [call.cwd for call in child_calls.calls if call.argv[0] == "gh"][-4:] == [
             api,
@@ -1488,7 +1535,9 @@ class TestShipLinks:
         result = ship_live(ship_workspace, run_command, child_calls)
 
         assert result.exit_code == 0, result.output
-        assert [call["argv"][:2] for call in ship_workspace.calls("gh")] == [["pr", "create"]]
+        assert [call["argv"][:3] for call in ship_workspace.calls("gh")] == [
+            ["api", "--method", "POST"]
+        ]
         assert link_calls(ship_workspace) == []
         assert [pr["body"] for pr in ship_workspace.prs()] == [SHIP_BODY]
 
@@ -1538,6 +1587,27 @@ class TestShipLinks:
         assert api_body == linked_body(WEB_PR, before="Opened by hand.\n\n")
         assert api_body.count(RELATED_START) == api_body.count(RELATED_END) == 1
 
+    def test_links_found_pr_when_its_body_is_empty(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        found = "https://github.com/acme/demo-api/pull/7"
+        # GitHub's REST API answers null for the body of a PR opened without one.
+        ship_workspace.write_prs([seeded_pr(state="OPEN", url=found) | {"body": None}])
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        api_body = ship_workspace.prs()[0]["body"]
+        assert api_body.endswith(linked_body(WEB_PR, before=""))
+        assert api_body.count(RELATED_START) == api_body.count(RELATED_END) == 1
+
     def test_skips_edit_when_run_again_unchanged(
         self,
         ship_workspace: Workspace,
@@ -1556,10 +1626,7 @@ class TestShipLinks:
         result = ship_live(ship_workspace, run_command, child_calls)
 
         assert result.exit_code == 0, result.output
-        assert link_calls(ship_workspace) == [
-            ["pr", "view", API_PR, "--json", "body"],
-            ["pr", "view", WEB_PR, "--json", "body"],
-        ]
+        assert link_calls(ship_workspace) == [read_argv(API_PR), read_argv(WEB_PR)]
         assert ship_workspace.prs() == linked
         for pr in ship_workspace.prs():
             assert pr["body"].count(RELATED_START) == pr["body"].count(RELATED_END) == 1
@@ -1602,8 +1669,8 @@ class TestShipLinks:
             f"hub ship: PR open: {WEB_PR}",
             "hub ship: the issue was not moved",
         ]
-        assert [argv for argv in link_calls(ship_workspace) if argv[1] == "edit"] == []
-        reads = [call for call in child_calls.calls if call.argv[-2:] == ["--json", "body"]]
+        assert [argv for argv in link_calls(ship_workspace) if argv[2] == "PATCH"] == []
+        reads = [call for call in child_calls.calls if call.argv == ["gh", *read_argv(api)]]
         assert [call.output_limit for call in reads] == [1_048_576]
         assert ship_steps.PR_BODY_OUTPUT_LIMIT == 1_048_576
         assert tracker.calls == [("get_issue", ISSUE)]
@@ -1625,7 +1692,8 @@ class TestShipLinks:
 
         assert result.exit_code == 1, result.output
         assert result.stderr.splitlines()[-4:] == [
-            "hub ship: demo-web: link failed: gh pr edit failed: gh (fake): synthetic edit failure",
+            "hub ship: demo-web: link failed: gh api PATCH pulls failed:"
+            " gh (fake): synthetic edit failure",
             f"hub ship: PR open: {API_PR}",
             f"hub ship: PR open: {WEB_PR}",
             "hub ship: the issue was not moved",
@@ -1845,12 +1913,11 @@ def workspace_paths(ship_workspace: Workspace) -> set[str]:
 
 def shipped_texts(ship_workspace: Workspace, tracker: Any) -> list[str]:
     """Every text hub ship gave ``gh`` or the tracker: each ``gh`` argument but a body file's
-    path (its text is the stored body), each PR's title and body as the fake stored them, and
-    each write's values."""
+    path (``body=@<file>``: its text is the stored body), each PR's title and body as the fake
+    stored them (the body read from stdin or a file), and each write's values."""
     gh = []
     for call in ship_workspace.calls("gh"):
-        argv = call["argv"]
-        gh += [arg for index, arg in enumerate(argv) if argv[index - 1 : index] != ["--body-file"]]
+        gh += [arg for arg in call["argv"] if not arg.startswith("body=@")]
     stored = [pr[field] for pr in ship_workspace.prs() for field in ("title", "body")]
     written = [value for _, *values in tracker.calls[1:] for value in values]
     return [*gh, *stored, *written]
@@ -1915,14 +1982,8 @@ class TestShipAttribution:
         result = ship_live(ship_workspace, run_command, child_calls)
 
         assert result.exit_code == 0, result.output
-        edits = [argv for argv in link_calls(ship_workspace) if argv[1] == "edit"]
-        assert edits[0] == [
-            "pr",
-            "edit",
-            found,
-            "--body-file",
-            body_file(ship_workspace, "demo-api"),
-        ]
+        edits = [argv for argv in link_calls(ship_workspace) if argv[2] == "PATCH"]
+        assert edits[0] == edit_argv(found, body_file(ship_workspace, "demo-api"))
         assert ship_workspace.prs()[0]["body"] == linked_body(
             WEB_PR, before="Notes.\nsee demo-api/x.py\n\n\n"
         )
@@ -2118,10 +2179,10 @@ class TestShipLongBodies:
         assert ship_workspace.prs()[0]["body"] == expected
         longest = max(len(argument.encode()) for c in child_calls.calls for argument in c.argv)
         assert longest <= MAX_ARGUMENT_BYTES
-        edits = [call["argv"] for call in ship_workspace.calls("gh") if call["argv"][1] == "edit"]
+        edits = [call["argv"] for call in ship_workspace.calls("gh") if call["argv"][2] == "PATCH"]
         assert edits == [
-            ["pr", "edit", found, "--body-file", body_file(ship_workspace, "demo-api")],
-            ["pr", "edit", WEB_PR, "--body-file", body_file(ship_workspace, "demo-web")],
+            edit_argv(found, body_file(ship_workspace, "demo-api")),
+            edit_argv(WEB_PR, body_file(ship_workspace, "demo-web")),
         ]
         folder = log_path(ship_workspace, "demo-api").parent
         assert sorted(entry.name for entry in folder.iterdir()) == [
@@ -2166,11 +2227,11 @@ class TestShipDryRun:
             f"would run: bash -c 'make check'   (cwd {api})",
             f"would run: {shown_command(push_command('jdoe/dem-7-x'))}   (cwd {api})",
             f"would run: {shown_command(create_call(API_GITHUB, 'jdoe/dem-7-x', api_title))}"
-            f"   (cwd {api})",
+            f" <<< {SHOWN_BODY}   (cwd {api})",
             f"would run: bash -c 'make check'   (cwd {web})",
             f"would run: {shown_command(push_command('jdoe/dem-7'))}   (cwd {web})",
             f"would run: {shown_command(create_call('acme/demo-web', 'jdoe/dem-7', web_title))}"
-            f"   (cwd {web})",
+            f" <<< {SHOWN_BODY}   (cwd {web})",
             f"would call: move_state({ISSUE}, In Review)",
             "would call: "
             + json.dumps(f"comment({ISSUE}, Pull requests:\n- {DRY_API_PR}\n- {DRY_WEB_PR})"),
@@ -2190,11 +2251,11 @@ class TestShipDryRun:
         result = ship_live(ship_workspace, run_command, child_calls, "--dry-run", "--draft")
 
         assert result.exit_code == 0, result.output
-        creates = [line for line in result.stdout.splitlines() if " gh pr create " in line]
+        creates = [line for line in result.stdout.splitlines() if " gh api " in line]
         draft = create_call(API_GITHUB, "jdoe/dem-7-x", "feat(api): add x (DEM-7)", draft=True)
-        assert creates == [f"would run: {shown_command(draft)}   (cwd {api})"]
+        assert creates == [f"would run: {shown_command(draft)} <<< {SHOWN_BODY}   (cwd {api})"]
         # A dry run never shows a link edit: the live one runs only when it changes a body.
-        assert " gh pr edit " not in result.stdout
+        assert " PATCH " not in result.stdout
 
     def test_prints_label_removal_when_dry_run_issue_carries_failed_label(
         self,

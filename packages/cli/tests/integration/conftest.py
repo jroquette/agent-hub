@@ -1927,22 +1927,31 @@ elif mode in ("prose", "silent"):
     answer("I made the change and ran the tests.")
 """.replace("RUN_COST", repr(RUN_COST_USD)).replace("RUN_SUMMARY", repr(RUN_SUMMARY))
 )
+# hub run's ``gh``: GitHub's REST API (``gh api``), as a cloud session's proxy lets through:
+# ``--method POST repos/<repo>/pulls`` (the body read from stdin, logged as ``stdin``) and
+# ``--method GET repos/<repo>/pulls`` (the branch's open PR). ``pr view <branch>`` answers a
+# workflow's own shell step (the sample pack's ``pr`` node), never hub run, which reads GitHub
+# through the REST API only; any other call exits 2.
 _RUN_FAKE_GH = (
     _FAKE_LOG
     + """mode = os.environ.get("FAKE_GH_MODE", "url")
-log("gh", mode=mode)
-if sys.argv[1:3] == ["pr", "view"]:
-    # The branch's PR: open in mode "exists", none otherwise.
-    if mode != "exists":
-        print("no pull requests found for branch", file=sys.stderr)
-        sys.exit(1)
+argv = sys.argv[1:]
+log("gh", mode=mode, stdin=sys.stdin.read() if "body=@-" in argv else None)
+if argv[:2] == ["pr", "view"] and mode == "exists":
     print(json.dumps({"url": PR_URL, "state": "OPEN"}))
     sys.exit(0)
+if argv[:3] == ["api", "--method", "GET"]:
+    # The branch's open PR: listed in mode "exists", none otherwise.
+    print(json.dumps([{"html_url": PR_URL, "state": "open"}] if mode == "exists" else []))
+    sys.exit(0)
+if argv[:3] != ["api", "--method", "POST"]:
+    print("gh (fake): unknown call: " + " ".join(argv), file=sys.stderr)
+    sys.exit(2)
 if mode in ("fail", "exists"):
-    print("gh: a pull request already exists" if mode == "exists" else "gh: synthetic failure",
+    print("gh: Validation Failed (HTTP 422)" if mode == "exists" else "gh: synthetic failure",
           file=sys.stderr)
     sys.exit(1)
-print("Creating pull request" if mode == "no-url" else PR_URL)
+print(json.dumps({"number": 1} if mode == "no-url" else {"html_url": PR_URL, "number": 1}))
 """.replace("PR_URL", repr(RUN_PR_URL))
 )
 _FAKE_MAKE = (
@@ -2158,20 +2167,22 @@ def logged_git(run_workspace: RunWorkspace) -> RunWorkspace:
 
 
 # hub ship's fakes (AGH-63). Its ``gh`` keeps the PRs it opened in ``FAKE_GH_STATE``, a JSON list
-# of ``{repo, head, base, title, url, state, body, draft}``, and answers only the calls hub ship
-# makes: ``pr create``, ``pr view <branch> --repo R --json …``, ``pr view <url> --json …`` and
-# ``pr edit <url> --body B`` or ``--body-file F``. It serves only the ``--json`` fields asked
-# for and exits 2 on any other argv. ``FAKE_GH_FAIL`` (``<step>:<repo>,…``, steps ``create``,
-# ``view``, ``body``, ``edit``, repo as its dir) makes that call exit 1; step ``nourl`` makes
-# ``pr create`` exit 0 without printing a url or opening a PR. Every call is logged as the run
-# fakes log.
+# of ``{repo, head, base, title, url, state, body, draft}``, and answers only the GitHub REST
+# calls (``gh api``; a cloud session's proxy refuses ``gh pr``, which is GraphQL) hub ship makes:
+# ``--method POST repos/<repo>/pulls`` with the fields ``title``, ``head``, ``base`` (``-f``),
+# ``body`` (``-F body=@-``, read from stdin) and ``-F draft=true``; ``--method GET
+# repos/<repo>/pulls -f head=<owner>:<branch> -f state=open``; ``--method GET
+# repos/<repo>/pulls/<n>``; and ``--method PATCH repos/<repo>/pulls/<n> -F body=@<file>``. It
+# prints each PR as the REST API does (``html_url``, ``state`` in lower case, ``body``…) and
+# exits 2 on any other argv. ``FAKE_GH_FAIL`` (``<step>:<repo>,…``, steps ``create``, ``view``,
+# ``body``, ``edit``, repo as its dir) makes that call exit 1; step ``nourl`` makes the create
+# exit 0 without a PR url or opening a PR. Every call is logged as the run fakes log.
 _SHIP_FAKE_GH = (
     _FAKE_LOG
     + """import re
 argv = sys.argv[1:]
 log("gh")
 STATE = os.environ["FAKE_GH_STATE"]
-FIELDS = ("url", "state", "body")
 FAILS = {tuple(entry.split(":", 1)) for entry in os.environ.get("FAKE_GH_FAIL", "").split(",")}
 def refuse():
     print("gh (fake): unknown call: " + " ".join(argv), file=sys.stderr)
@@ -2184,37 +2195,45 @@ def load():
 def save(prs):
     with open(STATE, "w") as file:
         json.dump(prs, file)
-def options(arguments, names, switches=()):
-    # The options of one call: each of ``names`` takes a value, each of ``switches`` none.
-    found, index = {}, 0
-    while index < len(arguments):
-        name = arguments[index]
-        if name in switches:
-            found[name] = True
-            index += 1
-        elif name in names and index + 1 < len(arguments) and name not in found:
-            found[name] = arguments[index + 1]
-            index += 2
-        else:
-            refuse()
-    if any(name not in found for name in names):
+def api_fields(arguments):
+    # Each -f key=value as text; -F key=@- from stdin, -F key=@<file> from that file, and
+    # -F key=true as true: the forms hub ship sends. Anything else is refused.
+    if len(arguments) % 2:
         refuse()
+    found = {}
+    for flag, field in zip(arguments[::2], arguments[1::2]):
+        key, sep, value = field.partition("=")
+        if flag not in ("-f", "-F") or not sep or key in found:
+            refuse()
+        if flag == "-F" and value == "@-":
+            value = sys.stdin.read()
+        elif flag == "-F" and value.startswith("@"):
+            with open(value[1:], encoding="utf-8") as file:
+                value = file.read()
+        elif flag == "-F":
+            value = True if value == "true" else refuse()
+        found[key] = value
     return found
 def fails(step, repo):
     if (step, repo.rsplit("/", 1)[-1]) in FAILS:
         print("gh (fake): synthetic " + step + " failure", file=sys.stderr)
         sys.exit(1)
-def fields(given):
-    asked = given.split(",")
-    if not asked or any(field not in FIELDS for field in asked):
-        refuse()
-    return asked
-def show(pr, asked):
-    print(json.dumps({field: pr[field] for field in asked}))
+def serve(pr):
+    # The PR as GitHub's REST API answers it (the fields hub ship may read).
+    number = int(pr["url"].rsplit("/", 1)[1])
+    merged = pr["state"] == "MERGED"
+    return {
+        "url": "https://api.github.com/repos/" + pr["repo"] + "/pulls/" + str(number),
+        "html_url": pr["url"], "number": number,
+        "state": "open" if pr["state"] == "OPEN" else "closed",
+        "merged": merged, "merged_at": "2026-10-01T00:00:00Z" if merged else None,
+        "title": pr["title"], "body": pr["body"], "draft": pr["draft"],
+        "head": {"ref": pr["head"], "repo": {"full_name": pr["repo"]}},
+        "base": {"ref": pr["base"], "repo": {"full_name": pr["repo"]}},
+    }
+def show(pr):
+    print(json.dumps(serve(pr)))
     sys.exit(0)
-def repo_of(url):
-    match = re.fullmatch(r"https://github[.]com/([^/]+/[^/]+)/pull/[0-9]+", url)
-    return match.group(1) if match else refuse()
 def by_url(prs, url):
     found = [pr for pr in prs if pr["url"] == url]
     if not found:
@@ -2222,50 +2241,49 @@ def by_url(prs, url):
         sys.exit(1)
     return found[0]
 prs = load()
-if argv[:2] == ["pr", "create"]:
-    given = options(argv[2:], ("--repo", "--base", "--head", "--title", "--body"), ("--draft",))
-    repo, head = given["--repo"], given["--head"]
+if len(argv) < 4 or argv[:2] != ["api", "--method"]:
+    refuse()
+method, path, fields = argv[2], argv[3], api_fields(argv[4:])
+pulls = re.fullmatch(r"repos/([^/]+)/([^/]+)/pulls", path)
+one = re.fullmatch(r"repos/([^/]+/[^/]+)/pulls/([0-9]+)", path)
+if method == "POST" and pulls and set(fields) - {"draft"} == {"title", "head", "base", "body"}:
+    repo, head = pulls.group(1) + "/" + pulls.group(2), fields["head"]
+    if fields.get("draft", True) is not True:
+        refuse()
     fails("create", repo)
     if ("nourl", repo.rsplit("/", 1)[-1]) in FAILS:
-        print("Creating pull request for " + head)
+        print(json.dumps({"message": "Created"}))
         sys.exit(0)
     for pr in prs:
         if (pr["repo"], pr["head"], pr["state"]) == (repo, head, "OPEN"):
-            print("a pull request for branch " + head + " already exists:\\n" + pr["url"],
-                  file=sys.stderr)
+            print(json.dumps({"message": "Validation Failed", "errors": [
+                {"message": "A pull request already exists for " + pr["url"]}]}))
+            print("gh: Validation Failed (HTTP 422)", file=sys.stderr)
             sys.exit(1)
     url = "https://github.com/" + repo + "/pull/" + str(101 + len(prs))
-    prs.append({"repo": repo, "head": head, "base": given["--base"], "title": given["--title"],
-                "url": url, "state": "OPEN", "body": given["--body"],
-                "draft": "--draft" in given})
+    prs.append({"repo": repo, "head": head, "base": fields["base"], "title": fields["title"],
+                "url": url, "state": "OPEN", "body": fields["body"],
+                "draft": "draft" in fields})
     save(prs)
-    print(url)
-elif argv[:2] == ["pr", "view"] and len(argv) > 2 and "--repo" in argv:
-    given = options(argv[3:], ("--repo", "--json"))
-    fails("view", given["--repo"])
-    asked = fields(given["--json"])
-    found = [pr for pr in prs if (pr["repo"], pr["head"]) == (given["--repo"], argv[2])]
-    if not found:
-        print("no pull requests found for branch " + argv[2], file=sys.stderr)
-        sys.exit(1)
-    show(found[-1], asked)
-elif argv[:2] == ["pr", "view"] and len(argv) > 2:
-    given = options(argv[3:], ("--json",))
-    fails("body", repo_of(argv[2]))
-    show(by_url(prs, argv[2]), fields(given["--json"]))
-elif argv[:2] == ["pr", "edit"] and len(argv) > 2 and "--body-file" in argv:
-    given = options(argv[3:], ("--body-file",))
-    fails("edit", repo_of(argv[2]))
-    with open(given["--body-file"], encoding="utf-8") as file:
-        by_url(prs, argv[2])["body"] = file.read()
+    show(prs[-1])
+elif method == "GET" and pulls and sorted(fields) == ["head", "state"]:
+    repo = pulls.group(1) + "/" + pulls.group(2)
+    owner, _, head = fields["head"].partition(":")
+    if owner != pulls.group(1) or fields["state"] != "open":
+        refuse()
+    fails("view", repo)
+    found = [serve(pr) for pr in prs
+             if (pr["repo"], pr["head"], pr["state"]) == (repo, head, "OPEN")]
+    print(json.dumps(found))
+elif method == "GET" and one and not fields:
+    fails("body", one.group(1))
+    show(by_url(prs, "https://github.com/" + one.group(1) + "/pull/" + one.group(2)))
+elif method == "PATCH" and one and list(fields) == ["body"]:
+    fails("edit", one.group(1))
+    pr = by_url(prs, "https://github.com/" + one.group(1) + "/pull/" + one.group(2))
+    pr["body"] = fields["body"]
     save(prs)
-    print(argv[2])
-elif argv[:2] == ["pr", "edit"] and len(argv) > 2:
-    given = options(argv[3:], ("--body",))
-    fails("edit", repo_of(argv[2]))
-    by_url(prs, argv[2])["body"] = given["--body"]
-    save(prs)
-    print(argv[2])
+    show(pr)
 else:
     refuse()
 """
@@ -2370,6 +2388,7 @@ class SpiedChild(NamedTuple):
     timeout: float | None
     own_session: bool | None
     output_limit: int | None
+    stdin: bytes | None = None
 
 
 class ChildCalls:
@@ -2393,6 +2412,7 @@ class ChildCalls:
                     timeout=options.get("timeout"),
                     own_session=options.get("own_session"),
                     output_limit=options.get("output_limit"),
+                    stdin=options.get("stdin"),
                 )
             )
             return real(argv, **options)

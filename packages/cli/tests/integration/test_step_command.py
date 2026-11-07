@@ -263,7 +263,12 @@ class TestPr:
         )
         (gh,) = run_workspace.calls("gh")
         assert gh["cwd"] == str(worktree_of(workspace))
-        assert gh["argv"][-1] == "DEM-1\n\nAdds it.\n\n## Verification\nGates green: `make check`."
+        assert gh["argv"] == [
+            *("api", "--method", "POST", "repos/acme/demo-api/pulls"),
+            *("-f", f"title={SUBJECT}", "-f", "head=jdoe/dem-1", "-f", "base=trunk"),
+            *("-F", "body=@-"),
+        ]
+        assert gh["stdin"] == "DEM-1\n\nAdds it.\n\n## Verification\nGates green: `make check`."
         assert "GH_TOKEN" in gh["env"]
         assert KEY_VARIABLE not in gh["env"]
 
@@ -279,7 +284,7 @@ class TestPr:
 
         assert result.exit_code == 0, result.output
         (gh,) = run_workspace.calls("gh")
-        assert gh["argv"][-1].splitlines()[:2] == [
+        assert gh["stdin"].splitlines()[:2] == [
             "DEM-1",
             "Feature record: https://github.com/acme/demo-hub/blob/trunk/brain/features"
             "/demo-feature/",
@@ -325,7 +330,7 @@ class TestPr:
         assert result.exit_code == 1
         assert result.stdout == ""
         assert result.stderr.splitlines()[-1].startswith(
-            "hub step pr: gh pr create failed: gh: synthetic failure"
+            "hub step pr: gh api POST pulls failed: gh: synthetic failure"
         )
 
 

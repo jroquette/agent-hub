@@ -1,3 +1,4 @@
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -40,14 +41,22 @@ TIMEOUTS = StepTimeouts(gate=11.0, push=13.0, gh=17.0, git=19.0)
 LIST = ("git", "config", "--list", "--show-scope", "--includes", "-z")
 ORIGIN = ("git", "config", "--get-all", "remote.origin.url")
 GITHUB_ORIGIN = ChildResult(0, b"https://github.com/acme/demo-api.git\n", b"")
-CREATE = ("gh", "pr", "create")
-VIEW = ("gh", "pr", "view")
+# GitHub's REST API through ``gh api``: a cloud session's proxy refuses ``gh pr`` (GraphQL).
+CREATE = ("gh", "api", "--method", "POST")
+VIEW = ("gh", "api", "--method", "GET")
 PR_URL = "https://github.com/acme/demo-api/pull/7"
 CREATE_FAILED = ChildResult(1, b"", b"a pull request for branch already exists\n")
 CREATE_ARGV = (
-    *("gh", "pr", "create", "--repo", "acme/demo-api", "--base", "trunk"),
-    *("--head", "jdoe/dem-7-x", "--title", "feat: add x", "--body", "DEM-7"),
+    *("gh", "api", "--method", "POST", "repos/acme/demo-api/pulls"),
+    *("-f", "title=feat: add x", "-f", "head=jdoe/dem-7-x", "-f", "base=trunk"),
+    *("-F", "body=@-"),
 )
+VIEW_ARGV = (
+    *("gh", "api", "--method", "GET", "repos/acme/demo-api/pulls"),
+    *("-f", "head=acme:jdoe/dem-7-x", "-f", "state=open"),
+)
+CREATED = ChildResult(0, json.dumps({"html_url": PR_URL, "number": 7}).encode(), b"")
+CREATE_GAVE_UP = "gh api POST pulls failed: a pull request for branch already exists\n"
 
 
 @dataclass(frozen=True)
@@ -56,6 +65,8 @@ class Call:
     env: dict[str, str]
     timeout: float
     cwd: Path | None
+    output_limit: int = 0
+    stdin: bytes | None = None
 
 
 @dataclass
@@ -74,8 +85,9 @@ class FakeChild:
         timeout: float,
         output_limit: int = 0,
         cwd: Path | None = None,
+        stdin: bytes | None = None,
     ) -> ChildResult:
-        self.calls.append(Call(tuple(argv), dict(env), timeout, cwd))
+        self.calls.append(Call(tuple(argv), dict(env), timeout, cwd, output_limit, stdin))
         matches = [prefix for prefix in self.script if tuple(argv[: len(prefix)]) == prefix]
         return self.script[max(matches, key=len)] if matches else OK
 
@@ -250,43 +262,65 @@ def open_pr(child: FakeChild, *, draft: bool = False) -> OpenedPr:
 
 
 def viewed(state: str) -> ChildResult:
-    return ChildResult(0, f'{{"url": "{PR_URL}", "state": "{state}"}}'.encode(), b"")
+    return ChildResult(0, json.dumps([{"html_url": PR_URL, "state": state}]).encode(), b"")
+
+
+def test_creates_pr_through_rest_api_with_body_on_stdin_when_opened() -> None:
+    child = FakeChild({CREATE: CREATED})
+
+    assert open_pr(child) == OpenedPr(url=PR_URL, found=False)
+    assert child.argvs() == [CREATE_ARGV]
+    assert child.calls[0].stdin == b"DEM-7"
+    assert [argument for argument in child.calls[0].argv if "DEM-7" in argument] == []
+    assert child.calls[0].output_limit == pr_steps.GH_API_OUTPUT_LIMIT == 1_048_576
 
 
 def test_uses_open_pr_when_create_fails() -> None:
-    child = FakeChild({CREATE: CREATE_FAILED, VIEW: viewed("OPEN")})
+    child = FakeChild({CREATE: CREATE_FAILED, VIEW: viewed("open")})
 
     assert open_pr(child) == OpenedPr(url=PR_URL, found=True)
-    assert child.argvs()[1] == (
-        *("gh", "pr", "view", "jdoe/dem-7-x", "--repo", "acme/demo-api"),
-        *("--json", "url,state"),
-    )
+    assert child.argvs()[1] == VIEW_ARGV
+    assert child.calls[1].stdin is None
     assert "GH_TOKEN" in child.names(1)
     assert "LINEAR_API_KEY" not in child.names(1)
     assert [call.timeout for call in child.calls] == [17.0, 17.0]
+    assert [call.output_limit for call in child.calls] == [pr_steps.GH_API_OUTPUT_LIMIT] * 2
 
 
 def test_fails_when_found_pr_closed() -> None:
-    child = FakeChild({CREATE: CREATE_FAILED, VIEW: viewed("CLOSED")})
+    child = FakeChild({CREATE: CREATE_FAILED, VIEW: viewed("closed")})
 
     with pytest.raises(PrStepError) as raised:
         open_pr(child)
 
-    assert raised.value.reason == "gh pr create failed: a pull request for branch already exists\n"
-    assert [argv[:3] for argv in child.argvs()] == [CREATE, VIEW]
+    assert raised.value.reason == CREATE_GAVE_UP
+    assert [argv[:4] for argv in child.argvs()] == [CREATE, VIEW]
 
 
 @pytest.mark.parametrize(
     "answer",
     [
-        ChildResult(1, f'{{"url": "{PR_URL}", "state": "OPEN"}}'.encode(), b""),
+        ChildResult(1, json.dumps([{"html_url": PR_URL, "state": "open"}]).encode(), b""),
         ChildResult(0, b"not json", b""),
         ChildResult(0, b"[]", b""),
-        ChildResult(0, b'{"state": "OPEN", "url": "javascript:x"}', b""),
-        ChildResult(0, b'{"state": "OPEN", "url": "https://a\\nb"}', b""),
-        ChildResult(0, b'{"state": "OPEN", "url": 7}', b""),
+        ChildResult(0, json.dumps({"html_url": PR_URL, "state": "open"}).encode(), b""),
+        ChildResult(0, b'[{"state": "open", "url": "' + PR_URL.encode() + b'"}]', b""),
+        ChildResult(0, b'[{"state": "open", "html_url": "javascript:x"}]', b""),
+        ChildResult(0, b'[{"state": "open", "html_url": "https://a\\nb"}]', b""),
+        ChildResult(0, b'[{"state": "open", "html_url": 7}]', b""),
+        ChildResult(0, b"[1]", b""),
     ],
-    ids=["exit-1", "not-json", "not-object", "not-https", "line-break", "not-string"],
+    ids=[
+        "exit-1",
+        "not-json",
+        "none",
+        "not-list",
+        "api-url-only",
+        "not-https",
+        "line-break",
+        "not-string",
+        "not-object",
+    ],
 )
 def test_fails_when_found_pr_url_refused(answer: ChildResult) -> None:
     child = FakeChild({CREATE: CREATE_FAILED, VIEW: answer})
@@ -294,12 +328,24 @@ def test_fails_when_found_pr_url_refused(answer: ChildResult) -> None:
     with pytest.raises(PrStepError) as raised:
         open_pr(child)
 
-    assert raised.value.reason == "gh pr create failed: a pull request for branch already exists\n"
-    assert [argv[:3] for argv in child.argvs()] == [CREATE, VIEW]
+    assert raised.value.reason == CREATE_GAVE_UP
+    assert [argv[:4] for argv in child.argvs()] == [CREATE, VIEW]
 
 
-def test_fails_when_create_prints_no_url() -> None:
-    child = FakeChild({CREATE: ChildResult(0, b"done\n", b"")})
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        b"done\n",
+        f"{PR_URL}\n".encode(),
+        b'{"url": "https://api.github.com/repos/acme/demo-api/pulls/7"}',
+        b'{"html_url": "javascript:x"}',
+        b"[]",
+        b"{" + b" " * pr_steps.GH_API_OUTPUT_LIMIT + b'"html_url": "' + PR_URL.encode() + b'"}',
+    ],
+    ids=["text", "url-text", "api-url-only", "not-https", "not-object", "too-long"],
+)
+def test_fails_when_create_prints_no_url(stdout: bytes) -> None:
+    child = FakeChild({CREATE: ChildResult(0, stdout, b"")})
 
     with pytest.raises(PrStepError) as raised:
         open_pr(child)
@@ -309,12 +355,11 @@ def test_fails_when_create_prints_no_url() -> None:
 
 
 def test_adds_draft_when_draft_asked() -> None:
-    created = ChildResult(0, f"{PR_URL}\n".encode(), b"")
-    child = FakeChild({CREATE: created})
+    child = FakeChild({CREATE: CREATED})
 
     assert open_pr(child, draft=True) == OpenedPr(url=PR_URL, found=False)
     assert open_pr(child, draft=False) == OpenedPr(url=PR_URL, found=False)
-    assert child.argvs() == [(*CREATE_ARGV, "--draft"), CREATE_ARGV]
+    assert child.argvs() == [(*CREATE_ARGV, "-F", "draft=true"), CREATE_ARGV]
     assert "GH_TOKEN" in child.names(0)
 
 
@@ -356,7 +401,7 @@ def test_pushes_from_given_folder_when_cwd_passed() -> None:
 
 
 def test_opens_pr_from_given_folder_when_cwd_passed() -> None:
-    child = FakeChild({CREATE: CREATE_FAILED, VIEW: viewed("OPEN")})
+    child = FakeChild({CREATE: CREATE_FAILED, VIEW: viewed("open")})
 
     open_or_find_pr(
         child,
@@ -373,7 +418,7 @@ def test_opens_pr_from_given_folder_when_cwd_passed() -> None:
 
 
 def test_runs_in_caller_folder_when_cwd_not_passed() -> None:
-    child = FakeChild({ORIGIN: GITHUB_ORIGIN, CREATE: ChildResult(0, PR_URL.encode(), b"")})
+    child = FakeChild({ORIGIN: GITHUB_ORIGIN, CREATE: CREATED})
 
     run_gate(child, gate="true", environ=CALLER_ENV, timeout=5.0)
     push_branch(child, target=TARGET, environ=CALLER_ENV, timeouts=TIMEOUTS)
