@@ -158,14 +158,16 @@ def default_branches(text: str) -> dict[str, str]:
 
 
 def git_lines(repo_dir: Path, *args: str) -> list[str]:
-    """Git's stdout lines in the repo (no network); raises ``RefsUnreadableError`` when git
-    cannot run there or fails."""
+    """Git's stdout lines in the repo (no network), read as UTF-8 with a byte that is not
+    shown as U+FFFD (git prints a subject in ``i18n.logOutputEncoding``, or as stored when it
+    cannot convert it); raises ``RefsUnreadableError`` when git cannot run there or fails."""
     try:
         done = subprocess.run(  # noqa: S603 - fixed arguments, read-only, in a hub repo
             ["git", *args],  # noqa: S607 - git from PATH, as for-each-ref runs it
             cwd=repo_dir,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=GIT_TIMEOUT,
             check=False,
         )
