@@ -5,8 +5,9 @@ pairs it with the hub's workflow of that name and compares the two packs. A pack
 when every file of the built-in's pack (hidden names and ``__pycache__`` skipped, as the seed
 skips them) is a regular file of the hub's pack at the same path with the same bytes; the hub's
 own extra files do not count. No link is followed: a link where the built-in has a file, or on
-its path, differs. A built-in whose hub file did not load is left out (``workflows.valid``
-reports that file).
+its path, differs. A hub file whose size is not the built-in file's differs unread, and each pair
+of packs is compared once, however many workflows they hold. A built-in whose hub file did not
+load is left out (``workflows.valid`` reports that file).
 """
 
 import os
@@ -29,17 +30,21 @@ def workflow_shadows(
     discovery = discover_workflows(hub_root, builtin_root=builtin_root)
     hub = {found.name: found for found in discovery.workflows if found.origin == "hub"}
     shadows: list[WorkflowShadow] = []
+    compared: dict[tuple[Path, Path], bool] = {}
     for builtin in discovery.overridden:
         mine = hub.get(builtin.name)
         if mine is None:
             continue
+        packs = (mine.pack_root, builtin.pack_root)
+        if packs not in compared:
+            compared[packs] = _holds_pack(*packs)
         shadows.append(
             WorkflowShadow(
                 name=mine.name,
                 path=mine.path.relative_to(hub_root).as_posix(),
                 pack=mine.pack_root.relative_to(hub_root).as_posix(),
                 builtin_pack=builtin.pack,
-                identical=_holds_pack(mine.pack_root, builtin.pack_root),
+                identical=compared[packs],
             )
         )
     return tuple(shadows)
@@ -48,8 +53,9 @@ def workflow_shadows(
 def _holds_pack(hub_pack: Path, builtin_pack: Path) -> bool:
     """Whether every file of ``builtin_pack`` is in ``hub_pack`` with the same bytes."""
     for relative in _pack_files(builtin_pack):
-        mine = _regular_bytes(hub_pack, relative)
-        if mine is None or mine != (builtin_pack / relative).read_bytes():
+        theirs = builtin_pack / relative
+        mine = _regular_bytes(hub_pack, relative, size=theirs.stat().st_size)
+        if mine is None or mine != theirs.read_bytes():
             return False
     return True
 
@@ -69,20 +75,20 @@ def _skipped(name: str) -> bool:
     return name.startswith(".") or name == _SKIPPED_FOLDER
 
 
-def _regular_bytes(root: Path, relative: str) -> bytes | None:
+def _regular_bytes(root: Path, relative: str, *, size: int) -> bytes | None:
     """The bytes of ``root/relative`` when no part of its path is a link and it is a regular
-    file; else ``None``."""
+    file of ``size`` bytes, the only case in which it is read; else ``None``."""
     path = root
-    mode = 0
+    found: os.stat_result | None = None
     for part in relative.split("/"):
         path = path / part
         try:
-            mode = os.lstat(path).st_mode
+            found = os.lstat(path)
         except OSError:
             return None
-        if stat.S_ISLNK(mode):
+        if stat.S_ISLNK(found.st_mode):
             return None
-    if not stat.S_ISREG(mode):
+    if found is None or not stat.S_ISREG(found.st_mode) or found.st_size != size:
         return None
     try:
         return path.read_bytes()
