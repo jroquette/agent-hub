@@ -137,7 +137,7 @@ class SkillReads:
         self._guard = threading.Lock()
 
     def catalog(self, *, project: str, hub_path: str) -> SkillCatalog:
-        """The hub's catalog with usage joined."""
+        """The hub's catalog with usage joined, and the hub tool calls."""
         sources, folded = self._folded(project, hub_path)
         self._capture_items(project, hub_path, sources, *folded.catalog.items)
         usage = self._project_usage(project)
@@ -145,7 +145,8 @@ class SkillReads:
             item.model_copy(update={"usage": _usage_of(item, usage)})
             for item in folded.catalog.items
         )
-        return folded.catalog.model_copy(update={"items": items})
+        hub_tools = {} if usage is None else dict(usage.hub_tools)
+        return folded.catalog.model_copy(update={"items": items, "hub_tools": hub_tools})
 
     def item_names(self, *, project: str, hub_path: str) -> frozenset[tuple[ItemKind, str]]:
         """The kind and name of each catalog item, from the (memoized) fold alone: no unit is

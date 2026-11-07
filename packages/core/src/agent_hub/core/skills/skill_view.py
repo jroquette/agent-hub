@@ -311,7 +311,8 @@ class SkillCatalog(ViewModel):
     """A project's skills, agents and hooks in stable order (kind, name, source).
 
     ``truncated`` says a bound stopped the listing or the reads; ``notice`` is one line for the
-    owner (an empty hub, a file not read), or None.
+    owner (an empty hub, a file not read), or None. ``hub_tools`` is the usage fold's calls of
+    the hub's knowledge tools (``SkillUsage.hub_tools``), empty with no event source (AGH-699).
     """
 
     project: str
@@ -320,6 +321,7 @@ class SkillCatalog(ViewModel):
     truncated: bool = False
     notice: str | None = None
     usage_days: int = USAGE_DAYS
+    hub_tools: dict[str, HubToolCalls] = {}
 
 
 class FrontmatterPair(ViewModel):
