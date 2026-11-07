@@ -452,6 +452,119 @@ def test_states_git_read_limits_when_constants_read(
     assert run_python(hook_python, GIT_LIMITS, path=ws / "demo-hub" / HOOKS) == [2, 4]
 
 
+PUSH_UNREAD_REASON = (
+    "the branch this `git push` sends cannot be told ({}); confirm it is not a protected branch"
+)
+READS_CAP_CAUSE = "over 4 git reads in one command"
+
+
+def test_asks_with_cap_cause_when_command_needs_fifth_git_read(ws: Path, decide: Decide) -> None:
+    repos = [git_repo(ws / f"r{n}", "me/dem-1-x", "me@example.com") for n in range(5)]
+    pushes = " && ".join(f"git -C {repo.name} push" for repo in repos)
+    commits = " && ".join(f"git -C {repo.name} commit -m x" for repo in repos)
+
+    verdicts = decide([bash_at(pushes, ws), bash_at(commits, ws), bash_at(pushes[:-15], ws)])
+
+    assert verdicts == [
+        ("ask", PUSH_UNREAD_REASON.format(READS_CAP_CAUSE)),
+        ("ask", IDENTITY_UNCHECKED_REASON.format(READS_CAP_CAUSE, "commit")),
+        None,
+    ]
+
+
+# The git reads of one command share one deadline, so they, the project extension's 3 s and its
+# 1 s kill wait stay inside the hook's 10 s (past 10 s the call goes through unchecked). The child
+# runs reads that each hang until cut, on a clock they move. argv: hub, cwd. Prints [verdict, the
+# timeouts the reads were given, the deadline, the extension's timeout and kill wait].
+GIT_DEADLINE = r"""
+import json
+import subprocess
+from pathlib import Path
+import guard
+from hubhooks import load_config
+clock = [0.0]
+class Clock:
+    monotonic = staticmethod(lambda: clock[0])
+guard.time = Clock
+timeouts = []
+def hung(args, **kwargs):
+    timeouts.append(kwargs["timeout"])
+    clock[0] += kwargs["timeout"]
+    raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+subprocess.run = hung
+cfg = load_config(Path(sys.argv[1]))
+command = " && ".join(f"git -C r{n} push" for n in range(4))
+found = guard.check_change_flow(command, cfg, sys.argv[2])
+limits = [guard.GIT_READS_BUDGET, guard.EXTENSION_TIMEOUT, guard.KILL_WAIT]
+print(json.dumps([found, timeouts, *limits]))
+"""
+
+
+def test_stops_git_reads_when_shared_deadline_spent(
+    ws: Path, *, hook_python: str, run_python: Callable[..., Any]
+) -> None:
+    hub = ws / "demo-hub"
+
+    found = run_python(hook_python, GIT_DEADLINE, path=hub / HOOKS, args=[str(hub), str(ws)])
+
+    verdict, timeouts, budget, extension, kill_wait = found
+    assert verdict == ["ask", PUSH_UNKNOWN_REASON]
+    assert timeouts == [2, 2]
+    assert (budget, extension, kill_wait) == (4, 3, 1)
+    assert budget + extension + kill_wait < 10
+
+
+# The guard's git reads run the hook's own git with only git's config and location variables of
+# the call: a call that sets PATH, LD_*, DYLD_*, GIT_EXEC_PATH or GIT_TRACE* would run another git
+# (or write a trace) outside the sandbox, so it asks and git is not run.
+GIT_UNSAFE_CAUSE = "the command sets {}, which changes the git that runs"
+
+
+def test_asks_without_running_git_when_call_sets_unsafe_variable(ws: Path, decide: Decide) -> None:
+    app = git_repo(ws / "app", "me/dem-1-x", "me@example.com")
+    planted, ran, trace = ws / "planted", ws / "ran.txt", ws / "trace.txt"
+    put(planted / "git", f"#!/bin/sh\necho ran > {ran}\necho trunk\n").chmod(0o755)
+    cases = [
+        (f"PATH={planted} git push", "PATH", "push"),
+        (f"export PATH={planted}; git commit -m x", "PATH", "commit"),
+        (f"env LD_PRELOAD={planted}/x.so git push origin HEAD", "LD_PRELOAD", "push"),
+        (
+            f"DYLD_INSERT_LIBRARIES={planted}/x.dylib git commit -m x",
+            "DYLD_INSERT_LIBRARIES",
+            "commit",
+        ),
+        (f"GIT_EXEC_PATH={planted} git commit -m x", "GIT_EXEC_PATH", "commit"),
+        (f"GIT_TRACE={trace} git push", "GIT_TRACE", "push"),
+        (f"GIT_TRACE2_EVENT={trace} git commit -m x", "GIT_TRACE2_EVENT", "commit"),
+    ]
+
+    verdicts = decide([bash_at(command, app) for command, _, _ in cases])
+
+    assert verdicts == [
+        (
+            "ask",
+            PUSH_UNREAD_REASON.format(GIT_UNSAFE_CAUSE.format(name))
+            if sub == "push"
+            else IDENTITY_UNCHECKED_REASON.format(GIT_UNSAFE_CAUSE.format(name), sub),
+        )
+        for _, name, sub in cases
+    ]
+    assert not ran.exists()
+    assert not trace.exists()
+
+
+def test_reads_git_config_from_call_variables_when_git_reads_them(ws: Path, decide: Decide) -> None:
+    app = git_repo(ws / "app", "me/dem-1-x")
+    other = put(ws / "other.gitconfig", f"[user]\n\temail = {OTHER}\n")
+    mine = put(ws / "mine.gitconfig", "[user]\n\temail = me@example.com\n")
+    events = [
+        bash_at(f"GIT_CONFIG_GLOBAL={other} git commit -m x", app),
+        bash_at(f"GIT_CONFIG_GLOBAL={mine} DEBUG=1 git commit -m x", app),
+    ]
+
+    assert decide(events) == [("deny", IDENTITY_REASON.format("commit", OTHER, "author")), None]
+
+
 # Hostile commands: one command reads at most 8 message files, each at most 1 MiB (past them a
 # file asks), and a long cluster of short options is read once, letter by letter, so a command of
 # many calls or a huge word gets its verdict well inside the hook's 10 s.
