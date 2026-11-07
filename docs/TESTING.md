@@ -103,9 +103,13 @@ driver selected in production.
   the hub's `origin`, the user's checkout cloned from it, and a fake `gh` on `PATH` (`packages/hub_git/tests/conftest.py`).
   The origin's URL stays `https://github.com/acme/demo-hub.git`, as a real hub's is; a global git config under the
   test's own `HOME` rewrites it to the bare repository (`url.<bare>.insteadOf`), so git never reaches the network. The
-  fake `gh` is a stdlib script that records its calls, answers `gh auth token` unless a `logged-out` switch is set, and
-  for `gh pr create` checks that the head branch is on the origin and prints a PR URL, or fails (`fail`) or prints
-  something else (`garbage`). The tests check the branch's one commit (the hub author, no trailer), that
+  fake `gh` is a stdlib script that records its calls, answers `gh auth token` unless a `logged-out` switch is set,
+  and answers GitHub's REST API only, as a cloud session's proxy does (it refuses `gh pr`, which is GraphQL): for
+  `gh api --method POST repos/<repo>/pulls` it checks that the `head` field's branch is on the origin and prints the
+  pull request as JSON (its `html_url`), or fails (`fail`) or prints something else (`garbage`); `gh api --method GET
+  repos/<repo>/pulls -f head=<owner>:<branch> -f state=open` lists the open ones (`list-fail` fails it); any other
+  call exits 2. The tests check the REST argv (the body read from a file, never on the command line), the branch's
+  one commit (the hub author, no trailer), that
   `origin/main` is unchanged, that the user's checkout is unchanged (`HEAD`, `git status`, `git for-each-ref`), that a
   failed `gh` deletes the pushed branch, and that no temporary folder is left.
 

@@ -83,8 +83,18 @@ def run_children(repo: str, *, api_branch: str | None) -> RunChildren:
     )
 
 
+def field(argv: list[str], name: str) -> str:
+    """The value of the one ``-f <name>=<value>`` field of a ``gh api`` argv."""
+    (value,) = [
+        argument.split("=", 1)[1]
+        for flag, argument in zip(argv, argv[1:], strict=False)
+        if flag == "-f" and argument.startswith(f"{name}=")
+    ]
+    return value
+
+
 def base_argument(argv: list[str]) -> str:
-    return argv[argv.index("--base") + 1]
+    return field(argv, "base")
 
 
 @pytest.mark.parametrize(("repo", "branch"), [("demo-api", "master"), ("demo-web", "trunk")])
@@ -92,7 +102,7 @@ def test_bases_run_on_repo_branch_when_repo_sets_one(repo: str, branch: str) -> 
     children = run_children(repo, api_branch="master")
 
     assert children.base == f"origin/{branch}"
-    assert base_argument(children.pr_argv(title="t", body="b")) == branch
+    assert base_argument(children.pr_argv(title="t")) == branch
 
 
 @pytest.mark.parametrize("repo", ["demo-api", "demo-web"])
@@ -100,7 +110,56 @@ def test_bases_run_on_project_branch_when_repo_sets_none(repo: str) -> None:
     children = run_children(repo, api_branch=None)
 
     assert children.base == "origin/trunk"
-    assert base_argument(children.pr_argv(title="t", body="b")) == "trunk"
+    assert base_argument(children.pr_argv(title="t")) == "trunk"
+
+
+def test_opens_and_finds_pr_through_rest_api_when_argv_built() -> None:
+    run = run_children("demo-web", api_branch=None)
+
+    assert run.pr_argv(title="feat: x") == [
+        *("gh", "api", "--method", "POST", "repos/acme/demo-web/pulls"),
+        *("-f", "title=feat: x", "-f", "head=jdoe/dem-1", "-f", "base=trunk"),
+        *("-F", "body=@-"),
+    ]
+    assert pr_view_command(github=run.github, branch=run.branch) == [
+        *("gh", "api", "--method", "GET", "repos/acme/demo-web/pulls"),
+        *("-f", "head=acme:jdoe/dem-1", "-f", "state=open"),
+        *("--jq", "[.[] | {html_url, state}]"),
+    ]
+
+
+def test_reads_and_edits_pr_body_through_rest_api_when_url_given() -> None:
+    path = children.pull_request_path("https://github.com/acme/demo-web/pull/12")
+
+    assert path == "repos/acme/demo-web/pulls/12"
+    assert children.pr_body_command(path) == ["gh", "api", "--method", "GET", path]
+    assert children.pr_edit_command(path, Path("/hub/x.body")) == [
+        *("gh", "api", "--method", "PATCH", path, "-F", "body=@/hub/x.body"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/acme/demo-web/pull/12/files",
+        "https://github.com/acme/demo-web/issues/12",
+        "https://example.com/acme/demo-web/pull/12",
+        "https://github.com/acme/demo-web/pull/0",
+        "https://github.com/acme/demo-web/pull/x",
+        "https://github.com/acme/../pull/1",
+    ],
+)
+def test_names_no_rest_path_when_url_not_a_pull_request(url: str) -> None:
+    assert children.pull_request_path(url) is None
+
+
+def test_shows_stdin_after_argv_when_dry_run_line_built() -> None:
+    line = children.would_run_line(["gh", "api"], cwd=Path("/w"), stdin="DEM-1\n\nx y")
+
+    assert line == 'would run: gh api <<< "DEM-1\\n\\nx y"   (cwd /w)'
+    assert children.would_run_line(["gh"], cwd=Path("/w"), stdin="b") == (
+        "would run: gh <<< b   (cwd /w)"
+    )
 
 
 OPTIONS = RunOptions(
@@ -182,13 +241,14 @@ def test_takes_branch_from_repo_convention_when_hub_sets_conventions(
     document: Any, repo: str, branch: str
 ) -> None:
     children = children_of(document(), repo)
-    pr_argv = children.pr_argv(title="t", body="b")
+    pr_argv = children.pr_argv(title="t")
 
     assert children.branch == branch
     assert children.push_argv()[-1] == branch
-    assert pr_argv[pr_argv.index("--head") + 1] == branch
+    assert field(pr_argv, "head") == branch
     # pr_steps builds the view from the same target fields.
-    assert pr_view_command(github=children.github, branch=children.branch)[3] == branch
+    view = pr_view_command(github=children.github, branch=children.branch)
+    assert field(view, "head") == f"acme:{branch}"
 
 
 def accepting_runner(
