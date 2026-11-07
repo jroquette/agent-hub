@@ -215,6 +215,25 @@ def test_fences_notes_when_group_prompt_rendered() -> None:
     assert len(prompt.encode()) < 131072
 
 
+def test_states_every_output_cap_when_group_prompt_read() -> None:
+    """Regression: AGH-504, a check group's target over 200 characters failed the contract."""
+    found = discover_workflows(PACK, builtin_root=BUILTIN_WORKFLOWS)
+    (inbox,) = [item for item in found.workflows if item.name == "inbox"]
+    (group,) = [node for node in inbox.document["nodes"] if node["id"] == "group"]
+    groups = group["output_format"]["properties"]["groups"]
+    fields = groups["items"]["properties"]
+    prompt = (PACK / "prompts" / "group.md").read_text(encoding="utf-8")
+
+    caps = prompt[prompt.index('{"groups": [') : prompt.index("The notes, as JSON")]
+    assert f"at most {groups['maxItems']:,} groups" in caps
+    assert f"at most {fields['notes']['maxItems']:,} notes per group" in caps
+    for field in ("target", "reason", "text"):
+        assert f"`{field}` at most {fields[field]['maxLength']:,} characters" in caps, field
+    check = prompt[prompt.index("- `check`:") : prompt.index("- `drop`:")]
+    assert "a path or a short label" in check
+    assert "goes in `reason`" in check
+
+
 def a_hub(workspace: Workspace) -> Path:
     """The demo hub as a git repo whose origin/<default branch> holds two inbox notes."""
     hub: Path = workspace.hub
