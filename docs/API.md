@@ -435,7 +435,8 @@ main checkout shares its rows with `hub search`. Neither route writes the hub or
   `read`, `indexed`, `dropped`), `skipped` (`path`, `reason`) and `warnings`, one per repo that is not checked out
   (`<dir>: not checked out; its docs are not searched`). `q` is 1 to 500 characters and only its runs of letters and
   digits are searched, all required, never as FTS5 syntax; `kind` repeats, at most 10, each one of the index's kinds;
-  `limit` is 1 to 50, default 50. Results come best first, as `hub search` prints them; none is `results: []`.
+  `limit` is 1 to 50, default 50. Results come in the index's order (by kind, then status, then text match; see the
+  SPEC's "Search and team memory"), as `hub search` prints them; none is `results: []`.
 - `GET /api/v1/projects/{project}/brain/backlinks?path=` → `NoteBacklinks`: `project`, `path`, `items` (each
   indexed document holding a Markdown link to `brain/<path>`: `path`, `kind`, `title`), sorted by path, at most 100,
   and `total`, the full count. `path` is checked exactly as `GET …/brain/note` checks it, before anything is read. The
