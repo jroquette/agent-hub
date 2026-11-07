@@ -982,6 +982,14 @@ export function ScenarioBuilder({
     setDescribing(false);
   };
   const proposed = offered?.document && !tree ? toDocument(offered.document) : null;
+  // The proposal's graph as the list shows it, read once per proposal: `programOf` gives an If or
+  // At the same time a new key on each read, so a read on every draw mounted their rows again
+  // each time, and a row being pressed or focused left the page (AGH-659).
+  const offeredDocument = offered?.document;
+  const proposedMain = useMemo(
+    () => (offeredDocument && !tree ? programOf(toDocument(offeredDocument).nodes).main : null),
+    [offeredDocument, tree],
+  );
   // Written as blocks: the proposal's stages, and its changes by block address.
   const proposedTree = offered?.document && tree ? toTreeDocument(offered.document) : null;
   // A proposal for a scenario written as blocks that holds no stages (a graph of `nodes`, the
@@ -1202,9 +1210,7 @@ export function ScenarioBuilder({
         </div>
       </section>
     ) : null;
-  const reviewProgram = underReview
-    ? (theirStages ?? (proposed ? programOf(proposed.nodes).main : null))
-    : null;
+  const reviewProgram = underReview ? (theirStages ?? proposedMain) : null;
 
   // Keys on the builder (never while typing in a field): Delete removes the selected block (with
   // an Undo toast), Alt+↑/↓ moves it in its list, ⌘D duplicates it, ⌘Z/⇧⌘Z undo and redo, ⌘S

@@ -54,16 +54,6 @@ export function useHighlight(text: string, lang: string, enabled: boolean): Reac
   return useMemo(() => (module ? module.highlight(text, lang) : null), [module, text, lang]);
 }
 
-/** `text` as highlighted nodes, one list per line; null means plain. */
-export function useHighlightLines(
-  text: string,
-  lang: string,
-  enabled: boolean,
-): ReactNode[][] | null {
-  const module = useHighlighter(enabled);
-  return useMemo(() => (module ? module.highlightLines(text, lang) : null), [module, text, lang]);
-}
-
 /** Each of `texts` highlighted on its own, as one list per line; null means plain. A grammar
  * state (an open string or comment) never carries from one text into the next. */
 export function useHighlightBlocks(

@@ -89,6 +89,10 @@ class SessionStreamView:
         """The session as it is now."""
         self._session = self._read()
 
+    def opening(self) -> list[SseMessage]:
+        """Nothing: the client reads the session's events itself."""
+        return []
+
     def replay(self, events: Sequence[StoredEvent]) -> list[SseMessage]:
         """The missed events, one ``event`` each."""
         return [self._event_message(stored) for stored in events]
@@ -136,6 +140,10 @@ class LiveStreamView:
     def prime(self) -> None:
         """The tiles as they are now."""
         self._tiles = self._read()
+
+    def opening(self) -> list[SseMessage]:
+        """Nothing: the client reads the tiles itself."""
+        return []
 
     def replay(self, events: Sequence[StoredEvent]) -> list[SseMessage]:
         """Every current tile: the client's copy may be older than the missed events."""
@@ -196,6 +204,10 @@ class RunStreamView:
         """The run and its steps as they are now."""
         self._run, self._steps = self._read()
 
+    def opening(self) -> list[SseMessage]:
+        """Nothing: the client reads the run itself."""
+        return []
+
     def replay(self, events: Sequence[StoredEvent]) -> list[SseMessage]:
         """The whole run, every step and the missed gate events."""
         last_id = _last_id(events)
@@ -254,8 +266,8 @@ class RunStreamView:
 
 
 class GlobalStreamView:
-    """``/events/stream``: ``counts`` when a badge count changes, ``collector`` when a source
-    sends; heartbeats carry each source's last event time."""
+    """``/events/stream``: ``counts`` on connect and when a badge count changes, ``collector``
+    when a source sends; heartbeats carry each source's last event time."""
 
     def __init__(
         self, models: EventReadModels, counters: IngestionCounters | None, scope: Scope
@@ -274,6 +286,12 @@ class GlobalStreamView:
         """The counts and the sources' times as they are now."""
         self._counts = _dump(self._models.stream_counts())
         self._sources = self._source_times()
+
+    def opening(self) -> list[SseMessage]:
+        """The current counts: the client compares later ones with them (AGH-699)."""
+        if self._counts is None:
+            return []
+        return [SseMessage("counts", self._counts)]
 
     def replay(self, events: Sequence[StoredEvent]) -> list[SseMessage]:
         """The current counts."""

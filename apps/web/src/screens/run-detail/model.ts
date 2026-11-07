@@ -1,4 +1,4 @@
-import type { PipelineStep, Stage as ChipStage } from "../../components";
+import type { PipelineStep } from "../../components";
 import { STAGES } from "../../components";
 import type { RunStep, Stage, WorkflowRun } from "../runs-list/queries";
 import { durationSeconds, STEP_OF } from "../runs-list/model";
@@ -129,8 +129,4 @@ export function lanes(run: WorkflowRun, now: number): { lanes: Lane[]; from: num
   const from = Math.min(Date.parse(run.started_at), ...rows.map((r) => r.start));
   const to = Math.max(from + 1000, ...rows.map((r) => r.end));
   return { lanes: rows, from, to };
-}
-
-export function chipOf(stage: Stage): ChipStage {
-  return stage === "FAILED" ? "PICKED" : stage;
 }

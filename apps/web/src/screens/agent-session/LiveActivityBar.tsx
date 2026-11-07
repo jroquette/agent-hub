@@ -393,35 +393,6 @@ export const STEPS_PANEL_ID = "as-live-panel";
 export const STEPS_KEYS = "Control+Alt+Period Meta+Alt+Period";
 export const STEPS_KEY_LABEL = "Ctrl Alt .";
 
-export interface StepsToggleProps {
-  steps: TurnSteps;
-  open: boolean;
-  onToggle: () => void;
-}
-
-/** The header's way to the Steps drawer, beside Review changes: a pulse while the turn runs. */
-export function StepsToggle({ steps, open, onToggle }: StepsToggleProps) {
-  if (steps.end === null) return null;
-  const total = steps.feed.length + steps.earlier;
-  const running = steps.activity !== null;
-  return (
-    <button
-      type="button"
-      className={cx("as-files-chip", open && "as-files-chip-open")}
-      aria-expanded={open}
-      aria-controls={open ? STEPS_PANEL_ID : undefined}
-      aria-keyshortcuts={STEPS_KEYS}
-      aria-label={`Steps, ${String(total)}${running ? ", turn running" : ""}`}
-      title={`${open ? "Hide" : "Show"} the turn's steps (${STEPS_KEY_LABEL})`}
-      onClick={onToggle}
-    >
-      <Icon name="list" size="sm" />
-      <span>Steps</span>
-      <span className="as-steps-count ah-num">{total}</span>
-    </button>
-  );
-}
-
 function stepsHeadline(steps: TurnSteps): string {
   const took = steps.tookMs === null ? "" : ` in ${elapsed(steps.tookMs)}`;
   switch (steps.end) {
