@@ -25,7 +25,11 @@ from agent_hub.generator.hub_template import render_template
 from agent_hub.generator.json_form import JsonBuilder, dump_json
 from agent_hub.generator.json_merge import merge_json
 from agent_hub.generator.links import plugin_links, project_links
-from agent_hub.generator.placeholders import agent_model_overlay, substitution_mapping
+from agent_hub.generator.placeholders import (
+    agent_model_overlay,
+    extension_mapping,
+    substitution_mapping,
+)
 from agent_hub.generator.registry import REGISTRY, TemplateEntry
 
 
@@ -65,9 +69,10 @@ def render_entries(
     ``X.json`` renders too (else ``ValueError``, a caller bug); ``X.json`` then holds the strict
     merge (``MergeError``). Project agent and skill links come after the base plugin's, which
     keep a name both plugins hold. A plugin agent whose tier ``models.agents`` sets renders with
-    that tier's model (``agent_model_overlay``).
+    that tier's model (``agent_model_overlay``). ``CLAUDE.md`` names the superpowers key the
+    settings sibling enables (``extension_mapping``).
     """
-    mapping = substitution_mapping(config)
+    mapping = substitution_mapping(config) | extension_mapping(extensions)
     selected = _selected(config, entries)
     rendered = [
         _render(entry, path, config=config, mapping=mapping | agent_model_overlay(config, path))

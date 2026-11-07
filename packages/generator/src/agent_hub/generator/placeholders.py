@@ -27,7 +27,8 @@ services section, from ``hub.json`` only; a hub without keeps its bytes (AGH-282
 Pick a flow table is ``flow_catalog``'s, built from the built-in packs, the same in every hub
 (AGH-495). ``hub_features_url`` is the hub's ``brain/features`` folder on GitHub, built by core's
 ``record_links`` from the hub's repo and default branch in ``hub.json``: the skills link the
-records a PR body cites under it.
+records a PR body cites under it. ``extension_mapping`` adds the values the project's extension
+inputs give, not ``hub.json``: the superpowers key ``CLAUDE.md`` tells developers to enable.
 """
 
 import re
@@ -44,7 +45,9 @@ from agent_hub.core.hub_config.platform_repository import (
     PLATFORM_REPOSITORY_PATTERN,
 )
 from agent_hub.core.hub_config.workspace_repos import workspace_repos
+from agent_hub.core.hub_files.extension_inputs import ExtensionInputs
 from agent_hub.core.hub_files.rendered_file import Ownership
+from agent_hub.core.json_form import InvalidJsonError, load_json_bytes
 from agent_hub.core.runner import brief
 from agent_hub.core.workspace.environment_lines import escaped_text
 from agent_hub.core.workspace.shown_conventions import (
@@ -90,6 +93,13 @@ _PREFIX_NOTE: Final = (
     f"\n   `{PREFIX_PLACEHOLDER}` is `hub.local.json` → `project.branch_prefix`, else the local"
     " part of your author email plus `/`."
 )
+
+# ``CLAUDE.md``'s superpowers enable line: the official marketplace's key, unless the project's
+# settings sibling enables its own (``extension_mapping``). A key outside this shape is ignored, so
+# the rendered code span holds no backtick, space or line break.
+SUPERPOWERS_PLUGIN: Final = "superpowers@claude-plugins-official"
+_SUPERPOWERS: Final = re.compile(r"superpowers@[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
+_SETTINGS_SIBLING: Final = ".claude/settings.project.json"
 
 # The template text right after each ``AGENTS.md`` team mention, so a wrapped list of several
 # teams keeps its last line within 120 characters (AGH-56).
@@ -164,6 +174,29 @@ _JOIN_CLOUD: Final = (
     " your commit identity.\n"
     "- First message: `/kickoff`; check that its guard probe says the session is guarded."
 )
+
+
+def extension_mapping(extensions: ExtensionInputs) -> dict[str, str]:
+    """Map each placeholder the project's extension inputs give to its text (AGH-699 E-8).
+
+    ``superpowers_plugin`` is the ``superpowers@<marketplace>`` key the settings sibling enables
+    (``true``; the first in key order when several are), else ``SUPERPOWERS_PLUGIN``: a hub that
+    pins its own copy is never told to install the official one too. A sibling that is not valid
+    JSON gives the default here; the merge of ``settings.json`` refuses it.
+    """
+    content = extensions.project_json.get(_SETTINGS_SIBLING)
+    enabled: list[str] = []
+    if content is not None:
+        try:
+            value = load_json_bytes(content, strict=True)
+        except InvalidJsonError:
+            value = None
+        plugins = value.get("enabledPlugins") if isinstance(value, dict) else None
+        if isinstance(plugins, dict):
+            enabled = sorted(
+                key for key, on in plugins.items() if on is True and _SUPERPOWERS.fullmatch(key)
+            )
+    return {"superpowers_plugin": enabled[0] if enabled else SUPERPOWERS_PLUGIN}
 
 
 def substitution_mapping(config: HubConfig) -> dict[str, str]:
