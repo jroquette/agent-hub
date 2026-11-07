@@ -12,11 +12,11 @@ Synchronous (SQLite FTS5 in production). ``KnowledgeIndexContract`` checks every
   its text and gets the new fingerprint; a dropped path loses its row. Every row the change writes
   gets the change's ``version``. A skipped file keeps no text, so a search never returns it.
 - ``search`` answers the hub's documents holding every word in ``search_query``'s order: by the
-  tier of the kind (curated knowledge first, feature records and inbox notes last), then of the
-  status (approved, active or accepted first, draft or proposed last), then best match first (a
-  title match weighted above a body match), then by path; at most ``limit``, of the listed kinds
-  only when given; none when no word is given. A hit's snippet is one line around the first
-  match in the body.
+  tier of the kind (curated knowledge first, then the docs, the journal, feature records and inbox
+  notes), then of the status (approved or active first, draft or proposed last), then best match
+  first (a title match weighted above a body match), then by path; at most ``limit``, of the
+  listed kinds only when given; none when no word is given. A hit's snippet is one line around
+  the first match in the body.
 
 ``KnowledgeLinksContract`` checks each document's links (AGH-393):
 

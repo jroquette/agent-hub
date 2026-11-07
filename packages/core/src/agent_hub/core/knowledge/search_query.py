@@ -8,9 +8,9 @@ strings are joined with FTS5's implicit AND, so no caller text is FTS5 syntax an
 syntax error.
 
 Results come by their kind's tier, then their status's tier, then their text match (bm25, a title
-match above a body match), then their path: curated knowledge first and feature records and inbox
-notes last, whatever their match, so an agent sees what the team settled before history and
-proposals. Every index orders the same way (``KnowledgeIndexContract``).
+match above a body match), then their path: curated knowledge first, and the docs, the journal,
+feature records and inbox notes after it, whatever their match, so an agent sees what the team
+settled before history and proposals. Every index orders the same way (``KnowledgeIndexContract``).
 """
 
 import re
@@ -25,16 +25,15 @@ MAX_RESULTS: Final = 50
 # A result's snippet is one line of at most this many characters (D-output).
 MAX_SNIPPET_CHARS: Final = 160
 
-# The kinds of each tier, first tier first: curated knowledge, then the docs and the journal, then
-# feature records and inbox notes (history and proposals, never authoritative).
-KIND_TIERS: Final[tuple[tuple[Kind, ...], tuple[Kind, ...], tuple[Kind, ...]]] = (
+# The kinds of each tier, first tier first: curated knowledge, then the docs, the journal, feature
+# records and inbox notes (history and proposals, never authoritative).
+KIND_TIERS: Final[tuple[tuple[Kind, ...], tuple[Kind, ...]]] = (
     ("adr", "decision", "domain", "learning", "playbook", "system"),
-    ("doc", "journal"),
-    ("feature", "inbox"),
+    ("doc", "feature", "inbox", "journal"),
 )
 # A status counts by its leading word: its leading ASCII letters, in any case. A settled one ranks
 # first, a tentative one last, any other (or none) between them.
-SETTLED_STATUSES: Final = ("accepted", "active", "approved")
+SETTLED_STATUSES: Final = ("active", "approved")
 TENTATIVE_STATUSES: Final = ("draft", "proposed")
 # The letters of a status's leading word (the set SQLite's ``ltrim`` takes in the adapter).
 STATUS_WORD_LETTERS: Final = string.ascii_letters

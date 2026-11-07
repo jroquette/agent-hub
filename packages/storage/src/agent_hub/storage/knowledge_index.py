@@ -84,21 +84,17 @@ _SEARCH: Final = text(
     "AS status_word "
     "FROM knowledge_text JOIN knowledge_documents AS d ON d.id = knowledge_text.rowid "
     "WHERE knowledge_text MATCH :match AND d.hub = :hub AND d.kind IN :kinds) "
-    "ORDER BY CASE WHEN kind IN :first_kinds THEN 0 WHEN kind IN :second_kinds THEN 1 ELSE 2 END, "
+    "ORDER BY CASE WHEN kind IN :first_kinds THEN 0 ELSE 1 END, "
     "CASE WHEN status_word IN :settled THEN 0 WHEN status_word IN :tentative THEN 2 ELSE 1 END, "
     "score, path LIMIT :limit"
 ).bindparams(
-    *(
-        bindparam(name, expanding=True)
-        for name in ("kinds", "first_kinds", "second_kinds", "settled", "tentative")
-    )
+    *(bindparam(name, expanding=True) for name in ("kinds", "first_kinds", "settled", "tentative"))
 )
-# The bound values of the order: the first two kind tiers (the third is the rest) and the
-# status words.
+# The bound values of the order: the first kind tier (the second is the rest) and the status
+# words.
 _ORDER: Final = {
     "letters": STATUS_WORD_LETTERS,
     "first_kinds": list(KIND_TIERS[0]),
-    "second_kinds": list(KIND_TIERS[1]),
     "settled": list(SETTLED_STATUSES),
     "tentative": list(TENTATIVE_STATUSES),
 }
