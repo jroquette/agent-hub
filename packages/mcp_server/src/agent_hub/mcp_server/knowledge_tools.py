@@ -10,7 +10,12 @@ from typing import Final
 
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.json_form import JsonValue
-from agent_hub.core.knowledge.document_rules import UNREADABLE, document_from
+from agent_hub.core.knowledge.document_rules import (
+    UNREADABLE,
+    document_meta,
+    document_text,
+    kind_of,
+)
 from agent_hub.core.knowledge.knowledge_index import Kind, KnowledgeIndex, SkippedFile
 from agent_hub.core.knowledge.search_query import query_words
 from agent_hub.core.knowledge.sync_knowledge import SearchOutcome, search_knowledge
@@ -58,7 +63,8 @@ class KnowledgeTools:
     def read(self, path: str) -> dict[str, JsonValue]:
         """The file at ``path`` with its kind and metadata, under the index's own rules: the path
         is allowed (``read_path``), git lists the file, and it reads as a document the index
-        would keep (no link, regular, size, UTF-8, no secret)."""
+        would keep (no link, regular, size, UTF-8). The text is the one the index keeps, every
+        secret r1 recognises replaced by its marker (AGH-696)."""
         refused = refusal(path, self._hub.repo_dirs)
         if refused is not None:
             raise ToolRefusal(f"read: {refused}")
@@ -76,16 +82,17 @@ class KnowledgeTools:
         data = checkout.read(path)
         if not isinstance(data, bytes):
             raise ToolRefusal(f"read: {NOT_FOUND if data is None else data}")
-        document = document_from(path, data, entry.fingerprint)
-        if isinstance(document, SkippedFile):
-            raise ToolRefusal(f"read: {document.reason}")
+        text = document_text(path, data, entry.fingerprint)
+        if isinstance(text, SkippedFile):
+            raise ToolRefusal(f"read: {text.reason}")
+        meta = document_meta(text, path.rsplit("/", 1)[-1])
         return {
-            "path": document.path,
-            "kind": document.kind,
-            "title": document.title,
-            "status": document.status,
-            "provenance": document.provenance,
-            "text": data.decode("utf-8"),
+            "path": path,
+            "kind": kind_of(path),
+            "title": meta.title,
+            "status": meta.status,
+            "provenance": meta.provenance,
+            "text": text,
         }
 
     def _opened_index(self) -> KnowledgeIndex:

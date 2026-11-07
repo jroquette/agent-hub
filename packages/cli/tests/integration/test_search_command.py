@@ -349,36 +349,37 @@ def test_indexes_only_eligible_files_when_checkout_holds_others(
     )
 
 
-def test_skips_file_when_secret_rule_matches(
+def test_indexes_redacted_text_when_secret_rule_matches(
     knowledge_hub: KnowledgeHubFactory, run_command: CommandRunner
 ) -> None:
-    hub = knowledge_hub(
-        {
-            "brain/_inbox/leak.md": f"# Leak\n\nmarker {secret_token()}\n".encode(),
-            "brain/a.md": MARKER,
-        }
-    )
+    hub = knowledge_hub({"brain/_inbox/leak.md": f"# Leak\n\nmarker {secret_token()}\n".encode()})
 
     result = run_command(hub, "search", "marker")
 
     assert result.exit_code == 0, result.output
-    assert result.stdout == "brain/a.md  doc\nNote\n# Note marker\n"
-    assert result.stderr == "hub search: skipped brain/_inbox/leak.md: matches a secret rule\n"
+    assert (
+        result.stdout
+        == "brain/_inbox/leak.md  inbox\nLeak\n# Leak marker [redacted: github token]\n"
+    )
+    assert result.stderr == ""
     assert secret_token().encode() not in database_bytes()
 
 
-def test_reports_secret_skip_once_when_file_unchanged(
+def test_finds_doc_when_placeholder_matches_secret_rule(
     knowledge_hub: KnowledgeHubFactory, run_command: CommandRunner
 ) -> None:
-    hub = knowledge_hub({"brain/_inbox/leak.md": f"marker {secret_token()}\n".encode()})
+    # SPEC.md's line that kept the whole file out before AGH-696.
+    spec = (
+        b"# Spec\n\nIt prints `http://127.0.0.1:<port>/?token=<token>` (a fresh session token).\n"
+    )
+    hub = knowledge_hub({"demo-api/docs/SPEC.md": spec})
 
-    first = run_command(hub, "search", "marker")
-    second = run_command(hub, "search", "marker")
+    result = run_command(hub, "search", "token")
 
-    assert first.stderr == "hub search: skipped brain/_inbox/leak.md: matches a secret rule\n"
-    assert second.exit_code == 0, second.output
-    assert second.stderr == ""
-    assert second.stdout == "no results for marker\n"
+    assert result.exit_code == 0, result.output
+    assert result.stdout.startswith("demo-api/docs/SPEC.md  doc\nSpec\n")
+    assert "?token=[redacted: secret] (a fresh session token)" in result.stdout
+    assert result.stderr == ""
 
 
 def test_warns_and_goes_on_when_repo_not_checked_out(

@@ -234,7 +234,7 @@ def test_lists_skipped_files_when_sync_skips_them(
         {
             "brain/a.md": MARKER,
             "brain/big.md": MARKER + b"\n" * (SIZE_LIMIT + 1 - len(MARKER)),
-            "brain/_inbox/leak.md": f"# Leak\n\nmarker {secret_token()}\n".encode(),
+            "brain/latin.md": MARKER + b"caf\xe9\n",
         }
     )
 
@@ -243,9 +243,29 @@ def test_lists_skipped_files_when_sync_skips_them(
     found = found_by(result)
     assert paths_of(found) == ["brain/a.md"]
     assert found["skipped"] == [
-        {"path": "brain/_inbox/leak.md", "reason": "matches a secret rule"},
         {"path": "brain/big.md", "reason": "larger than 256 KiB"},
+        {"path": "brain/latin.md", "reason": "not UTF-8"},
     ]
+
+
+def test_finds_redacted_text_when_secret_rule_matches(
+    knowledge_hub: KnowledgeHubFactory, tmp_path: Path
+) -> None:
+    hub = knowledge_hub(
+        {
+            "brain/_inbox/leak.md": f"# Leak\n\nmarker {secret_token()}\n".encode(),
+            "demo-api/docs/SPEC.md": b"# Spec\n\nmarker at `/?token=<token>` on start\n",
+        }
+    )
+
+    [result] = served(hub_env(hub, tmp_path), ("search", {"query": "marker"}))
+
+    found = found_by(result)
+    assert sorted(paths_of(found)) == ["brain/_inbox/leak.md", "demo-api/docs/SPEC.md"]
+    assert found["skipped"] == []
+    snippets = {hit["path"]: hit["snippet"] for hit in found["results"]}
+    assert snippets["brain/_inbox/leak.md"] == "# Leak marker [redacted: github token]"
+    assert "[redacted: secret]" in snippets["demo-api/docs/SPEC.md"]
     assert secret_token() not in text_of(result)
 
 

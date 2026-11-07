@@ -279,9 +279,36 @@ def test_rebuilds_links_when_stored_version_older(tmp_path: Path) -> None:
     report = sync_knowledge(index, checkout, HUB)
 
     assert report.read == report.listed == 3
-    assert index.stored(HUB).version == INDEX_VERSION == 2
+    assert index.stored(HUB).version == INDEX_VERSION == 3
     assert _backlinks(index, NOW) == ["brain/playbooks/a.md", "brain/playbooks/b.md"]
     assert _backlinks(index, CLEANUP) == ["brain/playbooks/b.md"]
+
+
+def _token() -> str:
+    """A GitHub token shape r1 matches, built from parts so no literal is a token."""
+    return "gh" + "p_" + "A1b2C3d4E5f6G7h8" * 2 + "xyzw"
+
+
+def test_stores_no_token_when_synced_file_holds_one(tmp_path: Path) -> None:
+    path = tmp_path / "events.db"
+    index = open_knowledge_index(path)
+    checkout = FakeKnowledgeCheckout()
+    spec = f"# Spec\n\nOpen `/?token=<token>` and push with {_token()} after review.\n"
+    checkout.write("demo/docs/SPEC.md", spec.encode())
+
+    report = sync_knowledge(index, checkout, HUB)
+    hits = index.search(HUB, ("review",), limit=MAX_RESULTS)
+    index.close()
+
+    assert report.skipped == ()
+    assert [hit.snippet for hit in hits] == [
+        "# Spec Open `/?token=[redacted: secret] and push with [redacted: github token] "
+        "after review."
+    ]
+    # The database and its journal files: the token is in none of them, the marker is.
+    stored = b"".join(file.read_bytes() for file in sorted(tmp_path.iterdir()))
+    assert _token().encode() not in stored
+    assert b"[redacted: github token]" in stored
 
 
 def test_converges_links_when_syncs_run_concurrently(tmp_path: Path) -> None:

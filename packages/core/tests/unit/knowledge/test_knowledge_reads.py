@@ -95,18 +95,13 @@ class _World:
         return ReadKnowledge(self.hubs, sources=self.sources, index=self.opened_index)
 
 
-def _token() -> str:
-    """A GitHub token shape r1 matches, built from parts so no literal is a token."""
-    return "gh" + "p_" + "A1b2C3d4E5f6G7h8" * 2 + "xyzw"
-
-
 def test_answers_results_with_warnings_when_repo_not_checked_out() -> None:
     world = _World()
     world.checkout.write(
         "brain/decisions/0001-worktrees.md",
         b"---\nstatus: accepted\nprovenance: agent\n---\n# Worktrees from origin\n\nworktrees\n",
     )
-    world.checkout.write("brain/_inbox/leak.md", f"worktrees {_token()}\n".encode())
+    world.checkout.write("brain/_inbox/latin.md", b"worktrees \xe9\n")
     world.checkout.missing = ("demo-web",)
 
     found = world.reads().search("demo", query="worktrees", kinds=(), limit=50)
@@ -125,7 +120,7 @@ def test_answers_results_with_warnings_when_repo_not_checked_out() -> None:
             ),
         ),
         sync=KnowledgeSyncCounts(listed=2, read=2, indexed=1, dropped=0),
-        skipped=(KnowledgeSkip(path="brain/_inbox/leak.md", reason="matches a secret rule"),),
+        skipped=(KnowledgeSkip(path="brain/_inbox/latin.md", reason="not UTF-8"),),
         warnings=("demo-web: not checked out; its docs are not searched",),
     )
 

@@ -15,7 +15,6 @@ from agent_hub.core.errors import AgentHubError
 from agent_hub.core.knowledge.document_rules import (
     MAX_DOCUMENT_BYTES,
     NOT_REGULAR,
-    RULE_MATCH,
     THROUGH_LINK,
     TOO_LARGE,
 )
@@ -379,9 +378,12 @@ def test_reads_metadata_and_reasons_when_fake_checkout_lists_file() -> None:
     assert all(result.is_error for result in refused)
     assert (hub.checkout_opens, checkout.listings, checkout.reads) == (0, 0, [])
 
-    decision, doc, at_limit = hub.run(
+    decision, doc, at_limit, leak = hub.run(
         reading(
-            "brain/decisions/0001-worktrees.md", "demo-api/docs/adr/0001-x.md", "brain/limit.md"
+            "brain/decisions/0001-worktrees.md",
+            "demo-api/docs/adr/0001-x.md",
+            "brain/limit.md",
+            "brain/leak.md",
         )
     )
     assert _structured(decision) == {
@@ -401,6 +403,16 @@ def test_reads_metadata_and_reasons_when_fake_checkout_lists_file() -> None:
         "text": "No heading here.\n",
     }
     assert len(_structured(at_limit)["text"]) == MAX_DOCUMENT_BYTES
+    # The text the index keeps (AGH-696): the token is a marker, never served.
+    assert _structured(leak) == {
+        "path": "brain/leak.md",
+        "kind": "doc",
+        "title": "Leak",
+        "status": None,
+        "provenance": None,
+        "text": "# Leak\n\n[redacted: github token]\n",
+    }
+    assert TOKEN not in str(leak)
 
     paths = (
         "brain/link.md",
@@ -409,7 +421,6 @@ def test_reads_metadata_and_reasons_when_fake_checkout_lists_file() -> None:
         "brain/missing.md",
         "brain/pipe.md",
         "brain/big.md",
-        "brain/leak.md",
     )
     answers = hub.run(reading(*paths))
     assert all(result.is_error for result in answers)
@@ -420,7 +431,6 @@ def test_reads_metadata_and_reasons_when_fake_checkout_lists_file() -> None:
         "read: not found",
         f"read: {NOT_REGULAR}",
         f"read: {TOO_LARGE}",
-        f"read: {RULE_MATCH}",
     ]
     assert hub.index_opens == 0
 
