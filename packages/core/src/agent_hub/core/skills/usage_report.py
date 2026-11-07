@@ -3,13 +3,22 @@
 Pure functions over the usage fold's windows (``SkillUsage.windows_by_*``): one row per hub
 item, 0 runs and no last use for an item with no event; names, counts and times only
 (ADR 0019). The ordering puts the items never used in the chosen window first, then the most
-run, then project, kind and name; the API, the CLI and the UI all use it.
+run, then project, kind and name; the API, the CLI and the UI all use it. ``hub_tools_text``
+says how often the main sessions and their subagents called the hub's knowledge tools.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Final
 
-from agent_hub.core.skills.skill_view import ItemKind, SkillUsage, UsageDays, UsageRow
+from agent_hub.core.skills.skill_usage import HUB_TOOLS
+from agent_hub.core.skills.skill_view import (
+    HubToolCalls,
+    ItemKind,
+    SkillUsage,
+    UsageDays,
+    UsageRow,
+    UsageWindows,
+)
 
 NOT_READ_LINE: Final = "Some items were not read; the list may be incomplete."
 _HEADER: Final = "| Project | Kind | Name | 7 d | 30 d | 90 d | Last used (UTC) |"
@@ -93,3 +102,26 @@ def usage_markdown(rows: Iterable[UsageRow], *, days: UsageDays, truncated: bool
     if truncated:
         lines.extend(["", NOT_READ_LINE])
     return "\n".join(lines) + "\n"
+
+
+def hub_tools_text(hub_tools: Mapping[str, HubToolCalls], *, days: UsageDays) -> str:
+    """One line per hub knowledge tool (``HUB_TOOLS``, a tool not in ``hub_tools`` at zero): its
+    calls over ``days`` by the main sessions and by subagents. List lines, not table rows, so a
+    reader of the usage table above (the retro pack's) never takes them for items."""
+    lines = [f"Hub knowledge tools (hub mcp): calls in the last {days} days."]
+    for tool in HUB_TOOLS:
+        calls = hub_tools.get(tool)
+        main = 0 if calls is None else _runs(calls.main, days)
+        subagents = 0 if calls is None else _runs(calls.subagents, days)
+        lines.append(f"- {tool}: main sessions {main}, subagents {subagents}")
+    return "\n".join(lines) + "\n"
+
+
+def _runs(windows: UsageWindows, days: UsageDays) -> int:
+    match days:
+        case 7:
+            return windows.runs_7d
+        case 30:
+            return windows.runs_30d
+        case 90:
+            return windows.runs_90d

@@ -50,6 +50,7 @@ from agent_hub.core.skills.skill_view import (
     BundledFile,
     BundledFileText,
     CatalogItem,
+    HubToolCalls,
     ItemKind,
     SkillCatalog,
     SkillDetail,
@@ -242,6 +243,12 @@ class SkillReads:
             if unit is not None and unit.unit_path not in units:
                 units[unit.unit_path] = (unit, unit_fingerprint(index, unit))
         self._capture.capture(project, hub_path, units.values())
+
+    def hub_tool_calls(self, project: str) -> dict[str, HubToolCalls]:
+        """How often ``project``'s main sessions and subagents called each hub knowledge tool,
+        from the (memoized) fold; empty with no event source (``hub_tools_text`` reads zeros)."""
+        usage = self._project_usage(project)
+        return {} if usage is None else dict(usage.hub_tools)
 
     def _project_usage(self, project: str) -> SkillUsage | None:
         return None if self._usage is None else self._usage.skill_usage(project)

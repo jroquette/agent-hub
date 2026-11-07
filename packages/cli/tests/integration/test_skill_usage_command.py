@@ -85,7 +85,8 @@ def test_prints_unused_refactor_before_feature_when_usage_listed(
 
 
 def _hub_call(tool: str, *, session: str, days_ago: float, agent: str | None = None) -> Event:
-    payload: dict[str, object] = {"tool": tool, "tool_use_id": f"toolu_{session}_{tool}"}
+    tool_use_id = f"toolu_{session}_{agent or 'main'}_{tool}"
+    payload: dict[str, object] = {"tool": tool, "tool_use_id": tool_use_id}
     if agent is not None:
         payload["agent_id"] = f"{agent}-1"
     return an_event(

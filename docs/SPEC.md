@@ -756,7 +756,9 @@ only the version history below is stored, and only its restore and the Studio's 
   `project-owned`, `local`), an invocation mode (`user-only`, `model-only`, `both`, or `neither`, shown as "Hidden"),
   its invocation line and its use in the last 30 days (a fold over the stored events: a typed `/name` and a `Skill`
   call, an `Agent` call by type; signals of one invocation within 5 s count once; the same fold gives runs over 7,
-  30 and 90 days and the last use, for the Portfolio and `hub skill-usage`, AGH-482). Third-party plugins named by the
+  30 and 90 days and the last use, for the Portfolio and `hub skill-usage`, AGH-482; it also counts the calls of the
+  hub's knowledge tools `mcp__hub__search`, `mcp__hub__read` and `mcp__hub__propose` by the main sessions and by their
+  subagents, which `hub skill-usage` prints after its table, AGH-699). Third-party plugins named by the
   marketplace or `enabledPlugins` are listed with their pin and "not in this hub": nothing is fetched. Search and
   facets (kind, origin, mode, has diagnostics) live in the URL query.
 - **Detail.** An item is addressed by `kind/source/name`, `source` being the folder it comes from (`claude` for

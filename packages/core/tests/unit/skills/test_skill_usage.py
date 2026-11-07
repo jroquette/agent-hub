@@ -465,11 +465,11 @@ def _hub_call(
     )
 
 
-def _windows(runs_7d: int, runs_30d: int, runs_90d: int, at: datetime | None) -> UsageWindows:
+def _windows(runs_7d: int, runs_30d: int, runs_90d: int, *, at: datetime | None) -> UsageWindows:
     return UsageWindows(runs_7d=runs_7d, runs_30d=runs_30d, runs_90d=runs_90d, last_used_at=at)
 
 
-NONE_YET = _windows(0, 0, 0, None)
+NONE_YET = _windows(0, 0, 0, at=None)
 
 
 def test_counts_hub_tools_by_main_and_subagent_when_sessions_call_them() -> None:
@@ -489,10 +489,10 @@ def test_counts_hub_tools_by_main_and_subagent_when_sessions_call_them() -> None
 
     assert usage.hub_tools == {
         "mcp__hub__search": HubToolCalls(
-            main=_windows(2, 2, 2, _at(2)), subagents=_windows(1, 1, 1, _at(4))
+            main=_windows(2, 2, 2, at=_at(2)), subagents=_windows(1, 1, 1, at=_at(4))
         ),
-        "mcp__hub__read": HubToolCalls(main=_windows(1, 1, 1, _at(3)), subagents=NONE_YET),
-        "mcp__hub__propose": HubToolCalls(main=NONE_YET, subagents=_windows(1, 1, 1, _at(5))),
+        "mcp__hub__read": HubToolCalls(main=_windows(1, 1, 1, at=_at(3)), subagents=NONE_YET),
+        "mcp__hub__propose": HubToolCalls(main=NONE_YET, subagents=_windows(1, 1, 1, at=_at(5))),
     }
     assert "mcp__github__search" not in usage.hub_tools
 
@@ -518,7 +518,7 @@ def test_counts_hub_tools_by_window_when_calls_are_older() -> None:
     usage = fold_skill_usage(_sessions(events), project="demo", now=NOW)
 
     assert usage.hub_tools["mcp__hub__search"] == HubToolCalls(
-        main=_windows(1, 2, 2, _at(0)), subagents=NONE_YET
+        main=_windows(1, 2, 2, at=_at(0)), subagents=NONE_YET
     )
 
 
