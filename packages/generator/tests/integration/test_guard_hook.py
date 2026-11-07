@@ -2674,6 +2674,64 @@ def test_passes_when_eval_written_without_owner_provenance(
     assert evaluate(calls) == [None] * len(calls)
 
 
+def test_asks_when_bash_write_says_owner_provenance_mid_line(evaluate: Evaluate) -> None:
+    """A Bash write's new text is the command's: `provenance: owner` counts wherever it stands
+    (quoted, before a slash, an escaped newline or a pipe), not only on a line of its own."""
+    ac1 = "brain/features/x/evals/ac-1.md"
+    commands = [
+        f"echo 'provenance: owner' > {ac1}",
+        f"echo 'provenance: owner' >> {ac1}",
+        f"printf 'verdict: SHIP\\nprovenance: owner\\n' > {ac1}",
+        f"sed -i 's/provenance: agent/provenance: owner/' {ac1}",
+        f'echo "provenance:owner" | tee -a {ac1}',
+    ]
+
+    verdicts = evaluate([bash(command) for command in commands])
+
+    assert verdicts == [("ask", OWNER_SIGNOFF_REASON.format(ac1))] * len(commands)
+
+
+def test_passes_when_bash_write_says_other_provenance(evaluate: Evaluate) -> None:
+    ac1 = "brain/features/x/evals/ac-1.md"
+    commands = [
+        f"sed -i 's/provenance: owner/provenance: agent/' {ac1}",
+        f"echo 'provenance: owner-review' > {ac1}",
+        f"printf 'provenance: %s\\n' agent >> {ac1}",
+        "echo 'provenance: owner' > brain/features/x/notes.md",
+    ]
+
+    assert evaluate([bash(command) for command in commands]) == [None] * len(commands)
+
+
+def test_asks_when_owner_signoff_path_spelled_another_way(
+    evaluate: Evaluate, workspace: Path
+) -> None:
+    """The record is matched on the path as git sees it: `.`, `..` and `//` resolved, case
+    ignored (macOS file systems ignore it), and a link followed to its real folder."""
+    features = workspace / "demo-hub" / "brain" / "features"
+    (features / "dem-1-x" / "evals").mkdir(parents=True)
+    (workspace / "app" / "signed").symlink_to(features / "dem-1-x" / "evals")
+    paths = [
+        f"{features}/dem-1-x/evals/./owner-signoff.md",
+        f"{features}/dem-1-x/evals/../evals/owner-signoff.md",
+        f"{features}//dem-1-x/evals/owner-signoff.md",
+        f"{features}/dem-1-x/EVALS/Owner-Signoff.md",
+        str(workspace / "app" / "signed" / "owner-signoff.md"),
+    ]
+    bash_paths = [
+        "brain/features/x/evals/./owner-signoff.md",
+        "brain/features//x/evals/owner-signoff-r2.md",
+        "brain/features/x/evals/../evals/owner-signoff.md",
+    ]
+
+    verdicts = evaluate(
+        [file("Write", {"file_path": path, "content": "x"}) for path in paths]
+        + [bash(f"echo verdict: SHIP > {path}") for path in bash_paths]
+    )
+
+    assert verdicts == [("ask", OWNER_SIGNOFF_REASON.format(path)) for path in paths + bash_paths]
+
+
 def test_denies_write_when_git_internals_targeted(evaluate: Evaluate) -> None:
     denied = [
         "rm .git",
