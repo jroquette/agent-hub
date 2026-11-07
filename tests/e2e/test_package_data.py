@@ -95,7 +95,7 @@ def test_ships_output_schemas_when_core_wheel_built(
     ],
 )
 def test_leaves_testing_modules_out_when_wheel_built(
-    tmp_path: Path, run: Callable[..., CompletedProcess[str]], package: str, testing: str
+    tmp_path: Path, run: Callable[..., CompletedProcess[str]], *, package: str, testing: str
 ) -> None:
     """The fakes, builders and contract suites are for this repo's tests (they import pytest,
     which no wheel depends on), so no hub installs them."""
