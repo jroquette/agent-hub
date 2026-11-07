@@ -34,7 +34,8 @@ version and the seeded extension inputs (`*.project.json`, `AGENTS.project.md`, 
 templates use `@@` placeholders, always substituted. A project changes a managed file only via `hub.json` or a seeded
 sibling: `CLAUDE.md` imports `@AGENTS.md` and `@AGENTS.project.md`; the `Makefile` includes `mk/<module>.mk` per
 selected module, then `-include Makefile.project`; a `*.project.json` is deep-merged at the next sync
-([hub-sync.md](hub-sync.md)). Every JSON the generator builds or merges (settings, manifests, merged
+([hub-sync.md](hub-sync.md)), and `CLAUDE.md`'s superpowers line names the `superpowers@<marketplace>` key
+`.claude/settings.project.json` enables (else `superpowers@claude-plugins-official`). Every JSON the generator builds or merges (settings, manifests, merged
 `*.project.json`, `hub.lock`) has one form: sorted keys, 2-space indent, UTF-8, final newline.
 
 ### hub init

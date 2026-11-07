@@ -84,6 +84,7 @@ The logging library is chosen with the first logging code (likely `structlog`); 
 | Rule | Enforcement |
 |---|---|
 | English everywhere: code, comments, docs, ADRs, commits, PRs and issues. | review-only |
+| Agent-facing runbooks (skills, agents, `docs/USING.md`): each stop condition states the exit code and the output; a skip depends on a step whose exit was checked; each recovery path is reachable from the state the failed step leaves; each command names its cwd, stdin, timeout, where its output goes and its success condition. | review-only |
 
 ## Formatting and other lint
 
