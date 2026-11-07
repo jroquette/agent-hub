@@ -1,12 +1,17 @@
-"""The words of a query and their FTS5 form (AGH-391, D-query): no caller text is FTS5 syntax."""
+"""The words of a query and their FTS5 form (AGH-391, D-query): no caller text is FTS5 syntax.
+The order of results by kind and status (B-11)."""
 
 import pytest
 
+from agent_hub.core.knowledge.knowledge_index import KINDS
 from agent_hub.core.knowledge.search_query import (
+    KIND_TIERS,
     MAX_SNIPPET_CHARS,
     fts5_match,
+    kind_tier,
     query_words,
     snippet_line,
+    status_tier,
 )
 
 
@@ -54,3 +59,40 @@ def test_cuts_snippet_to_one_line_when_text_long() -> None:
     assert MAX_SNIPPET_CHARS == 160
     assert cut == "x" * 159 + "…"
     assert snippet_line("y" * 160) == "y" * 160
+
+
+def test_puts_each_kind_in_one_tier_when_tiers_read() -> None:
+    tiered = [kind for kinds in KIND_TIERS for kind in kinds]
+
+    assert sorted(tiered) == sorted(KINDS)
+    assert [kind_tier(kind) for kind in ("learning", "adr", "doc", "journal", "feature")] == [
+        0,
+        0,
+        1,
+        1,
+        2,
+    ]
+    assert kind_tier("inbox") == 2
+
+
+@pytest.mark.parametrize(
+    ("status", "tier"),
+    [
+        ("approved", 0),
+        ("Approved (owner, 2026-10-13)", 0),
+        ("ACTIVE", 0),
+        ("accepted", 0),
+        (None, 1),
+        ("", 1),
+        ("done", 1),
+        ("drafted", 1),
+        (" approved", 1),
+        ("(draft)", 1),
+        ("draft", 2),
+        ("draft, proposed extra", 2),
+        ("proposed", 2),
+        ("drafté", 2),
+    ],
+)
+def test_tiers_status_by_leading_word_when_status_given(status: str | None, tier: int) -> None:
+    assert status_tier(status) == tier
