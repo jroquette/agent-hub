@@ -9,10 +9,10 @@
 # not squash, and /release dispatches the platform repo's release workflow, which alone makes the
 # tag (ADR 0047); no node here makes, moves or pushes one. The run waits until the owner says the
 # tag exists (tagged.py checks it on origin: annotated, on the release commit), then a second
-# approval opens the hub PR that sets platform.version and runs ./hub sync (hub_branch.py,
-# pin.py apply; hub step config reads the branch and the hub's facts from hub.json for them, as
-# config does for pin.py list: no script reads its config from hub.json); the owner merges both
-# PRs. Started only by /release or ./hub workflow run release
+# approval opens the hub PR that sets platform.version, runs ./hub sync and keeps brain/now.md's
+# pin and last_verified current (hub_branch.py, pin.py apply; hub step config reads the branch
+# and the hub's facts from hub.json for them, as config does for pin.py list: no script reads its
+# config from hub.json); the owner merges both PRs. Started only by /release or ./hub workflow run release
 # (never scheduled or event-started). No node reads or writes the tracker (ADR 0030): /release
 # finds or creates the release issue before the run and comments after it.
 version: 1
@@ -362,7 +362,7 @@ nodes:
 
   - id: pin
     type: script
-    description: Set platform.version, run ./hub sync, check it is up to date, commit.
+    description: Set platform.version, run ./hub sync, check it is up to date, set brain/now.md's pin and last_verified, commit.
     depends_on: [hub_branch]
     runtime: python
     script: pin.py
