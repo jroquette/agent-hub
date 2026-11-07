@@ -5,7 +5,7 @@ import pytest
 
 from agent_hub.collector import hook_spool
 from agent_hub.collector.hook_spool import parse_spool
-from agent_hub.core.ingestion.hook_envelope import MAX_BODY_BYTES
+from agent_hub.core.ingestion.hook_envelope import MAX_BODY_BYTES, MAX_JSON_DEPTH
 from agent_hub.core.testing.hook_inputs import a_hook_input, an_envelope
 
 
@@ -82,6 +82,21 @@ def test_reports_nested_too_deeply_when_parse_or_validation_overflows(
 
     assert [(error.line_number, error.reason) for error in lines.errors] == [
         (1, "invalid JSON: nested too deeply")
+    ]
+
+
+def test_reports_bad_line_when_envelope_nests_deeper_than_hook_route_allows() -> None:
+    nested: Any = "leaf"
+    for _ in range(100):
+        nested = [nested]
+    deep = an_envelope(a_hook_input("PreToolUse", tool_input={"nested": nested}))
+    data = b"\n".join([deep.model_dump_json().encode(), _line()])
+
+    lines = parse_spool(data)
+
+    assert [item.line_number for item in lines.envelopes] == [2]
+    assert [(error.line_number, error.reason) for error in lines.errors] == [
+        (1, f"nested deeper than {MAX_JSON_DEPTH} levels")
     ]
 
 
