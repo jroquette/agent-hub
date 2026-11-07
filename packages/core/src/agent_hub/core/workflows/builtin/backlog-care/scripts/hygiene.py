@@ -22,7 +22,8 @@ Each finding names its evidence (the field and its value):
 - merged: with ``--config``, an issue whose state is not completed or canceled and whose id
   (any case, not inside a longer id) is in the subject of one of the last ``MAX_COMMITS`` commits
   of a repo's default branch as last fetched (``origin/<branch>``, else the local ``<branch>``;
-  ``git log`` in ``../<dir>``, no network); the evidence is the newest such commit.
+  ``git log`` in ``../<dir>``, no network); the evidence is the newest such commit, its subject
+  cut to ``SUBJECT_CHARS`` (``%s`` joins the first paragraph's lines, so a subject can run long).
 
 Prints ``{"orphans", "stale", "duplicates", "cycles", "merged", "unreadable", "summary"}``; a repo
 whose refs cannot be read (``MAX_REFS`` at most, ``GIT_TIMEOUT`` seconds) is in ``unreadable`` and
@@ -45,6 +46,7 @@ UTC = timezone.utc  # noqa: UP017
 
 MAX_REFS = 20_000
 MAX_COMMITS = 5_000
+SUBJECT_CHARS = 200
 GIT_TIMEOUT = 30
 SUMMARY_CHARS = 16_000
 STARTED_NAMES = frozenset({"in progress", "in review"})
@@ -219,7 +221,7 @@ def named_commits(
                     "repo": repo,
                     "branch": shown,
                     "commit": commit,
-                    "subject": subject,
+                    "subject": subject[:SUBJECT_CHARS],
                 }
                 named.setdefault(found.upper(), where)
     return named
