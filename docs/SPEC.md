@@ -865,7 +865,8 @@ AGH-458.
   can get a nickname kept on this machine (`GET`/`PUT /feature-names`). **Feature detail**: a calm golden path, one
   Waiting for you banner pointing to each owner wait (a plan change request first, which opens its ticket's panel;
   each acceptance prompt is on the Eval tab: the owner sign-off, `POST /features/{project}/{slug}/owner-signoff`, a
-  SHIP eval with `provenance: owner`), a ticket panel per ticket (its preflight runs, local notes and discoveries from
+  SHIP eval with `provenance: owner`; since AGH-695 a strict write that needs `hub web`'s launch cookie, as a restore,
+  so an agent session cannot sign off for the owner), a ticket panel per ticket (its preflight runs, local notes and discoveries from
   `GET …/tickets/{ticket}`, and a plan change request's Approve or Decline with a note: through its run's gate, or,
   when the run is gone, `POST …/change-requests/{n}/decision`, which creates the request's decision file once), an
   Eval tab with history per scope and who ran each eval, Approve at the end of the spec, research and plan

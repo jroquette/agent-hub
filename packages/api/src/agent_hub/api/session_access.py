@@ -16,9 +16,10 @@ refuses before routing, so a refused request never reaches a port.
   Origin and JSON checks are the strict ones of ``LocalSecurityMiddleware``.
 - **Run reads** (a paused scenario run's values, ADR 0049) need the cookie and follow the reads'
   Origin rules below; with ``sessions_off`` they answer 404 ``run-control-off``.
-- **Item writes** (a Restore into a hub's tree, AGH-295 D13) need the cookie too, with the
-  strict checks; with ``sessions_off`` they answer 409 ``hub_read_only`` before the cookie is
-  looked at (A6): the container mounts the hubs read-only and mints no token.
+- **Item writes** (a Restore into a hub's tree, AGH-295 D13; an owner sign-off, AGH-695) need
+  the cookie too, with the strict checks; with ``sessions_off`` they answer 409
+  ``hub_read_only`` before the cookie is looked at (A6): the container mounts the hubs read-only
+  and mints no token.
 - **Cookie.** Every route under the prefix needs the cookie (constant-time match); else 401.
   With no token configured, nothing matches.
 - **Writes** need this server's exact ``Origin``, ``Sec-Fetch-Site: same-origin`` when sent and,

@@ -3,8 +3,9 @@
 The server binds 127.0.0.1 only, but a page on any site can still make the browser send it a
 request. So: the ``Host`` must name the loopback at this port (DNS rebinding), a ``POST`` or
 ``DELETE`` carrying an ``Origin`` must come from this origin (cross-site writes), the learning
-actions, the workflow-run writes, a workflow gate's decision and the item writes (a Restore or a
-Publish into a hub's tree) also need that ``Origin``, a same-origin fetch and a JSON body (S7),
+actions, the workflow-run writes, a workflow gate's decision and the item writes (a Restore, a
+Publish or an owner sign-off into a hub's tree) also need that ``Origin``, a same-origin fetch
+and a JSON body (S7),
 so do the hub registry writes (``POST /hubs``, ``DELETE /hubs/{id}``; a missing ``Origin`` is
 refused too, A11: a registered hub is a folder sessions may start in), bodies stop at 1 MiB
 (160 MiB for ``POST /agent-sessions`` and its messages, which may carry images and files), API
@@ -59,12 +60,16 @@ RUN_WRITES = re.compile(
 # Restore of a Toolkit item's or a hub workflow's version, the Studio's Publish of a draft, the
 # scenario builder's save and a scenario's delete (a PUT or a DELETE of
 # ``/scenarios/{project}/{name}``; its GET is a read) and a scenario's migrate to blocks (ADR 0049).
+# The owner sign-off (AGH-695) writes the owner's SHIP or NO-SHIP eval into the feature's
+# ``evals/``: without the cookie, an agent session that knows ``AGENT_HUB_WEB_URL`` could settle
+# the owner's own acceptance gate.
 ITEM_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/((projects/[^/]+/skills/[^/]+/[^/]+/[^/]+"
     r"|workflows/[^/]+/[^/]+)/versions/[^/]+/restore"
     r"|projects/[^/]+/skills/drafts/[^/]+/publish"
     r"|scenarios/[^/]+/[^/]+(/proposal/dismiss|/migrate)?"
-    r"|projects/[^/]+/actions(/[^/]+/[^/]+)?)$"
+    r"|projects/[^/]+/actions(/[^/]+/[^/]+)?"
+    r"|features/[^/]+/[^/]+/owner-signoff)$"
 )
 # The run reads that need the launch cookie (ADR 0049): a paused scenario run's values (its
 # action inputs and outputs), which no other local process may read; off in the container.

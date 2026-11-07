@@ -156,7 +156,8 @@ LINEAR_PATHS: frozenset[tuple[str, str]] = frozenset(
     (method, f"{API_PREFIX}/tracker/linear") for method in ("get", "put", "delete")
 )
 
-# The owner signs off a feature's owner steps (playground): a new SHIP eval in the hub.
+# The owner signs off a feature's owner steps (playground): a new SHIP eval in the hub, a strict
+# item write that needs the launch cookie (AGH-695).
 OWNER_SIGNOFF_PATHS: frozenset[tuple[str, str]] = frozenset(
     {("post", f"{API_PREFIX}/features/{{project}}/{{slug}}/owner-signoff")}
 )
