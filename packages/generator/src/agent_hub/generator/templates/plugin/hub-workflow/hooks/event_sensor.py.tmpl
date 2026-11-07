@@ -27,8 +27,9 @@ neither, nothing is kept), outside every hub and repo, since the command text in
 only when `hub web` or `hub collect --spool` imports it. The folder is made with mode 0700, the
 files are 0600 and owned by this user, and neither is ever opened through a link. Every writer
 holds an flock on SPOOL_LOCK (waiting at most SPOOL_LOCK_WAIT seconds, else the envelope is
-dropped); a spool over MAX_SPOOL_BYTES loses its oldest lines down to SPOOL_KEEP_BYTES, and its
-first line {"dropped": n} counts every line dropped so far (written to SPOOL_TRIM, then renamed).
+dropped uncounted: the count is in the spool, which only the lock's holder writes); a spool over
+MAX_SPOOL_BYTES loses its oldest lines down to SPOOL_KEEP_BYTES, and its first line
+{"dropped": n} counts every line a trim dropped so far (written to SPOOL_TRIM, then renamed).
 """
 
 from __future__ import annotations

@@ -156,9 +156,10 @@ appended to `hook-spool.jsonl` in `$XDG_STATE_HOME/agent-hub/` (absolute only), 
 (absolute only; with neither, nothing is kept), never inside a hub or a repo, since its command text is redacted only
 at import. The folder is made with mode 0700; each file is opened by name in that folder with `O_NOFOLLOW` and used
 only when it is a regular file of this user, set to 0600. Each write holds an `flock` on `hook-spool.lock`, taken
-within 0.2 s or the envelope is dropped. A spool over 8 MiB (`MAX_SPOOL_BYTES`) loses its oldest lines down to 6 MiB
-(`SPOOL_KEEP_BYTES`), written to `hook-spool.trim` then renamed over it, and its first line `{"dropped": n}` adds those
-lines to the count an earlier trim wrote. Any failure there is silent, the exit code stays 0, and the hook's time is
+within 0.2 s or the envelope is dropped, uncounted (the count is in the spool, which only the lock's holder writes). A
+spool over 8 MiB (`MAX_SPOOL_BYTES`) loses its oldest lines down to 6 MiB (`SPOOL_KEEP_BYTES`), written to
+`hook-spool.trim` then renamed over it, and its first line `{"dropped": n}` adds those lines to the count an earlier
+trim wrote. Any failure there is silent, the exit code stays 0, and the hook's time is
 the send's deadline plus the lock wait and a few writes. `hub web` imports the spool when it starts and
 `hub collect --spool` imports it on demand, both through the collector's `HookSpool` ([SPEC](../SPEC.md), "Hooks as
 sensors"). After deciding, and after printing its decision, the
