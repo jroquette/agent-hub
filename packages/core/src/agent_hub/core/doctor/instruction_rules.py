@@ -269,7 +269,7 @@ def _file_refs(path: str, *, text: str, context: _RefContext) -> Iterator[Findin
     start = _body_start(text, lines=lines)
     folder = posixpath.dirname(path)
     for number, line in enumerate(lines[start:], start=start + 1):
-        for ref in _references(line):
+        for ref in line_references(line):
             if ref in context.branches or not _is_checked(ref, branch_prefix=context.branch_prefix):
                 continue
             ends = _unresolved_ends(ref, folder=folder, context=context)
@@ -358,7 +358,7 @@ def _body_start(text: str, *, lines: tuple[str, ...]) -> int:
     return 0
 
 
-def _references(line: str) -> list[str]:
+def line_references(line: str) -> list[str]:
     """The line's link targets, then its code spans shaped like a path, each stripped."""
     spans = (span for span in _TICK.findall(line) if _PATHY.match(span.strip()))
     return [ref.strip() for ref in (*_link_targets(line), *spans)]

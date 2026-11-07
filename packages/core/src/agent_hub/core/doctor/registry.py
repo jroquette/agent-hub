@@ -32,6 +32,7 @@ from agent_hub.core.doctor.links_rule import LINKS_DEAD
 from agent_hub.core.doctor.lock_rules import LOCK_DRIFT
 from agent_hub.core.doctor.makefile_rules import MAKEFILE_OVERRIDE
 from agent_hub.core.doctor.permission_rules import MCP_PINNED, PERMISSIONS_BYPASS, SETTINGS_VALID
+from agent_hub.core.doctor.read_cap_rule import INSTRUCTIONS_READ_CAP
 from agent_hub.core.doctor.repo_agents_rule import REPOS_AGENTS
 from agent_hub.core.doctor.repo_ui_paths_rule import REPOS_UI_PATHS
 from agent_hub.core.doctor.sandbox_rule import SANDBOX_WORKFLOW
@@ -70,6 +71,7 @@ REGISTRY: Final[tuple[Rule, ...]] = (
     WORKFLOWS_STARTS,
     SCENARIOS_GRAPH_FORMAT,
     WORKFLOWS_SHADOW,
+    INSTRUCTIONS_READ_CAP,
     BRAIN_MEMORY,
     SANDBOX_WORKFLOW,
     WORKFLOWS_VALID,

@@ -48,6 +48,7 @@ WORKFLOWS_STARTS_RULE: Final = "workflows.starts"
 SCENARIOS_GRAPH_FORMAT_RULE: Final = "scenarios.graph_format"
 ITEM_LEFTOVERS_RULE: Final = "items.leftovers"
 WORKFLOWS_SHADOW_RULE: Final = "workflows.shadow"
+INSTRUCTIONS_READ_CAP_RULE: Final = "instructions.read_cap"
 
 RULE_IDS: Final = (
     CONFIG_SCHEMA_RULE,
@@ -79,6 +80,7 @@ RULE_IDS: Final = (
     WORKFLOWS_STARTS_RULE,
     SCENARIOS_GRAPH_FORMAT_RULE,
     WORKFLOWS_SHADOW_RULE,
+    INSTRUCTIONS_READ_CAP_RULE,
     BRAIN_MEMORY_RULE,
     SANDBOX_WORKFLOW_RULE,
     WORKFLOWS_VALID_RULE,
@@ -215,6 +217,7 @@ class DoctorRules(ConfigObject):
     workflows_starts: RuleSettings | None = absent_by_default(alias="workflows.starts")
     scenarios_graph_format: RuleSettings | None = absent_by_default(alias="scenarios.graph_format")
     workflows_shadow: RuleSettings | None = absent_by_default(alias="workflows.shadow")
+    instructions_read_cap: RuleSettings | None = absent_by_default(alias="instructions.read_cap")
     repos_agents: RuleSettings | None = absent_by_default(alias="repos.agents")
     config_stop_gate: StopGateRuleSettings | None = absent_by_default(alias="config.stop_gate")
     brain_memory: RuleSettings | None = absent_by_default(alias="brain.memory")
