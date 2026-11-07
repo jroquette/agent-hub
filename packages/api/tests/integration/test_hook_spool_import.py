@@ -6,18 +6,28 @@ database and ``~/.claude/projects``. Every value is synthetic.
 """
 
 import json
+import logging
 import os
 from collections.abc import Callable, Sequence
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from agent_hub.api.settings import ApiSettings
+from agent_hub.api.spool_import import SpoolImport
+from agent_hub.collector.claude_hooks import ClaudeHookMapper
+from agent_hub.collector.hook_spool import HookSpool
+from agent_hub.collector.transcript_tail import TranscriptTail
 from agent_hub.core.events.event import Event
+from agent_hub.core.events.event_store import AppendResult
 from agent_hub.core.ingestion.hook_envelope import HookEnvelope
+from agent_hub.core.ingestion.ingest_hook import IngestHook
+from agent_hub.core.ingestion.ingestion_status import IngestionCounters
 from agent_hub.core.testing.builders import an_event
+from agent_hub.core.testing.fakes import InMemoryEventStore
 from agent_hub.core.testing.hook_inputs import a_hook_input, an_envelope
 from agent_hub.core.testing.transcript_lines import (
     TRANSCRIPT_SESSION,
@@ -190,3 +200,40 @@ def test_imports_nothing_when_no_spool_folder_given(
 
     assert composed.rows() == []
     assert _left(spool_folder) == [SPOOL_FILE]
+
+
+class _BatchStore(InMemoryEventStore):
+    """Records the size of each batch it is asked to append."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.batches: list[int] = []
+
+    def append(self, events: Sequence[Event]) -> AppendResult:
+        self.batches.append(len(events))
+        return super().append(events)
+
+
+@pytest.mark.anyio
+async def test_appends_in_bounded_batches_and_logs_size_first_when_spool_imported(
+    spool_folder: Path, projects_root: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    _spool(spool_folder, [_line(_tool_envelope(number)) for number in range(5)] + [b"{not json"])
+    store = _BatchStore()
+    ingest = IngestHook(
+        store,
+        ClaudeHookMapper(),
+        TranscriptTail(projects_root),
+        status=IngestionCounters(clock=lambda: datetime(2026, 10, 11, tzinfo=UTC)),
+    )
+    caplog.set_level(logging.INFO)
+
+    await SpoolImport(HookSpool(spool_folder), ingest, batch_size=2).start()
+
+    logged = [
+        record.getMessage() for record in caplog.records if record.name == SpoolImport.__module__
+    ]
+    assert store.batches == [2, 2, 1]
+    assert logged[0] == "hook spool import started: 5 envelopes, 1 bad lines"
+    assert len(store.read_all()) == 5
+    assert _left(spool_folder) == []
