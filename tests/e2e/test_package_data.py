@@ -9,6 +9,8 @@ from importlib.resources import files
 from pathlib import Path
 from subprocess import CompletedProcess
 
+import pytest
+
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.rendered_file import RenderedFile
 from agent_hub.core.hub_files.rendered_link import RenderedLink
@@ -83,6 +85,32 @@ def test_ships_output_schemas_when_core_wheel_built(
     [wheel] = tmp_path.glob("agent_hub_core-*.whl")
     with zipfile.ZipFile(wheel) as archive:
         assert set(SHIPPED_OUTPUT_SCHEMAS) <= set(archive.namelist())
+
+
+@pytest.mark.parametrize(
+    ("package", "testing"),
+    [
+        ("agent-hub-core", "agent_hub/core/testing/"),
+        ("agent-hub-claude-sessions", "agent_hub/claude_sessions/testing/"),
+    ],
+)
+def test_leaves_testing_modules_out_when_wheel_built(
+    tmp_path: Path, run: Callable[..., CompletedProcess[str]], package: str, testing: str
+) -> None:
+    """The fakes, builders and contract suites are for this repo's tests (they import pytest,
+    which no wheel depends on), so no hub installs them."""
+    uv = _uv()
+    command = [uv, "build", "--package", package, "--wheel", "--out-dir", str(tmp_path)]
+
+    result = run(command)
+
+    assert result.returncode == 0, result.stderr
+    [wheel] = tmp_path.glob("*.whl")
+    with zipfile.ZipFile(wheel) as archive:
+        names = archive.namelist()
+    assert [name for name in names if name.startswith(testing)] == []
+    # The rest of the package still ships: the exclusion is the testing folder alone.
+    assert any(name.startswith(testing.removesuffix("testing/")) for name in names)
 
 
 def test_ships_every_template_when_generator_wheel_built(
