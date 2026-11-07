@@ -264,8 +264,13 @@ grid. It serves on `127.0.0.1` only, port 7420 by default. Run it one of two way
 
 Register the hub once, with its absolute path: in the app under Settings › Hubs, or, from the agent-hub clone,
 `make connect HUB=<workspace>/<hub>`, which also checks that the hub has the event sensor and says what to do when it
-does not. The hub's hooks then send each session's events as they happen; without the control plane running they do
-nothing and the session is unaffected. Older work can be added once: `./hub collect --transcript <file>` for a
+does not. The hub's hooks then send each session's events as they happen. While the control plane is not running, the
+session is unaffected and each event waits in a spool, `~/.local/state/agent-hub/hook-spool.jsonl` (under
+`$XDG_STATE_HOME/agent-hub/` when that is set): this user's only (mode 0600), at most 8 MiB (the oldest events are
+dropped and counted), outside every hub and repo because its command text is redacted only when it is imported.
+`./hub web` imports it when it starts, and `./hub collect --spool` imports it without the control plane. The Docker
+control plane (`make up`) does not see the host's spool: a local `./hub web` or `./hub collect --spool` imports it into
+the local database. Older work can be added once: `./hub collect --transcript <file>` for a
 transcript under `~/.claude/projects/`, and `./hub collect --runs .agent-runs` for `hub run` records. Only metadata
 is stored (sizes, tools, repo-relative paths, short commands with secrets redacted, and for a failed tool its error
 text, redacted and cut at 300 characters), never prompt, output or file text.
