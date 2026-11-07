@@ -152,6 +152,11 @@ cross-field check of the model, not of the JSON Schema: [project-config.md](proj
 - [ADR 0012](../adr/0012-cli-subsumes-hub-scripts.md): the config lint and the feature-tracker check become rules.
 - [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md): `lock.drift` reads the same lock that `hub sync` writes.
 - [ADR 0002](../adr/0002-lean-hexagonal-architecture.md): rules are pure core functions over a snapshot, so no port.
+- `instructions.read_cap` (AGH-699) reads every instruction file `instructions.size` lists, the plugins' agents and
+  skills, and each repo's instruction files, not only the hub's `AGENTS.md`/`CLAUDE.md` and a repo's `AGENTS.md`
+  that the audit (E-6) named: a skill, an agent or a `.claude/rules` file that sends a session to a doc over the
+  Read cap costs it the same failed read, and these files are already in the snapshot, so the wider scope reads
+  nothing more.
 
 ## Open questions
 
