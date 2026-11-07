@@ -336,6 +336,57 @@ def test_reports_merged_issue_when_git_prints_subject_not_in_utf8(
     assert merged["evidence"].endswith("'feat(api): export the caf� menu (DEM-1)'")
 
 
+def test_names_newest_commit_when_two_commits_name_issue(
+    hub: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = hub.parent / "api"
+    git(repo, "commit", "-q", "--allow-empty", "-m", "feat(api): export (DEM-1)")
+    git(repo, "commit", "-q", "--allow-empty", "-m", "fix(api): export the totals too (DEM-1)")
+
+    (merged,) = run(
+        capsys, monkeypatch, a_read([an_issue("DEM-1", "Export")]), "--config", a_config()
+    )["merged"]
+
+    assert merged["commit"] == head(repo, "main")
+    assert merged["evidence"].endswith(": 'fix(api): export the totals too (DEM-1)'")
+
+
+def test_reads_last_max_commits_when_branch_is_longer(
+    hub: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load()
+    assert module.MAX_COMMITS == 5_000
+    monkeypatch.setattr(module, "MAX_COMMITS", 1)
+    repo = hub.parent / "api"
+    git(repo, "commit", "-q", "--allow-empty", "-m", "feat(api): export (DEM-1)")
+    git(repo, "commit", "-q", "--allow-empty", "-m", "fix(api): pad the totals (DEM-2)")
+    issues = [an_issue("DEM-1", "Export"), an_issue("DEM-2", "Pad")]
+    monkeypatch.setattr(sys, "stdin", StringIO(json.dumps(a_read(issues))))
+
+    assert module.main(["--today", TODAY, "--config", a_config()]) == 0
+
+    merged = json.loads(capsys.readouterr().out)["merged"]
+    assert [entry["id"] for entry in merged] == ["DEM-2"]
+
+
+def test_cuts_subject_in_evidence_when_subject_long(
+    hub: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load()
+    assert module.SUBJECT_CHARS == 200
+    repo = hub.parent / "api"
+    # git's %s joins the first paragraph's lines, so a subject can run long; the id is past the cut.
+    subject = "feat(api): " + "export " * 60 + "(DEM-1)"
+    git(repo, "commit", "-q", "--allow-empty", "-m", subject)
+
+    (merged,) = run(
+        capsys, monkeypatch, a_read([an_issue("DEM-1", "Export")]), "--config", a_config()
+    )["merged"]
+
+    commit = head(repo, "main")
+    assert merged["evidence"] == f"commit {commit[:12]} on api main: {subject[:200]!r}"
+
+
 def test_names_unreadable_repo_when_default_branch_missing(
     hub: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
