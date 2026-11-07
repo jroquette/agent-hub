@@ -22,6 +22,7 @@ from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 from agent_hub.core.workflows.catalog import WorkflowFile, check_workflows
 from agent_hub.generator.doctor_snapshot import build_doctor_snapshot, item_leftovers
+from agent_hub.generator.workflow_discovery import BUILTIN_WORKFLOWS
 
 RUNNING = "4.5.6"
 NO_RULES = Selection(rules=(), notes=(), severities={})
@@ -86,6 +87,7 @@ def test_reads_nothing_when_no_rule_selected(hub_root: Path) -> None:
     assert snapshot.base_hooks is None
     assert snapshot.branch_prefix is None
     assert snapshot.workflows is None
+    assert snapshot.workflow_shadows is None
     assert snapshot.scenarios is None
     assert snapshot.scenario_folders == ()
     assert called == []
@@ -190,6 +192,35 @@ def test_reads_hub_workflows_when_workflows_rule_selected(hub_root: Path) -> Non
     assert [(file, where) for file, _, where, _ in catalog.problems] == [
         ("workflows/demo/lint.yaml", "nodes[0].promt")
     ]
+
+
+def test_reads_shadows_when_shadow_rule_selected(hub_root: Path) -> None:
+    # A seeded pack as shipped, and the same pack with one prompt edited.
+    config = a_config()
+    shutil.copytree(
+        BUILTIN_WORKFLOWS / "spike",
+        hub_root / "workflows" / "spike",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    selection = select_rules(REGISTRY, config=config, only=("workflows.shadow",))
+    assert isinstance(selection, Selection)
+
+    def shadows() -> tuple[tuple[str, str, bool], ...] | None:
+        snapshot = build_doctor_snapshot(
+            str(hub_root),
+            config=config,
+            running=RUNNING,
+            selection=selection,
+            local=LocalConfig(),
+            branch_prefix=None,
+        )
+        found = snapshot.workflow_shadows
+        return None if found is None else tuple((s.name, s.path, s.identical) for s in found)
+
+    assert shadows() == (("spike", "workflows/spike/spike.yaml", True),)
+    prompt = next((hub_root / "workflows" / "spike" / "prompts").iterdir())
+    prompt.write_text(prompt.read_text(encoding="utf-8") + "Edited.\n", encoding="utf-8")
+    assert shadows() == (("spike", "workflows/spike/spike.yaml", False),)
 
 
 def test_lists_pack_folders_when_workflows_rule_selected(hub_root: Path) -> None:

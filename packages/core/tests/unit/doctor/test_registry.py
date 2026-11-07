@@ -31,6 +31,7 @@ RELEASED_IDS = (
     "environments.env_file",
     "workflows.starts",
     "scenarios.graph_format",
+    "workflows.shadow",
     "brain.memory",
     "sandbox.workflow",
     "workflows.valid",
@@ -70,6 +71,7 @@ DESIGN_SEVERITIES = {
     "workflows.starts": Severity.ERROR,
     "scenarios.graph_format": Severity.WARNING,
     "items.leftovers": Severity.WARNING,
+    "workflows.shadow": Severity.WARNING,
 }
 
 
