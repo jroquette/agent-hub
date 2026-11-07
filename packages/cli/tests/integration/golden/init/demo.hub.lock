@@ -254,7 +254,7 @@
     "hub.schema.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "b7ce44a63eaef0dc70904ab4d1121771afc3137e1fb6288b4590d6cf28b0334b"
+      "sha256": "b9080e7a5b53322e86f4eae3b89d4d60e63c10bfd39d9b1dccfcb2a34e057424"
     },
     "plugin/demo/.claude-plugin/plugin.json": {
       "ownership": "seeded"
@@ -597,6 +597,9 @@
       "ownership": "seeded"
     },
     "workflows/backlog-care/fixtures/backlog-approve-and-skip.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/fixtures/backlog-merged.yaml": {
       "ownership": "seeded"
     },
     "workflows/backlog-care/fixtures/backlog-mixed.yaml": {

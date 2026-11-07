@@ -49,6 +49,7 @@
             "features.tracker": null,
             "hooks.guard-extension": null,
             "instructions.duplicates": null,
+            "instructions.read_cap": null,
             "instructions.refs": null,
             "instructions.size": null,
             "items.leftovers": null,
@@ -270,6 +271,9 @@
               "$ref": "#/$defs/RuleSettings"
             },
             "instructions.duplicates": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "instructions.read_cap": {
               "$ref": "#/$defs/RuleSettings"
             },
             "instructions.refs": {
@@ -853,6 +857,9 @@
               "$ref": "#/$defs/RuleSettings"
             },
             "instructions.duplicates": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "instructions.read_cap": {
               "$ref": "#/$defs/RuleSettings"
             },
             "instructions.refs": {
