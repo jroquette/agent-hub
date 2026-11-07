@@ -98,7 +98,6 @@ DENY_BASH = [
 ALLOW_BASH = [
     "git push -u origin me/dem-1-main-fix",
     "git push -u origin feature",
-    # AGH-699 (C-6): `--no-verify` asks now (test_guard_change_flow.py), so this push has none
     "git push --follow-tags origin me/dem-1-fix",
     "git push origin me/fix-worktree-test-root",
     "git status --short",
