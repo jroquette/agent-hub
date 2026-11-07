@@ -260,6 +260,118 @@ def test_asks_when_message_file_unreadable_or_stdin(ws: Path, decide: Decide) ->
     assert verdicts == [("ask", UNCHECKED_REASON.format(name, cause)) for _, name, cause in cases]
 
 
+# A file the same command writes holds the command's own text only when echo or printf, or cat
+# from a here-document or here-string, writes it (`>`, no expansion): then the command's text is
+# what is checked. Any other write (cat of a file, an append, an expansion) asks; an input
+# redirection writes nothing, so the file is read as usual.
+WRITTEN_CAUSE = "this command writes it from what the guard does not read"
+
+
+def test_checks_message_file_by_how_same_command_writes_it(ws: Path, decide: Decide) -> None:
+    app = git_repo(ws / "app", "me/dem-1-x", "me@example.com")
+    put(app / "body.md", GENERATED)
+    put(app / "msg.txt", CO_AUTHORED)
+    api = "gh api repos/o/r/pulls -F body=@b.md -f title=x -f head=me/dem-1-x -f base=trunk"
+    cases = [
+        (
+            "cat body.md > out.md; gh pr create --title x --body-file out.md",
+            ("ask", UNCHECKED_REASON.format("out.md", WRITTEN_CAUSE)),
+        ),
+        (
+            "cat msg.txt > m.txt && git commit -F m.txt",
+            ("ask", UNCHECKED_REASON.format("m.txt", WRITTEN_CAUSE)),
+        ),
+        (
+            'echo "$(cat body.md)" > out.md && gh pr edit 3 --body-file out.md',
+            ("ask", UNCHECKED_REASON.format("out.md", WRITTEN_CAUSE)),
+        ),
+        (
+            "cat >> out.md <<'EOF'\nmore\nEOF\ngh pr edit 3 --body-file out.md",
+            ("ask", UNCHECKED_REASON.format("out.md", WRITTEN_CAUSE)),
+        ),
+        (
+            "cat > out.md <<EOF\n$(cat body.md)\nEOF\ngh pr edit 3 --body-file out.md",
+            ("ask", UNCHECKED_REASON.format("out.md", WRITTEN_CAUSE)),
+        ),
+        (
+            f"printf 'Generated with [Claude Code]\\n' > b.md && {api}",
+            ("deny", HELD_BY.format(PR_REASON, "b.md")),
+        ),
+        (
+            "gh pr create --title x --body-file body.md < body.md",
+            ("deny", HELD_BY.format(PR_REASON, "body.md")),
+        ),
+    ]
+
+    verdicts = decide([bash_at(command, app) for command, _ in cases])
+
+    assert verdicts == [verdict for _, verdict in cases]
+
+
+def test_passes_message_file_when_same_command_writes_clean_text(ws: Path, decide: Decide) -> None:
+    app = git_repo(ws / "app", "me/dem-1-x", "me@example.com")
+    commands = [
+        "echo 'Body' > b.md && gh pr create --title x --body-file b.md",
+        "cat > b.md <<EOF\nBody\nEOF\ngh pr create --title x --body-file b.md",
+        "cat <<< 'Body' > b.md && gh pr comment 3 -F b.md",
+        "printf 'Body\\n' > b.md && gh api repos/o/r/pulls -F body=@b.md -f title=x -f base=trunk",
+    ]
+
+    assert decide([bash_at(command, app) for command in commands]) == [None] * len(commands)
+
+
+# A message given as `$(cat <file>)` or `$(< file)` is that file's text: it is read as -F's.
+def test_reads_message_file_when_message_value_is_cat_substitution(
+    ws: Path, decide: Decide
+) -> None:
+    app = git_repo(ws / "app", "me/dem-1-x", "me@example.com")
+    put(app / "msg.txt", CO_AUTHORED)
+    put(app / "body.md", GENERATED)
+    put(app / "clean.md", "Body\n")
+    cases = [
+        ('git commit -m "$(cat msg.txt)"', ("deny", HELD_BY.format(COMMIT_REASON, "msg.txt"))),
+        ('git commit -m "$(< msg.txt)"', ("deny", HELD_BY.format(COMMIT_REASON, "msg.txt"))),
+        (
+            "git tag -a v1 --message=\"$(cat 'msg.txt')\"",
+            ("deny", HELD_BY.format(COMMIT_REASON, "msg.txt")),
+        ),
+        (
+            'gh pr create --title x --body "$(cat body.md)"',
+            ("deny", HELD_BY.format(PR_REASON, "body.md")),
+        ),
+        ('gh pr comment 3 -b "$(cat body.md)"', ("deny", HELD_BY.format(PR_REASON, "body.md"))),
+        ('gh pr create --title x --body "$(cat clean.md)"', None),
+        (
+            'git commit -m "$(cat missing.txt)"',
+            ("ask", UNCHECKED_REASON.format("missing.txt", "cannot be read")),
+        ),
+        ("git commit -m \"$(cat <<'EOF'\nfeat: x\n\nRefs DEM-1\nEOF\n)\"", None),
+    ]
+
+    verdicts = decide([bash_at(command, app) for command, _ in cases])
+
+    assert verdicts == [verdict for _, verdict in cases]
+
+
+# A here-document's body is text, not calls: the lines of a PR body are never read as commands,
+# but a body an interpreter or a shell runs still is.
+def test_reads_heredoc_body_as_text_when_call_is_not_shell(ws: Path, decide: Decide) -> None:
+    app = git_repo(ws / "app", "trunk", "me@example.com")
+    create = "gh pr create --title x --body-file b.md"
+    commands = [
+        f"cat > b.md <<'EOF'\ngh pr merge 12 is now denied\nEOF\n{create}",
+        f"cat > b.md <<-EOF\n\tgit push\n\tEOF\n{create}",
+        "cat > a.md <<A; cat > b.md <<'B'\ngit push\nA\ngh pr merge 3\nB\ngh pr comment 3 -F b.md",
+    ]
+    shells = ["bash <<'EOF'\ngit push\nEOF", "uv run sh <<EOF\ngit push\nEOF"]
+
+    verdicts = decide([bash_at(command, app) for command in commands + shells])
+
+    assert verdicts == [None] * len(commands) + [("deny", PUSH_REASON.format("trunk"))] * len(
+        shells
+    )
+
+
 # C-6: skipping the repo's hooks asks: the owner may mean it, an agent asks first.
 NO_VERIFY_REASON = (
     "`git {} {}` skips the repo's git hooks (pre-commit, commit-msg, pre-push); confirm"
@@ -804,6 +916,7 @@ def test_denies_gh_api_when_field_breaks_change_flow(ws: Path, decide: Decide) -
 
 
 def test_passes_gh_api_when_read_or_clean(ws: Path, decide: Decide) -> None:
+    put(ws / "review.json", '{"event": "COMMENT", "body": "Looks good"}\n')
     commands = [
         "gh api repos/o/r/pulls/12",
         "gh api repos/o/r/pulls/12/merge",
@@ -816,6 +929,84 @@ def test_passes_gh_api_when_read_or_clean(ws: Path, decide: Decide) -> None:
     ]
 
     assert decide([bash_at(command, ws) for command in commands]) == [None] * len(commands)
+
+
+# gh api's --input file is the request's body on a write: it is read as a message file.
+INPUT_REASON = "commits and PR text carry no AI attribution"
+
+
+def test_reads_gh_api_input_when_call_writes(ws: Path, decide: Decide) -> None:
+    put(ws / "pr.json", json.dumps({"title": "x", "head": "me/dem-1-x", "body": GENERATED}))
+    put(ws / "commit.json", json.dumps({"message": CO_AUTHORED, "branch": "me/dem-1-x"}))
+    cases = [
+        (
+            "gh api -X POST repos/o/r/pulls --input pr.json",
+            ("deny", HELD_BY.format(INPUT_REASON, "pr.json")),
+        ),
+        (
+            "gh api repos/o/r/pulls --input=pr.json",
+            ("deny", HELD_BY.format(INPUT_REASON, "pr.json")),
+        ),
+        (
+            "gh api -X PUT repos/o/r/contents/a.md --input commit.json",
+            ("deny", HELD_BY.format(INPUT_REASON, "commit.json")),
+        ),
+        ("gh api repos/o/r/pulls --input -", ("ask", UNCHECKED_REASON.format("-", "stdin"))),
+        (
+            "gh api repos/o/r/pulls --input missing.json",
+            ("ask", UNCHECKED_REASON.format("missing.json", "cannot be read")),
+        ),
+        ("gh api -X GET repos/o/r/pulls --input pr.json", None),
+    ]
+
+    verdicts = decide([bash_at(command, ws) for command, _ in cases])
+
+    assert verdicts == [verdict for _, verdict in cases]
+
+
+# A call behind a wrapper (timeout, nice, sudo) or with options before its verb (git -C, gh pr
+# -R) is still that call.
+def test_checks_call_when_wrapper_or_options_come_first(ws: Path, decide: Decide) -> None:
+    app = git_repo(ws / "app", "trunk", "me@example.com")
+    web = git_repo(ws / "web", "me/dem-1-x", "me@example.com")
+    cases = [
+        ("timeout 60 git push", app, ("deny", PUSH_REASON.format("trunk"))),
+        (
+            "timeout -s KILL --preserve-status 5m git push origin HEAD",
+            app,
+            ("deny", PUSH_REASON.format("trunk")),
+        ),
+        ("nice git push", app, ("deny", PUSH_REASON.format("trunk"))),
+        ("nice -n 5 git push", app, ("deny", PUSH_REASON.format("trunk"))),
+        ("sudo -u me git push", app, ("deny", PUSH_REASON.format("trunk"))),
+        (
+            f"nice git -c user.email={OTHER} commit -m x",
+            web,
+            ("deny", IDENTITY_REASON.format("commit", OTHER, "author")),
+        ),
+        (
+            f"timeout 30 git -c user.email={OTHER} commit -m x",
+            web,
+            ("deny", IDENTITY_REASON.format("commit", OTHER, "author")),
+        ),
+        (
+            "git -C web commit -m x -m 'Co-Authored-By: Claude <c@x.io>'",
+            ws,
+            ("deny", COMMIT_REASON),
+        ),
+        ("gh pr -R o/r merge 12", ws, ("deny", MERGE_REASON.format("gh pr merge"))),
+        ("gh pr --repo o/r merge 12", ws, ("deny", MERGE_REASON.format("gh pr merge"))),
+        ("gh pr --repo=o/r merge 12", ws, ("deny", MERGE_REASON.format("gh pr merge"))),
+        (
+            "gh pr -R o/r create --title x --body 'Generated with [Claude Code]'",
+            ws,
+            ("deny", PR_REASON),
+        ),
+    ]
+
+    verdicts = decide([bash_at(command, cwd) for command, cwd, _ in cases])
+
+    assert verdicts == [verdict for _, _, verdict in cases]
 
 
 # C-13: a push the guard cannot read asks (branch protection is the barrier, this is defence in
