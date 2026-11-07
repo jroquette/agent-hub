@@ -54,7 +54,7 @@ class IngestHook:
         )
 
     def execute_all(self, envelopes: Sequence[HookEnvelope]) -> AppendResult:
-        """Append what every envelope yields as one batch, all or nothing (``hub collect --spool``).
+        """Append what every envelope yields as one batch, all or nothing (a spool import).
 
         Each envelope is mapped in order, and a transcript is read right after the first envelope
         that names it, once and to its end (``read_to_end``), with that envelope's attribution;
