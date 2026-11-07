@@ -81,7 +81,8 @@ class TranscriptTailer(Protocol):
         ...
 
     def read_to_end(self, ref: TranscriptRef) -> TailResult:
-        """As ``read_new``, but up to the file's last complete line however far that is."""
+        """As ``read_new``, but up to the file's last complete line, within the tailer's byte
+        budget for one such read; the next read goes on from where it stopped."""
         ...
 
     def commit(self, position: TailPosition) -> None:

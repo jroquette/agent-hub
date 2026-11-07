@@ -57,10 +57,11 @@ class IngestHook:
         """Append what every envelope yields as one batch, all or nothing (a spool import).
 
         Each envelope is mapped in order, and a transcript is read right after the first envelope
-        that names it, once and to its end (``read_to_end``), with that envelope's attribution;
-        the batch holds the hooks' events and the transcripts' in that order. The tail positions
-        are committed only once the batch is stored. An ``EventConflictError`` propagates with
-        nothing written and no position committed.
+        that names it, once and to its end within the tailer's budget (``read_to_end``), with that
+        envelope's attribution; the batch holds the hooks' events and the transcripts' in that
+        order. The tail positions are committed only once the batch is stored, so a transcript
+        past the budget is read on from there by its next read. An ``EventConflictError``
+        propagates with nothing written and no position committed.
         """
         events: list[Event] = []
         positions: list[TailPosition] = []

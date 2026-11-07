@@ -4,8 +4,10 @@ Only a regular file whose real path is under the Claude Code projects folder is 
 path component is opened with ``O_NOFOLLOW`` (a symlink is refused, never followed) and
 ``O_NONBLOCK`` (a FIFO swapped in cannot block), then ``fstat`` must show a regular file. Each
 read takes at most ``max_bytes`` and stops at the last complete line, so a line being written is
-read next time; ``read_to_end`` (a spool import) reads again until a read is not full. A line
-longer than ``max_line_bytes`` is skipped and counted. Offsets, turns, the usage message ids and
+read next time; ``read_to_end`` (a spool import) reads again until a read is not full or
+``max_to_end_bytes`` bytes were read (as ``hub collect --transcript``'s cap), so a larger file is
+read on from where it stopped, by the next read. A line longer than ``max_line_bytes`` is skipped
+and counted. Offsets, turns, the usage message ids and
 titles seen and the last line's timestamp live in memory per path, the newest ``max_paths`` kept;
 after a restart a file is read again from the start and the store's idempotency drops the
 duplicates.
@@ -29,6 +31,8 @@ from agent_hub.core.events.event import Event
 from agent_hub.core.ingestion.ingestion_ports import TailPosition, TailResult, TranscriptRef
 
 MAX_READ_BYTES: Final = 8 * 1_048_576
+# What one read_to_end reads at most: hub collect --transcript refuses a larger transcript.
+MAX_TO_END_BYTES: Final = 256 * 1_048_576
 MAX_PATHS: Final = 10_000
 _OPEN_FLAGS: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 _NEWLINE: Final = b"\n"
@@ -60,11 +64,13 @@ class TranscriptTail:
         projects_root: Path,
         *,
         max_bytes: int = MAX_READ_BYTES,
+        max_to_end_bytes: int = MAX_TO_END_BYTES,
         max_line_bytes: int = MAX_LINE_BYTES,
         max_paths: int = MAX_PATHS,
     ) -> None:
         self._root = projects_root
         self._max_bytes = max_bytes
+        self._max_to_end_bytes = max_to_end_bytes
         self._max_line_bytes = max_line_bytes
         self._max_paths = max_paths
         self._states: OrderedDict[str, _PathState] = OrderedDict()
@@ -76,7 +82,8 @@ class TranscriptTail:
         return self._read_ref(ref, is_to_end=False)
 
     def read_to_end(self, ref: TranscriptRef) -> TailResult:
-        """As ``read_new``, read after read of ``max_bytes`` up to the last complete line."""
+        """As ``read_new``, read after read of ``max_bytes`` up to the last complete line, or up to
+        ``max_to_end_bytes`` bytes read; the next read goes on from where this one stopped."""
         return self._read_ref(ref, is_to_end=True)
 
     def _read_ref(self, ref: TranscriptRef, *, is_to_end: bool) -> TailResult:
@@ -135,18 +142,22 @@ class TranscriptTail:
     def _read_chunks(
         self, descriptor: int, progress: _Progress, origin: TranscriptOrigin, *, is_to_end: bool
     ) -> tuple[tuple[Event, ...], int, _Progress]:
-        """One read of at most ``max_bytes``, or (``is_to_end``) reads until one is not full."""
+        """One read of at most ``max_bytes``, or (``is_to_end``) reads until one is not full or
+        ``max_to_end_bytes`` bytes were read."""
         events: list[Event] = []
         skipped = 0
+        budget = self._max_to_end_bytes if is_to_end else self._max_bytes
         while True:
-            chunk = os.pread(descriptor, self._max_bytes, progress.offset)
+            size = min(self._max_bytes, budget)
+            chunk = os.pread(descriptor, size, progress.offset)
+            budget -= len(chunk)
             chunk_events, chunk_skipped, reached = self._parse(chunk, progress, origin)
             events.extend(chunk_events)
             skipped += chunk_skipped
             # A full read always moves the offset (a line or a skipped piece), so this ends.
-            has_more = len(chunk) == self._max_bytes and reached.offset > progress.offset
+            has_more = len(chunk) == size and reached.offset > progress.offset
             progress = reached
-            if not (is_to_end and has_more):
+            if not (is_to_end and has_more and budget > 0):
                 return tuple(events), skipped, progress
 
     def _state_of(self, real: str, *, size: int) -> _PathState:

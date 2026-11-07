@@ -259,7 +259,8 @@ def _ingest_hooks_or_exit(
         ingest = IngestHook(
             open_event_store(db_path),
             ClaudeHookMapper(),
-            TranscriptTail(projects_root),
+            # Each named transcript is read as far as --transcript would take it.
+            TranscriptTail(projects_root, max_to_end_bytes=MAX_TRANSCRIPT_BYTES),
             status=IngestionCounters(clock=lambda: datetime.now(UTC)),
         )
         return ingest.execute_all(envelopes)
