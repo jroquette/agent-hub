@@ -183,9 +183,10 @@ def test_keeps_listed_kinds_when_kind_option_repeated(
         run_command(hub, "search", "marker", "--kind", "feature", "--kind", "adr", "--json")
     )
 
+    # An ADR ranks above a feature record (B-11).
     assert [result["path"] for result in found["results"]] == [
-        "brain/features/x/a.md",
         "demo-api/docs/adr/0001-a.md",
+        "brain/features/x/a.md",
     ]
 
 
@@ -849,14 +850,15 @@ def test_prints_no_text_line_when_note_body_empty(
     result = run_command(hub, "search", "marker")
 
     assert result.exit_code == 0, result.output
+    # A draft ranks below a note with no status (B-11), whatever its title match.
     assert result.stdout == (
-        "brain/marker.md  doc  draft\n"
-        "marker.md\n"
-        "(no text)\n"
-        "\n"
         "brain/other.md  doc\n"
         "Note\n"
         "# Note marker\n"
+        "\n"
+        "brain/marker.md  doc  draft\n"
+        "marker.md\n"
+        "(no text)\n"
     )
 
 

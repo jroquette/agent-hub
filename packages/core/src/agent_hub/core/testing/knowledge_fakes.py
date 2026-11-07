@@ -19,7 +19,13 @@ from agent_hub.core.knowledge.knowledge_index import (
     StoredFile,
     StoredIndex,
 )
-from agent_hub.core.knowledge.search_query import MAX_SNIPPET_CHARS, query_words, snippet_line
+from agent_hub.core.knowledge.search_query import (
+    MAX_SNIPPET_CHARS,
+    kind_tier,
+    query_words,
+    snippet_line,
+    status_tier,
+)
 from agent_hub.core.knowledge.sync_plan import ListedFile
 
 # A word in the title counts this many times a word in the body (D-query's weights 10 and 1).
@@ -91,7 +97,7 @@ class InMemoryKnowledgeIndex:
     def search(
         self, hub: str, words: tuple[str, ...], *, kinds: tuple[Kind, ...] = (), limit: int
     ) -> tuple[SearchHit, ...]:
-        """The hub's documents holding every word, best first, then by path."""
+        """The hub's documents holding every word, by kind tier, status tier, best score, path."""
         with self._lock:
             rows = list(self._rows.get(hub, {}).values())
         documents = [row.document for row in rows if row.document is not None]
@@ -102,7 +108,7 @@ class InMemoryKnowledgeIndex:
             if not kinds or document.kind in kinds
             if (score := _score(document, wanted)) is not None
         ]
-        scored.sort(key=lambda pair: (-pair[0], pair[1].path))
+        scored.sort(key=lambda pair: _rank(*pair))
         return tuple(_hit(document, wanted) for _, document in scored[:limit])
 
     def backlinks(self, hub: str, target: str, *, limit: int) -> Backlinks:
@@ -127,6 +133,11 @@ def _score(document: IndexedDocument, words: list[str]) -> int | None:
     if not words or any(title[word] + body[word] == 0 for word in words):
         return None
     return sum(_TITLE_WEIGHT * title[word] + body[word] for word in words)
+
+
+def _rank(score: int, document: IndexedDocument) -> tuple[int, int, int, str]:
+    """Where a scored document sorts: the search order of ``search_query``."""
+    return (kind_tier(document.kind), status_tier(document.status), -score, document.path)
 
 
 def _hit(document: IndexedDocument, words: list[str]) -> SearchHit:

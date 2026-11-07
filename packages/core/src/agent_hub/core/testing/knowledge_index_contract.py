@@ -73,7 +73,8 @@ def _paths(
 
 
 class KnowledgeIndexContract:
-    """Search by every word, title first, kinds, limit; per-hub rows; apply as P-5 says."""
+    """Search by every word, kind tier, status tier, title first, kinds, limit; per-hub rows;
+    apply as P-5 says."""
 
     def test_ranks_title_match_first_when_lengths_equal(
         self, knowledge_index: KnowledgeIndex

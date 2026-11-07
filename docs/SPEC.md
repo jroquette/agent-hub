@@ -528,7 +528,11 @@ A web app reads the hubs and the agents' events and answers five questions, one 
 Git stays the source of truth. Each developer's database holds a derived full-text index (SQLite FTS5) of the hub's
 `brain/` (except `brain/auto/`) and each repo's `docs/`, synced with the checkout on every search and rebuilt by
 `hub brain reindex`. `hub search` and the MCP server `hub mcp` (tools `search`, `read`, `propose`) query it; every
-result names its path and a snippet. A query is its runs of letters and digits, all required, never FTS5 syntax: one
+result names its path and a snippet. Results come curated knowledge first (ADRs, decisions, learnings, playbooks,
+domain and system notes), then the docs and the journal, then feature records and inbox notes, whatever their text
+match; inside each of these tiers a note whose `status` starts with approved, active or accepted comes first and one
+whose `status` starts with draft or proposed last; then the best text match (`bm25`, the title above the body), then
+the path (AGH-699). A query is its runs of letters and digits, all required, never FTS5 syntax: one
 with no word (`!!!`, `(`) exits 2, and one that starts with `-` goes after `--` (`hub search -- -foo`). `propose`
 writes a new `brain/_inbox/` note on a branch `<prefix>learning-propose-<slug>` and opens a hub pull request through
 `hub_git`, never the default branch; its `kind` names the brain folder the note would join (`learning`, `playbook`,

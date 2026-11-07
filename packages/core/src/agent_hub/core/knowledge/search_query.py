@@ -1,20 +1,46 @@
-"""The words of a ``hub search`` query and how they reach FTS5 (AGH-391, D-query).
+"""The words of a ``hub search`` query and how they reach FTS5 (AGH-391, D-query), and the order
+of the results (B-11).
 
 A word is a run of Unicode letters and digits in the NFC-composed text, and every other character
 separates words: FTS5's ``unicode61`` split, except that it keeps private-use characters inside a
 word where this split does not (a known gap). Each word reaches FTS5 as a quoted string and the
 strings are joined with FTS5's implicit AND, so no caller text is FTS5 syntax and no query is a
 syntax error.
+
+Results come by their kind's tier, then their status's tier, then their text match (bm25, a title
+match above a body match), then their path: curated knowledge first and feature records and inbox
+notes last, whatever their match, so an agent sees what the team settled before history and
+proposals. Every index orders the same way (``KnowledgeIndexContract``).
 """
 
 import re
+import string
 import unicodedata
 from typing import Final
+
+from agent_hub.core.knowledge.knowledge_index import Kind
 
 # At most this many results per search (D-query).
 MAX_RESULTS: Final = 50
 # A result's snippet is one line of at most this many characters (D-output).
 MAX_SNIPPET_CHARS: Final = 160
+
+# The kinds of each tier, first tier first: curated knowledge, then the docs and the journal, then
+# feature records and inbox notes (history and proposals, never authoritative).
+KIND_TIERS: Final[tuple[tuple[Kind, ...], tuple[Kind, ...], tuple[Kind, ...]]] = (
+    ("adr", "decision", "domain", "learning", "playbook", "system"),
+    ("doc", "journal"),
+    ("feature", "inbox"),
+)
+# A status counts by its leading word: its leading ASCII letters, in any case. A settled one ranks
+# first, a tentative one last, any other (or none) between them.
+SETTLED_STATUSES: Final = ("accepted", "active", "approved")
+TENTATIVE_STATUSES: Final = ("draft", "proposed")
+# The letters of a status's leading word (the set SQLite's ``ltrim`` takes in the adapter).
+STATUS_WORD_LETTERS: Final = string.ascii_letters
+_SETTLED_TIER: Final = 0
+_OTHER_STATUS_TIER: Final = 1
+_TENTATIVE_TIER: Final = 2
 
 _WORD: Final = re.compile(r"[^\W_]+")
 
@@ -38,3 +64,22 @@ def snippet_line(text: str) -> str:
     if len(line) <= MAX_SNIPPET_CHARS:
         return line
     return line[: MAX_SNIPPET_CHARS - 1] + "…"
+
+
+def kind_tier(kind: Kind) -> int:
+    """The tier of ``kind`` in ``KIND_TIERS``: 0 ranks first."""
+    return next(tier for tier, kinds in enumerate(KIND_TIERS) if kind in kinds)
+
+
+def status_tier(status: str | None) -> int:
+    """The tier of a frontmatter ``status`` by its leading word: 0 settled, 2 tentative, 1 any
+    other status or none."""
+    if status is None:
+        return _OTHER_STATUS_TIER
+    rest = status.lstrip(STATUS_WORD_LETTERS)
+    word = status[: len(status) - len(rest)].lower()
+    if word in SETTLED_STATUSES:
+        return _SETTLED_TIER
+    if word in TENTATIVE_STATUSES:
+        return _TENTATIVE_TIER
+    return _OTHER_STATUS_TIER

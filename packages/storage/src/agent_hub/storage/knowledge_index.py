@@ -12,8 +12,9 @@ An ``apply`` runs in one ``BEGIN IMMEDIATE`` transaction (P-5): a row is upserte
 ``(hub, path)``, so concurrent syncs converge, and its text is deleted and, for a document,
 inserted again under its id. A row's links are cleared with its text and, for a document,
 inserted again; a dropped row and a rebuilt hub lose theirs, a touched row keeps them (no foreign
-key does it). A search binds the hub, the kinds and an FTS5 ``MATCH`` string built
-only by ``fts5_match`` (each word quoted), so no caller text is SQL or FTS5 syntax.
+key does it). A search binds the hub, the kinds, the order's kind tiers and status words (from
+``search_query``) and an FTS5 ``MATCH`` string built only by ``fts5_match`` (each word quoted),
+so no caller text is SQL or FTS5 syntax.
 
 Database errors leave as ``DatabaseAccessError`` (``DatabaseBusyError`` past the busy
 timeout); their messages carry no content (the engine hides bound parameters).
@@ -43,7 +44,14 @@ from agent_hub.core.knowledge.knowledge_index import (
     StoredFile,
     StoredIndex,
 )
-from agent_hub.core.knowledge.search_query import fts5_match, snippet_line
+from agent_hub.core.knowledge.search_query import (
+    KIND_TIERS,
+    SETTLED_STATUSES,
+    STATUS_WORD_LETTERS,
+    TENTATIVE_STATUSES,
+    fts5_match,
+    snippet_line,
+)
 from agent_hub.storage.db import knowledge_documents, knowledge_links
 from agent_hub.storage.engine import BUSY_TIMEOUT_MS, create_sqlite_engine, dispose_when_dropped
 from agent_hub.storage.errors import (
@@ -63,15 +71,37 @@ _INSERT_TEXT: Final = text(
     "INSERT INTO knowledge_text (rowid, title, body) VALUES (:id, :title, :body)"
 )
 _DELETE_TEXT: Final = text("DELETE FROM knowledge_text WHERE rowid = :id")
-# P-6: ranked by bm25 with the title weighted 10 and the body 1, then by path; the snippet is
-# FTS5's cut of the body around the first match, without markers.
+# P-6, B-11: ranked as ``search_query`` says: by the kind's tier, then the status's tier, then by
+# bm25 with the title weighted 10 and the body 1, then by path. A status's leading word is its
+# leading ASCII letters (``ltrim`` drops them, so the length lost is the word's), lowercased. The
+# snippet is FTS5's cut of the body around the first match, without markers.
 _SEARCH: Final = text(
+    "SELECT path, kind, title, status, provenance, snippet FROM ("
     "SELECT d.path, d.kind, d.title, d.status, d.provenance, "
-    "snippet(knowledge_text, 1, '', '', '…', 24) AS snippet "
+    "snippet(knowledge_text, 1, '', '', '…', 24) AS snippet, "
+    "bm25(knowledge_text, 10.0, 1.0) AS score, "
+    "lower(substr(d.status, 1, length(d.status) - length(ltrim(d.status, :letters)))) "
+    "AS status_word "
     "FROM knowledge_text JOIN knowledge_documents AS d ON d.id = knowledge_text.rowid "
-    "WHERE knowledge_text MATCH :match AND d.hub = :hub AND d.kind IN :kinds "
-    "ORDER BY bm25(knowledge_text, 10.0, 1.0), d.path LIMIT :limit"
-).bindparams(bindparam("kinds", expanding=True))
+    "WHERE knowledge_text MATCH :match AND d.hub = :hub AND d.kind IN :kinds) "
+    "ORDER BY CASE WHEN kind IN :first_kinds THEN 0 WHEN kind IN :second_kinds THEN 1 ELSE 2 END, "
+    "CASE WHEN status_word IN :settled THEN 0 WHEN status_word IN :tentative THEN 2 ELSE 1 END, "
+    "score, path LIMIT :limit"
+).bindparams(
+    *(
+        bindparam(name, expanding=True)
+        for name in ("kinds", "first_kinds", "second_kinds", "settled", "tentative")
+    )
+)
+# The bound values of the order: the first two kind tiers (the third is the rest) and the
+# status words.
+_ORDER: Final = {
+    "letters": STATUS_WORD_LETTERS,
+    "first_kinds": list(KIND_TIERS[0]),
+    "second_kinds": list(KIND_TIERS[1]),
+    "settled": list(SETTLED_STATUSES),
+    "tentative": list(TENTATIVE_STATUSES),
+}
 _DELETE_PATH_TEXT: Final = text(
     "DELETE FROM knowledge_text WHERE rowid IN "
     "(SELECT id FROM knowledge_documents WHERE hub = :hub AND path = :path)"
@@ -186,11 +216,12 @@ class SqliteKnowledgeIndex:
     def search(
         self, hub: str, words: tuple[str, ...], *, kinds: tuple[Kind, ...] = (), limit: int
     ) -> tuple[SearchHit, ...]:
-        """The hub's documents holding every word, by bm25 (title 10, body 1) and then path, of
-        ``kinds`` when not empty; ``()`` with no word."""
+        """The hub's documents holding every word, by kind tier, status tier, bm25 (title 10,
+        body 1) and then path, of ``kinds`` when not empty; ``()`` with no word."""
         if not words:
             return ()
         parameters = {
+            **_ORDER,
             "match": fts5_match(words),
             "hub": hub,
             "kinds": list(kinds or KINDS),
