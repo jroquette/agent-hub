@@ -1,5 +1,9 @@
-"""GitHub names in git and gh output: the ``owner/name`` an ``origin`` url points at, the pull
-request url ``gh pr create`` prints and the open pull request ``gh pr list --json url`` names."""
+"""GitHub names in git and gh output: the ``owner/name`` an ``origin`` url points at, and the pull
+request urls GitHub's REST API answers through ``gh api``: the one it created
+(``POST repos/<owner>/<name>/pulls``) and the open one it lists (``GET …/pulls``).
+
+The REST API, not ``gh pr`` (GraphQL), because a cloud session's proxy refuses GraphQL.
+"""
 
 import json
 import re
@@ -14,6 +18,8 @@ _GITHUB_URL: Final = re.compile(
     re.IGNORECASE,
 )
 _PULL_URL: Final = re.compile(r"https://github\.com/(?P<repo>[^/\s]+/[^/\s]+)/pull/\d+")
+# A pull request's page; its ``url`` is the API's.
+HTML_URL: Final = "html_url"
 
 
 class UnexpectedOutputError(ValueError):
@@ -29,10 +35,14 @@ def github_repo(url: str) -> str | None:
 
 
 def pull_request_url(stdout: bytes, *, hub_repo: str) -> str | None:
-    """The pull request url that ends ``stdout`` (its last word) when it is
+    """The ``html_url`` of the pull request object ``gh api`` printed when it is
     ``https://github.com/<hub_repo>/pull/<n>`` (owner and name compared without case)."""
-    words = stdout.decode("utf-8", errors="replace").split()
-    return _hub_pull_url(words[-1], hub_repo=hub_repo) if words else None
+    try:
+        created = json.loads(stdout.decode("utf-8"))
+    except UnicodeDecodeError, ValueError:
+        return None
+    url = created.get(HTML_URL) if isinstance(created, dict) else None
+    return _hub_pull_url(url, hub_repo=hub_repo) if isinstance(url, str) else None
 
 
 def _hub_pull_url(text: str, *, hub_repo: str) -> str | None:
@@ -43,9 +53,10 @@ def _hub_pull_url(text: str, *, hub_repo: str) -> str | None:
 
 
 def open_pull_request_url(stdout: bytes, *, hub_repo: str) -> str | None:
-    """The first url of ``gh pr list --json url`` output, or None when it lists none.
+    """The first ``html_url`` of the pull request list ``gh api`` printed, or None when it lists
+    none.
 
-    The output must be a JSON list of objects whose ``url`` is
+    The output must be a JSON list of objects whose ``html_url`` is
     ``https://github.com/<hub_repo>/pull/<n>``; anything else raises ``UnexpectedOutputError``.
     """
     try:
@@ -56,7 +67,7 @@ def open_pull_request_url(stdout: bytes, *, hub_repo: str) -> str | None:
         raise UnexpectedOutputError
     urls: list[str] = []
     for item in listed:
-        url = item.get("url") if isinstance(item, dict) else None
+        url = item.get(HTML_URL) if isinstance(item, dict) else None
         found = _hub_pull_url(url, hub_repo=hub_repo) if isinstance(url, str) else None
         if found is None:
             raise UnexpectedOutputError

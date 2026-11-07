@@ -203,30 +203,33 @@ DEMO_SKILL_TEXT = (
     "1. **Test**: run `make check` in demo-api.\n"
     "2. **Review**: ask the `evaluator` agent to read the diff.\n"
 )
-# A fake ``gh``: ``auth token`` succeeds; ``pr create`` checks the head branch is on the bare
-# ``origin`` and prints the next pull request url of ``--repo``. Synthetic: no account, no token.
+# A fake ``gh``: ``auth token`` succeeds; ``api --method POST repos/<repo>/pulls`` (GitHub's REST
+# API, the only one a cloud session's proxy lets through) checks the ``head`` field's branch is
+# on the bare ``origin`` and prints the next pull request of that repo as JSON; any other call,
+# ``gh pr`` included, exits 2. Synthetic: no account, no token.
 FAKE_GH = """\
-import os, subprocess, sys
+import json, os, subprocess, sys
 
 args = sys.argv[1:]
 if args[:2] == ["auth", "token"]:
     print("gho_not-a-real-token")
     sys.exit(0)
-if args[:2] != ["pr", "create"]:
+if args[:3] != ["api", "--method", "POST"] or len(args) < 4:
     sys.exit(2)
-opts = dict(arg[2:].split("=", 1) for arg in args[2:] if arg.startswith("--") and "=" in arg)
+repo = args[3].removeprefix("repos/").removesuffix("/pulls")
+fields = dict(field.split("=", 1) for field in args[5::2])
 head = subprocess.run(
     ["git", "--git-dir", os.environ["FAKE_GH_ORIGIN"], "rev-parse", "--verify", "--quiet",
-     "refs/heads/" + opts["head"]],
+     "refs/heads/" + fields["head"]],
     stdout=subprocess.DEVNULL,
 )
 if head.returncode != 0:
     sys.exit(1)
 pulls = os.path.join(os.environ["FAKE_GH_DIR"], "pulls")
 with open(pulls, "a") as out:
-    out.write(opts["head"] + "\\n")
+    out.write(fields["head"] + "\\n")
 count = sum(1 for _ in open(pulls))
-print("https://github.com/" + opts["repo"] + "/pull/" + str(count))
+print(json.dumps({"html_url": "https://github.com/" + repo + "/pull/" + str(count)}))
 """
 
 # Absolute URLs the built bundle may contain, each exact. None is ever requested: React's and

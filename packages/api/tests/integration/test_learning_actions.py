@@ -43,7 +43,7 @@ def _decisions(app: Any) -> list[Event]:
 
 
 def _created_pulls(world: Any) -> list[list[str]]:
-    return [argv for argv in world.gh_calls() if argv[:2] == ["pr", "create"]]
+    return [argv for argv in world.gh_calls() if argv[:3] == ["api", "--method", "POST"]]
 
 
 def test_pushes_branch_with_moved_note_when_accepted(

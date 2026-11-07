@@ -374,26 +374,32 @@ if args[:2] == ["auth", "token"]:
         sys.exit(1)
     print("gho_not-a-real-token")
     sys.exit(0)
-if args[:2] != ["pr", "create"] or switch("fail"):
+# Only the REST call that opens a pull request (gh api), as a cloud session's proxy lets
+# through: gh pr fails.
+if args[:4] != ["api", "--method", "POST", "repos/acme/demo-hub/pulls"] or switch("fail"):
     sys.exit(1)
-opts = dict(arg[2:].split("=", 1) for arg in args[2:] if arg.startswith("--") and "=" in arg)
+fields = {}
+for flag, field in zip(args[4::2], args[5::2]):
+    key, value = field.split("=", 1)
+    if flag == "-F":
+        with open(value.removeprefix("@")) as given:
+            value = given.read()
+    fields[key] = value
 head = subprocess.run(
     ["git", "--git-dir", os.environ["FAKE_GH_ORIGIN"], "rev-parse", "--verify", "--quiet",
-     "refs/heads/" + opts["head"]],
+     "refs/heads/" + fields["head"]],
     stdout=subprocess.DEVNULL,
 )
 if head.returncode != 0:
     sys.exit(1)
 pulls = os.path.join(state, "pulls.jsonl")
 count = sum(1 for _ in open(pulls)) if os.path.exists(pulls) else 0
-url = "https://github.com/" + opts["repo"] + "/pull/" + str(count + 1)
-with open(opts["body-file"]) as body_file:
-    body = body_file.read()
-pull = {"url": url, "body": body}
-pull.update({key: opts[key] for key in ("head", "base", "title")})
+url = "https://github.com/acme/demo-hub/pull/" + str(count + 1)
+pull = {"url": url}
+pull.update({key: fields[key] for key in ("body", "head", "base", "title")})
 with open(pulls, "a") as out:
     out.write(json.dumps(pull) + "\\n")
-print(url)
+print(json.dumps({"html_url": url, "number": count + 1, "state": "open"}))
 """
 
 
@@ -444,7 +450,7 @@ class ProposalHub(NamedTuple):
 
     def switch(self, name: str) -> None:
         """Turn on a fake ``gh`` switch: ``logged-out`` (``auth token`` fails) or ``fail``
-        (``pr create`` fails)."""
+        (the pull request's creation fails)."""
         (self.gh_state / name).touch()
 
     def reject_pushes(self) -> None:
@@ -477,9 +483,10 @@ def proposal_hub(
     """``proposal_hub(files=...)``: ``knowledge_hub(files)`` with ``origin`` =
     ``https://github.com/acme/demo-hub.git``, which the test's global git config rewrites to a
     bare repository under ``tmp_path`` (git never reaches the network), ``main`` pushed to it,
-    and a fake ``gh``: ``gh auth token`` succeeds unless ``logged-out`` is on, ``gh pr create``
-    records the pull request and prints its url when the head is on ``origin``, and fails when
-    ``fail`` is on. Synthetic only: no real repository, account or token."""
+    and a fake ``gh``: ``gh auth token`` succeeds unless ``logged-out`` is on, ``gh api --method
+    POST repos/acme/demo-hub/pulls`` records the pull request and prints it as JSON when the
+    head is on ``origin``, and fails when ``fail`` is on; any other call (``gh pr`` included)
+    fails. Synthetic only: no real repository, account or token."""
 
     def build(files: Mapping[str, bytes] | None = None) -> ProposalHub:
         hub = knowledge_hub(dict(files or {}))
