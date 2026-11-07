@@ -1397,20 +1397,23 @@ def _from_text(words: list[tuple[str, bool]], call: _Call) -> bool:
     return name in ("echo", "printf") or (name == "cat" and call.here and all(text == "-" for text in operands))
 
 
-def _skip_bodies(cmd: str, pos: int, heredocs: list[tuple[str, bool, bool, _Call]]) -> int:
+def _skip_bodies(cmd: str, pos: int, heredocs: list[tuple[str, bool, bool, _Call]]) -> int | None:
     """Where the here-document bodies that start at pos end, read in order: each to a line that is
-    its delimiter (leading tabs dropped for `<<-`), or to cmd's end. A body whose delimiter is not
-    quoted expands: one that holds `$` or a backtick makes its call's text not the command's."""
+    its delimiter (leading tabs dropped for `<<-`); None when one never comes, so the caller reads
+    the lines as calls and a body cannot hide one. A body whose delimiter is not quoted expands:
+    one that holds `$` or a backtick makes its call's text not the command's."""
     for delimiter, strip, quoted, call in heredocs:
-        while pos < len(cmd):
+        ended = False
+        while pos < len(cmd) and not ended:
             end = cmd.find("\n", pos)
             end = len(cmd) if end < 0 else end
             line = cmd[pos:end]
             pos = end + 1
-            if (line.lstrip("\t") if strip else line) == delimiter:
-                break
-            if not quoted and ("$" in line or "`" in line):
+            ended = (line.lstrip("\t") if strip else line) == delimiter
+            if not ended and not quoted and ("$" in line or "`" in line):
                 call.text = False
+        if not ended:
+            return None
     return min(pos, len(cmd))
 
 
@@ -1420,16 +1423,20 @@ def _shell_calls(cmd: str) -> tuple[list[list[tuple[str, bool]]], dict[str, bool
     `&>`) write to, each with whether every write puts only text of the command there (_from_text,
     no append). A `#` at a word's start comments to the line's end; a call ends at a newline, `;`,
     `&`, `|`, `(` or `)`, but a `&` or `|` right after `<` or `>`, or a `&` before `>`, is the
-    redirection's. A here-document's body (from the line after its `<<` to its delimiter) is the
-    text of its call, not calls, unless a call with one on that line holds an interpreter or shell
-    word (INTERPRETER), which runs it: then the bodies are read as calls."""
+    redirection's; inside arithmetic (`((`…`))`, `$((`…`))`) `<` and `>` only part words. A
+    here-document's body (from the line after its `<<` to its delimiter) is the text of its call,
+    not calls, unless a call with one on that line holds an interpreter or shell word
+    (INTERPRETER), which runs it, or its delimiter never comes (from then on no body is skipped):
+    then the bodies are read as calls, and the text their calls write is not the command's."""
     calls: list[list[tuple[str, bool]]] = []
     writes: list[tuple[str, bool, _Call]] = []
     words: list[tuple[str, bool]] = []
     parts: list[str] = []
     expanded = started = quoted = keep_bodies = False
+    skipping = True  # until a here-document's delimiter never comes
     redirect = ""  # the redirection operator whose word comes next
     operator_end = -1  # where the last `<` or `>` ended: one right after it extends the operator
+    arithmetic, open_end = 0, -1  # the open parentheses of arithmetic, and where the last `(` ended
     call = _Call()
     heredocs: list[tuple[str, bool, bool, _Call]] = []  # (delimiter, `<<-`, quoted, its call) of this line
     line_heredocs = 0  # how many of them the current call added
@@ -1441,6 +1448,13 @@ def _shell_calls(cmd: str) -> tuple[list[list[tuple[str, bool]]], dict[str, bool
         first = text[0]
         if text == "\\\n":
             continue
+        if first == "(":
+            arithmetic = arithmetic + 1 if arithmetic else 2 if start == open_end else 0
+            open_end = pos
+        elif first == ")" and arithmetic:
+            arithmetic -= 1
+        elif first in "<>" and arithmetic:
+            first = " "  # a comparison or a shift, not a redirection
         if first in "<>" and started and not redirect and "".join(parts).isdigit():
             parts, started = [], False  # the fd of `2>`
         if first in " \t\r\f\v<>" or first in SHELL_CALL_END:
@@ -1481,7 +1495,11 @@ def _shell_calls(cmd: str) -> tuple[list[list[tuple[str, bool]]], dict[str, bool
                     calls.append(words)
                 words, call = [], _Call()
                 if first == "\n" and heredocs:
-                    pos = pos if keep_bodies else _skip_bodies(cmd, pos, heredocs)
+                    end = _skip_bodies(cmd, pos, heredocs) if skipping and not keep_bodies else None
+                    skipping = skipping and (keep_bodies or end is not None)
+                    for _, _, _, unread in heredocs if end is None else ():
+                        unread.text = False  # its body is read as calls, not checked as its text
+                    pos = pos if end is None else end
                     heredocs, keep_bodies, line_heredocs = [], False, 0
         elif first == "#" and not started:
             end = cmd.find("\n", pos - len(text))
