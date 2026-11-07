@@ -4494,6 +4494,16 @@ export interface components {
     /** @enum {string} */
     HubHealth: "ok" | "warning" | "error";
     /**
+     * HubToolCalls
+     * @description The calls of one of the hub's knowledge tools (``hub mcp``'s ``search``, ``read`` and
+     *     ``propose``) over 7, 30 and 90 days, by the main sessions and by their subagents: counts and
+     *     a time only (ADR 0019).
+     */
+    HubToolCalls: {
+      main: components["schemas"]["UsageWindows"];
+      subagents: components["schemas"]["UsageWindows"];
+    };
+    /**
      * HubView
      * @description A registered hub as read now.
      *
@@ -7725,7 +7735,8 @@ export interface components {
      * @description A project's skills, agents and hooks in stable order (kind, name, source).
      *
      *     ``truncated`` says a bound stopped the listing or the reads; ``notice`` is one line for the
-     *     owner (an empty hub, a file not read), or None.
+     *     owner (an empty hub, a file not read), or None. ``hub_tools`` is the usage fold's calls of
+     *     the hub's knowledge tools (``SkillUsage.hub_tools``), empty with no event source (AGH-699).
      */
     SkillCatalog: {
       /**
@@ -7733,6 +7744,13 @@ export interface components {
        * @default []
        */
       external_plugins: components["schemas"]["ExternalPlugin"][];
+      /**
+       * Hub Tools
+       * @default {}
+       */
+      hub_tools: {
+        [key: string]: components["schemas"]["HubToolCalls"];
+      };
       /** Items */
       items: components["schemas"]["CatalogItem"][];
       /** Notice */
@@ -8547,6 +8565,20 @@ export interface components {
       name: string;
       /** Project */
       project: string;
+      /** Runs 30D */
+      runs_30d: number;
+      /** Runs 7D */
+      runs_7d: number;
+      /** Runs 90D */
+      runs_90d: number;
+    };
+    /**
+     * UsageWindows
+     * @description How often a skill or agent was used over 7, 30 and 90 days, and its last use within 90
+     *     days: counts and a time only (AGH-482, ADR 0019).
+     */
+    UsageWindows: {
+      last_used_at: components["schemas"]["ApiTimestamp"] | null;
       /** Runs 30D */
       runs_30d: number;
       /** Runs 7D */
