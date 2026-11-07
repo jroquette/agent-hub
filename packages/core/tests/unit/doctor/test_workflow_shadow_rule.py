@@ -1,4 +1,4 @@
-"""``workflows.shadow``: a hub workflow that overrides a built-in whose pack has changed."""
+"""``workflows.shadow``: a hub workflow that overrides a built-in, identical to it or not."""
 
 from collections.abc import Callable
 from dataclasses import replace
@@ -41,35 +41,66 @@ def test_finds_nothing_when_no_hub_workflow_shadows_builtin(
     assert list(WORKFLOWS_SHADOW.check(snapshot)) == []
 
 
-def test_finds_nothing_when_shadow_identical_to_builtin(snapshot_of: SnapshotFactory) -> None:
-    # A seeded pack as hub init wrote it hides nothing of the running release (ADR 0032).
+def test_warns_with_delete_fix_when_shadow_identical_to_builtin(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    # A copy as hub init seeds it hides nothing today, but hub sync never refreshes it, so it
+    # hides every later release's changes to the built-in (ADR 0032).
     snapshot = replace(snapshot_of(), workflow_shadows=(a_shadow(identical=True),))
 
-    assert list(WORKFLOWS_SHADOW.check(snapshot)) == []
+    (found,) = WORKFLOWS_SHADOW.check(snapshot)
+
+    assert (found.path, found.line, found.severity) == (
+        "workflows/brain-care/inbox.yaml",
+        None,
+        Severity.WARNING,
+    )
+    assert found.message == (
+        "overrides the built-in workflow inbox, and workflows/brain-care/ is identical to the"
+        " built-in brain-care pack of this release (0.2.0), so it only hides the changes of"
+        " later releases"
+    )
+    assert found.fix == (
+        "delete workflows/brain-care/ to run the built-in (move any file of your own out of it"
+        " first)"
+    )
 
 
 def test_warns_with_compare_fix_when_shadow_differs_from_builtin(
     snapshot_of: SnapshotFactory,
 ) -> None:
+    snapshot = replace(snapshot_of(), workflow_shadows=(a_shadow(identical=False),))
+
+    (found,) = WORKFLOWS_SHADOW.check(snapshot)
+
+    assert (found.path, found.line, found.severity) == (
+        "workflows/brain-care/inbox.yaml",
+        None,
+        Severity.WARNING,
+    )
+    assert found.message == (
+        "overrides the built-in workflow inbox, and workflows/brain-care/ differs from the"
+        " built-in brain-care pack of this release (0.2.0)"
+    )
+    assert found.fix == (
+        "compare workflows/brain-care/ with packages/core/src/agent_hub/core/workflows/builtin/"
+        "brain-care/ at the platform's tag v0.2.0 and merge what you need, or delete"
+        " workflows/brain-care/ to run the built-in (move any file of your own out of it first)"
+    )
+
+
+def test_warns_once_per_workflow_when_pack_holds_several(snapshot_of: SnapshotFactory) -> None:
     snapshot = replace(
         snapshot_of(),
-        workflow_shadows=(a_shadow(identical=True, name="context"), a_shadow(identical=False)),
+        workflow_shadows=(a_shadow(identical=True, name="context"), a_shadow(identical=True)),
     )
 
     found = list(WORKFLOWS_SHADOW.check(snapshot))
 
-    assert [(f.path, f.line, f.severity) for f in found] == [
-        ("workflows/brain-care/inbox.yaml", None, Severity.WARNING)
+    assert [(f.path, f.message.split(",")[0]) for f in found] == [
+        ("workflows/brain-care/context.yaml", "overrides the built-in workflow context"),
+        ("workflows/brain-care/inbox.yaml", "overrides the built-in workflow inbox"),
     ]
-    assert found[0].message == (
-        "overrides the built-in workflow inbox, and workflows/brain-care/ differs from the"
-        " built-in brain-care pack of this release (0.2.0)"
-    )
-    assert found[0].fix == (
-        "compare workflows/brain-care/ with packages/core/src/agent_hub/core/workflows/builtin/"
-        "brain-care/ at the platform's tag v0.2.0 and merge what you need, or delete"
-        " workflows/brain-care/ to run the built-in"
-    )
 
 
 def test_points_fix_at_workflow_file_when_override_in_another_pack(
@@ -97,3 +128,26 @@ def test_points_fix_at_workflow_file_when_override_in_another_pack(
         "builtin/brain-care/ at the platform's tag v0.2.0 and merge what you need, or delete"
         " workflows/mine/inbox.yaml to run the built-in"
     )
+
+
+def test_points_delete_fix_at_workflow_file_when_other_pack_identical(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    mine = WorkflowShadow(
+        name="inbox",
+        path="workflows/mine/inbox.yaml",
+        pack="workflows/mine",
+        builtin_pack="brain-care",
+        identical=True,
+    )
+    snapshot = replace(snapshot_of(), workflow_shadows=(mine,))
+
+    (found,) = WORKFLOWS_SHADOW.check(snapshot)
+
+    assert (found.path, found.severity) == ("workflows/mine/inbox.yaml", Severity.WARNING)
+    assert found.message == (
+        "overrides the built-in workflow inbox of the built-in brain-care pack of this release"
+        " (0.2.0) from another pack, workflows/mine/, which holds that pack identical, so it"
+        " only hides the changes of later releases"
+    )
+    assert found.fix == "delete workflows/mine/inbox.yaml to run the built-in"

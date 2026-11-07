@@ -23,12 +23,12 @@ from click import unstyle
 from typer.testing import CliRunner, Result
 
 from agent_hub.cli import doctor_command
-from agent_hub.cli.doctor_report import report_lines
+from agent_hub.cli.doctor_report import finding_line, report_lines, totals_line
 from agent_hub.cli.main import app
 from agent_hub.core.doctor.brain_memory_rule import FIX as MEMORY_FIX
 from agent_hub.core.doctor.finding import Read, Rule
 from agent_hub.core.doctor.registry import REGISTRY
-from agent_hub.core.doctor.run_rules import UsageProblem, count_findings
+from agent_hub.core.doctor.run_rules import Totals, UsageProblem, count_findings
 from agent_hub.core.hub_config.doctor_rules import Severity
 from agent_hub.core.hub_config.platform_repository import PLATFORM_REPOSITORY_MESSAGE
 from agent_hub.core.json_form import dump_json
@@ -44,11 +44,13 @@ from agent_hub.core.testing.platform_repository_cases import (
     CUSTOM_REPOSITORY,
     SECRET_PARTS,
 )
+from agent_hub.core.testing.seeded_shadows import seeded_shadow_findings
 from agent_hub.generator import render_hub as render_hub_module
 
 # The conftest's in-process doctor run, its path recorder and the recorder's filters (tests
 # cannot import a conftest in importlib mode).
 type DoctorRunner = Callable[..., Result]
+type SyncRunner = Callable[..., Result]
 type ReadsIn = Callable[[list[PathRead], Path], set[str]]
 type Ancestors = Callable[..., set[str]]
 type CheckoutFactory = Callable[[str], Path]
@@ -90,6 +92,31 @@ LISTING_FIX = (
 )
 # The characters of the box Rich may draw around a usage error.
 BOX_CHARACTERS = "│╭╮╰╯─"
+# hub init seeds every built-in pack as shipped, so a full run on a DEMO hub names each seeded
+# workflow, identical to its built-in, with the fix "delete it" (AGH-699 D15). By rule id they
+# sort after every other rule's findings in these runs.
+SEEDED_FINDINGS = seeded_shadow_findings(VERSION)
+SEEDED_SHADOWS = [finding_line(finding) for finding in SEEDED_FINDINGS]
+SEEDED_JSON: list[dict[str, Any]] = [
+    {
+        "rule": finding.rule,
+        "severity": str(finding.severity),
+        "path": finding.path,
+        "line": finding.line,
+        "message": finding.message,
+        "fix": finding.fix,
+    }
+    for finding in SEEDED_FINDINGS
+]
+
+
+def seeded_totals(*, errors: int = 0, warnings: int = 0, infos: int = 0) -> str:
+    """The totals line of a run on a seeded hub: its other findings, plus the seeded shadows."""
+    return totals_line(Totals(errors=errors, warnings=warnings + len(SEEDED_FINDINGS), infos=infos))
+
+
+# A full run on a DEMO hub that nothing else is wrong with.
+SEEDED_CLEAN = [*SEEDED_SHADOWS, seeded_totals()]
 
 
 @pytest.fixture(autouse=True)
@@ -189,7 +216,7 @@ def test_lists_options_when_help_requested(demo_hub: Path, run_doctor: DoctorRun
     assert "--json" in help_text
     assert "Print one JSON object instead of lines." in help_text
     assert "not implemented yet" not in ran.output
-    assert lines_of(ran, exit_code=0) == [CLEAN]
+    assert lines_of(ran, exit_code=0) == SEEDED_CLEAN
     assert unknown.exit_code == 2
     assert "Usage:" in unknown.stderr
     assert unknown.stdout == ""
@@ -756,7 +783,7 @@ class TestExitCodes:
 
         lines = lines_of(run_doctor(demo_hub), exit_code=0)
 
-        assert lines == [NOT_ADOPTED_LINE, "0 errors, 1 warning, 0 infos"]
+        assert lines == [NOT_ADOPTED_LINE, *SEEDED_SHADOWS, seeded_totals(warnings=1)]
 
     def test_runs_only_named_rule_when_only_given(
         self, demo_hub: Path, run_doctor: DoctorRunner
@@ -854,12 +881,15 @@ class TestBenchTasks:
         lines = lines_of(run_doctor(demo_hub, *only), exit_code=1)
 
         fix = "Fix: fix the case in tasks.json"
+        # A full run also names the seeded workflows; a run of bench.tasks alone does not.
+        seeded = [] if only else SEEDED_SHADOWS
         assert lines == [
             f'error bench.tasks {TASKS}: [1].id: duplicate id "T1" {fix}',
             f'error bench.tasks {TASKS}: [1].repo: "zz" is not in repos (demo-api) {fix}',
             f"error bench.tasks {TASKS}: [2].merge: must be a commit sha:"
             f" 7 to 40 characters among 0-9 and a-f {fix}",
-            "3 errors, 0 warnings, 0 infos",
+            *seeded,
+            f"3 errors, {len(seeded)} warnings, 0 infos",
         ]
 
     def test_skips_rule_when_bench_unselected(
@@ -870,8 +900,8 @@ class TestBenchTasks:
         lines = lines_of(run_doctor(demo_hub, "--json"), exit_code=0)
 
         assert json.loads("\n".join(lines)) == {
-            "findings": [],
-            "totals": {"errors": 0, "warnings": 0, "infos": 0},
+            "findings": SEEDED_JSON,
+            "totals": {"errors": 0, "warnings": len(SEEDED_JSON), "infos": 0},
         }
 
     def test_rejects_rule_settings_when_bench_unselected(
@@ -937,9 +967,11 @@ def test_prints_one_json_object_when_json_given(
         for finding in document["findings"]
     ] == text_lines[:-1]
     assert all(finding["line"] is None for finding in document["findings"])
-    errors = len(document["findings"])
-    assert document["totals"] == {"errors": errors, "warnings": 0, "infos": 0}
-    assert (case == "error") == (errors == 2)
+    errors = sum(finding["severity"] == "error" for finding in document["findings"])
+    warnings = len(document["findings"]) - errors
+    assert document["totals"] == {"errors": errors, "warnings": warnings, "infos": 0}
+    # A broken hub.json runs only the config rules; a clean hub names its seeded workflows.
+    assert (errors, warnings) == ((2, 0) if case == "error" else (0, len(SEEDED_SHADOWS)))
     assert not_hub.exit_code == 2
     assert not_hub.stdout == ""
     assert not_hub.stderr == f"{os.path.realpath(empty)}{NOT_A_HUB}\n"
@@ -1034,7 +1066,7 @@ def test_warns_not_adopted_and_runs_other_rules_when_lock_absent(
 
     lines = lines_of(run_doctor(demo_hub), exit_code=0)
 
-    assert lines == [NOT_ADOPTED_LINE, OVERRIDE_LINE, "0 errors, 2 warnings, 0 infos"]
+    assert lines == [NOT_ADOPTED_LINE, OVERRIDE_LINE, *SEEDED_SHADOWS, seeded_totals(warnings=2)]
 
 
 def test_renders_nothing_when_doctor_runs(
@@ -1049,7 +1081,7 @@ def test_renders_nothing_when_doctor_runs(
 
     lines = lines_of(run_doctor(demo_hub), exit_code=0)
 
-    assert lines == [CLEAN]
+    assert lines == SEEDED_CLEAN
 
 
 def refusing_call(name: str) -> Callable[..., Any]:
@@ -1075,7 +1107,7 @@ def test_leaves_no_marker_when_guard_extension_would_write(
 
     lines = lines_of(run_doctor(demo_hub), exit_code=0)
 
-    assert lines == [CLEAN]
+    assert lines == SEEDED_CLEAN
     assert not os.path.lexists(marker)
 
 
@@ -1275,10 +1307,13 @@ def test_reports_listing_problem_once_when_git_missing(
     lines = lines_of(run_doctor(demo_hub, *only), exit_code=1)
 
     # E35: E24's owner is the first rule by id reading the listing, E28's file sets included.
+    # workflows.shadow reads no listing, so a full run still names the seeded workflows.
     owner = "features.tracker" if only else "attribution.ai"
+    seeded = [] if only else SEEDED_SHADOWS
     assert lines == [
         f"error {owner} .: could not list the files: git not found {LISTING_FIX}",
-        ONE_ERROR,
+        *seeded,
+        totals_line(Totals(errors=1, warnings=len(seeded), infos=0)),
     ]
 
 
@@ -1306,7 +1341,7 @@ def test_reports_info_when_checkout_missing(
 
     lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=0)
 
-    assert lines == [MISSING_WEB, "0 errors, 0 warnings, 1 info"]
+    assert lines == [MISSING_WEB, *SEEDED_SHADOWS, seeded_totals(infos=1)]
 
 
 def test_reads_checkout_real_path_when_dir_is_link(
@@ -1319,7 +1354,7 @@ def test_reads_checkout_real_path_when_dir_is_link(
 
     lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=0)
 
-    assert lines == [CLEAN]
+    assert lines == SEEDED_CLEAN
 
 
 def test_reads_no_repo_when_no_repo_rule_selected(
@@ -1362,7 +1397,8 @@ def test_reports_error_when_checkout_cannot_be_listed(
         "error brain.leak ../demo-web: could not list the files: git exited with 128:"
         " fatal: not a git repository (or any of the parent directories): .git"
         f" {LISTING_FIX}",
-        ONE_ERROR,
+        *SEEDED_SHADOWS,
+        seeded_totals(errors=1),
     ]
 
 
@@ -1389,7 +1425,8 @@ def test_checks_rest_of_checkout_when_one_file_unreadable(
     assert lines == [
         "error brain.leak ../demo-api/LEAK.md:1: line also in the brain at brain/note.md:3"
         " Fix: reword or remove the line here, or reword the brain note if it quotes this file",
-        ONE_ERROR,
+        *SEEDED_SHADOWS,
+        seeded_totals(errors=1),
     ]
 
 
@@ -1412,7 +1449,8 @@ def test_reports_error_when_checkout_cannot_be_looked_at(
     assert lines == [
         f"error brain.leak ../demo-web: could not list the files: {os.path.realpath(web)}:"
         f" Permission denied {LISTING_FIX}",
-        ONE_ERROR,
+        *SEEDED_SHADOWS,
+        seeded_totals(errors=1),
     ]
 
 
@@ -1452,7 +1490,7 @@ def test_skips_fenced_quote_when_onboard_proposal_checked(
     # block, which brain.leak skips.
     hub = onboard_hub(demo_two_repo_hub, demo_checkout, quoted_in_prose=False)
 
-    assert lines_of(run_doctor(hub), exit_code=0) == [CLEAN]
+    assert lines_of(run_doctor(hub), exit_code=0) == SEEDED_CLEAN
 
 
 def test_flags_prose_quote_when_onboard_proposal_checked(
@@ -1465,7 +1503,8 @@ def test_flags_prose_quote_when_onboard_proposal_checked(
         "error brain.leak ../demo-api/AGENTS.md:3: line also in the brain at"
         f" {ONBOARD_PROPOSAL}:15 Fix: reword or remove the line here, or reword the brain note"
         " if it quotes this file",
-        ONE_ERROR,
+        *SEEDED_SHADOWS,
+        seeded_totals(errors=1),
     ]
 
 
@@ -1479,9 +1518,19 @@ REPO_AGENTS_LINE = (
 @pytest.mark.parametrize(
     ("settings", "expected"),
     [
-        (None, (0, [REPO_AGENTS_LINE, "0 errors, 1 warning, 0 infos"])),
-        ({"enabled": False}, (0, [CLEAN])),
-        ({"severity": "error"}, (1, [REPO_AGENTS_LINE.replace("warning", "error", 1), ONE_ERROR])),
+        (None, (0, [REPO_AGENTS_LINE, *SEEDED_SHADOWS, seeded_totals(warnings=1)])),
+        ({"enabled": False}, (0, SEEDED_CLEAN)),
+        (
+            {"severity": "error"},
+            (
+                1,
+                [
+                    REPO_AGENTS_LINE.replace("warning", "error", 1),
+                    *SEEDED_SHADOWS,
+                    seeded_totals(errors=1),
+                ],
+            ),
+        ),
     ],
     ids=["default", "disabled", "error"],
 )
@@ -1547,7 +1596,7 @@ def test_hides_brain_memory_content_when_memory_committed(
     text = run_doctor(hub)
     shown = run_doctor(hub, "--json")
 
-    assert lines_of(text, exit_code=0) == [MEMORY_LINE, "0 errors, 1 warning, 0 infos"]
+    assert lines_of(text, exit_code=0) == [MEMORY_LINE, *SEEDED_SHADOWS, seeded_totals(warnings=1)]
     assert (shown.exit_code, shown.stderr) == (0, "")
     assert json.loads(shown.stdout) == {
         "findings": [
@@ -1558,9 +1607,10 @@ def test_hides_brain_memory_content_when_memory_committed(
                 "line": None,
                 "message": "personal memory file is tracked or not ignored by git",
                 "fix": MEMORY_FIX,
-            }
+            },
+            *SEEDED_JSON,
         ],
-        "totals": {"errors": 0, "warnings": 1, "infos": 0},
+        "totals": {"errors": 0, "warnings": 1 + len(SEEDED_JSON), "infos": 0},
     }
     for result in (text, shown):
         assert MEMORY_CANARY not in result.stdout
@@ -1570,9 +1620,19 @@ def test_hides_brain_memory_content_when_memory_committed(
 @pytest.mark.parametrize(
     ("settings", "expected"),
     [
-        (None, (0, [MEMORY_LINE, "0 errors, 1 warning, 0 infos"])),
-        ({"enabled": False}, (0, [CLEAN])),
-        ({"severity": "error"}, (1, [MEMORY_LINE.replace("warning", "error", 1), ONE_ERROR])),
+        (None, (0, [MEMORY_LINE, *SEEDED_SHADOWS, seeded_totals(warnings=1)])),
+        ({"enabled": False}, (0, SEEDED_CLEAN)),
+        (
+            {"severity": "error"},
+            (
+                1,
+                [
+                    MEMORY_LINE.replace("warning", "error", 1),
+                    *SEEDED_SHADOWS,
+                    seeded_totals(errors=1),
+                ],
+            ),
+        ),
     ],
     ids=["default", "disabled", "error"],
 )
@@ -1673,7 +1733,7 @@ class TestIdentity:
 
         lines = lines_of(run_doctor(demo_workspace.hub), exit_code=0)
 
-        assert lines == [DERIVED_INFO, ONE_INFO]
+        assert lines == [DERIVED_INFO, *SEEDED_SHADOWS, seeded_totals(infos=1)]
         # Git is asked for the email only: the prefix needs nothing else.
         assert identity_reads(traced_git) == email_read_in(demo_workspace.hub)
 
@@ -1686,7 +1746,7 @@ class TestIdentity:
 
         lines = lines_of(run_doctor(demo_workspace.hub), exit_code=0)
 
-        assert lines == [CLEAN]
+        assert lines == SEEDED_CLEAN
         assert identity_reads(traced_git) == []
 
     def test_reports_local_file_error_when_invalid(
@@ -1699,7 +1759,8 @@ class TestIdentity:
         assert lines == [
             "error config.schema hub.local.json: project.colour: Extra inputs are not permitted"
             " Fix: fix hub.local.json (docs/design/developer-identity.md)",
-            ONE_ERROR,
+            *SEEDED_SHADOWS,
+            seeded_totals(errors=1),
         ]
 
     def test_reports_local_file_error_when_hub_json_also_invalid(
@@ -1753,7 +1814,7 @@ class TestIdentity:
             "error instructions.refs AGENTS.md:3: stale reference `me/dem-1-x`",
         ]
         # The edited AGENTS.md is also lock.drift's.
-        assert shown[-1] == "3 errors, 0 warnings, 0 infos"
+        assert shown[-1] == seeded_totals(errors=3)
 
     def test_refuses_identity_severity_when_hub_json_retunes_it(
         self, demo_workspace: Workspace, run_doctor: DoctorRunner
@@ -1788,7 +1849,7 @@ class TestIdentity:
 
         lines = lines_of(run_doctor(demo_workspace.hub), exit_code=0)
 
-        assert lines == [CLEAN]
+        assert lines == SEEDED_CLEAN
         assert identity_reads(traced_git) == []
 
     def test_reports_main_checkout_local_file_when_run_from_hub_worktree(
@@ -1847,7 +1908,7 @@ class TestIdentity:
 
         lines = lines_of(run_doctor(root), exit_code=0)
 
-        assert lines == [CLEAN]
+        assert lines == SEEDED_CLEAN
 
 
 STOP_GATE_FIX = (
@@ -1891,7 +1952,8 @@ class TestStopGate:
         assert lines == [
             stop_gate_line(0, "demo-api"),
             stop_gate_line(1, "demo-web"),
-            "0 errors, 2 warnings, 0 infos",
+            *SEEDED_SHADOWS,
+            seeded_totals(warnings=2),
         ]
 
     def test_reports_nothing_when_stop_gate_rule_disabled(
@@ -1905,7 +1967,7 @@ class TestStopGate:
 
         lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=0)
 
-        assert lines == [CLEAN]
+        assert lines == SEEDED_CLEAN
 
     def test_refuses_stop_gate_severity_when_hub_json_retunes_it(
         self, demo_two_repo_hub: Path, run_doctor: DoctorRunner
@@ -2271,11 +2333,42 @@ def test_warns_read_cap_when_repo_agents_points_to_big_spec(
     ]
 
 
+def keep_one_seeded_pack(hub: Path, kept: str) -> None:
+    """Delete each pack ``hub init`` seeded in ``hub`` but ``kept``, as a hub that followed the
+    built-ins would have done; ``hub sync`` neither seeds them again nor reports them."""
+    for pack in (hub / "workflows").iterdir():
+        if pack.name != kept:
+            shutil.rmtree(pack)
+
+
+def test_warns_once_with_delete_fix_when_hub_holds_copy_of_builtin(
+    demo_hub: Path, run_doctor: DoctorRunner, run_sync: SyncRunner
+) -> None:
+    # AGH-699 D15-2, which replaces the earlier rule that a pack as hub init seeds it gives
+    # nothing: the copy hides nothing of this release, but sync never refreshes it, so it hides
+    # each later release's changes to the built-in.
+    keep_one_seeded_pack(demo_hub, "spike")
+
+    lines = lines_of(run_doctor(demo_hub), exit_code=0)
+
+    assert lines == [
+        "warning workflows.shadow workflows/spike/spike.yaml: overrides the built-in workflow"
+        f" spike, and workflows/spike/ is identical to the built-in spike pack of this release"
+        f" ({VERSION}), so it only hides the changes of later releases Fix: delete"
+        " workflows/spike/ to run the built-in (move any file of your own out of it first)",
+        "0 errors, 1 warning, 0 infos",
+    ]
+    # The fix leaves a clean hub that sync keeps as it is.
+    shutil.rmtree(demo_hub / "workflows" / "spike")
+    assert lines_of(run_doctor(demo_hub), exit_code=0) == [CLEAN]
+    synced = run_sync(demo_hub, "--check")
+    assert (synced.exit_code, synced.stdout, synced.stderr) == (0, "up to date\n", "")
+
+
 def test_warns_with_compare_fix_when_seeded_pack_differs_from_builtin(
     demo_hub: Path, run_doctor: DoctorRunner
 ) -> None:
-    # hub init seeds each built-in pack as shipped: a fresh hub's copies hide nothing.
-    assert lines_of(run_doctor(demo_hub, "--only", "workflows.shadow"), exit_code=0) == [CLEAN]
+    keep_one_seeded_pack(demo_hub, "spike")
     # A copy frozen before the release changed one prompt of the built-in pack.
     prompt = demo_hub / "workflows" / "spike" / "prompts" / "options.md"
     prompt.write_text(prompt.read_text(encoding="utf-8") + "An older step.\n", encoding="utf-8")
@@ -2287,7 +2380,8 @@ def test_warns_with_compare_fix_when_seeded_pack_differs_from_builtin(
         f" spike, and workflows/spike/ differs from the built-in spike pack of this release"
         f" ({VERSION}) Fix: compare workflows/spike/ with"
         " packages/core/src/agent_hub/core/workflows/builtin/spike/ at the platform's tag"
-        f" v{VERSION} and merge what you need, or delete workflows/spike/ to run the built-in",
+        f" v{VERSION} and merge what you need, or delete workflows/spike/ to run the built-in"
+        " (move any file of your own out of it first)",
         "0 errors, 1 warning, 0 infos",
     ]
 
