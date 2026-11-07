@@ -752,6 +752,65 @@ def test_reads_option_cluster_once_when_word_is_huge(ws: Path, decide: Decide) -
     assert decide([bash_at("git commit -" + "a" * (4 << 20) + " -m x", app)]) == [None]
 
 
+# The same, counted rather than timed: the child gives _parsed words that count the slices taken
+# of them. A cluster slices its word at most once, at the letter that takes a value, so a cluster
+# of a thousand letters takes one slice, not one per letter. argv: none. Prints [slices of a
+# cluster with no value letter, slices of one ending in -m's value, the options read].
+CLUSTER_SLICES = r"""
+import json
+import guard
+slices = [0]
+class Word(str):
+    def __getitem__(self, key):
+        slices[0] += isinstance(key, slice)
+        return str.__getitem__(self, key)
+plain, _ = guard._parsed([(Word("-" + "a" * 1000), False)], "m")
+counts = [slices[0]]
+valued, _ = guard._parsed([(Word("-" + "a" * 1000 + "mx"), False)], "m")
+counts.append(slices[0] - counts[0])
+print(json.dumps([*counts, len(plain), valued[-1]]))
+"""
+
+
+def test_slices_option_cluster_once_when_word_is_long(
+    ws: Path, *, hook_python: str, run_python: Callable[..., Any]
+) -> None:
+    found = run_python(hook_python, CLUSTER_SLICES, path=ws / "demo-hub" / HOOKS)
+
+    assert found == [0, 1, 1000, ["-m", ["x", False]]]
+
+
+# A run of glued `<` or `>` grows the redirection operator a character at a time; grown without
+# end it is copied for each character, so a million took 15.5 s, past the hook's 10 s, and the call
+# went through unchecked. The operator stops growing at four characters (one past `<<<`, the
+# longest bash reads), so a longer run reads as four do. The child records the longest operator
+# _redirection returns. argv: none. Prints [its length, whether the calls of a run of a thousand are
+# those of a run of four, the verdict on a merge followed by a thousand `<`].
+REDIRECTION_RUN = r"""
+import json
+import guard
+longest = [0]
+grown = guard._redirection
+def counted(*args):
+    operator = grown(*args)
+    longest[0] = max(longest[0], len(operator))
+    return operator
+guard._redirection = counted
+long = guard._shell_calls("gh pr merge 12 " + "<" * 1000 + "x")
+four = guard._shell_calls("gh pr merge 12 <<<<x")
+verdict = guard.check_change_flow("gh pr merge 12 " + "<" * 1000, guard.Config())
+print(json.dumps([longest[0], long == four, verdict]))
+"""
+
+
+def test_stops_growing_redirection_when_run_of_operators_is_long(
+    ws: Path, *, hook_python: str, run_python: Callable[..., Any]
+) -> None:
+    found = run_python(hook_python, REDIRECTION_RUN, path=ws / "demo-hub" / HOOKS)
+
+    assert found == [4, True, ["deny", MERGE_REASON.format("gh pr merge")]]
+
+
 # X-1: a GitHub MCP tool (`mcp__<server naming github>__<method>`) and `gh api` get the
 # attribution rule on their title, body and message fields, the `claude/` rule on their branch,
 # head and ref fields, and the protected-branch rule on what they write; and merging a pull
