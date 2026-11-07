@@ -157,17 +157,19 @@ def test_tails_transcript_and_adds_its_events_when_mapping_names_one() -> None:
 
 def test_reads_transcript_to_its_end_when_executed_to_end() -> None:
     position = TailPosition(path="/home/demo/t.jsonl", version=2)
+    hook_event = an_event(type="session.end", payload={"outcome": None})
     transcript_event = an_event(source="transcript", type="message", payload={"role": "user"})
-    mapping = _stop_mapping()
+    ref = TranscriptRef(project="demo", session="session-1", path="/home/demo/t.jsonl", kind="main")
     use_case, store, tailer, _ = _use_case(
-        mapping, TailResult(events=(transcript_event,), position=position)
+        HookMapping(events=(hook_event,), transcript=ref),
+        TailResult(events=(transcript_event,), position=position),
     )
 
     result = use_case.execute(_envelope("Stop"), is_to_end=True)
 
     assert result == AppendResult(appended=2, duplicates=0)
-    assert tailer.to_end_refs == [mapping.transcript]
-    assert store.read_all() == [*mapping.events, transcript_event]
+    assert tailer.to_end_refs == [ref]
+    assert store.read_all() == [hook_event, transcript_event]
     assert tailer.committed == [position]
 
 

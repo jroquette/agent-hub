@@ -33,17 +33,20 @@ class IngestHook:
         self._tailer = tailer
         self._status = status
 
-    def execute(self, envelope: HookEnvelope) -> AppendResult:
+    def execute(self, envelope: HookEnvelope, *, is_to_end: bool = False) -> AppendResult:
         """Append what ``envelope`` yields; the result adds the hook's and the transcript's counts.
 
-        An ``EventConflictError`` propagates (nothing of that batch is written).
+        ``is_to_end`` reads the transcript to its end (``read_to_end``, as a spool import does)
+        instead of its next piece. An ``EventConflictError`` propagates (nothing of that batch is
+        written).
         """
         self._status.record_hook()
         mapping = self._mapper.map(envelope)
         result = self._append(mapping.events)
         if mapping.transcript is None:
             return result
-        tail = self._tailer.read_new(mapping.transcript)
+        read = self._tailer.read_to_end if is_to_end else self._tailer.read_new
+        tail = read(mapping.transcript)
         self._status.record_tail(refused=tail.refused, skipped_lines=tail.skipped_lines)
         tail_result = self._append(tail.events)
         if tail.position is not None:
