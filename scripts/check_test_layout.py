@@ -347,7 +347,7 @@ def _check_dependencies_declared(
             yield Violation(path, "dependency-declared", f"cannot be read as TOML: {error}")
     owners = _workspace_modules(files, members)
     for member in members:
-        yield from _check_member_imports(files, member, owners, providers)
+        yield from _check_member_imports(files, member, owners=owners, providers=providers)
 
 
 def _read_package(folder: str, text: str) -> _Package:
@@ -373,6 +373,7 @@ def _workspace_modules(files: Iterable[str], members: Iterable[_Package]) -> dic
 def _check_member_imports(
     files: Mapping[str, str],
     member: _Package,
+    *,
     owners: Mapping[str, str],
     providers: Mapping[str, Collection[str]],
 ) -> Iterator[Violation]:

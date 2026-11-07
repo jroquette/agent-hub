@@ -530,7 +530,8 @@ def test_ignores_dependency_declared_when_import_is_stdlib_relative_or_own_packa
     source = (
         "import json\nimport os.path\nfrom . import db\nfrom agent_hub.storage.db import x\n"
         "from agent_hub.core.events import y\nimport agent_hub\n"
-        "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from _typeshed import Incomplete\n"
+        "from typing import TYPE_CHECKING\n"
+        "if TYPE_CHECKING:\n    from _typeshed import Incomplete\n"
     )
 
     assert dependency_hits(storage_importing(source)) == []
