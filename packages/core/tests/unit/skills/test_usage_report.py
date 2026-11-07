@@ -5,7 +5,12 @@ from agent_hub.core.events.event import Event
 from agent_hub.core.events.stored_event import StoredEvent
 from agent_hub.core.skills.skill_usage import fold_skill_usage
 from agent_hub.core.skills.skill_view import ItemKind, SkillUsage, UsageDays, UsageWindows
-from agent_hub.core.skills.usage_report import ordered_usage, usage_markdown, usage_rows
+from agent_hub.core.skills.usage_report import (
+    hub_tools_text,
+    ordered_usage,
+    usage_markdown,
+    usage_rows,
+)
 from agent_hub.core.testing.builders import an_event
 from agent_hub.core.testing.read_model_builders import a_usage_row
 from agent_hub.core.testing.session_scenarios import as_stored
@@ -134,3 +139,38 @@ def test_prints_usage_markdown_table_when_rows_given() -> None:
         "Some items were not read; the list may be incomplete.",
     ]
     assert not usage_markdown(rows, days=7, truncated=False).endswith("incomplete.\n")
+
+
+def test_prints_hub_tool_lines_in_window_when_calls_folded() -> None:
+    def call(tool: str, *, tool_use_id: str, days_ago: float, agent: str | None = None) -> Event:
+        payload: dict[str, object] = {"tool": tool, "tool_use_id": tool_use_id}
+        return an_event(
+            session="s-hub",
+            type="tool.call",
+            timestamp=NOW - timedelta(days=days_ago),
+            source_id=f"s-hub:{tool_use_id}",
+            payload=payload | ({} if agent is None else {"agent_id": f"{agent}-1"}),
+            agent=agent,
+        )
+
+    usage = _usage(
+        [
+            call("mcp__hub__search", tool_use_id="t1", days_ago=1),
+            call("mcp__hub__search", tool_use_id="t2", days_ago=20, agent="evaluator"),
+            call("mcp__hub__propose", tool_use_id="t3", days_ago=60),
+        ]
+    )
+
+    assert hub_tools_text(usage.hub_tools, days=30).splitlines() == [
+        "Hub knowledge tools (hub mcp): calls in the last 30 days.",
+        "- mcp__hub__search: main sessions 1, subagents 1",
+        "- mcp__hub__read: main sessions 0, subagents 0",
+        "- mcp__hub__propose: main sessions 0, subagents 0",
+    ]
+    assert "- mcp__hub__search: main sessions 1, subagents 0" in hub_tools_text(
+        usage.hub_tools, days=7
+    )
+    assert "- mcp__hub__propose: main sessions 1, subagents 0" in hub_tools_text(
+        usage.hub_tools, days=90
+    )
+    assert hub_tools_text({}, days=30) == hub_tools_text(_usage([]).hub_tools, days=30)
