@@ -2731,6 +2731,133 @@ def test_asks_when_owner_signoff_path_spelled_another_way(
     assert verdicts == [("ask", OWNER_SIGNOFF_REASON.format(path)) for path in paths + bash_paths]
 
 
+# What a feature eval says after a change is read as core reads its provenance field (the value
+# stripped and unquoted): from a file tool, its text on disk with the edits applied; from Bash,
+# its text on disk and the text one plain echo or printf writes there. Any other Bash write (a
+# copy, a move, a link, tee, sed -i of an eval that exists, more than one write, a glob or an
+# escape) puts there what the guard does not see.
+OWNER_UNCHECKED_REASON = (
+    "owner sign-off: what {} says after this change cannot be told ({}); a feature eval that says"
+    " provenance: owner is the owner's sign-off, confirm"
+)
+UNSEEN_WRITE_CAUSE = "the command writes it other than with one plain echo or printf"
+
+
+def an_eval(workspace: Path, name: str, text: str) -> Path:
+    """``brain/features/dem-1-x/evals/<name>`` of the demo hub, holding text."""
+    path = workspace / "demo-hub" / "brain" / "features" / "dem-1-x" / "evals" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def multi_edit(path: str, edits: list[dict[str, str]]) -> str:
+    """The expression ``check_file('MultiEdit', {file_path, edits}, cfg)``."""
+    return f"check_file('MultiEdit', {{'file_path': {path!r}, 'edits': {edits!r}}}, cfg)"
+
+
+def test_asks_when_file_tool_leaves_eval_saying_owner(evaluate: Evaluate, workspace: Path) -> None:
+    agent = str(an_eval(workspace, "ac-1.md", AGENT_EVAL))
+    owner = str(an_eval(workspace, "ac-2.md", OWNER_EVAL.replace("SHIP", "NO-SHIP")))
+    huge = str(an_eval(workspace, "ac-3.md", AGENT_EVAL + "x" * (1 << 20)))
+    new = str(workspace / "demo-hub" / "brain" / "features" / "dem-1-x" / "evals" / "ac-4.md")
+    split = [{"old_string": "ag", "new_string": "ow"}, {"old_string": "ent", "new_string": "ner"}]
+    calls = {
+        "value-only Edit": file(
+            "Edit", {"file_path": agent, "old_string": "agent", "new_string": "owner"}
+        ),
+        "split MultiEdit": multi_edit(agent, split),
+        "verdict flip": file(
+            "Edit", {"file_path": owner, "old_string": "NO-SHIP", "new_string": "SHIP"}
+        ),
+        "no-break space": file(
+            "Write", {"file_path": new, "content": "---\nprovenance: owner\u00a0\n---\n"}
+        ),
+        "quoted blanks": file(
+            "Write", {"file_path": new, "content": "---\nprovenance: ' owner'\n---\n"}
+        ),
+        "unreadable": file(
+            "Edit", {"file_path": huge, "old_string": "SHIP", "new_string": "NO-SHIP"}
+        ),
+    }
+
+    verdicts = dict(zip(calls, evaluate(list(calls.values())), strict=True))
+
+    assert verdicts == {
+        "value-only Edit": ("ask", OWNER_SIGNOFF_REASON.format(agent)),
+        "split MultiEdit": ("ask", OWNER_SIGNOFF_REASON.format(agent)),
+        "verdict flip": ("ask", OWNER_SIGNOFF_REASON.format(owner)),
+        "no-break space": ("ask", OWNER_SIGNOFF_REASON.format(new)),
+        "quoted blanks": ("ask", OWNER_SIGNOFF_REASON.format(new)),
+        "unreadable": ("ask", OWNER_UNCHECKED_REASON.format(huge, "over 1 MiB")),
+    }
+
+
+def test_passes_when_file_tool_leaves_eval_saying_agent(
+    evaluate: Evaluate, workspace: Path
+) -> None:
+    agent = str(an_eval(workspace, "ac-1.md", AGENT_EVAL))
+    edits = [
+        {"old_string": "SHIP", "new_string": "NO-SHIP"},
+        {"old_string": "---\n", "new_string": ""},
+    ]
+    calls = [
+        file("Edit", {"file_path": agent, "old_string": "SHIP", "new_string": "NO-SHIP"}),
+        multi_edit(agent, edits),
+    ]
+
+    assert evaluate(calls) == [None, None]
+
+
+def test_asks_when_bash_write_may_leave_eval_saying_owner(
+    evaluate: Evaluate, workspace: Path
+) -> None:
+    agent = an_eval(workspace, "ac-1.md", AGENT_EVAL)
+    owner = an_eval(workspace, "ac-2.md", OWNER_EVAL.replace("SHIP", "NO-SHIP"))
+    cut = an_eval(workspace, "ac-3.md", "---\ntype: eval\nprovenance: ow")
+    new = agent.parent / "ac-9.md"
+    says_owner = [
+        (f"sed -i 's/NO-SHIP/SHIP/' {owner}", owner),
+        (f"echo reviewed >> {owner}", owner),
+        (f"rm {owner}", owner),
+        (f"sed -i 's/agent/owner/' {new}", new),
+        (f"printf 'provenance: ow%s\\n' ner > {new}", new),
+        (f"printf 'ner\\n' >> {cut}", cut),
+    ]
+    unseen = [
+        f"sed -i 's/: ag/: ow/;s/ent$/ner/' {agent}",
+        f"printf 'provenance: ow' > {new}; printf 'ner\\n' >> {new}",
+        f"printf 'provenance: \\157wner\\n' > {new}",
+        f"echo provenance: owne? > {new}",
+        f'echo "provenance: $who" > {new}',
+        f"cp /tmp/a.md {new}",
+        f"mv /tmp/a.md {new}",
+        f"ln -s /tmp/a.md {new}",
+        f"cat /tmp/a.md > {new}",
+        f"cat /tmp/a.md | tee {new}",
+    ]
+
+    verdicts = evaluate([bash(command) for command, _ in says_owner] + [bash(c) for c in unseen])
+
+    assert verdicts == [("ask", OWNER_SIGNOFF_REASON.format(path)) for _, path in says_owner] + [
+        ("ask", OWNER_UNCHECKED_REASON.format(new if new.name in c else agent, UNSEEN_WRITE_CAUSE))
+        for c in unseen
+    ]
+
+
+def test_passes_when_bash_writes_plain_agent_text_to_eval(
+    evaluate: Evaluate, workspace: Path
+) -> None:
+    agent = an_eval(workspace, "ac-1.md", AGENT_EVAL)
+    commands = [
+        f"echo 'provenance: agent' > {agent}",
+        f"printf 'note: %s\\n' rerun >> {agent}",
+        f"echo -n 'verdict: SHIP' > {agent.parent / 'ac-9.md'}",
+    ]
+
+    assert evaluate([bash(command) for command in commands]) == [None] * len(commands)
+
+
 def test_denies_write_when_git_internals_targeted(evaluate: Evaluate) -> None:
     denied = [
         "rm .git",
