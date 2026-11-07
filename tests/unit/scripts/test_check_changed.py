@@ -3,7 +3,10 @@ steps a run starts.
 
 Planner tests use the small graph and tree below, except those whose name ends in ``in_repo``:
 they read this checkout's own packages and test folders. Runner tests plan from this checkout
-too. git and every step are fakes: no process starts.
+too. git and every step are fakes: no process starts, except in the two ``start_step`` tests
+(``test_kills_step_and_what_it_started_when_run_stops`` and
+``test_ends_step_group_when_run_group_killed``), which start real Python processes: a step
+that starts a grandchild, and a run of that step.
 """
 
 import itertools
@@ -791,18 +794,20 @@ HOLD_S = 10.0
 
 @dataclass
 class StopStart:
-    """Fails the step naming ``failing`` at once; holds the step naming ``holder`` until the run
-    stops it (``HOLD_S`` at most), then answers as a killed step does."""
+    """Fails the step naming ``failing`` at once (noting when); holds the step naming ``holder``
+    until the run stops it (``HOLD_S`` at most), then answers as a killed step does."""
 
     failing: str
     holder: str
     calls: list[tuple[str, ...]] = field(default_factory=list)
     stopped: list[tuple[str, ...]] = field(default_factory=list)
+    failed_at: float | None = None
 
     def __call__(self, argv: Sequence[str], stop: threading.Event | None = None) -> tuple[int, str]:
         call = tuple(argv)
         self.calls.append(call)
         if _names(call, self.failing):
+            self.failed_at = self.failed_at or time.monotonic()
             return 1, f"{FAILED_OUTPUT}\n"
         if not _names(call, self.holder):
             return 0, ""
@@ -825,16 +830,17 @@ def test_stops_other_lane_when_a_lane_fails_first(
     failing: str, holder: str, *, never: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
     start = StopStart(failing, holder)
-    began = time.monotonic()
 
     code = main([WEB_SCREEN], environ={}, start=start, git=FakeGit({}))
 
-    elapsed = time.monotonic() - began
+    ended = time.monotonic()
     last = capsys.readouterr().out.splitlines()[-1]
     assert code == 1
     assert [_names(call, holder) for call in start.stopped] == [True]
     assert [call for call in start.calls if _names(call, never)] == []
-    assert elapsed < HOLD_S / 2
+    # From the failure on: the plan read from the checkout before it is not what is bounded.
+    assert start.failed_at is not None
+    assert ended - start.failed_at < HOLD_S / 2
     assert _names(shlex.split(last.removeprefix(FAILED_LINE)), failing)
 
 
