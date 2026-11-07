@@ -1482,6 +1482,9 @@ SHELL_PIECE = LazyPattern(
 )
 SHELL_DQ_ESCAPE = LazyPattern(r"\\([$`\"\\\n])")
 SHELL_CALL_END = "\n;&|()"
+# The longest redirection operator kept: one past `<<<`, the longest bash reads, so a longer run of
+# glued `<` or `>` reads as four do, and the operator is never copied at length (a run is linear).
+REDIRECTION_CAP = 4
 CALL_PREFIX_WORDS = INFRA_PREFIX_WORDS | {"{", "!", "exec", "nohup"}
 ENV_VALUE_OPTIONS = INFRA_ENV_VALUE | {"-u", "--unset"}
 # Wrappers that run the call after their options, with the options that take the next word;
@@ -1591,6 +1594,14 @@ def _from_text(words: list[tuple[str, bool]], call: _Call) -> bool:
     return name in ("echo", "printf") or (name == "cat" and call.here and all(text == "-" for text in operands))
 
 
+def _redirection(operator: str, first: str, glued: bool) -> str:
+    """The redirection operator once a `<` or `>` (first) is read: glued to the operator before, it
+    extends it, up to REDIRECTION_CAP characters; else it starts one."""
+    if not glued:
+        return first
+    return operator + first if len(operator) < REDIRECTION_CAP else operator
+
+
 def _skip_bodies(cmd: str, pos: int, heredocs: list[tuple[str, bool, bool, _Call]]) -> int | None:
     """Where the here-document bodies that start at pos end, read in order: each to a line that is
     its delimiter (leading tabs dropped for `<<-`); None when one never comes, so the caller reads
@@ -1673,7 +1684,7 @@ def _shell_calls(cmd: str) -> tuple[list[list[tuple[str, bool]]], dict[str, bool
                 redirect = ""
             parts, expanded, started, quoted = [], False, False, False
             if first in "<>":
-                redirect = redirect + first if start == operator_end else first
+                redirect = _redirection(redirect, first, start == operator_end)
                 operator_end = pos
                 if redirect == "<<" and cmd.startswith("-", pos):
                     redirect, pos = "<<-", pos + 1
