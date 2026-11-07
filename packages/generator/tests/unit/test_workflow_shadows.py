@@ -104,3 +104,36 @@ def test_skips_shadow_when_hub_file_does_not_load(hub: Path, builtin: Path) -> N
     (pack / "inbox.yaml").write_bytes(b"version: [\n")
 
     assert workflow_shadows(hub, builtin_root=builtin) == (_shadow("context", identical=False),)
+
+
+def test_finds_differing_shadows_when_prompt_same_size_other_bytes(
+    hub: Path, builtin: Path
+) -> None:
+    _pack(hub / "workflows", "brain-care", prompt=b"Group the notes!\n")
+
+    assert [shadow.identical for shadow in workflow_shadows(hub, builtin_root=builtin)] == [
+        False,
+        False,
+    ]
+
+
+def test_reads_pack_once_and_skips_hub_file_when_sizes_differ(
+    hub: Path, builtin: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A hub file of another size differs whatever its bytes, so it is never read (a big file
+    # costs nothing), and the pack's two workflows share one comparison.
+    _pack(hub / "workflows", "brain-care", prompt=b"Group the notes, as an older release did.\n")
+    read: list[Path] = []
+    real = Path.read_bytes
+
+    def recording(path: Path) -> bytes:
+        read.append(path)
+        return real(path)
+
+    monkeypatch.setattr(Path, "read_bytes", recording)
+
+    shadows = workflow_shadows(hub, builtin_root=builtin)
+
+    assert [shadow.identical for shadow in shadows] == [False, False]
+    assert hub / "workflows" / "brain-care" / "prompts" / "group.md" not in read
+    assert len(read) == len(set(read))
