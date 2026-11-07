@@ -95,6 +95,11 @@ BODIES: dict[tuple[str, str], object] = {
     },
     ("post", "/api/v1/projects/{project}/config/repos"): {"op": "remove_repo", "dir": "api"},
     ("post", "/api/v1/projects/{project}/environment-discoveries"): {"repos": ["api"]},
+    # The owner writes are strict writes too (AGH-699): a JSON body, even an empty one.
+    ("put", "/api/v1/projects/{project}/config/local"): {},
+    ("put", "/api/v1/tracker/linear"): {"api_key": "lin_api_" + "x" * 40},
+    ("put", "/api/v1/feature-names"): {"project": "demo", "slug": "demo-feature", "name": "Demo"},
+    ("post", "/api/v1/features/{project}/{slug}/owner-signoff"): {},
 }
 OWN_ORIGIN = {"Origin": "http://127.0.0.1:7420"}
 QUERIES = {
@@ -142,7 +147,7 @@ def test_answers_not_implemented_problem_when_route_is_a_stub(
         url,
         json=BODIES.get((method, path)),
         params=QUERIES.get(path),
-        headers=OWN_ORIGIN,  # the learning actions need it (S7); the other routes ignore it
+        headers=OWN_ORIGIN,  # the strict writes need it (S7); the other routes ignore it
     )
 
     assert response.status_code == 501, response.text

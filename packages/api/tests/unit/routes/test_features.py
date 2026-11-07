@@ -195,6 +195,11 @@ class _DiskFolders:
         return read_feature_folder(Path(hub_path), slug)
 
 
+# The sign-off is an owner write (AGH-699): the owner's page sends this server's Origin and a
+# JSON body (an empty one is the sign-off without a body), with the launch cookie.
+SIGNOFF_HEADERS = {"Origin": "http://127.0.0.1:7420", "Content-Type": "application/json"}
+
+
 def _signoff_hub(tmp_path: Path, wired: Any, verdict: str) -> Path:
     """A hub with one feature whose only eval has ``verdict``, wired behind the sign-off route."""
     hub = tmp_path / "demo-hub"
@@ -233,7 +238,9 @@ def _signoff_hub(tmp_path: Path, wired: Any, verdict: str) -> Path:
 def test_answers_created_with_record_when_owner_signs_off(tmp_path: Path, wired: Any) -> None:
     evals = _signoff_hub(tmp_path, wired, "SHIP-WITH-OWNER-STEPS")
 
-    response = wired.client.post("/api/v1/features/demo/demo-feature/owner-signoff")
+    response = wired.client.post(
+        "/api/v1/features/demo/demo-feature/owner-signoff", headers=SIGNOFF_HEADERS
+    )
 
     assert response.status_code == 201, response.text
     body = response.json()
@@ -260,7 +267,10 @@ def test_answers_conflict_and_writes_nothing_when_no_owner_steps(
     problems = {OwnerSignOffError: owner_signoff_problem}
 
     with open_client(ports=ports, problems=problems) as client:
-        response = client.post("/api/v1/features/demo/demo-feature/owner-signoff")
+        client.cookies.update(wired.client.cookies)
+        response = client.post(
+            "/api/v1/features/demo/demo-feature/owner-signoff", headers=SIGNOFF_HEADERS
+        )
 
     assert response.status_code == 409, response.text
     assert response.json()["detail"] == "no AC waits on owner steps"
@@ -276,6 +286,7 @@ def test_answers_created_with_no_ship_when_owner_finds_more_work(
     response = wired.client.post(
         "/api/v1/features/demo/demo-feature/owner-signoff",
         json={"delivery": "dem-7", "decision": "more_work", "note": "The migration is not run."},
+        headers=SIGNOFF_HEADERS,
     )
 
     assert response.status_code == 201, response.text
@@ -292,6 +303,7 @@ def test_answers_created_with_ship_when_owner_settles_one_eval(tmp_path: Path, w
     response = wired.client.post(
         "/api/v1/features/demo/demo-feature/owner-signoff",
         json={"delivery": "dem-7", "decision": "done", "note": "Deployed the config by hand."},
+        headers=SIGNOFF_HEADERS,
     )
 
     assert response.status_code == 201, response.text
@@ -310,6 +322,7 @@ def test_answers_created_with_ship_when_owner_signs_off_named_ac(
     response = wired.client.post(
         "/api/v1/features/demo/demo-feature/owner-signoff",
         json={"acs": ["AC-7.2"], "note": "Checked the page by hand."},
+        headers=SIGNOFF_HEADERS,
     )
 
     assert response.status_code == 201, response.text
@@ -333,7 +346,9 @@ def test_answers_unprocessable_and_writes_nothing_when_signoff_body_invalid(
 ) -> None:
     evals = _signoff_hub(tmp_path, wired, "SHIP-WITH-OWNER-STEPS")
 
-    response = wired.client.post("/api/v1/features/demo/demo-feature/owner-signoff", json=body)
+    response = wired.client.post(
+        "/api/v1/features/demo/demo-feature/owner-signoff", json=body, headers=SIGNOFF_HEADERS
+    )
 
     assert response.status_code == 422, response.text
     assert sorted(path.name for path in evals.iterdir()) == ["dem-7.md"]
@@ -343,13 +358,13 @@ def test_answers_unprocessable_and_writes_nothing_when_signoff_body_invalid(
 def test_answers_not_found_when_signoff_feature_unknown(tmp_path: Path, wired: Any) -> None:
     _signoff_hub(tmp_path, wired, "SHIP-WITH-OWNER-STEPS")
 
-    response = wired.client.post("/api/v1/features/demo/nope/owner-signoff")
+    response = wired.client.post(
+        "/api/v1/features/demo/nope/owner-signoff", headers=SIGNOFF_HEADERS
+    )
 
     assert response.status_code == 404
 
 
-# The Origin of the app's own pages, which the decision route's callers send.
-OWN = {"Origin": "http://127.0.0.1:7420"}
 SIGNOFF = "/api/v1/features/demo/demo-feature/owner-signoff"
 DECISION = "/api/v1/features/demo/demo-feature/change-requests/2/decision"
 REQUEST = (
@@ -406,9 +421,10 @@ def test_forgets_shell_feature_lists_when_feature_record_written(
 
     with open_client(ports=ports, problems=problems) as client:
         client.cookies.update(wired.client.cookies)
-        written = client.post(path, json=body, headers=OWN)
+        # A JSON body, or none with the JSON type (the sign-off without a body): a strict write.
+        written = client.post(path, json=body, headers=SIGNOFF_HEADERS)
         forgotten = list(wired.screen_reads.calls)
-        refused = client.post(path, json=body, headers=OWN)
+        refused = client.post(path, json=body, headers=SIGNOFF_HEADERS)
 
     assert written.status_code == 201, written.text
     assert refused.status_code == 409, refused.text

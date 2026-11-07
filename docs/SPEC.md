@@ -558,7 +558,13 @@ The server is local only: loopback bind, `Host` and `Origin` checks, a path hold
 before any other check, 1 MiB request bodies (160 MiB for
 `POST /agent-sessions` and `POST /agent-sessions/{id}/messages`, which may carry up to ten images and ten PDF or
 text files attached in the chat), no CORS, and a CSP that keeps the app on its own origin (a UX mockup's own page
-keeps a narrower one: inline styles and `data:` only, no script, no request; AGH-687).
+keeps a narrower one: inline styles and `data:` only, no script, no request; AGH-687). The writes only the owner's
+page makes, the owner writes (`OWNER_WRITES`, AGH-699: the Hub config writes, a hub's platform sync and doctor fix,
+the learning decisions, the Linear key, a feature's nickname, the owner sign-off), need the launch cookie on top of
+this server's exact `Origin`, a same-origin fetch and a JSON body, as the run and item writes do: an `Origin` alone is
+something any local process can send. In the container, which mints no token, they answer 404 `owner-writes-off`
+([API.md](API.md#local-security)). A checked-in table names every write route's class, and a test fails for a write
+route the table lacks and probes each one for its class's answers.
 It reaches the network in two documented cases only: the learning decisions' explicit
 pull request ([ADR 0024](adr/0024-learning-actions-from-the-app.md)), and a read-only, server-side read of Linear's
 GraphQL API for a feature's tickets, only when `LINEAR_API_KEY` is set where `hub web` runs
