@@ -9,6 +9,8 @@ Makefile uses.
 - **TDD.** Write the failing test first, run it and see it fail for the expected reason, then implement. A new module's
   first red run usually fails at collection (import error, pytest exit 2); that counts as red.
 - **Never weaken an assertion** to make a test pass. Fix the code, or change the test in the open with the reason.
+- **Headless skills run once for real.** A skill that runs headless (`claude -p`) gets one capped real run before
+  merge; its AC checks the file the run writes, not the skill's wording.
 - **Synthetic fixtures only.** Test data comes from builders in `agent_hub.core.testing.builders`. No real transcripts,
   no `*.jsonl` copied from `~/.claude/projects`, no real tokens, keys or personal data, anywhere in the repo.
 - **Hermetic.** Unit and contract tests have no network (sockets are blocked). No test reads or writes the real database
@@ -134,7 +136,10 @@ The text a two-team hub renders where it names the tracker teams, the text a hub
 it shows them, and the seeded starter `AGENTS.md` for app repos are checked in byte-exact under
 `packages/generator/tests/integration/rendered/two_teams/<path>.golden`, `rendered/conventions/<path>.golden` and
 `rendered/app_repo_agents/<path>.golden` (`-text`) by `test_rendered_text.py`; `GOLDEN_UPDATE=1` rewrites them (refused
-under `CI`). `apps/web/src/testing/treeDocuments.ts` is the strict loader's parse of each tree fixture under
+under `CI`). Before a plan for a template change states pins or line budgets, apply the drafted text to a scratch
+export (`git archive origin/main | tar -x -C <scratch>`), run the generator and cli tests there, and measure
+`AGENTS.md` on the stacked configs (`a_stacked_conventions_config` in `test_render_hub.py`), not the goldens: the worst
+case is at the 100-line `instructions.size` cap. `apps/web/src/testing/treeDocuments.ts` is the strict loader's parse of each tree fixture under
 `packages/core/tests/data/scenarios/blocks/tree/`, as the API gives it, which the web builder's round trip is checked
 against; `packages/generator/tests/integration/test_web_tree_documents.py` checks it, and `GOLDEN_UPDATE=1` rewrites it
 (refused under `CI`).
@@ -297,6 +302,10 @@ dev dependency of the workspace.
   detail of the 5,000-event session must be complete in under 2 s. Playwright never downloads a browser here: the test
   passes the Chromium headless shell found under `PLAYWRIGHT_BROWSERS_PATH` (else Playwright's cache) as
   `AGENT_HUB_CHROMIUM`. Without npm or a Chromium it skips locally and fails under `CI`.
+  Playwright tests run only through the `tests/e2e/test_web_smoke.py` wrappers: select them with `-k loads_pages` or
+  `-k agent_session` (new chat tests start their title with `Agent session`, which that wrapper's `--grep` picks; the
+  other wrappers, such as `-k route_chunks`, have their own). A smoke step that checks a background state waits for it, with the
+  child's budget, before the action that stops it.
 - The route chunks (AGH-614) have a run of their own on the same server (`-k route_chunks`): it plays
   `apps/web/e2e/routes.spec.ts`, whose test titles all start with `Route chunks:` (the page run leaves them out). A
   first `/sessions` visit fetches only the entry, vendor, shared and Sessions chunks, and prints its request log (each
