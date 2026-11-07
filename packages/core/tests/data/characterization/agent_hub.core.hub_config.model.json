@@ -66,6 +66,7 @@
             "secrets.config": null,
             "settings.valid": null,
             "settings.weakening": null,
+            "workflows.shadow": null,
             "workflows.starts": null,
             "workflows.valid": null
           }
@@ -320,6 +321,9 @@
               "$ref": "#/$defs/RuleSettings"
             },
             "settings.weakening": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "workflows.shadow": {
               "$ref": "#/$defs/RuleSettings"
             },
             "workflows.starts": {
@@ -900,6 +904,9 @@
               "$ref": "#/$defs/RuleSettings"
             },
             "settings.weakening": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "workflows.shadow": {
               "$ref": "#/$defs/RuleSettings"
             },
             "workflows.starts": {

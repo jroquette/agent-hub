@@ -112,6 +112,23 @@ class EnvFileFacts:
     linked: bool = False
 
 
+@dataclass(frozen=True, kw_only=True, slots=True)
+class WorkflowShadow:
+    """A hub workflow that overrides the built-in of its name (ADR 0032), as discovery found it.
+
+    ``path`` is the hub's workflow file and ``pack`` its pack folder, from the hub root;
+    ``builtin_pack`` is the overridden built-in's pack. ``identical`` is whether every file of
+    that built-in pack (hidden names and ``__pycache__`` aside) is a regular file of the hub's
+    pack at the same path with the same bytes: the pack as ``hub init`` seeds it from this release.
+    """
+
+    name: str
+    path: str
+    pack: str
+    builtin_pack: str
+    identical: bool
+
+
 # What the CLI's probe of the pinned release's tag found (ADR 0054).
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ReleaseFound:
@@ -156,7 +173,9 @@ class DoctorSnapshot:
     runs inside a Claude Code session (its commands sandboxed when the settings say so); else
     ``None``. ``workflows`` is the hub's workflows and the built-ins, as ``hub workflow`` reads
     them, when a selected rule reads them; else ``None``. ``workflow_folders`` then lists the pack
-    folders, so the control plane's cache sees a pack git does not list. ``item_leftovers`` is
+    folders, so the control plane's cache sees a pack git does not list. ``workflow_shadows``
+    holds each hub workflow that overrides a built-in, by name, when a selected rule reads them;
+    else ``None``. ``item_leftovers`` is
     every temp-named entry directly in the item folders, in path order, when a selected rule
     reads them; else ``None``. ``item_folders`` then holds the folders to watch for them: the
     ones scanned, plus ``plugin`` and each ``plugin/<p>``, where an item folder can be made.
@@ -180,6 +199,7 @@ class DoctorSnapshot:
     workflows: WorkflowSource | None = None
     # The folders directly under ``workflows/`` (``workflows/<pack>``), read with ``workflows``.
     workflow_folders: tuple[str, ...] = ()
+    workflow_shadows: tuple[WorkflowShadow, ...] | None = None
     item_leftovers: tuple[str, ...] | None = None
     item_folders: tuple[str, ...] = ()
     env_files: tuple[EnvFileFacts, ...] | None = None

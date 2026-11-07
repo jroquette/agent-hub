@@ -2249,6 +2249,27 @@ def test_prints_fix_line_for_schedule_naming_unknown_workflow_when_doctor_runs(
     ]
 
 
+def test_warns_with_compare_fix_when_seeded_pack_differs_from_builtin(
+    demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    # hub init seeds each built-in pack as shipped: a fresh hub's copies hide nothing.
+    assert lines_of(run_doctor(demo_hub, "--only", "workflows.shadow"), exit_code=0) == [CLEAN]
+    # A copy frozen before the release changed one prompt of the built-in pack.
+    prompt = demo_hub / "workflows" / "spike" / "prompts" / "options.md"
+    prompt.write_text(prompt.read_text(encoding="utf-8") + "An older step.\n", encoding="utf-8")
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "workflows.shadow"), exit_code=0)
+
+    assert lines == [
+        "warning workflows.shadow workflows/spike/spike.yaml: overrides the built-in workflow"
+        f" spike, and workflows/spike/ differs from the built-in spike pack of this release"
+        f" ({VERSION}) Fix: compare workflows/spike/ with"
+        " packages/core/src/agent_hub/core/workflows/builtin/spike/ at the platform's tag"
+        f" v{VERSION} and merge what you need, or delete workflows/spike/ to run the built-in",
+        "0 errors, 1 warning, 0 infos",
+    ]
+
+
 # The scenario hub init wrote in the graph format (version 1) before it seeded blocks.
 GRAPH_SCENARIO = (
     Path(__file__).resolve().parents[3] / "generator/tests/data/scenarios/demo-service-up.v1.yaml"

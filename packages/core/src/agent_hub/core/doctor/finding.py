@@ -51,6 +51,8 @@ class Read(StrEnum):
     REMOTES = "remotes"
     # The hub's workflows and the built-ins, through core's ``WorkflowSource`` (AGH-227).
     WORKFLOWS = "workflows"
+    # Each hub workflow that overrides a built-in, and whether its pack is the built-in's.
+    WORKFLOW_SHADOWS = "workflow_shadows"
     # The temp-named entries directly in the item folders, scanned by name (AGH-297).
     ITEM_FOLDERS = "item_folders"
     # Each declared env file: whether it exists, which checkout holds it, whether git ignores it.

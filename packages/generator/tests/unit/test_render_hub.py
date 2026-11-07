@@ -5363,6 +5363,8 @@ ADAPTER_MODULES = frozenset(
         "workflow_discovery.py",
         "workflow_fixtures.py",
         "workflow_source.py",
+        # Compares a hub pack with the built-in it overrides, for hub doctor.
+        "workflow_shadows.py",
         "action_discovery.py",
         "git_answers.py",
         "env_file_reader.py",

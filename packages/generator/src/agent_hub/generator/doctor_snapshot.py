@@ -58,6 +58,7 @@ from agent_hub.generator.errors import GeneratorError
 from agent_hub.generator.hub_tree import read_root_entry
 from agent_hub.generator.scenario_discovery import HUB_SCENARIOS, DiscoveredScenarioSource
 from agent_hub.generator.workflow_discovery import HUB_WORKFLOWS
+from agent_hub.generator.workflow_shadows import workflow_shadows
 from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
 
 # The developer's effective branch prefix and its source, or None when no source gives one.
@@ -96,6 +97,7 @@ def build_doctor_snapshot(
         release = None if kept is None else release_probe(kept.repository, config.platform.version)
     workflows = DiscoveredWorkflowSource(Path(root)) if Read.WORKFLOWS in reads else None
     packs = pack_folders(root) if workflows is not None else ()
+    shadows = workflow_shadows(Path(root)) if Read.WORKFLOW_SHADOWS in reads else None
     leftovers, item_folders = item_leftovers(root) if Read.ITEM_FOLDERS in reads else (None, ())
     env_files = env_file_facts(root, config, local) if Read.ENV_FILES in reads else None
     scenarios = DiscoveredScenarioSource(Path(root)) if Read.SCENARIOS in reads else None
@@ -112,6 +114,7 @@ def build_doctor_snapshot(
         remote_probes=probes,
         workflows=workflows,
         workflow_folders=packs,
+        workflow_shadows=shadows,
         item_leftovers=leftovers,
         item_folders=item_folders,
         env_files=env_files,
