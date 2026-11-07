@@ -56,8 +56,12 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         and the hub/agent launchers (a Bash write asks only when one is its target, so running them never asks);
         editing paths in guard.ask_before_edit, writing brain/ outside now.md, journal/, _inbox/, auto/, features/,
         writing an owner sign-off record (brain/features/<slug>/evals/owner-signoff[-rN] in any spelling of
-        the path, or an eval whose new text says provenance: owner, on a line of its own from Write, Edit or
-        MultiEdit, anywhere in the command from a Bash write),
+        the path, or an eval whose text after the change says provenance: owner, read as core reads the field:
+        Write's content, an edit's new strings or the file with the edits applied; from Bash, the eval's text
+        now, the command (anywhere, or `owner` with its quotes removed) and what the one plain echo or printf
+        of the command writes there), or any other Bash write to an eval (a copy, move, link, tee, sed -i of
+        one that exists, more than one call, a glob, brace, expansion or numeric escape), or a change to an
+        eval that cannot be read,
         a mutating hub env (add, set, remove, service add|remove; list and show pass) or hub repo
         (add, set, remove; list passes), git hooks skipped (--no-verify on commit, push or merge, commit's
         -n, core.hooksPath set by -c, --config-env, an assignment or git config), a message file that cannot
@@ -343,15 +347,35 @@ REPO_COMMAND = LazyPattern(
 )
 REPO_COMMAND_REASON = "hub repo {} changes hub.json's repos (the checks the Stop hook runs); confirm"
 # An owner sign-off record is the owner's own verdict, which hub web writes: a feature eval named
-# owner-signoff[-rN], or any feature eval whose new text says `provenance: owner`.
+# owner-signoff[-rN], or any feature eval whose text after a change says `provenance: owner`.
 FEATURE_EVAL = LazyPattern(r"(?:^|/)brain/features/[^/]+/evals/[^/]+$")
 OWNER_SIGNOFF_NAME = LazyPattern(r"(?:^|/)owner-signoff[^/]*$", re.I)
-OWNER_PROVENANCE = LazyPattern(r"^[ \t]*provenance[ \t]*:[ \t]*['\"]?owner['\"]?[ \t]*\r?$", re.M)
+# A provenance field, read as core reads it (each line's value, stripped and unquoted, is `owner`)
+# and more leniently: blanks before the key and around the colon, any quotes and blanks around the value.
+PROVENANCE_FIELD = LazyPattern(r"\s*provenance\s*:(.*)")
+OWNER_VALUE_EDGES = LazyPattern(r"^[\s'\"]+|[\s'\"]+\Z")
 # A Bash write's new text is the command's, quoted and escaped (echo, printf's `\n`, sed's s///):
-# there the value counts wherever it stands.
+# there the value counts wherever it stands, and so does `owner` itself with the command's quotes and
+# backslashes removed (`s/agent/owner/`, `printf '%s' owner`, `ow''ner`).
 OWNER_PROVENANCE_ANYWHERE = LazyPattern(r"provenance\s*:\s*['\"]?owner(?![\w-])")
+OWNER_WORD = LazyPattern(r"owner(?![\w-])", re.I)
 OWNER_SIGNOFF_REASON = ("owner sign-off: {} holds the owner's own verdict (owner-signoff, or provenance: owner); "
                         "the owner signs off in hub web, confirm")
+OWNER_UNCHECKED_REASON = ("owner sign-off: what {} says after this change cannot be told ({}); a feature eval that "
+                          "says provenance: owner is the owner's sign-off, confirm")
+UNSEEN_WRITE_CAUSE = "the command writes it other than with one plain echo or printf"
+EVAL_EDITS_CAP = 100  # a MultiEdit's edits the rule applies to a feature eval's text; past it the edit asks
+# What a single echo or printf call writes can be told only from plain words: a glob, a brace, an
+# expansion or a numeric escape (printf's and echo -e's `\157`, `\x6f`, `\u`) makes text the command
+# does not spell.
+EVAL_HIDDEN = LazyPattern(r"[*?\[\]{}$`]|\\[0-7xuU]")
+ECHO_OPTIONS = LazyPattern(r"-[neE]+")
+PRINTF_DIRECTIVE = LazyPattern(r"(%%|%s)")
+SIMPLE_ESCAPE = LazyPattern(r"\\(.)", re.S)
+SIMPLE_ESCAPES = {"\\": "\\", "a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r",
+                  "t": "\t", "v": "\v", '"': '"', "'": "'", "?": "?"}
+SED_IN_PLACE = LazyPattern(r"-\w*i.*|--in-place(?:=.*)?")
+WRITE_PROGRAMS = ("tee", "rm", "mv", "cp", "truncate", "ln")
 AUTO_MODE_SUFFIX = (
     " (denied in auto mode, which never stops to confirm: take another way, or ask the user to"
     " switch the session out of auto mode to approve it)"
@@ -396,12 +420,62 @@ def _new_text(tool: str, ti: dict) -> str:
     return "\n".join(_str(e.get("new_string")) for e in _edits(ti)) if tool == "MultiEdit" else ""
 
 
-def _owner_signoff(path: str, text: str, cfg: Config, provenance: LazyPattern = OWNER_PROVENANCE) -> bool:
-    """Whether a write of text to path makes or changes an owner sign-off record: a spelling of path
-    (_candidates: `.`, `..`, `//` and links resolved, case ignored) is a feature eval, and one is
-    named owner-signoff[-rN] or text says `provenance: owner` (provenance)."""
-    evals = [spelling for spelling in _candidates(path, cfg) if FEATURE_EVAL.search(spelling)]
-    return bool(evals) and (any(OWNER_SIGNOFF_NAME.search(spelling) for spelling in evals) or bool(provenance.search(text)))
+def _says_owner(text: str) -> bool:
+    """Whether text holds a provenance field whose value is owner (PROVENANCE_FIELD, on any line as
+    str.splitlines splits it, as core reads it)."""
+    if "provenance" not in text:
+        return False
+    for line in text.splitlines():
+        found = PROVENANCE_FIELD.match(line)
+        if found and OWNER_VALUE_EDGES.sub("", found.group(1)) == "owner":
+            return True
+    return False
+
+
+def _feature_evals(path: str, cfg: Config) -> list[str]:
+    """The spellings of path (_candidates: `.`, `..`, `//` and links resolved, case ignored) that
+    name a feature eval; empty when path is not one."""
+    return [spelling for spelling in _candidates(path, cfg) if FEATURE_EVAL.search(spelling)]
+
+
+def _owner_signoff(path: str, text: str, cfg: Config, says: Callable[[str], object] = _says_owner) -> bool:
+    """Whether a write of text to path makes or changes an owner sign-off record: path is a feature
+    eval (_feature_evals), and one spelling is named owner-signoff[-rN] or says(text)."""
+    evals = _feature_evals(path, cfg)
+    return bool(evals) and (any(OWNER_SIGNOFF_NAME.search(spelling) for spelling in evals) or bool(says(text)))
+
+
+def _eval_text(path: str) -> tuple[str | None, str | None]:
+    """A feature eval's text now ("" when no file is there yet), or (None, why) when it cannot be
+    read (_message_text: not a regular file, over 1 MiB, unreadable)."""
+    if not os.path.lexists(path):
+        return "", None
+    return _message_text(path)
+
+
+def _file_owner_signoff(tool: str, ti: dict, path: str, cfg: Config) -> Verdict:
+    """The owner sign-off rule on a Write, Edit or MultiEdit of path: an ask when path is a feature
+    eval named owner-signoff[-rN], or its text after the change says provenance: owner (_says_owner:
+    Write's content; an edit's new strings, or the file's text with the edits applied as the tool
+    applies them), or that text cannot be told (the file cannot be read, past EVAL_EDITS_CAP edits)."""
+    if not _owner_signoff(path, _new_text(tool, ti), cfg):
+        if tool not in ("Edit", "MultiEdit") or not _feature_evals(path, cfg):
+            return None
+        edits = [ti] if tool == "Edit" else _edits(ti)
+        text, cause = _eval_text(path)
+        if text is not None and len(edits) > EVAL_EDITS_CAP:
+            text, cause = None, f"over {EVAL_EDITS_CAP} edits"
+        for edit in edits if text is not None else ():
+            old, new = _str(edit.get("old_string")), _str(edit.get("new_string"))
+            text = text.replace(old, new) if edit.get("replace_all") is True else text.replace(old, new, 1)
+            if len(text) > BLOCKED_FILE_CAP:
+                text, cause = None, "over 1 MiB"
+                break
+        if text is None:
+            return "ask", OWNER_UNCHECKED_REASON.format(path, cause)
+        if not _says_owner(text):
+            return None
+    return "ask", OWNER_SIGNOFF_REASON.format(path)
 
 
 def _read_text(path: str) -> str:
@@ -1163,13 +1237,134 @@ def check_bash(cmd: str, cfg: Config | None = None, cwd: str | None = None) -> V
     infra = check_infra(cmd, cfg)
     if infra and infra[0] == "deny":
         return infra
-    verdict = tighten(infra, _after_infra(c, cfg))
+    verdict = tighten(infra, _after_infra(c, cfg, cwd))
     if verdict and verdict[0] == "deny":
         return verdict
     return tighten(verdict, check_change_flow(cmd, cfg, cwd))
 
 
-def _after_infra(c: str, cfg: Config) -> Verdict:
+def _unescaped(text: str) -> str:
+    """text with echo -e's and printf's simple escapes decoded (SIMPLE_ESCAPES; `\\c` ends it)."""
+    out: list[str] = []
+    at = 0
+    for found in SIMPLE_ESCAPE.finditer(text):
+        out.append(text[at:found.start()])
+        if found.group(1) == "c":
+            return "".join(out)
+        out.append(SIMPLE_ESCAPES.get(found.group(1), found.group(0)))
+        at = found.end()
+    return "".join(out) + text[at:]
+
+
+def _echo_texts(args: list[str]) -> list[str]:
+    """What bash's echo prints for args, as written and with escapes decoded (-e, or xpg_echo):
+    leading -n, -e and -E words are its options."""
+    at, newline = 0, "\n"
+    while at < len(args) and ECHO_OPTIONS.fullmatch(args[at]):
+        newline = "" if "n" in args[at] else newline
+        at += 1
+    text = " ".join(args[at:]) + newline
+    return [text, _unescaped(text)]
+
+
+def _printf_texts(args: list[str]) -> list[str] | None:
+    """What printf prints for args (its format reused while values are left), as written and with
+    escapes decoded; None when the guard cannot tell (an option, a directive other than %s and %%,
+    over 1 MiB of text)."""
+    if not args or args[0].startswith("-"):
+        return None
+    parts = PRINTF_DIRECTIVE.split(args[0])
+    if any("%" in part for part in parts[0::2]):
+        return None
+    values, at, out, size = args[1:], 0, [], 0
+    while size <= BLOCKED_FILE_CAP:
+        for index, part in enumerate(parts):
+            if index % 2 == 0 or part == "%%":
+                out.append(part if index % 2 == 0 else "%")
+            else:
+                out.append(values[at] if at < len(values) else "")
+                at += 1
+            size += len(out[-1])
+        if at >= len(values) or "%s" not in parts:
+            text = "".join(out)
+            return [text, _unescaped(text)]
+    return None
+
+
+def _single_call(cmd: str) -> tuple[list[str], list[tuple[str, bool, bool]]] | None:
+    """cmd's words and redirect writes (_shell_calls) when it is one call of plain words: no
+    expansion, glob, brace or numeric escape (EVAL_HIDDEN); None otherwise."""
+    if EVAL_HIDDEN.search(cmd):
+        return None
+    calls, _, writes = _shell_calls(cmd)
+    return ([text for text, _ in calls[0]], writes) if len(calls) == 1 else None
+
+
+def _bash_eval_write(tok: str, single: tuple[list[str], list[tuple[str, bool, bool]]] | None,
+                     cwd: str | None) -> Verdict:
+    """The owner sign-off rule on a feature eval a Bash command writes (tok, as the command spells
+    it, from cwd): an ask when its text now says provenance: owner or cannot be read, or when the
+    command may leave it saying so. Only a command that is one plain call (single) leaves it
+    readable: an echo or printf that writes it once with > or >> (its text, after the eval's own for
+    >>, then read by _says_owner), an rm of it, or a sed -i of it while no file is there yet."""
+    path = os.path.join(cwd or os.getcwd(), os.path.expanduser(tok))
+    text, cause = _eval_text(path)
+    if text is None:
+        return "ask", OWNER_UNCHECKED_REASON.format(tok, cause)
+    if _says_owner(text):
+        return "ask", OWNER_SIGNOFF_REASON.format(tok)
+    words, writes = single or ([""], [])
+    program, args = words[0], words[1:]
+    if program in ("echo", "printf") and [(target, plain) for target, _, plain in writes] == [(tok, True)]:
+        written = _echo_texts(args) if program == "echo" else _printf_texts(args)
+        if written is not None:
+            before = text if writes[0][1] else ""
+            return ("ask", OWNER_SIGNOFF_REASON.format(tok)) if any(_says_owner(before + w) for w in written) else None
+    elif tok in args and not writes and (program == "rm" or (program == "sed" and not os.path.lexists(path)
+                                                             and any(SED_IN_PLACE.fullmatch(a) for a in args))):
+        return None
+    return "ask", OWNER_UNCHECKED_REASON.format(tok, UNSEEN_WRITE_CAUSE)
+
+
+def _call_write_targets(cmd: str) -> list[str]:
+    """The files cmd's calls (_shell_calls, so a `;` inside quotes splits nothing) may write: their
+    redirect targets, and the words after tee, rm, mv, cp, truncate, ln or a sed with -i."""
+    calls, _, writes = _shell_calls(cmd)
+    found = [target for target, _, _ in writes]
+    for words in calls:
+        at = _program(words)[0]
+        args = [text for text, _ in words[at + 1:] if not text.startswith("-")]
+        name = words[at][0].rsplit("/", 1)[-1] if at < len(words) else ""
+        if name in WRITE_PROGRAMS or (name == "sed" and any(SED_IN_PLACE.fullmatch(text) for text, _ in words[at + 1:])):
+            found += args
+    return found
+
+
+def _bash_owner_signoff(c: str, segments: list[str], cfg: Config, cwd: str | None) -> Verdict:
+    """The owner sign-off rule on a Bash command's write targets (every one, as _write_targets and,
+    for a command that names evals, _call_write_targets find them: a link or another spelling may
+    name a feature eval): an ask when one is named owner-signoff[-rN] or the command says
+    provenance: owner, or `owner` once its quotes and backslashes are removed; then
+    _bash_eval_write on each feature eval it writes."""
+    toks = [tok for seg in segments if BASH_WRITE.search(seg) for tok in _write_targets(seg)]
+    if toks and "evals" in c.lower():
+        toks += _call_write_targets(c)
+    evals = [tok for tok in dict.fromkeys(toks) if _feature_evals(tok, cfg)]
+    if not evals:
+        return None
+    said = OWNER_PROVENANCE_ANYWHERE.search(c) or OWNER_WORD.search(re.sub(r"['\"\\\\]", "", c))
+    for tok in evals:
+        if _owner_signoff(tok, c, cfg, lambda _: said):
+            return "ask", OWNER_SIGNOFF_REASON.format(tok)
+    single = _single_call(c)
+    for tok in evals:
+        verdict = _bash_eval_write(tok, single, cwd)
+        if verdict:
+            return verdict
+    return None
+
+
+def _after_infra(c: str, cfg: Config, cwd: str | None = None) -> Verdict:
     """check_bash's rules after the infra rule (secrets, attribution, claude/ branches, .git,
     deny_paths, guard files, tests, brain, ask_before_edit, a mutating hub env or hub repo): an infra ask or allow does not end the
     check, so a later deny wins and a later ask keeps the infra reason."""
@@ -1214,10 +1409,9 @@ def _after_infra(c: str, cfg: Config) -> Verdict:
                     return "ask", GUARD_PARENT_REASON.format(tok, held or "the hub")
     if re.search(r"\b(rm|mv|truncate)\b[^;&|\n]*\s" + TEST_PATH, c) or re.search(r"\bsed\s+(-\w*i\w*|--in-place)\b[^;&|\n]*\s" + TEST_PATH, c):
         return "ask", "deleting or sed-editing tests from Bash bypasses the assertion guard; use Edit, or confirm this is intended"
-    for seg in segments:  # every target: a link or another spelling may name a feature's evals
-        for tok in _write_targets(seg) if BASH_WRITE.search(seg) else ():
-            if _owner_signoff(tok, c, cfg, OWNER_PROVENANCE_ANYWHERE):
-                return "ask", OWNER_SIGNOFF_REASON.format(tok)
+    signoff = _bash_owner_signoff(c, segments, cfg, cwd)
+    if signoff:
+        return signoff
     if "brain/" in c and re.search(r"(>>?|\btee\b(\s+-a)?|\bsed\s+-\w*i\w*|\b(rm|mv|cp)\b)[^;&|\n]*\bbrain/(?!(now\.md|journal/|_inbox/|auto/|features/))\S+", c):
         return "ask", "brain/ is curated: agents write only now.md, journal/, _inbox/, auto/ and features/; propose via /learn or confirm"
     if cfg.ask_before_edit:
@@ -1417,11 +1611,12 @@ def _skip_bodies(cmd: str, pos: int, heredocs: list[tuple[str, bool, bool, _Call
     return min(pos, len(cmd))
 
 
-def _shell_calls(cmd: str) -> tuple[list[list[tuple[str, bool]]], dict[str, bool]]:
+def _shell_calls(cmd: str) -> tuple[list[list[tuple[str, bool]]], dict[str, bool], list[tuple[str, bool, bool]]]:
     """cmd's calls, each its words as (text, whether it holds an expansion) with quotes removed as
     bash removes them and redirections left out, and the files output redirections (`>`, `>>`,
     `&>`) write to, each with whether every write puts only text of the command there (_from_text,
-    no append). A `#` at a word's start comments to the line's end; a call ends at a newline, `;`,
+    no append); then each write, in order, as (file, whether it appends, whether its call's output
+    is only text of the command). A `#` at a word's start comments to the line's end; a call ends at a newline, `;`,
     `&`, `|`, `(` or `)`, but a `&` or `|` right after `<` or `>`, or a `&` before `>`, is the
     redirection's; inside arithmetic (`((`…`))`, `$((`…`))`) `<` and `>` only part words. A
     here-document's body (from the line after its `<<` to its delimiter) is the text of its call,
@@ -1526,7 +1721,7 @@ def _shell_calls(cmd: str) -> tuple[list[list[tuple[str, bool]]], dict[str, bool
     targets: dict[str, bool] = {}
     for target, append, writer in writes:
         targets[target] = targets.get(target, True) and not append and writer.text
-    return calls, targets
+    return calls, targets, [(target, append, writer.text) for target, append, writer in writes]
 
 
 def _program(words: list[tuple[str, bool]]) -> tuple[int, dict[str, str | None]]:
@@ -2024,7 +2219,7 @@ def check_change_flow(cmd: str, cfg: Config, cwd: str | None = None) -> Verdict:
     `export` or a lone assignment set before it: the first deny, else the first ask."""
     if not CHANGE_FLOW_WORDS.search(cmd):
         return None
-    calls, targets = _shell_calls(cmd)
+    calls, targets, _ = _shell_calls(cmd)
     here: str | None = cwd or os.getcwd()
     exported: dict[str, str | None] = {}
     reads = _Reads(targets, cmd)
@@ -2128,8 +2323,9 @@ def check_file(tool: str, ti: dict, cfg: Config | None = None) -> Verdict:
     pat = protected(path, cfg)
     if pat:
         return "ask", f"{path} matches guard.ask_before_edit `{pat}` (hub.json): plan and approval first; confirm this change is intended"
-    if _owner_signoff(path, _new_text(tool, ti), cfg):
-        return "ask", OWNER_SIGNOFF_REASON.format(path)
+    signoff = _file_owner_signoff(tool, ti, path, cfg)
+    if signoff:
+        return signoff
     rel = _brain_rel(path, cfg)
     if rel is not None and not re.match(r"(now\.md|journal/|_inbox/|auto/|features/)", rel):
         return "ask", "brain/ is curated: agents write only now.md, journal/, _inbox/, auto/ and features/; propose via /learn or confirm"

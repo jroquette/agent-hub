@@ -305,11 +305,20 @@ below asks where the owner has a legitimate use for the call, and denies where t
 `packages/generator/tests/integration/test_guard_change_flow.py` (the change-flow rules).
 
 - **Owner sign-off** (rule `owner_signoff`, ask): a Write, Edit, MultiEdit or Bash write (a redirect, `tee`, `sed -i`,
-  `rm`, `mv`, `cp`, `truncate`, `ln` target) of a feature eval, `brain/features/<slug>/evals/<name>`, asks when the
-  name is `owner-signoff[-rN]` or its new text (Write's content, Edit's and MultiEdit's new strings, the Bash command)
-  says `provenance: owner`: on a line of its own in a file tool's text, anywhere in a Bash command (quoted, in
-  `printf`'s `\n`, in `sed`'s `s///`, so a `sed` that replaces `owner` by `agent` asks too). The path counts in every
-  spelling (`.`, `..`, `//` and links resolved, case ignored). Only hub web writes the owner's verdict; an eval with
+  `rm`, `mv`, `cp`, `truncate`, `ln` target, found also from the command's calls, so a `;` inside quotes splits
+  nothing) of a feature eval, `brain/features/<slug>/evals/<name>`, asks when the name is `owner-signoff[-rN]` or the
+  eval's text after the change says `provenance: owner`, read as core reads the field (each line's value stripped and
+  unquoted, so a no-break space or `' owner'` counts) and more leniently. A file tool's text after the change is
+  Write's content, or the file's text with an Edit's or MultiEdit's edits applied as the tool applies them (so a
+  value-only edit, an edit split over several, or a verdict flip in an eval that already says owner asks), and the
+  new strings alone. A Bash write asks when the eval's text now says owner, when the command says `provenance: owner`
+  anywhere (quoted, in `printf`'s `\n`, in `sed`'s `s///`) or holds `owner` once its quotes and backslashes are
+  removed, or when the command may write what the guard does not see: only one plain `echo` or `printf` (`%s` and
+  `%%` only) writing the eval once with `>` or `>>`, an `rm`, or a `sed -i` of an eval not there yet passes, and the
+  text the `echo` or `printf` writes (after the eval's own for `>>`) is read as above; a copy, move, link, `tee`, a
+  `sed -i` of an eval that exists, more than one call, or a glob, brace, expansion or numeric escape asks. An eval
+  that cannot be read (not a regular file, over 1 MiB, past 100 edits) asks. The path counts in every spelling
+  (`.`, `..`, `//` and links resolved, case ignored). Only hub web writes the owner's verdict; an eval with
   `provenance: agent` passes.
 - **Calls, not text**: the rules below read a Bash command as calls: its simple commands, words unquoted as bash does
   (`'…'`, `"…"`, `$'…'`, backslashes, a `#` comment, redirections left out), in one linear pass. A word holding `$` or
