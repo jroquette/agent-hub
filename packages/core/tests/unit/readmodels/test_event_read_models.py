@@ -27,10 +27,11 @@ from agent_hub.core.sessions.problem import ProblemKind, Resolution
 from agent_hub.core.sessions.session import ProblemCounts, SessionStatus
 from agent_hub.core.sessions.session_label import LabelRules
 from agent_hub.core.skills import skill_usage
-from agent_hub.core.skills.skill_usage import MAX_USAGE_NAMES, fold_skill_usage
+from agent_hub.core.skills.skill_usage import MAX_USAGE_NAMES
 from agent_hub.core.skills.skill_view import Usage, UsageWindows
 from agent_hub.core.testing.builders import an_event
 from agent_hub.core.testing.fakes import InMemoryEventStore
+from agent_hub.core.testing.history_folds import fold_skill_usage
 from agent_hub.core.testing.session_scenarios import (
     SCENARIO_START,
     NodeVisit,

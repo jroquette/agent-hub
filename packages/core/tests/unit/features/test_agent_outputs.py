@@ -20,7 +20,6 @@ from agent_hub.core.features.agent_outputs import (
     eval_problems,
     export_output_schema_text,
     preflight_problems,
-    read_shipped_output_schema,
     review_problems,
 )
 from agent_hub.core.features.feature_record import MAX_RECORD_BYTES
@@ -37,6 +36,7 @@ from agent_hub.core.features.output_models import (
 )
 from agent_hub.core.features.output_shape import output_path
 from agent_hub.core.hub_config.versions import ECHO_LIMIT
+from agent_hub.core.testing.shipped_schemas import read_shipped_output_schema
 
 REVIEW_FILE = "spec-r1.json"
 REVIEW_FOLDER = "AGH-7"

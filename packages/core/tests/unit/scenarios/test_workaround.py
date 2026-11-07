@@ -1,11 +1,14 @@
 """A workaround option's plan and whether it can be picked (AC-350.21, AC-350.23; P-6)."""
 
+from collections.abc import Mapping, Sequence
+
 from agent_hub.core.hub_config.effective_environments import (
     EffectiveEnvironments,
     effective_environments,
 )
 from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.json_form import JsonValue
 from agent_hub.core.scenarios.action_catalog import ActionEntry
 from agent_hub.core.scenarios.action_document import parse_action
 from agent_hub.core.scenarios.investigation import ProposedStep
@@ -16,13 +19,18 @@ from agent_hub.core.scenarios.workaround import (
     needs_acceptance,
     pick_problem,
     pick_refusal,
-    plan_changed,
     plan_option,
     step_refusal,
 )
 from agent_hub.core.testing.builders import an_environments_document
 
 HASH = "sha256:" + "0" * 64
+
+
+def plan_changed(shown: Sequence[Mapping[str, JsonValue]], now: Sequence[StepPlan]) -> bool:
+    """Whether ``now`` differs from the plan ``shown`` (as recorded with the proposal)."""
+    recorded = [step.model_dump(mode="json") for step in now]
+    return [dict(step) for step in shown] != recorded
 
 
 def an_entry(name: str, effect: str, *, draft: bool = False, content: str = HASH) -> ActionEntry:

@@ -1,8 +1,5 @@
 """The Phase 2 contract's paths, the paths control-plane clarity, ticket planning, the Skills
-tab, the workflows, the run commands, the item versions, the scenarios and the screen reads add,
-and the paths an app's OpenAPI document lists."""
-
-from fastapi import FastAPI
+tab, the workflows, the run commands, the item versions, the scenarios and the screen reads add."""
 
 API_PREFIX = "/api/v1"
 
@@ -289,9 +286,3 @@ SERVED_PATHS: frozenset[tuple[str, str]] = (
     | SCREEN_PATHS
     | UX_MOCKUP_PATHS
 )
-
-
-def document_paths(app: FastAPI) -> frozenset[tuple[str, str]]:
-    """Every ``(method, path)`` of the app's OpenAPI document."""
-    paths: dict[str, dict[str, object]] = app.openapi()["paths"]
-    return frozenset((method, path) for path, item in paths.items() for method in item)

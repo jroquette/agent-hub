@@ -1,4 +1,5 @@
 import pytest
+from fastapi import FastAPI
 
 from agent_hub.api.app import create_app
 from agent_hub.api.openapi_paths import (
@@ -24,9 +25,15 @@ from agent_hub.api.openapi_paths import (
     TICKET_PATHS,
     UX_MOCKUP_PATHS,
     WORKFLOW_PATHS,
-    document_paths,
 )
 from agent_hub.api.settings import ApiSettings
+
+
+def document_paths(app: FastAPI) -> frozenset[tuple[str, str]]:
+    """Every ``(method, path)`` of the app's OpenAPI document."""
+    paths: dict[str, dict[str, object]] = app.openapi()["paths"]
+    return frozenset((method, path) for path, item in paths.items() for method in item)
+
 
 # The spec's "API surface in P2", with the path parameters named.
 SPEC_PATHS = {

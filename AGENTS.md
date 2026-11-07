@@ -18,18 +18,22 @@ The spec is in `docs/SPEC.md`: read it before any task. The directions already s
   | `packages/generator` (`agent-hub-generator`) | `agent_hub.generator` | Hub templates, `@@` renderer, registry |
   | `packages/tracker_linear` (`agent-hub-tracker-linear`) | `agent_hub.tracker_linear` | Linear tracker adapters: GraphQL (`LINEAR_API_KEY`) and MCP (`McpTrackerClient`, `claude -p`, ADR 0015) |
   | `packages/hub_git` (`agent-hub-hub-git`) | `agent_hub.hub_git` | Hub pull requests for learning decisions (`git`, `gh`; ADR 0024) |
+  | `packages/claude_sessions` (`agent-hub-claude-sessions`) | `agent_hub.claude_sessions` | Claude Code session adapter for `hub web`, the only importer of `claude_agent_sdk`; `api`'s `sessions` extra (ADR 0031) |
   | `packages/api` (`agent-hub-api`) | `agent_hub.api` | FastAPI control plane (`hub web`), a second composition root (ADR 0017) |
   | `packages/mcp_server` (`agent-hub-mcp-server`) | `agent_hub.mcp_server` | `hub mcp`: the hub's knowledge as a stdio MCP server (`search`, `read`, `propose`), a third composition root (ADR 0044) |
   | `packages/cli` (`agent-hub-cli`) | `agent_hub.cli` | Typer CLI, command `hub` |
   | `packages/agent-hub` (`agent-hub`) | `agent_hub_meta` (placeholder, no code) | Meta-package: `uv tool install` gets everything |
 
 - Everything depends on `core`; `core` depends on nothing internal. `cli` is the composition root (ADR 0008): it may
-  import `storage`, `collector`, `generator` and `tracker_linear`, and nothing imports `cli`. `api` is a second
-  composition root (ADR 0017) that may also import `hub_git` and `tracker_linear` (ADR 0025); `cli` reaches `api`
-  only through `web_command`. `mcp_server` is a third composition root (ADR 0044) that wires `hub_git` and is the only
-  package that imports the MCP SDK `mcp`; `cli` reaches it only through `mcp_command`, and it and `api` never import
-  each other. The adapters (`storage`, `collector`, `generator`, `tracker_linear`, `hub_git`) never import each other
+  import `storage`, `collector`, `generator`, `tracker_linear` and `hub_git` (its `knowledge_checkout` only), `api`
+  (through `web_command` only) and `mcp_server` (through `mcp_command` only), and nothing imports `cli`. `api` is a
+  second composition root (ADR 0017) that may also import `hub_git` and `tracker_linear` (ADR 0025), and
+  `claude_sessions` behind a guarded import. `mcp_server` is a third composition root (ADR 0044) that wires `hub_git`
+  and is the only package that imports the MCP SDK `mcp`; it and `api` never import each other. The adapters
+  (`storage`, `collector`, `generator`, `tracker_linear`, `hub_git`, `claude_sessions`) never import each other
   (import-linter).
+- Each `packages/*/pyproject.toml` declares every distribution its src imports outside `testing/`; the layout
+  checker's `dependency-declared` rule (`make check-fast`) fails otherwise.
 - `apps/web` is the React app; its production build is committed in `packages/api/.../web_dist` (`make web-build`).
 
 ## Gates

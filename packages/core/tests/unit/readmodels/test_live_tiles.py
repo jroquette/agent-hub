@@ -3,10 +3,10 @@ from decimal import Decimal
 
 from agent_hub.core.events.stored_event import StoredEvent
 from agent_hub.core.readmodels.live_tiles import failing_notice, live_tiles, tile_fields
-from agent_hub.core.sessions.fold_session import fold_sessions, group_by_session
 from agent_hub.core.sessions.session import ProblemCounts, SessionStatus
 from agent_hub.core.sessions.session_problems import fold_problems
 from agent_hub.core.testing.builders import an_event
+from agent_hub.core.testing.history_folds import fold_sessions, group_by_session
 from agent_hub.core.testing.session_scenarios import (
     SCENARIO_START,
     a_session_events,

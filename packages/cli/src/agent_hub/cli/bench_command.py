@@ -26,7 +26,6 @@ from pathlib import Path
 from typing import Annotated, Final
 
 import typer
-from typer._click.core import ParameterSource
 
 from agent_hub.cli.bench_steps import (
     BenchSteps,
@@ -38,6 +37,7 @@ from agent_hub.cli.command_exits import FAILURE, fail
 from agent_hub.cli.effective_config import load_effective_config_or_exit
 from agent_hub.cli.hub_root import hub_root_or_exit, main_checkout
 from agent_hub.cli.run_children import SESSION_HIDDEN, without
+from agent_hub.cli.vendored_click import ParameterSource
 from agent_hub.core.bench.bench_cases import CASE_ID_PATTERN, MAX_CASES
 from agent_hub.core.bench.bench_plan import ARMS, jobs, run_cases
 from agent_hub.core.bench.bench_session import EFFORTS, plugin_id

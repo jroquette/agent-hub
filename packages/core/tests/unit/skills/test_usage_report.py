@@ -3,10 +3,10 @@ from datetime import UTC, datetime, timedelta
 
 from agent_hub.core.events.event import Event
 from agent_hub.core.events.stored_event import StoredEvent
-from agent_hub.core.skills.skill_usage import fold_skill_usage
 from agent_hub.core.skills.skill_view import ItemKind, SkillUsage, UsageDays, UsageWindows
 from agent_hub.core.skills.usage_report import ordered_usage, usage_markdown, usage_rows
 from agent_hub.core.testing.builders import an_event
+from agent_hub.core.testing.history_folds import fold_skill_usage
 from agent_hub.core.testing.read_model_builders import a_usage_row
 from agent_hub.core.testing.session_scenarios import as_stored
 

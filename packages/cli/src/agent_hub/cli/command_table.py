@@ -16,8 +16,9 @@ from typing import Any, Final, Literal
 import typer
 import typer.core
 import typer.main
-from typer._click.core import Command, Context
 from typer.models import CommandInfo, TyperInfo
+
+from agent_hub.cli.vendored_click import Command, Context
 
 # The real commands are built with this value; ``main.app`` must keep it (a unit test checks).
 PRETTY_EXCEPTIONS_SHORT: Final = True

@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Linear tracker adapter of agent-hub: the TrackerClient port over Linear's GraphQL API."
 license = "Apache-2.0"
 requires-python = ">=3.14"
-dependencies = ["agent-hub-core"]
+dependencies = ["agent-hub-core", "pydantic>=2"]
 
 [tool.uv.sources]
 agent-hub-core = { workspace = true }
