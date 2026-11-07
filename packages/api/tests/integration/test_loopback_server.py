@@ -11,12 +11,12 @@ from typing import Any
 import pytest
 
 from agent_hub.api.app import create_app
-from agent_hub.api.server import LoopbackServer, PortInUseError, bind_address, bind_loopback
+from agent_hub.api.server import LOOPBACK, LoopbackServer, PortInUseError, bind_address
 from agent_hub.api.settings import ApiSettings
 
 
 def test_binds_loopback_only_when_port_free() -> None:
-    sock = bind_loopback(0)
+    sock = bind_address(LOOPBACK, 0)
     try:
         host, port = sock.getsockname()
         assert host == "127.0.0.1"
@@ -45,11 +45,11 @@ def test_raises_port_in_use_when_given_address_taken() -> None:
 
 
 def test_raises_port_in_use_naming_port_when_port_taken() -> None:
-    first = bind_loopback(0)
+    first = bind_address(LOOPBACK, 0)
     port = first.getsockname()[1]
     try:
         with pytest.raises(PortInUseError) as raised:
-            bind_loopback(port)
+            bind_address(LOOPBACK, port)
     finally:
         first.close()
 
@@ -61,7 +61,7 @@ def test_turns_nagle_off_on_each_connection_when_socket_bound() -> None:
     # uvicorn serves the bound socket through asyncio, which turns Nagle off only on a socket
     # made for TCP. With Nagle on, a body sent after its headers on a kept-alive connection waits
     # for the client's delayed ACK, about 40 ms.
-    sock = bind_loopback(0)
+    sock = bind_address(LOOPBACK, 0)
     nodelay: list[int] = []
 
     class Accepted(asyncio.Protocol):
@@ -94,7 +94,7 @@ def _get(url: str, host: str | None = None) -> tuple[int, dict[str, Any]]:
 
 
 def test_serves_api_until_stopped_when_run(api_settings: ApiSettings, web_dist: Any) -> None:
-    sock = bind_loopback(0)
+    sock = bind_address(LOOPBACK, 0)
     port = sock.getsockname()[1]
     settings = ApiSettings(
         db_path=api_settings.db_path,
@@ -159,7 +159,7 @@ def test_calls_on_exit_before_graceful_wait_when_signalled(
 ) -> None:
     lifecycle = OrderedLifecycle()
     app = create_app(api_settings, web_dist=web_dist, lifecycle=lifecycle)
-    server, thread = _serve(app, bind_loopback(0))
+    server, thread = _serve(app, bind_address(LOOPBACK, 0))
     lifecycle.server = server
 
     server.signal(sig)
@@ -172,7 +172,7 @@ def test_calls_on_exit_before_graceful_wait_when_signalled(
 def test_calls_given_hook_once_when_stopped_twice(api_settings: ApiSettings, web_dist: Any) -> None:
     hooked: list[str] = []
     app = create_app(api_settings, web_dist=web_dist)
-    server, thread = _serve(app, bind_loopback(0), on_exit=lambda: hooked.append("exit"))
+    server, thread = _serve(app, bind_address(LOOPBACK, 0), on_exit=lambda: hooked.append("exit"))
 
     server.stop()
     server.stop()

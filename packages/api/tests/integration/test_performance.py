@@ -32,7 +32,7 @@ import pytest
 
 from agent_hub.api.app import create_app
 from agent_hub.api.dependencies import ApiPorts
-from agent_hub.api.server import LoopbackServer, bind_loopback
+from agent_hub.api.server import LOOPBACK, LoopbackServer, bind_address
 from agent_hub.api.session_token import cookie_name
 from agent_hub.core.agent_sessions.driver import DriverEvent, DriverHandle, TextBlock, TextDelta
 from agent_hub.core.events.event import Event
@@ -356,7 +356,7 @@ def test_streams_delta_within_budget_when_thousand_deltas_emitted_agent_session_
     turn = tuple(TextDelta(block=0, index=n, text=f"d{n:04d} ") for n in range(DELTAS))
     driver = _StampingDriver(replies={"Go.": (*turn, TextBlock(block=0, text="done"))})
     rig = build_rig(driver=driver)
-    sock = bind_loopback(0)
+    sock = bind_address(LOOPBACK, 0)
     port = sock.getsockname()[1]
     settings = replace(api_settings, port=port, session_token=STREAM_TOKEN)
     server = LoopbackServer(

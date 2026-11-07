@@ -59,12 +59,6 @@ BASE_PLUGIN: Final = "hub-workflow"
 
 _FILE_ID_HEX: Final = 16
 _CONTROL: Final = re.compile(r"[\x00-\x1f\x7f]")
-_ROLE_LABELS: Final[Mapping[FileRole, str]] = {
-    "scripts": "executed at invocation",
-    "references": "read on demand",
-    "assets": "assets",
-    "other": "other",
-}
 _ROLES: Final[Mapping[str, FileRole]] = {
     "scripts": "scripts",
     "references": "references",
@@ -242,12 +236,6 @@ def role_of(skill_relative_path: str) -> FileRole:
     directly in the skill folder is ``other``."""
     first, slash, _ = skill_relative_path.partition("/")
     return _ROLES.get(first, "other") if slash else "other"
-
-
-def role_label(role: FileRole) -> str:
-    """What a role means to the owner: ``scripts`` "executed at invocation", ``references``
-    "read on demand"."""
-    return _ROLE_LABELS[role]
 
 
 def file_id(path: str) -> str:

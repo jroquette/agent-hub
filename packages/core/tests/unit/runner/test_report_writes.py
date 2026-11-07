@@ -1,5 +1,4 @@
 from agent_hub.core.hub_config.model import TrackerStates
-from agent_hub.core.hub_config.schema import read_shipped_schema
 from agent_hub.core.runner.report_writes import (
     REVIEW_STATE,
     TrackerWrite,
@@ -10,6 +9,7 @@ from agent_hub.core.runner.report_writes import (
     success_writes,
 )
 from agent_hub.core.testing.builders import an_issue
+from agent_hub.core.testing.shipped_schemas import read_shipped_schema
 
 COMMENT = "Run ab12cd34 opened https://github.com/acme/demo-api/pull/99. Adds the parser."
 NO_CHANGES = "Run ab12cd34 ended with no changes at IMPLEMENTING: no commit on the branch"

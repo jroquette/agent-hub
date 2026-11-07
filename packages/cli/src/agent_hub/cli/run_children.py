@@ -221,9 +221,6 @@ class RunChildren:
             draft=False,
         )
 
-    def pr_view_argv(self) -> list[str]:
-        return pr_view_command(github=self.github, branch=self.branch)
-
 
 def gate_command(gate: str) -> list[str]:
     """The gate (a repo's ``check``), run by bash."""

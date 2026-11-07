@@ -9,11 +9,11 @@ from agent_hub.core.skills.skill_sources import (
     SkillLimits,
     SkillPathError,
     file_id,
-    role_label,
     role_of,
     skill_relative,
 )
 from agent_hub.core.skills.skill_view import FILE_ID
+from agent_hub.core.testing.skill_role_labels import role_label
 
 REFUSED = [
     "",

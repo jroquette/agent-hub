@@ -6,7 +6,13 @@ import pytest
 
 import agent_hub.cli.run_children as children
 from agent_hub.cli.child_process import ChildResult
-from agent_hub.cli.run_children import RunChildren, RunOptions, push_env, session_env
+from agent_hub.cli.run_children import (
+    RunChildren,
+    RunOptions,
+    pr_view_command,
+    push_env,
+    session_env,
+)
 from agent_hub.cli.worktree_steps import worktree_task
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.scenarios.credentials import CredentialNames
@@ -181,7 +187,8 @@ def test_takes_branch_from_repo_convention_when_hub_sets_conventions(
     assert children.branch == branch
     assert children.push_argv()[-1] == branch
     assert pr_argv[pr_argv.index("--head") + 1] == branch
-    assert children.pr_view_argv()[3] == branch
+    # pr_steps builds the view from the same target fields.
+    assert pr_view_command(github=children.github, branch=children.branch)[3] == branch
 
 
 def accepting_runner(

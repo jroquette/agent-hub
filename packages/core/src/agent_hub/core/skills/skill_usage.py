@@ -16,7 +16,8 @@ argument or any other payload text (ADR 0019).
 Names are normalised by ``bare_name``. ``fold_skill_uses`` reads the signals at or after a
 ``start`` into each name's uses (``SkillUses``); ``usage_at`` counts them at a ``now``, keeping
 the uses at or after ``now - LONGEST_WINDOW`` (the longest of ``USAGE_WINDOWS``, 90 days);
-``fold_skill_usage`` is both, from ``start = now - LONGEST_WINDOW``. ``by_skill`` and
+the tests' oracle ``agent_hub.core.testing.history_folds.fold_skill_usage`` is both, from
+``start = now - LONGEST_WINDOW``. ``by_skill`` and
 ``by_agent`` count only the uses at or after ``now - USAGE_DAYS`` (the Toolkit's 30 days);
 ``windows_by_skill`` and ``windows_by_agent`` give every name used in 90 days its runs over 7,
 30 and 90 days (each window inclusive of its edge) and its last use (AGH-482). At most
@@ -230,12 +231,3 @@ def usage_at(uses: SkillUses, *, now: datetime) -> SkillUsage:
         windows_by_agent=windows_by_agent,
         windows_truncated=skill_windows_cut or agent_windows_cut,
     )
-
-
-def fold_skill_usage(
-    sessions: Mapping[str, Sequence[StoredEvent]], *, project: str, now: datetime
-) -> SkillUsage:
-    """The usage of ``project``'s skills and agents in ``sessions`` (session id -> its events,
-    any order) over the ``USAGE_DAYS`` before ``now``, and its 7/30/90-day windows."""
-    uses = fold_skill_uses(sessions, project=project, start=now - LONGEST_WINDOW)
-    return usage_at(uses, now=now)

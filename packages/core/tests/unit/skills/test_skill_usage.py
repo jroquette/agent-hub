@@ -6,9 +6,10 @@ import pytest
 from agent_hub.core.events.event import Event
 from agent_hub.core.events.stored_event import StoredEvent
 from agent_hub.core.skills import skill_usage
-from agent_hub.core.skills.skill_usage import MAX_USAGE_NAMES, fold_skill_usage
+from agent_hub.core.skills.skill_usage import MAX_USAGE_NAMES
 from agent_hub.core.skills.skill_view import USAGE_DAYS, Usage, UsageWindows
 from agent_hub.core.testing.builders import an_event
+from agent_hub.core.testing.history_folds import fold_skill_usage
 from agent_hub.core.testing.session_scenarios import as_stored
 
 NOW = datetime(2026, 10, 13, 12, 0, tzinfo=UTC)

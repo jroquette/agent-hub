@@ -244,12 +244,3 @@ def fold_approvals(
         hub_path = (hub_paths or {}).get(stored.event.project)
         approvals[_gate_id(stored)] = _approval(stored, kind, decision=decision, hub_path=hub_path)
     return approvals
-
-
-def open_gate_ids(events: Iterable[StoredEvent]) -> frozenset[str]:
-    """The gate ids of the approvals in ``events`` still waiting for a person."""
-    return frozenset(
-        approval_id
-        for approval_id, approval in fold_approvals(events).items()
-        if not approval.decided
-    )

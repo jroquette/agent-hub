@@ -19,7 +19,7 @@ order, one run's state kept per run id, so the live ``hub run`` and a later
 ``hub collect --runs`` of the same records yield the same events.
 """
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Final
@@ -225,12 +225,6 @@ class RunEventMapper:
             workflow=RUN_WORKFLOW,
             step=step,
         )
-
-
-def map_run_records(records: Iterable[Record], *, project: str) -> tuple[Event, ...]:
-    """The events of ``records`` (one or more runs, in written order)."""
-    mapper = RunEventMapper(project=project)
-    return tuple(event for record in records for event in mapper.map(record))
 
 
 def _checked(raw: Record) -> _Record:
