@@ -1664,7 +1664,23 @@ class _Reads:
         if left <= 0:
             return GIT_OUT_OF_TIME_CAUSE
         self.runs += 1
-        return _git_run(args, folder, variables, left)
+        return self._run(args, folder, variables, left)
+
+    @staticmethod
+    def _run(args: list[str], folder: str, variables: dict[str, str], timeout: float) -> tuple[int, str] | None:
+        """(exit code, stdout) of the hook's git with args in folder, the hook's environment plus
+        variables, cut at timeout seconds; None when git is missing, cannot start or is cut."""
+        import subprocess  # here, not at the top: a call with no git read never loads it
+
+        program = _git_program()
+        if program is None:
+            return None
+        try:
+            done = subprocess.run([program, *args], cwd=folder, env={**os.environ, **variables}, capture_output=True,
+                                  stdin=subprocess.DEVNULL, timeout=timeout)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return None
+        return done.returncode, done.stdout.decode("utf-8", "replace")
 
 
 def _git_program() -> str | None:
@@ -1675,22 +1691,6 @@ def _git_program() -> str | None:
         if os.path.isabs(entry) and os.path.isfile(program) and os.access(program, os.X_OK):
             return program
     return None
-
-
-def _git_run(args: list[str], folder: str, variables: dict[str, str], timeout: float) -> tuple[int, str] | None:
-    """(exit code, stdout) of the hook's git with args in folder, the hook's environment plus
-    variables, cut at timeout seconds; None when git is missing, cannot start or is cut."""
-    import subprocess  # here, not at the top: a call with no git read never loads it
-
-    program = _git_program()
-    if program is None:
-        return None
-    try:
-        done = subprocess.run([program, *args], cwd=folder, env={**os.environ, **variables}, capture_output=True,
-                              stdin=subprocess.DEVNULL, timeout=timeout)
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        return None
-    return done.returncode, done.stdout.decode("utf-8", "replace")
 
 
 def _message_text(path: str) -> tuple[str | None, str | None]:
