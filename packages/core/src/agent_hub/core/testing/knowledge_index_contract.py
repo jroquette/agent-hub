@@ -133,7 +133,8 @@ class KnowledgeIndexContract:
     def test_ranks_curated_kind_first_when_matches_equal(
         self, knowledge_index: KnowledgeIndex
     ) -> None:
-        # In path order an inbox note and a feature record come first.
+        # In path order an inbox note and a feature record come first; inside the second tier the
+        # equal matches stay in path order.
         expected: list[tuple[Kind, str]] = [
             ("decision", "brain/decisions/marker.md"),
             ("domain", "brain/domain/marker.md"),
@@ -141,10 +142,10 @@ class KnowledgeIndexContract:
             ("playbook", "brain/playbooks/marker.md"),
             ("system", "brain/system/marker.md"),
             ("adr", "repo/docs/adr/0001-marker.md"),
-            ("journal", "brain/journal/2026/marker.md"),
-            ("doc", "brain/now.md"),
             ("inbox", "brain/_inbox/marker.md"),
             ("feature", "brain/features/marker/spec.md"),
+            ("journal", "brain/journal/2026/marker.md"),
+            ("doc", "brain/now.md"),
         ]
         _index(
             knowledge_index,
@@ -154,7 +155,7 @@ class KnowledgeIndexContract:
         found = _paths(knowledge_index, "marker")
 
         order = [path for _, path in expected]
-        _check(found == order, f"curated, then docs and journal, then the rest: {found}")
+        _check(found == order, f"curated knowledge, then the rest: {found}")
 
     def test_ranks_curated_kind_first_when_feature_matches_better(
         self, knowledge_index: KnowledgeIndex
@@ -177,6 +178,30 @@ class KnowledgeIndexContract:
 
         _check(found == [learning.path, feature.path], f"the learning first: {found}")
 
+    def test_ranks_title_match_first_when_kind_and_status_tiers_equal(
+        self, knowledge_index: KnowledgeIndex
+    ) -> None:
+        # Both curated and both approved, so the text match decides: the title match first.
+        in_body = _document(
+            "brain/decisions/a.md",
+            title="Cleanup",
+            body="worktrees removed after merge",
+            kind="decision",
+            status="approved",
+        )
+        in_title = _document(
+            "brain/learnings/z.md",
+            title="Worktrees",
+            body="cleanup removed after merge",
+            kind="learning",
+            status="Approved (owner)",
+        )
+        _index(knowledge_index, in_body, in_title)
+
+        found = _paths(knowledge_index, "worktrees")
+
+        _check(found == [in_title.path, in_body.path], f"bm25 inside one tier: {found}")
+
     def test_ranks_settled_status_first_when_matches_equal(
         self, knowledge_index: KnowledgeIndex
     ) -> None:
@@ -184,11 +209,11 @@ class KnowledgeIndexContract:
         expected: list[tuple[str | None, str]] = [
             ("approved (owner, 2026-10-13)", "brain/features/h.md"),
             ("Active", "brain/features/i.md"),
-            ("accepted", "brain/features/j.md"),
             (None, "brain/features/d.md"),
             ("drafted", "brain/features/e.md"),
             ("(approved)", "brain/features/f.md"),
             ("done", "brain/features/g.md"),
+            ("accepted", "brain/features/j.md"),
             ("draft", "brain/features/a.md"),
             ("PROPOSED", "brain/features/b.md"),
             ("draft, proposed extra", "brain/features/c.md"),

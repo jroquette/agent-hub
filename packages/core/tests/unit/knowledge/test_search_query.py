@@ -70,9 +70,9 @@ def test_puts_each_kind_in_one_tier_when_tiers_read() -> None:
         0,
         1,
         1,
-        2,
+        1,
     ]
-    assert kind_tier("inbox") == 2
+    assert kind_tier("inbox") == 1
 
 
 @pytest.mark.parametrize(
@@ -81,8 +81,8 @@ def test_puts_each_kind_in_one_tier_when_tiers_read() -> None:
         ("approved", 0),
         ("Approved (owner, 2026-10-13)", 0),
         ("ACTIVE", 0),
-        ("accepted", 0),
         (None, 1),
+        ("accepted", 1),
         ("", 1),
         ("done", 1),
         ("drafted", 1),
