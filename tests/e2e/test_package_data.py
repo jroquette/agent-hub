@@ -34,17 +34,17 @@ INSTALL_TIMEOUT_SECONDS = 300
 WEB_DIST = REPO_ROOT / "packages" / "api" / "src" / "agent_hub" / "api" / "web_dist"
 SHIPPED_WEB_DIST = "agent_hub/api/web_dist"
 
-# Run by the scratch venv's python, from a cwd outside the repo: renders the demo config with the
-# installed wheels and prints where core and the generator were imported from, one row per file
-# and one row per link.
+# Run by the scratch venv's python, from a cwd outside the repo: renders the demo config (the JSON
+# file named by its argument; the wheels ship no builders) with the installed wheels and prints
+# where core and the generator were imported from, one row per file and one row per link.
 RENDER_SCRIPT = """
-import hashlib, json
+import hashlib, json, pathlib, sys
 import agent_hub.core, agent_hub.generator
 from agent_hub.core.hub_config.model import HubConfig
-from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.generator.render_hub import render_hub
 
-rendered = render_hub(HubConfig.model_validate(a_hub_document()))
+document = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+rendered = render_hub(HubConfig.model_validate(document))
 rows = [
     [f.path, f.kind.value, f.ownership.value, f.module, f.executable,
      hashlib.sha256(f.content).hexdigest()]
@@ -231,8 +231,10 @@ def test_renders_same_files_when_installed_wheels_run_outside_repo(
     assert installed.returncode == 0, installed.stderr
     outside = tmp_path / "outside"
     outside.mkdir()
+    document = tmp_path / "hub.json"
+    document.write_text(json.dumps(a_hub_document()), encoding="utf-8")
 
-    result = run([str(python), "-I", "-c", RENDER_SCRIPT], env=env, cwd=outside)
+    result = run([str(python), "-I", "-c", RENDER_SCRIPT, str(document)], env=env, cwd=outside)
 
     assert result.returncode == 0, result.stderr
     report = json.loads(result.stdout)

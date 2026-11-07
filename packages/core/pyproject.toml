@@ -14,3 +14,6 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 # agent_hub is an implicit namespace package shared by every distribution.
 packages = ["src/agent_hub"]
+# Test support (fakes, builders, contract suites; some import pytest) for this repo's tests and
+# scripts, which import it from the workspace: no hub needs it installed.
+exclude = ["src/agent_hub/core/testing"]

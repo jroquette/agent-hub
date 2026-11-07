@@ -16,3 +16,5 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 # agent_hub is an implicit namespace package shared by every distribution.
 packages = ["src/agent_hub"]
+# The stub claude and its scenarios are for this repo's tests, which run them from the workspace.
+exclude = ["src/agent_hub/claude_sessions/testing"]
