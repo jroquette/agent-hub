@@ -301,45 +301,63 @@ call nobody chose to confirm. Proof: `packages/generator/tests/integration/test_
 
 The 2026-11-06 audit found paths round the guard's rules for authorship (rule 1) and the change flow (rule 2). Each rule
 below asks where the owner has a legitimate use for the call, and denies where the hub's rules never allow it. Proof:
-`packages/generator/tests/integration/test_guard_hook.py`.
+`packages/generator/tests/integration/test_guard_hook.py` (owner sign-off, the rule ids) and
+`packages/generator/tests/integration/test_guard_change_flow.py` (the change-flow rules).
 
 - **Owner sign-off** (rule `owner_signoff`, ask): a Write, Edit, MultiEdit or Bash write (a redirect, `tee`, `sed -i`,
   `rm`, `mv`, `cp`, `truncate`, `ln` target) of a feature eval, `brain/features/<slug>/evals/<name>`, asks when the
   name is `owner-signoff[-rN]` or its new text (Write's content, Edit's and MultiEdit's new strings, the Bash command)
-  holds a `provenance: owner` line. Only hub web writes the owner's verdict; an eval with `provenance: agent` passes.
+  says `provenance: owner`: on a line of its own in a file tool's text, anywhere in a Bash command (quoted, in
+  `printf`'s `\n`, in `sed`'s `s///`, so a `sed` that replaces `owner` by `agent` asks too). The path counts in every
+  spelling (`.`, `..`, `//` and links resolved, case ignored). Only hub web writes the owner's verdict; an eval with
+  `provenance: agent` passes.
 - **Calls, not text**: the rules below read a Bash command as calls: its simple commands, words unquoted as bash does
   (`'…'`, `"…"`, `$'…'`, backslashes, a `#` comment, redirections left out), in one linear pass. A word holding `$` or
-  a backtick outside single quotes is an expansion the guard cannot read. The folder of each call starts at the
-  event's `cwd` and follows `cd`, `pushd` and `git -C`; after `popd` or an expanded `cd`, a read that needs it asks.
-  A command with over 64 `git` and `gh` calls asks (`change_flow_unchecked`), so a hostile command stays linear.
+  a backtick outside single quotes is an expansion the guard cannot read. A call's program follows its assignments
+  and the wrappers `command`, `exec`, `time`, `nohup`, `env`, `timeout`, `nice` and `sudo` (and their options). A
+  here-document's body is its call's text, not calls, unless a call with one on that line holds an interpreter or
+  shell word, which runs it. The folder of each call starts at the event's `cwd` and follows `cd`, `pushd` and `git
+  -C`; after `popd` or an expanded `cd`, a read that needs it asks. A command with over 64 `git` and `gh` calls asks
+  (`change_flow_unchecked`), so a hostile command stays linear.
 - **Message files** (rule `ai_attribution`, deny): `git commit|tag|merge -F/--file` and `gh pr
   create|edit|comment|review -F/--body-file` read the file they name (at most 1 MiB, regular files only, at most 8
-  files per command) when the call runs, so a body file written earlier is checked when it is used; a file the same command writes (a redirect target)
-  was checked as the command's text. A file tool's write of a file named like a message (`pr.md`, `<name>-pr.md`,
-  `body.md`, `msg.txt`, …) holding attribution is denied at once. A message on stdin (`-`), behind an expansion, or
-  in a file that cannot be read asks (`message_unchecked`). `git merge` and `gh pr comment|review` text is checked
-  inline too.
+  files per command) when the call runs, so a body file written earlier is checked when it is used; so do a message
+  given as `$(cat <file>)` or `$(< file)` (`-m`, `--message`, `-b`, `--body`) and a `gh api` write's `--input`
+  file. A file the same command writes with `>` from its own text (`echo`, `printf`, `cat` of a here-document or
+  here-string, no expansion) is checked as the command's text; one written any other way (`cat` of a file, `>>`, an
+  expansion) asks, and a `<` input writes nothing. A file tool's write of a file named like a message (`pr.md`,
+  `<name>-pr.md`, `body.md`, `msg.txt`, …) holding attribution is denied at once. A message on stdin (`-`), behind
+  an expansion, or in a file that cannot be read asks (`message_unchecked`). `git merge` and `gh pr comment|review`
+  text is checked inline too, as is a call's text when `git`'s options or `gh pr -R` come before the verb.
 - **Bare push** (rule `push_protected_branch`, deny): `git push` with no refspec, or only `HEAD` or `@`, sends the
-  branch checked out where it runs (`git symbolic-ref --short HEAD`, 2 s): a protected branch denies, a branch that
-  cannot be told (detached, no repo, an unknown folder) asks (`push_branch_unknown`). `--tags` and `--all` are not
-  read as a bare push.
+  branch checked out where it runs (`git symbolic-ref --short HEAD`): a protected branch denies, a branch that
+  cannot be told (detached, no repo, an unknown folder, a git read not made) asks (`push_branch_unknown`). `--tags`
+  and `--all` are not read as a bare push.
+- **Git reads**: the bare push and the commit identity read git (the hook runs outside the sandbox). A read runs the
+  hook's own `git`, by absolute path from the hook's `PATH`, with only the call's variables that pick git's config
+  and repository (`GIT_CONFIG*`, `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_CEILING_DIRECTORIES`,
+  `GIT_DISCOVERY_ACROSS_FILESYSTEM`, `HOME`, `XDG_CONFIG_HOME`). A call that sets `PATH`, `LD_*`, `DYLD_*`,
+  `GIT_EXEC_PATH` or `GIT_TRACE*` runs another git than the hook would read, so it asks and git is not run. One
+  command makes at most four reads, each cut at 2 s and all within 4 s; past either it asks, naming the cause. The
+  4 s, the project extension's 3 s and its 1 s kill wait add up to 8 s, inside the hook's 10 s timeout (past it the
+  call would go through unchecked).
 - **Commit identity** (rule `commit_identity`, deny): when `hub.local.json` or `hub.json` sets
   `project.author_email`, a `git commit`, `git merge` (not `--abort`/`--quit`) or annotated `git tag` whose author,
   committer or tagger email differs from it (case ignored) is denied, and the reason names the expected identity. Each
   email is, first found: `--author` (author only), the `GIT_AUTHOR_EMAIL` or `GIT_COMMITTER_EMAIL` the call, an earlier
   `export` or the session sets, `git -c author.email|committer.email|user.email`, `git config` where the call runs (one
-  `git config --get-regexp` read, 2 s), then `EMAIL`. A config git cannot read, an expansion, a folder that cannot be
-  told or an `--author` with no `<email>` asks; no email anywhere passes (git refuses or makes one up), as does a hub
-  that sets none. A command makes at most four git reads (bare push and identity together), so they fit the hook's
-  10 s; this is the commit-time half of rule 1, the CI author check its server-side half.
+  `git config --get-regexp` read, as **Git reads** says), then `EMAIL`. A config git cannot read, a read not made, an
+  expansion, a folder that cannot be told or an `--author` with no `<email>` asks; no email anywhere passes (git
+  refuses or makes one up), as does a hub that sets none. This is the commit-time half of rule 1, the CI author check
+  its server-side half.
 - **GitHub calls** (rules `ai_attribution`, `agent_branch`, `push_protected_branch`, deny): a GitHub MCP tool (an
   `mcp__` tool whose server's name holds `github`, so `mcp__github__*` and a plugin's `mcp__plugin_github_github__*`)
   is no longer checked for blocked words alone, and `gh api` is read call by call. AI attribution in a `title`,
   `body`, `message`, `commit_message` or `commit_title` (a tool's top-level field, or a `gh api -f/-F` field, the last
-  key of `comments[][body]` too, with `-F body=@file` read as a message file) is denied; on a call that writes (an MCP
-  method other than `get_*`, `list_*`, `search_*`, `*_read`; a `gh api` method other than GET), a `claude/` branch in
-  `branch`, `head`, `ref` or `new_branch`, and a protected branch in `branch` (or `gh api … git/refs/heads/<branch>`)
-  are denied. `gh api --input <file>` is not read.
+  key of `comments[][body]` too, with `-F body=@file` read as a message file, and a write's `--input` file read
+  whole) is denied; on a call that writes (an MCP method other than `get_*`, `list_*`, `search_*`, `*_read`; a `gh
+  api` method other than GET), a `claude/` branch in `branch`, `head`, `ref` or `new_branch`, and a protected branch
+  in `branch` (or `gh api … git/refs/heads/<branch>`) are denied.
 - **Merges** (rule `pr_merge`, deny): the user merges every PR (rule 2), and branch protection cannot tell an agent
   from the owner, since both use the owner's credentials. So `gh pr merge` (`--auto` too), `gh api` PUT or POST on
   `pulls/<n>/merge`, POST on `merges`, a `graphql` `mergePullRequest` or `enablePullRequestAutoMerge`, and the MCP

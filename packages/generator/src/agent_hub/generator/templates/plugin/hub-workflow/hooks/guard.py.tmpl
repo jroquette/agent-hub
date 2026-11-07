@@ -7,7 +7,9 @@ deny  = hard block (secrets (guard.secret_env_files added, guard.readable_env_fi
         local-only form; without it: the fixed infra rule; both see a redirection glued to the tool word,
         aws>/dev/null; values in their reasons are escaped and capped), AI attribution in commits/PRs/branches
         (ai_attributed, linear in the text; in the command, in a message file a git commit|tag|merge -F/--file or a gh pr create|edit|comment|review
-        -F/--body-file names, read when the call runs unless the same command writes it, or in a file tool's
+        -F/--body-file names, a $(cat <file>) or $(< file) message or a gh api write's --input file, read
+        when the call runs, or, when the same command writes it with > from its own text (echo, printf,
+        cat of a here-document or here-string), that text; or in a file tool's
         write of a message file: pr.md, <name>-pr.md, body.md, msg.txt and the like), a bare push (no refspec,
         or HEAD or @) from a protected branch (git symbolic-ref where the call runs, followed through cd and -C),
         a git commit, annotated tag or merge that would record an author, committer or tagger email (from
@@ -53,15 +55,18 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         plugin/<project>/hooks/, .claude/settings*.json, hub.lock, hub.json and hub.local.json, in the hub or a hub worktree,
         and the hub/agent launchers (a Bash write asks only when one is its target, so running them never asks);
         editing paths in guard.ask_before_edit, writing brain/ outside now.md, journal/, _inbox/, auto/, features/,
-        writing an owner sign-off record (brain/features/<slug>/evals/owner-signoff[-rN], or an eval whose new
-        text says provenance: owner; from Write, Edit, MultiEdit or a Bash write),
+        writing an owner sign-off record (brain/features/<slug>/evals/owner-signoff[-rN] in any spelling of
+        the path, or an eval whose new text says provenance: owner, on a line of its own from Write, Edit or
+        MultiEdit, anywhere in the command from a Bash write),
         a mutating hub env (add, set, remove, service add|remove; list and show pass) or hub repo
         (add, set, remove; list passes), git hooks skipped (--no-verify on commit, push or merge, commit's
         -n, core.hooksPath set by -c, --config-env, an assignment or git config), a message file that cannot
-        be read (stdin, an expansion, unreadable, not regular, over 1 MiB, past 8 in one command), a command
+        be read (stdin, an expansion, unreadable, not regular, over 1 MiB, past 8 in one command, written by
+        the same command other than from its text), a command
         with over 64 git and gh calls (past them, unread), a bare push whose branch cannot
         be told, a commit identity that cannot be (git config unreadable, an expansion, a folder that
-        cannot be told, an --author with no email), a git push whose remote or refspec is a shell expansion
+        cannot be told, an --author with no email), either because git is not read (a call that sets PATH,
+        LD_*, DYLD_*, GIT_EXEC_PATH or GIT_TRACE*, past 4 reads or 4 s), a git push whose remote or refspec is a shell expansion
         or that deletes a remote branch (--delete, -d, a :<branch> refspec), git push or commit or gh pr in
         the words after an interpreter or shell word (python*, node, deno, bun, perl, ruby, php, a shell, eval),
         with HUB_RUN_ENVIRONMENT naming a declared environment of access read or production (an agent
@@ -78,8 +83,9 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         env file is declared)
 Project values (default branch, tracker team, guard lists) come from hub.json. The branch prefix of a deny's
 hint is the developer's: hub.local.json, else hub.json, else the local part of git config user.email plus `/`
-(git runs only on that deny); with none, the hint has no prefix. Besides, git runs (2 s each, at most 4
-reads per command) only for a bare push, to read the branch it sends, and for a commit, annotated tag or
+(git runs only on that deny); with none, the hint has no prefix. Besides, git runs (the hook's own git,
+by absolute path, with only the call's git config and location variables; 2 s each, at most 4 reads and
+4 s per command) only for a bare push, to read the branch it sends, and for a commit, annotated tag or
 merge, to read its identity's git config. A list entry `@hub/<path>` is <path> in the hub that holds this file; with no such hub (plugin cache) it is skipped.
 Then, for Bash and the file tools (EXTENSION_TOOLS) and unless the verdict is deny (final), the project's extension plugin/<project>/hooks/project_guard.py
 of the hub that holds this file (never one found from $CLAUDE_PROJECT_DIR, the cwd or the tool input;
