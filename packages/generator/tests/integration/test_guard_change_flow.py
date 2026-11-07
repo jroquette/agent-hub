@@ -374,6 +374,23 @@ def test_reads_heredoc_body_as_text_when_call_is_not_shell(ws: Path, decide: Dec
     )
 
 
+# A `<<` inside arithmetic (`$((1<<2))`) is a shift, not a here-document, and a here-document
+# whose delimiter never comes is not skipped: the lines after it stay calls, so neither hides one.
+def test_reads_later_lines_as_calls_when_shift_or_heredoc_unterminated(
+    ws: Path, decide: Decide
+) -> None:
+    app = git_repo(ws / "app", "trunk", "me@example.com")
+    commands = [
+        "x=$((1<<2))\ngit push\n2",
+        "echo $(( (1 + 2) << 3 ))\ngit push\n3",
+        "cat > b.md <<EOF\ngit push",
+    ]
+
+    verdicts = decide([bash_at(command, app) for command in commands])
+
+    assert verdicts == [("deny", PUSH_REASON.format("trunk"))] * len(commands)
+
+
 # C-6: skipping the repo's hooks asks: the owner may mean it, an agent asks first.
 NO_VERIFY_REASON = (
     "`git {} {}` skips the repo's git hooks (pre-commit, commit-msg, pre-push); confirm"
