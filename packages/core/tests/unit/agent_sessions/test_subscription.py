@@ -2,10 +2,12 @@ from collections.abc import AsyncIterator, Callable
 
 import pytest
 
+from agent_hub.core.agent_sessions import subscription
 from agent_hub.core.agent_sessions.agent_session import AgentSessionStatus, SendMessage
 from agent_hub.core.agent_sessions.driver import TextBlock, TextDelta
 from agent_hub.core.agent_sessions.errors import AgentSessionNotFoundError
 from agent_hub.core.agent_sessions.limits import SessionLimits
+from agent_hub.core.agent_sessions.live_session import LIVE_BUFFER
 from agent_hub.core.agent_sessions.records import (
     DeltaFrame,
     LogRecord,
@@ -139,6 +141,86 @@ async def test_streams_raw_live_and_replays_redacted_when_text_holds_token(
     assert isinstance(stored_text, LogRecord)
     assert live_text.body["text"] == secret
     assert GITHUB_TOKEN not in str(stored_text.body)
+
+
+async def test_streams_record_raw_when_turn_released_during_replay(make_rig: MakeRig) -> None:
+    """Regression: AGH-432. A record emitted after the stream attached, while its replay still
+    reads the store, comes live (raw), not as the store's redacted copy."""
+    secret = f"token {GITHUB_TOKEN}"
+    rig = make_rig(replies={"Show it.": (Hold(), TextBlock(block=0, text=secret))})
+    created = await rig.create("Show it.")
+    await rig.until(lambda: "init" in rig.kinds(created.id))
+    live = rig.control._live[created.id]  # noqa: SLF001 -- the session the stream reads
+    reads: list[int] = []
+
+    async def read_releasing_turn(after: int, limit: int) -> tuple[LogRecord, ...]:
+        # The first read lets the turn run to its stored text record, as a turn released while
+        # the replay reads would.
+        if not reads:
+            rig.driver.release(rig.handle())
+            await rig.until(lambda: "text" in rig.kinds(created.id))
+        reads.append(after)
+        return rig.store.records(created.id, after=after, limit=limit)
+
+    stream = subscription.frames(
+        live.view(), StreamPosition(seq=0), live=live, read=read_releasing_turn
+    )
+    texts: list[LogRecord] = []
+    async for item in stream:
+        if isinstance(item, LogRecord) and item.kind == "text":
+            texts.append(item)
+        if _label(item) == "4:result":
+            break
+
+    assert reads != []
+    assert [text.body["text"] for text in texts] == [secret]
+
+
+async def test_streams_record_raw_when_turn_released_during_catch_up_replay(
+    make_rig: MakeRig,
+) -> None:
+    """Regression: AGH-432, on the other replay. A stream behind the live buffer replays the
+    store; a record emitted while that replay reads comes live (raw), not as the store's
+    redacted copy."""
+    secret = f"token {GITHUB_TOKEN}"
+    deltas = tuple(TextDelta(block=1, index=n, text="x") for n in range(LIVE_BUFFER + 1))
+    turn = (
+        Hold(),
+        TextBlock(block=0, text="First."),
+        *deltas,
+        Hold(),
+        TextBlock(block=1, text=secret),
+    )
+    rig = make_rig(replies={"Show it.": turn})
+    created = await rig.create("Show it.")
+    await rig.until(lambda: "init" in rig.kinds(created.id))
+    live = rig.control._live[created.id]  # noqa: SLF001 -- the session the stream reads
+    reads: list[int] = []
+
+    async def read_releasing_turn(after: int, limit: int) -> tuple[LogRecord, ...]:
+        # The first read lets the turn run on to its stored secret text record, as a turn
+        # released while the catch-up replay reads would.
+        if not reads:
+            rig.driver.release(rig.handle())
+            await rig.until(lambda: rig.kinds(created.id).count("text") == 2)
+        reads.append(after)
+        return rig.store.records(created.id, after=after, limit=limit)
+
+    stream = subscription.frames(live.view(), None, live=live, read=read_releasing_turn)
+    assert _label(await anext(stream)) == "status:running"
+    attached = live.published
+    rig.driver.release(rig.handle())
+    # The first text record and more deltas than the live buffer holds: the stream is behind.
+    await rig.until(lambda: live.published >= attached + LIVE_BUFFER + 2)
+    texts: list[LogRecord] = []
+    async for item in stream:
+        if isinstance(item, LogRecord) and item.kind == "text":
+            texts.append(item)
+        if isinstance(item, LogRecord) and item.kind == "result":
+            break
+
+    assert reads != []
+    assert [text.body["text"] for text in texts] == ["First.", secret]
 
 
 async def test_ends_stream_after_status_when_session_ended(make_rig: MakeRig) -> None:

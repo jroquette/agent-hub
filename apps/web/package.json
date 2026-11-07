@@ -17,6 +17,8 @@
     "format:check": "prettier --check --cache --cache-strategy content .",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
+    "lint:changed": "node scripts/check-changed.mjs lint",
+    "test:related": "node scripts/check-changed.mjs related",
     "gen:api": "node scripts/gen-api.mjs",
     "gen:api:check": "node scripts/gen-api.mjs --check",
     "gen:tokens": "node scripts/gen-tokens.mjs",
