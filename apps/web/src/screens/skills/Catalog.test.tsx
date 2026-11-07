@@ -178,6 +178,46 @@ describe("Catalog groups and notices", () => {
     expect(second).toHaveTextContent("Disabled");
   });
 
+  it("counts the hub knowledge tool calls by main sessions and subagents (AC-699.1)", () => {
+    const calls = (main: number, subagents: number) => ({
+      main: { runs_7d: 0, runs_30d: main, runs_90d: main + 9, last_used_at: null },
+      subagents: { runs_7d: 0, runs_30d: subagents, runs_90d: subagents + 9, last_used_at: null },
+    });
+    open(
+      "/projects/demo/skills",
+      aSkillCatalog({
+        hub_tools: {
+          mcp__hub__search: calls(4, 2),
+          mcp__hub__read: calls(1, 0),
+          mcp__hub__propose: calls(0, 0),
+        },
+      }),
+    );
+
+    const fold = screen.getByText("Hub knowledge tools · 30 d").closest("details");
+    if (!fold) throw new Error("no hub tools section");
+    expect(fold.querySelector("summary")).toHaveTextContent(/7$/);
+    const rows = within(fold)
+      .getAllByRole("row", { hidden: true })
+      .slice(1)
+      .map((row) =>
+        within(row)
+          .getAllByRole("cell", { hidden: true })
+          .map((cell) => cell.textContent),
+      );
+    expect(rows).toEqual([
+      ["mcp__hub__search", "4", "2"],
+      ["mcp__hub__read", "1", "0"],
+      ["mcp__hub__propose", "0", "0"],
+    ]);
+  });
+
+  it("leaves the hub knowledge tools out when no event was read (AC-699.1)", () => {
+    open();
+
+    expect(screen.queryByText(/Hub knowledge tools/)).toBeNull();
+  });
+
   it("warns when the catalog is truncated and shows its notice", () => {
     open(
       "/projects/demo/skills",
