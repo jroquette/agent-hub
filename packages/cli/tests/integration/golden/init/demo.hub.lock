@@ -189,7 +189,7 @@
     "CLAUDE.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "9d4828a2463e76f1d083582dea7b0f214a84b6a9fb60a38691dda6617a8d1613"
+      "sha256": "b67565d061a56c185e410fa954e9c5b80135978d72da043ef4efc567884bea12"
     },
     "Makefile": {
       "executable": false,
@@ -436,7 +436,7 @@
     "plugin/hub-workflow/skills/deliver/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "86dbdec4296b707156b17068373ce0f9c92d9f8848adbb9be88f13533ef327a0"
+      "sha256": "5b433be93debc9e56bca856448bc12225662fa8295f6c26e43ab691656b985d1"
     },
     "plugin/hub-workflow/skills/design-fit/SKILL.md": {
       "executable": false,
@@ -446,7 +446,7 @@
     "plugin/hub-workflow/skills/feature/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "89ea5cfa7fed504f95471af6b5499621844caf57d85ebf8a50a35437d5f6f25e"
+      "sha256": "1b3f427510e5cc2d82e570611bb18e7107ffa2d0be298c5e0325a0d3c9ed76ef"
     },
     "plugin/hub-workflow/skills/fix/SKILL.md": {
       "executable": false,
@@ -456,12 +456,12 @@
     "plugin/hub-workflow/skills/handoff/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "58e25ce6dbaaf99e459639b3d60d431427cc443c3e2ca2694ad9139b10a789bb"
+      "sha256": "56bc2e339949da6452aec3cee5a78de7c01dba93382d3680a0e6b4aa615b4aa4"
     },
     "plugin/hub-workflow/skills/implement/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "362327b3c2b3ce58a153cfde7f9c7e73e81a59a241c5f8e17ff0b59a3a259cc5"
+      "sha256": "c8504db53f785f6a5e4fa1e99b1b68e8902e97b87b75524233b85c1f8014b4d5"
     },
     "plugin/hub-workflow/skills/incident/SKILL.md": {
       "executable": false,
@@ -481,7 +481,7 @@
     "plugin/hub-workflow/skills/onboard/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "1e9504ff4478a6af10eac3ab822c84ba984d42977d326acc5418327a627d55d2"
+      "sha256": "291d30004a98ac6df5766635d5234651d116b70a81e431f444c58a30fca31682"
     },
     "plugin/hub-workflow/skills/onboard/reference.md": {
       "executable": false,
@@ -491,7 +491,7 @@
     "plugin/hub-workflow/skills/overengineering-review/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "09182a56f4f77c0917340792cba6bfd585cba93ef177dc1803ad575a0aee1a55"
+      "sha256": "6656e62bb579186621badcd8e7ffff9ce8350251900ec53b660b420182e68afa"
     },
     "plugin/hub-workflow/skills/overengineering-review/references/patterns.md": {
       "executable": false,
@@ -526,7 +526,7 @@
     "plugin/hub-workflow/skills/release/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "2fea32cbf7568bd9f9d37ebd034b695385fcf0a4fb9d00b4225e7d8f2cdce4b1"
+      "sha256": "615b72e460097790b8f43ec0c3063005048166e85b2332f8ad21b4530020b5a7"
     },
     "plugin/hub-workflow/skills/research/SKILL.md": {
       "executable": false,
@@ -536,7 +536,7 @@
     "plugin/hub-workflow/skills/retro/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "9fdd63a50d246b249eb66140ded55977671b3d219d764c304e1843ec405cbd06"
+      "sha256": "fff7cc319037b2c17091e648110ce2a9b29dba6b2a49cefd23675f80df7e418f"
     },
     "plugin/hub-workflow/skills/review/SKILL.md": {
       "executable": false,
@@ -566,12 +566,12 @@
     "plugin/hub-workflow/skills/upgrade/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "1ad5cf0419c8ff8a8cfea4e43887ae369c14a63f0f9a7f39fa328c0983abe54a"
+      "sha256": "fb50d7f6c3b42c08909b1c82be608de8dd6c24df09429fa2e58efd3de285e26c"
     },
     "plugin/hub-workflow/skills/ux-review/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "ba62aaa12548b76981021f7002aef74bc60cb761e1c7e628ba75b3c14c0fde1d"
+      "sha256": "9b20945fe3057120b0a2c066c25719af7f5092e23ec58376613c5fc140bf81bd"
     },
     "plugin/hub-workflow/skills/ux-review/references/checklist.md": {
       "executable": false,

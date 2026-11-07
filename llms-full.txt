@@ -392,7 +392,8 @@ file and answer `./hub workflow respond <run> --choice comment|request-changes|a
 then does `/review` post it. The repo's check runs at the PR's head in a throwaway worktree, never for a fork.
 
 The platform's own releases come from `/release`, which runs the built-in `release` workflow: the owner approves
-the release PR, merges it with a merge commit, and approves the hub PR that raises `platform.version`.
+the release PR, merges it with a merge commit, and approves the hub PR that raises `platform.version` and sets
+`brain/now.md`'s pin and `last_verified`.
 
 **The weekly retro.** `/retro` runs the built-in `retro` workflow (`./hub workflow run retro --input since=7 --live`):
 the week's run metrics, at most five changes each backed by those numbers, and, for the ones you keep at its gate,
@@ -2363,10 +2364,11 @@ seeded files are never rewritten by `hub sync`.
 - [ADR 0002](../adr/0002-lean-hexagonal-architecture.md), [ADR 0008](../adr/0008-cli-as-composition-root.md): the
   use case `start_task` and its ports `TaskWorktrees` and `SessionLauncher` are core; git, the prints and the exec
   are `cli` (`GitTaskWorktrees`, `ClaudeSession`, `PrintedSession`).
+- `hub start` moves an issue only to `tracker.states.started`; `tracker.states.review` is read by `hub run` and
+  `hub ship`, which move an issue there once its PR is open.
 
 ## Open questions
 
-- `tracker.states.review` is read by nothing yet: the review step (AGH-63) decides who moves an issue there.
 - An existing hub gets `brain/auto/agent-context-*.md` in its `.gitignore` only by hand; nothing reports it missing.
 
 ---
