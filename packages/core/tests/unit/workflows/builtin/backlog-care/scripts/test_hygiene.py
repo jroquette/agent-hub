@@ -320,6 +320,22 @@ def test_reads_local_branch_when_repo_has_no_remote_branch(
     assert merged["evidence"].startswith(f"commit {merged['commit'][:12]} on api main: ")
 
 
+def test_reports_merged_issue_when_git_prints_subject_not_in_utf8(
+    hub: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = hub.parent / "api"
+    # git re-encodes each subject to this encoding, so "é" reaches the script as byte 0xE9.
+    git(repo, "config", "i18n.logOutputEncoding", "latin1")
+    git(repo, "commit", "-q", "--allow-empty", "-m", "feat(api): export the café menu (DEM-1)")
+
+    (merged,) = run(
+        capsys, monkeypatch, a_read([an_issue("DEM-1", "Export")]), "--config", a_config()
+    )["merged"]
+
+    assert merged["commit"] == head(repo, "main")
+    assert merged["evidence"].endswith("'feat(api): export the caf� menu (DEM-1)'")
+
+
 def test_names_unreadable_repo_when_default_branch_missing(
     hub: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
