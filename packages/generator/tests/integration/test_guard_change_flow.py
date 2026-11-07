@@ -1062,6 +1062,91 @@ def test_passes_gh_api_when_read_or_clean(ws: Path, decide: Decide) -> None:
     assert decide([bash_at(command, ws) for command in commands]) == [None] * len(commands)
 
 
+# A merge endpoint with a query string, a graphql query read from a file, a write whose ref names a
+# protected branch, a body given as `$(cat file)` and a text field nested in a GitHub MCP tool's
+# lists and objects are read too.
+MERGE_UNCHECKED_REASON = (
+    "change flow not checked: the graphql query in {} cannot be read ({}); confirm it merges no"
+    " pull request"
+)
+
+
+def test_denies_github_call_when_merge_ref_or_text_hides(ws: Path, decide: Decide) -> None:
+    put(ws / "body.txt", GENERATED)
+    put(ws / "merge.graphql", "mutation { mergePullRequest(input: {pullRequestId: 1}) { x } }")
+    put(ws / "view.graphql", "query { viewer { login } }")
+    comments = [{"path": "a.md", "line": 1, "body": "Nit."}, {"path": "b.md", "body": GENERATED}]
+    review = {"owner": "o", "repo": "r", "pullNumber": 3, "event": "COMMENT", "comments": comments}
+    cases = [
+        (
+            bash_at("gh api -X PUT 'repos/o/r/pulls/12/merge?x=1'", ws),
+            ("deny", MERGE_REASON.format("gh api repos/o/r/pulls/12/merge?x=1")),
+        ),
+        (
+            bash_at("gh api graphql -F query=@merge.graphql", ws),
+            ("deny", MERGE_REASON.format("gh api graphql")),
+        ),
+        (
+            bash_at("gh api graphql -F query=@missing.graphql", ws),
+            ("ask", MERGE_UNCHECKED_REASON.format("missing.graphql", "cannot be read")),
+        ),
+        (bash_at("gh api graphql -F query=@view.graphql", ws), None),
+        (
+            bash_at("gh api -X POST repos/o/r/git/refs -f ref=refs/heads/main -f sha=a1", ws),
+            ("deny", PUSH_REASON.format("main")),
+        ),
+        (bash_at("gh api -X POST repos/o/r/deployments -f ref=main", ws), None),
+        (
+            bash_at('gh api -X POST repos/o/r/pulls -f title=x -f body="$(cat body.txt)"', ws),
+            ("deny", HELD_BY.format(PR_REASON, "body.txt")),
+        ),
+        (tool_at("mcp__github__create_pull_request_review", ws, **review), ("deny", PR_REASON)),
+        (
+            tool_at(
+                "mcp__github__create_pull_request_review",
+                ws,
+                **review | {"comments": [{"path": "a.md", "body": "Nit."}]},
+            ),
+            None,
+        ),
+    ]
+
+    verdicts = decide([event for event, _ in cases])
+
+    assert verdicts == [verdict for _, verdict in cases]
+
+
+# git's --config-env gives a config key the value of a variable, and --trailer's `=` stands for
+# the trailer's `:`: both are read as the commit records them.
+def test_denies_commit_when_config_env_or_trailer_breaks_rule(ws: Path, decide: Decide) -> None:
+    app = git_repo(ws / "app", "me/dem-1-x", "me@example.com")
+    cases = [
+        (
+            f"FOO={OTHER} git --config-env user.email=FOO commit -m x",
+            ("deny", IDENTITY_REASON.format("commit", OTHER, "author")),
+        ),
+        (
+            f"export FOO={OTHER}; git --config-env=user.email=FOO commit -m x",
+            ("deny", IDENTITY_REASON.format("commit", OTHER, "author")),
+        ),
+        (
+            'git --config-env "user.email=$V" commit -m x',
+            ("ask", IDENTITY_UNCHECKED_REASON.format("an email is a shell expansion", "commit")),
+        ),
+        ("FOO=me@example.com git --config-env user.email=FOO commit -m x", None),
+        (
+            "git commit --trailer 'Co-authored-by=Claude <noreply@anthropic.com>' -m x",
+            ("deny", COMMIT_REASON),
+        ),
+        ("git commit -m x --trailer=Co-authored-by=Claude", ("deny", COMMIT_REASON)),
+        ("git commit -m x --trailer 'Reviewed-by=Jane <j@x.io>'", None),
+    ]
+
+    verdicts = decide([bash_at(command, app) for command, _ in cases])
+
+    assert verdicts == [verdict for _, verdict in cases]
+
+
 # gh api's --input file is the request's body on a write: it is read as a message file.
 INPUT_REASON = "commits and PR text carry no AI attribution"
 
