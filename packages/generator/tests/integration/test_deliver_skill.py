@@ -39,7 +39,16 @@ STEPS = {
     ),
     3: ("script", ("`check_fast`, then its `check`", "`hub.json`", "`$?`")),
     4: ("gate", ("mergeable", "waits on reviewers", "never approves or merges")),
-    5: ("human", ("the user merges",)),
+    # AGH-699 E-14: a session that ends before the merge names the issues it leaves open.
+    5: (
+        "human",
+        (
+            "the user merges",
+            "Stopping before the merge",
+            "name each tracker issue it leaves open",
+            "`/handoff` or the next `/deliver` moves it to Done",
+        ),
+    ),
     # AC-5, AC-6: the merge commit's CI, the dependents re-checked after each merge.
     6: (
         "script",
