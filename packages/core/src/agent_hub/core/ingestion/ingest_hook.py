@@ -56,21 +56,23 @@ class IngestHook:
     def execute_all(self, envelopes: Sequence[HookEnvelope]) -> AppendResult:
         """Append what every envelope yields as one batch, all or nothing (``hub collect --spool``).
 
-        Each envelope is mapped in order, and each transcript one names is read right after it;
+        Each envelope is mapped in order, and a transcript is read right after the first envelope
+        that names it, once and to its end (``read_to_end``), with that envelope's attribution;
         the batch holds the hooks' events and the transcripts' in that order. The tail positions
         are committed only once the batch is stored. An ``EventConflictError`` propagates with
-        nothing written and no position committed. A transcript named twice is read twice: the
-        second read starts where the first started, so its events are duplicates in the batch.
+        nothing written and no position committed.
         """
         events: list[Event] = []
         positions: list[TailPosition] = []
+        read: set[str] = set()
         for envelope in envelopes:
             self._status.record_hook()
             mapping = self._mapper.map(envelope)
             events.extend(mapping.events)
-            if mapping.transcript is None:
+            if mapping.transcript is None or mapping.transcript.path in read:
                 continue
-            tail = self._tailer.read_new(mapping.transcript)
+            read.add(mapping.transcript.path)
+            tail = self._tailer.read_to_end(mapping.transcript)
             self._status.record_tail(refused=tail.refused, skipped_lines=tail.skipped_lines)
             events.extend(tail.events)
             if tail.position is not None:

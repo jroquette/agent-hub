@@ -4,10 +4,11 @@ Only a regular file whose real path is under the Claude Code projects folder is 
 path component is opened with ``O_NOFOLLOW`` (a symlink is refused, never followed) and
 ``O_NONBLOCK`` (a FIFO swapped in cannot block), then ``fstat`` must show a regular file. Each
 read takes at most ``max_bytes`` and stops at the last complete line, so a line being written is
-read next time. A line longer than ``max_line_bytes`` is skipped and counted. Offsets, turns, the
-usage message ids and titles seen and the last line's timestamp live in memory per path, the
-newest ``max_paths`` kept; after a restart a file is read again from the start and the store's
-idempotency drops the duplicates.
+read next time; ``read_to_end`` (a spool import) reads again until a read is not full. A line
+longer than ``max_line_bytes`` is skipped and counted. Offsets, turns, the usage message ids and
+titles seen and the last line's timestamp live in memory per path, the newest ``max_paths`` kept;
+after a restart a file is read again from the start and the store's idempotency drops the
+duplicates.
 A read is two-phase: it leaves the progress as it was and returns a position; ``commit`` moves
 the progress there once the events are stored, so a failed append loses no line. Only the
 newest read of a path can be committed; an older position is ignored.
@@ -72,6 +73,13 @@ class TranscriptTail:
 
     def read_new(self, ref: TranscriptRef) -> TailResult:
         """The events of the lines appended to ``ref.path`` since the last committed read."""
+        return self._read_ref(ref, is_to_end=False)
+
+    def read_to_end(self, ref: TranscriptRef) -> TailResult:
+        """As ``read_new``, read after read of ``max_bytes`` up to the last complete line."""
+        return self._read_ref(ref, is_to_end=True)
+
+    def _read_ref(self, ref: TranscriptRef, *, is_to_end: bool) -> TailResult:
         origin = TranscriptOrigin(
             project=ref.project, repo=ref.repo, agent=ref.agent, session=ref.session
         )
@@ -79,7 +87,7 @@ class TranscriptTail:
         if real is None:
             return TailResult(events=(), refused=True)
         with self._lock:
-            return self._read(real, origin)
+            return self._read(real, origin, is_to_end=is_to_end)
 
     def commit(self, position: TailPosition) -> None:
         """Move the progress of ``position.path`` to the read it names, if it is the newest."""
@@ -102,7 +110,7 @@ class TranscriptTail:
             return None
         return real
 
-    def _read(self, real: str, origin: TranscriptOrigin) -> TailResult:
+    def _read(self, real: str, origin: TranscriptOrigin, *, is_to_end: bool) -> TailResult:
         try:
             descriptor = os.open(real, _OPEN_FLAGS)
         except OSError:
@@ -112,16 +120,34 @@ class TranscriptTail:
             if not stat.S_ISREG(info.st_mode):
                 return TailResult(events=(), refused=True)
             state = self._state_of(real, size=info.st_size)
-            chunk = os.pread(descriptor, self._max_bytes, state.committed.offset)
+            events, skipped, reached = self._read_chunks(
+                descriptor, state.committed, origin, is_to_end=is_to_end
+            )
         except OSError:
             return TailResult(events=(), refused=True)
         finally:
             os.close(descriptor)
-        events, skipped, reached = self._parse(chunk, state.committed, origin)
         self._versions += 1
         state.pending = (self._versions, reached)
         position = TailPosition(path=real, version=self._versions)
         return TailResult(events=events, skipped_lines=skipped, position=position)
+
+    def _read_chunks(
+        self, descriptor: int, progress: _Progress, origin: TranscriptOrigin, *, is_to_end: bool
+    ) -> tuple[tuple[Event, ...], int, _Progress]:
+        """One read of at most ``max_bytes``, or (``is_to_end``) reads until one is not full."""
+        events: list[Event] = []
+        skipped = 0
+        while True:
+            chunk = os.pread(descriptor, self._max_bytes, progress.offset)
+            chunk_events, chunk_skipped, reached = self._parse(chunk, progress, origin)
+            events.extend(chunk_events)
+            skipped += chunk_skipped
+            # A full read always moves the offset (a line or a skipped piece), so this ends.
+            has_more = len(chunk) == self._max_bytes and reached.offset > progress.offset
+            progress = reached
+            if not (is_to_end and has_more):
+                return tuple(events), skipped, progress
 
     def _state_of(self, real: str, *, size: int) -> _PathState:
         state = self._states.get(real)

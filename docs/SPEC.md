@@ -116,12 +116,12 @@ events with the same all-or-nothing rule; their events name no project of their 
 `hub collect --spool` imports the hook spool ("Hooks as sensors", [Proposed architecture](#proposed-architecture)) without
 `hub web`, with the same all-or-nothing rule and exit 2 beside another input: under the spool's lock it moves
 `hook-spool.jsonl` aside to `hook-spool.taken.jsonl` (appended to it when an earlier import left one), maps every
-envelope as the hook route does and reads the transcripts their Stop, SubagentStop and SessionEnd hooks name (only
-under `AGENT_HUB_CLAUDE_PROJECTS`, else `~/.claude/projects/`), stores it all as one batch, then removes the taken
-file. A bad line (`line N: <reason>`), a conflict or a spool that is a link, not this user's or over 64 MiB writes
-nothing and exits 1, and the lines stay in the taken file for the next import; a first line `{"dropped": n}` adds a
-stderr warning naming n. A replayed spool only finds duplicates: each event's key comes from the envelope (the tool
-use id, else the hook's `sent_at` and a hash of its input). `hub run`
+envelope as the hook route does and reads each transcript their Stop, SubagentStop and SessionEnd hooks name once,
+to its last complete line (only under `AGENT_HUB_CLAUDE_PROJECTS`, else `~/.claude/projects/`), stores it all as one
+batch, then removes the taken file. A bad line (`line N: <reason>`), a conflict or a spool that is a link, not this
+user's or over 64 MiB writes nothing and exits 1, and the lines stay in the taken file for the next import; a first
+line `{"dropped": n}` adds a stderr warning naming n. A replayed spool only finds duplicates: each event's key comes
+from the envelope (the tool use id, else the hook's `sent_at` and a hash of its input). `hub run`
 also appends its executor events to the same store as it writes each record; an unwritable store prints one
 `hub run: event store unavailable: <reason>` line and the run carries on.
 

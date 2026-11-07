@@ -80,6 +80,10 @@ class TranscriptTailer(Protocol):
         """The events of the lines appended since the last committed read of ``ref.path``."""
         ...
 
+    def read_to_end(self, ref: TranscriptRef) -> TailResult:
+        """As ``read_new``, but up to the file's last complete line however far that is."""
+        ...
+
     def commit(self, position: TailPosition) -> None:
         """Move the read offset to ``position`` once its events are stored; stale: a no-op."""
         ...
