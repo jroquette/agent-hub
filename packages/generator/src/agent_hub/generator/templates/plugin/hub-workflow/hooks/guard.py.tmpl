@@ -341,6 +341,9 @@ REPO_COMMAND_REASON = "hub repo {} changes hub.json's repos (the checks the Stop
 FEATURE_EVAL = LazyPattern(r"(?:^|/)brain/features/[^/]+/evals/[^/]+$")
 OWNER_SIGNOFF_NAME = LazyPattern(r"(?:^|/)owner-signoff[^/]*$", re.I)
 OWNER_PROVENANCE = LazyPattern(r"^[ \t]*provenance[ \t]*:[ \t]*['\"]?owner['\"]?[ \t]*\r?$", re.M)
+# A Bash write's new text is the command's, quoted and escaped (echo, printf's `\n`, sed's s///):
+# there the value counts wherever it stands.
+OWNER_PROVENANCE_ANYWHERE = LazyPattern(r"provenance\s*:\s*['\"]?owner(?![\w-])")
 OWNER_SIGNOFF_REASON = ("owner sign-off: {} holds the owner's own verdict (owner-signoff, or provenance: owner); "
                         "the owner signs off in hub web, confirm")
 AUTO_MODE_SUFFIX = (
@@ -386,9 +389,12 @@ def _new_text(tool: str, ti: dict) -> str:
     return "\n".join(_str(e.get("new_string")) for e in _edits(ti)) if tool == "MultiEdit" else ""
 
 
-def _owner_signoff(path: str, text: str) -> bool:
-    """Whether a write of text to path makes or changes an owner sign-off record."""
-    return bool(FEATURE_EVAL.search(path)) and bool(OWNER_SIGNOFF_NAME.search(path) or OWNER_PROVENANCE.search(text))
+def _owner_signoff(path: str, text: str, cfg: Config, provenance: LazyPattern = OWNER_PROVENANCE) -> bool:
+    """Whether a write of text to path makes or changes an owner sign-off record: a spelling of path
+    (_candidates: `.`, `..`, `//` and links resolved, case ignored) is a feature eval, and one is
+    named owner-signoff[-rN] or text says `provenance: owner` (provenance)."""
+    evals = [spelling for spelling in _candidates(path, cfg) if FEATURE_EVAL.search(spelling)]
+    return bool(evals) and (any(OWNER_SIGNOFF_NAME.search(spelling) for spelling in evals) or bool(provenance.search(text)))
 
 
 def _read_text(path: str) -> str:
@@ -1201,11 +1207,10 @@ def _after_infra(c: str, cfg: Config) -> Verdict:
                     return "ask", GUARD_PARENT_REASON.format(tok, held or "the hub")
     if re.search(r"\b(rm|mv|truncate)\b[^;&|\n]*\s" + TEST_PATH, c) or re.search(r"\bsed\s+(-\w*i\w*|--in-place)\b[^;&|\n]*\s" + TEST_PATH, c):
         return "ask", "deleting or sed-editing tests from Bash bypasses the assertion guard; use Edit, or confirm this is intended"
-    if "evals/" in c:
-        for seg in segments:
-            for tok in _write_targets(seg) if BASH_WRITE.search(seg) else ():
-                if _owner_signoff(tok, c):
-                    return "ask", OWNER_SIGNOFF_REASON.format(tok)
+    for seg in segments:  # every target: a link or another spelling may name a feature's evals
+        for tok in _write_targets(seg) if BASH_WRITE.search(seg) else ():
+            if _owner_signoff(tok, c, cfg, OWNER_PROVENANCE_ANYWHERE):
+                return "ask", OWNER_SIGNOFF_REASON.format(tok)
     if "brain/" in c and re.search(r"(>>?|\btee\b(\s+-a)?|\bsed\s+-\w*i\w*|\b(rm|mv|cp)\b)[^;&|\n]*\bbrain/(?!(now\.md|journal/|_inbox/|auto/|features/))\S+", c):
         return "ask", "brain/ is curated: agents write only now.md, journal/, _inbox/, auto/ and features/; propose via /learn or confirm"
     if cfg.ask_before_edit:
@@ -1923,7 +1928,7 @@ def check_file(tool: str, ti: dict, cfg: Config | None = None) -> Verdict:
     pat = protected(path, cfg)
     if pat:
         return "ask", f"{path} matches guard.ask_before_edit `{pat}` (hub.json): plan and approval first; confirm this change is intended"
-    if _owner_signoff(path, _new_text(tool, ti)):
+    if _owner_signoff(path, _new_text(tool, ti), cfg):
         return "ask", OWNER_SIGNOFF_REASON.format(path)
     rel = _brain_rel(path, cfg)
     if rel is not None and not re.match(r"(now\.md|journal/|_inbox/|auto/|features/)", rel):

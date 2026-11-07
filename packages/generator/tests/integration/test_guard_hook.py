@@ -2694,7 +2694,7 @@ def test_asks_when_bash_write_says_owner_provenance_mid_line(evaluate: Evaluate)
 def test_passes_when_bash_write_says_other_provenance(evaluate: Evaluate) -> None:
     ac1 = "brain/features/x/evals/ac-1.md"
     commands = [
-        f"sed -i 's/provenance: owner/provenance: agent/' {ac1}",
+        f"sed -i 's/verdict: NO-SHIP/verdict: SHIP/' {ac1}",
         f"echo 'provenance: owner-review' > {ac1}",
         f"printf 'provenance: %s\\n' agent >> {ac1}",
         "echo 'provenance: owner' > brain/features/x/notes.md",
