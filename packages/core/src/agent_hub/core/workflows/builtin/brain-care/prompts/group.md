@@ -36,6 +36,7 @@ code fence, the JSON:
 
 The run checks the JSON against these caps, and one value over a cap fails the whole run:
 - at most 50 groups, and at most 50 notes per group;
+- at least 1 note in each group, and each note path at most 512 characters (copy it as listed);
 - `target` at most 200 characters (a path or a short label);
 - `reason` at most 500 characters, never empty;
 - `text` at most 2,000 characters.
