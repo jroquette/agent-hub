@@ -137,6 +137,38 @@ def test_keeps_taken_when_it_grew_since_read(folder: Path) -> None:
     assert _ids(later) == ["toolu_1", "toolu_2"]
 
 
+def test_reads_only_bytes_its_stat_saw_when_another_take_appends_during_read(
+    folder: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _spool(folder, "toolu_1")
+    taken_path = folder / TAKEN_FILE
+    real_fstat = os.fstat
+    appended: list[bool] = []
+
+    def fstat_then_append(descriptor: int) -> os.stat_result:
+        # Another take appends to the taken file (half of a line so far) right after this one's
+        # stat, outside the lock, while this one reads it.
+        info = real_fstat(descriptor)
+        if not appended and taken_path.exists() and info.st_ino == taken_path.stat().st_ino:
+            appended.append(True)
+            with taken_path.open("ab") as file:
+                file.write(_line("toolu_2")[:20])
+        return info
+
+    monkeypatch.setattr(os, "fstat", fstat_then_append)
+    spool = HookSpool(folder)
+    taken = spool.take()
+    monkeypatch.undo()
+    assert taken is not None
+    spool.remove(taken)
+
+    assert appended == [True]
+    assert _ids(taken) == ["toolu_1"]
+    assert taken.lines.errors == ()
+    assert taken.size == len(_line("toolu_1"))
+    assert taken_path.read_bytes() == _line("toolu_1") + _line("toolu_2")[:20]
+
+
 def test_waits_for_sensor_lock_when_spool_being_written(folder: Path) -> None:
     _spool(folder, "toolu_1")
     lock = os.open(folder / LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o600)
