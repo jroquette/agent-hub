@@ -255,6 +255,19 @@ describe("Catalog a11y", () => {
     expect(await seriousViolations(container)).toEqual([]);
     expect(screen.getByRole("status")).toHaveTextContent("1 of 2 skills");
   });
+
+  it("has no serious or critical axe violation with the hub knowledge tools open", async () => {
+    const none = { runs_7d: 0, runs_30d: 0, runs_90d: 0, last_used_at: null };
+    const { container } = open(
+      "/projects/demo/skills",
+      aSkillCatalog({ hub_tools: { mcp__hub__search: { main: none, subagents: none } } }),
+    );
+    const fold = screen.getByText("Hub knowledge tools · 30 d").closest("details");
+    if (!fold) throw new Error("no hub tools section");
+    fold.open = true;
+
+    expect(await seriousViolations(container)).toEqual([]);
+  });
 });
 
 describe("Catalog your_drafts", () => {
