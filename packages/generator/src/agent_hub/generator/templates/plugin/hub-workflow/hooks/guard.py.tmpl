@@ -64,8 +64,8 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         Write's content, an edit's new strings or the file with the edits applied; from Bash, the eval's text
         now, the command (anywhere, or `owner` with its quotes removed) and what the one plain echo or printf
         of the command writes there), or any other Bash write to an eval (a copy, move, link, tee, sed -i of
-        one that exists, more than one call, a glob, brace, expansion or numeric escape), or a change to an
-        eval that cannot be read,
+        one that exists, more than one call, a glob, brace, expansion or numeric escape) or into a feature's
+        evals folder, or a change to an eval that cannot be read,
         a mutating hub env (add, set, remove, service add|remove; list and show pass) or hub repo
         (add, set, remove; list passes), git hooks skipped (--no-verify on commit, push or merge, commit's
         -n, core.hooksPath set by -c, --config-env, an assignment or git config), a message file that cannot
@@ -354,6 +354,7 @@ REPO_COMMAND_REASON = "hub repo {} changes hub.json's repos (the checks the Stop
 # An owner sign-off record is the owner's own verdict, which hub web writes: a feature eval named
 # owner-signoff[-rN], or any feature eval whose text after a change says `provenance: owner`.
 FEATURE_EVAL = LazyPattern(r"(?:^|/)brain/features/[^/]+/evals/[^/]+$")
+FEATURE_EVALS_FOLDER = LazyPattern(r"(?:^|/)brain/features/[^/]+/evals/?$")
 OWNER_SIGNOFF_NAME = LazyPattern(r"(?:^|/)owner-signoff[^/]*$", re.I)
 # A provenance field, read as core reads it (each line's value, stripped and unquoted, is `owner`)
 # and more leniently: blanks before the key and around the colon, any quotes and blanks around the value.
@@ -1349,13 +1350,17 @@ def _call_write_targets(cmd: str) -> list[str]:
 def _bash_owner_signoff(c: str, segments: list[str], cfg: Config, cwd: str | None) -> Verdict:
     """The owner sign-off rule on a Bash command's write targets (every one, as _write_targets and,
     for a command that names evals, _call_write_targets find them: a link or another spelling may
-    name a feature eval): an ask when one is named owner-signoff[-rN] or the command says
-    provenance: owner, or `owner` once its quotes and backslashes are removed; then
-    _bash_eval_write on each feature eval it writes."""
+    name a feature eval): an ask when one is a feature's evals folder (FEATURE_EVALS_FOLDER), is
+    named owner-signoff[-rN], or the command says provenance: owner, or `owner` once its quotes and
+    backslashes are removed; then _bash_eval_write on each feature eval it writes."""
     toks = [tok for seg in segments if BASH_WRITE.search(seg) for tok in _write_targets(seg)]
     if toks and "evals" in c.lower():
         toks += _call_write_targets(c)
-    evals = [tok for tok in dict.fromkeys(toks) if _feature_evals(tok, cfg)]
+    toks = list(dict.fromkeys(toks))
+    folder = next((tok for tok in toks if any(FEATURE_EVALS_FOLDER.search(s) for s in _candidates(tok, cfg))), None)
+    if folder is not None:  # a copy, move or link into the folder: the eval it makes is not named
+        return "ask", OWNER_UNCHECKED_REASON.format(folder, UNSEEN_WRITE_CAUSE)
+    evals = [tok for tok in toks if _feature_evals(tok, cfg)]
     if not evals:
         return None
     said = OWNER_PROVENANCE_ANYWHERE.search(c) or OWNER_WORD.search(re.sub(r"['\"\\\\]", "", c))

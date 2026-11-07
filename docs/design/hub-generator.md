@@ -316,7 +316,8 @@ below asks where the owner has a legitimate use for the call, and denies where t
   removed, or when the command may write what the guard does not see: only one plain `echo` or `printf` (`%s` and
   `%%` only) writing the eval once with `>` or `>>`, an `rm`, or a `sed -i` of an eval not there yet passes, and the
   text the `echo` or `printf` writes (after the eval's own for `>>`) is read as above; a copy, move, link, `tee`, a
-  `sed -i` of an eval that exists, more than one call, or a glob, brace, expansion or numeric escape asks. An eval
+  `sed -i` of an eval that exists, more than one call, or a glob, brace, expansion or numeric escape asks, as does a
+  Bash write that names a feature's `evals` folder itself (`cp a.md brain/features/<slug>/evals/`). An eval
   that cannot be read (not a regular file, over 1 MiB, past 100 edits) asks. The path counts in every spelling
   (`.`, `..`, `//` and links resolved, case ignored). Only hub web writes the owner's verdict; an eval with
   `provenance: agent` passes.
