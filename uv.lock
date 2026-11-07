@@ -160,7 +160,7 @@ requires-dist = [
     { name = "agent-hub-storage", editable = "packages/storage" },
     { name = "agent-hub-tracker-linear", editable = "packages/tracker_linear" },
     { name = "pydantic", specifier = ">=2" },
-    { name = "typer" },
+    { name = "typer", specifier = ">=0.27.2,<0.29" },
 ]
 
 [[package]]

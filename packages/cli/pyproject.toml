@@ -6,7 +6,8 @@ license = "Apache-2.0"
 requires-python = ">=3.14"
 dependencies = ["agent-hub-core", "agent-hub-storage", "agent-hub-collector", "agent-hub-generator",
                 "agent-hub-hub-git", "agent-hub-tracker-linear", "agent-hub-api", "agent-hub-mcp-server",
-                "pydantic>=2", "typer"]
+                # The cli imports typer's private click (vendored_click.py): only the tested range.
+                "pydantic>=2", "typer>=0.27.2,<0.29"]
 
 [tool.uv.sources]
 agent-hub-core = { workspace = true }

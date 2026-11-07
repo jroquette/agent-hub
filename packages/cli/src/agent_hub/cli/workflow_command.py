@@ -66,12 +66,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Final
 
 import typer
-from typer._click.exceptions import ClickException
 
 from agent_hub.cli.command_exits import FAILURE, fail
 from agent_hub.cli.errors import RunLogError
 from agent_hub.cli.hub_root import FILE_LABEL, hub_checkout, hub_root_or_exit, local_home
 from agent_hub.cli.init_report import shown_path, shown_text
+from agent_hub.cli.vendored_click import ClickException
 from agent_hub.cli.workflow_schedule_command import schedule_app
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.catalog import (
