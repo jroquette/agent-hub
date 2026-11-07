@@ -316,7 +316,7 @@ below asks where the owner has a legitimate use for the call, and denies where t
   a backtick outside single quotes is an expansion the guard cannot read. A call's program follows its assignments
   and the wrappers `command`, `exec`, `time`, `nohup`, `env`, `timeout`, `nice` and `sudo` (and their options). A
   here-document's body is its call's text, not calls, unless a call with one on that line holds an interpreter or
-  shell word, which runs it. The folder of each call starts at the event's `cwd` and follows `cd`, `pushd` and `git
+  shell word, which runs it, or its delimiter never comes; a `<<` inside arithmetic (`$((1<<2))`) is a shift. The folder of each call starts at the event's `cwd` and follows `cd`, `pushd` and `git
   -C`; after `popd` or an expanded `cd`, a read that needs it asks. A command with over 64 `git` and `gh` calls asks
   (`change_flow_unchecked`), so a hostile command stays linear.
 - **Message files** (rule `ai_attribution`, deny): `git commit|tag|merge -F/--file` and `gh pr
