@@ -334,7 +334,8 @@ below asks where the owner has a legitimate use for the call, and denies where t
   given as `$(cat <file>)` or `$(< file)` (`-m`, `--message`, `-b`, `--body`) and a `gh api` write's `--input`
   file. A file the same command writes with `>` from its own text (`echo`, `printf`, `cat` of a here-document or
   here-string, no expansion) is checked as the command's text; one written any other way (`cat` of a file, `>>`, an
-  expansion) asks, and a `<` input writes nothing. A file tool's write of a file named like a message (`pr.md`,
+  expansion) asks, and a `<` input writes nothing. The written file and the message file are compared by their
+  normalized path from the call's folder (`./pr.md` is `pr.md`). A `--trailer key=value` is read as `key: value`. A file tool's write of a file named like a message (`pr.md`,
   `<name>-pr.md`, `body.md`, `msg.txt`, …) holding attribution is denied at once. A message on stdin (`-`), behind
   an expansion, or in a file that cannot be read asks (`message_unchecked`). `git merge` and `gh pr comment|review`
   text is checked inline too, as is a call's text when `git`'s options or `gh pr -R` come before the verb.
@@ -357,7 +358,8 @@ below asks where the owner has a legitimate use for the call, and denies where t
   `project.author_email`, a `git commit`, `git merge` (not `--abort`/`--quit`) or annotated `git tag` whose author,
   committer or tagger email differs from it (case ignored) is denied, and the reason names the expected identity. Each
   email is, first found: `--author` (author only), the `GIT_AUTHOR_EMAIL` or `GIT_COMMITTER_EMAIL` the call, an earlier
-  `export` or the session sets, `git -c author.email|committer.email|user.email`, `git config` where the call runs (one
+  `export` or the session sets, `git -c author.email|committer.email|user.email` (or `--config-env <key>=<VAR>`, the
+  value of `VAR` from the call, an export or the session), `git config` where the call runs (one
   `git config --get-regexp` read, as **Git reads** says), then `EMAIL`. A config git cannot read, a read not made, an
   expansion, a folder that cannot be told or an `--author` with no `<email>` asks; no email anywhere passes (git
   refuses or makes one up), as does a hub that sets none. This is the commit-time half of rule 1, the CI author check
@@ -365,14 +367,16 @@ below asks where the owner has a legitimate use for the call, and denies where t
 - **GitHub calls** (rules `ai_attribution`, `agent_branch`, `push_protected_branch`, deny): a GitHub MCP tool (an
   `mcp__` tool whose server's name holds `github`, so `mcp__github__*` and a plugin's `mcp__plugin_github_github__*`)
   is no longer checked for blocked words alone, and `gh api` is read call by call. AI attribution in a `title`,
-  `body`, `message`, `commit_message` or `commit_title` (a tool's top-level field, or a `gh api -f/-F` field, the last
-  key of `comments[][body]` too, with `-F body=@file` read as a message file, and a write's `--input` file read
-  whole) is denied; on a call that writes (an MCP method other than `get_*`, `list_*`, `search_*`, `*_read`; a `gh
-  api` method other than GET), a `claude/` branch in `branch`, `head`, `ref` or `new_branch`, and a protected branch
-  in `branch` (or `gh api … git/refs/heads/<branch>`) are denied.
+  `body`, `message`, `commit_message` or `commit_title` (a tool's top-level field or one nested in its lists and
+  objects, such as a review's `comments[].body`, or a `gh api -f/-F` field, the last key of `comments[][body]` too,
+  with `-F body=@file` and `body="$(cat <file>)"` read as a message file, and a write's `--input` file read whole) is
+  denied; on a call that writes (an MCP method other than `get_*`, `list_*`, `search_*`, `*_read`; a `gh api` method
+  other than GET), a `claude/` branch in `branch`, `head`, `ref` or `new_branch`, and a protected branch in `branch`,
+  in a `ref` that names `refs/heads/<branch>`, or in `gh api … git/refs/heads/<branch>` are denied.
 - **Merges** (rule `pr_merge`, deny): the user merges every PR (rule 2), and branch protection cannot tell an agent
   from the owner, since both use the owner's credentials. So `gh pr merge` (`--auto` too), `gh api` PUT or POST on
-  `pulls/<n>/merge`, POST on `merges`, a `graphql` `mergePullRequest` or `enablePullRequestAutoMerge`, and the MCP
+  `pulls/<n>/merge` (a query string dropped), POST on `merges`, a `graphql` `mergePullRequest` or
+  `enablePullRequestAutoMerge` (in a field, or in a `-F query=@file` it reads; one it cannot read asks), and the MCP
   `merge_pull_request` and `enable_pr_auto_merge` are denied; reading whether a PR is merged passes.
 - **Hidden pushes** (rules `push_hidden`, `push_delete`, `interpreter_git`, ask): defence in depth beside branch
   protection (the AGH-184 decision keeps these asks). A `git push` whose remote or refspec is a shell expansion
