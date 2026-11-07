@@ -34,7 +34,12 @@ from agent_hub.collector.jsonl import (
     json_object,
     validation_reason,
 )
-from agent_hub.core.ingestion.hook_envelope import MAX_BODY_BYTES, HookEnvelope
+from agent_hub.core.ingestion.hook_envelope import (
+    MAX_BODY_BYTES,
+    MAX_JSON_DEPTH,
+    HookEnvelope,
+    json_depth_exceeds,
+)
 
 SPOOL_FILE: Final = "hook-spool.jsonl"
 LOCK_FILE: Final = "hook-spool.lock"
@@ -86,7 +91,7 @@ def parse_spool(data: bytes) -> SpoolLines:
 
     Blank lines are skipped but still count for line numbers; only ``\\n`` ends a line. A line
     over ``MAX_BODY_BYTES`` (more than the sensor ever sends) is an error, as is one that the
-    live route would refuse as an envelope.
+    live route would refuse: nested deeper than ``MAX_JSON_DEPTH``, or not an envelope.
     """
     envelopes: list[SpooledEnvelope] = []
     errors: list[LineError] = []
@@ -109,6 +114,9 @@ def parse_spool(data: bytes) -> SpoolLines:
 def _line_value(line: bytes) -> HookEnvelope | int:
     if len(line) > MAX_BODY_BYTES:
         msg = f"longer than {MAX_BODY_BYTES} bytes"
+        raise LineRejectedError(msg)
+    if json_depth_exceeds(line):
+        msg = f"nested deeper than {MAX_JSON_DEPTH} levels"
         raise LineRejectedError(msg)
     try:
         text = line.decode("utf-8")

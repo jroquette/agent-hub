@@ -9,39 +9,11 @@ from fastapi.routing import APIRoute
 from agent_hub.api.dependencies import IngestHookDep
 from agent_hub.api.rfc9457 import problem
 from agent_hub.api.schemas import PROBLEM_RESPONSES, HookAccepted
-from agent_hub.core.ingestion.hook_envelope import MAX_JSON_DEPTH, HookEnvelope
-
-_QUOTE = ord('"')
-_BACKSLASH = ord("\\")
-_NESTING = {ord("["): 1, ord("{"): 1, ord("]"): -1, ord("}"): -1}
-
-
-def json_depth_exceeds(body: bytes, limit: int = MAX_JSON_DEPTH) -> bool:
-    """Whether ``body`` nests arrays and objects deeper than ``limit``, read without parsing.
-
-    Brackets inside strings do not count. One linear pass over at most 1 MiB (the security
-    middleware cut the body); it keeps the JSON parser's recursion bounded.
-    """
-    depth = 0
-    in_string = escaped = False
-    for byte in body:
-        if in_string:
-            in_string, escaped = _string_state(byte, escaped=escaped)
-            continue
-        in_string = byte == _QUOTE
-        depth += _NESTING.get(byte, 0)
-        if depth > limit:
-            return True
-    return False
-
-
-def _string_state(byte: int, *, escaped: bool) -> tuple[bool, bool]:
-    # (still in the string, next byte escaped) after ``byte`` inside a string.
-    if escaped:
-        return True, False
-    if byte == _BACKSLASH:
-        return True, True
-    return byte != _QUOTE, False
+from agent_hub.core.ingestion.hook_envelope import (
+    MAX_JSON_DEPTH,
+    HookEnvelope,
+    json_depth_exceeds,
+)
 
 
 class DepthCheckedRoute(APIRoute):
