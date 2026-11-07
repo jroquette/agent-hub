@@ -19,8 +19,9 @@
    are skipped, so nothing comes twice and ``seq`` never goes back.
 
 A subscriber that falls behind the live buffer replays the store again from its last record
-(no record is lost); a subscriber detached by a newer one (the cap) gets a reset and ends. The
-stream ends after the session's last frame, or after step 4 for an ended session.
+(no record is lost), up to the last record published when it fell behind: a later one comes
+live, raw, as in step 2. A subscriber detached by a newer one (the cap) gets a reset and ends.
+The stream ends after the session's last frame, or after step 4 for an ended session.
 """
 
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
@@ -139,9 +140,12 @@ async def _live(
     while not subscriber.detached:
         published = live.frames_after(subscriber.cursor)
         if published is None:
-            # Behind the live buffer: replay what the store has since the last record sent.
+            # Behind the live buffer: replay what the store has since the last record sent, up
+            # to the last record published so far (read with the cursor, no await between, as
+            # in ``frames``); a later one comes among the live frames, raw (AGH-432).
             subscriber.cursor = live.published
-            async for record in _replayed(read, sent):
+            until = live.last_seq
+            async for record in _replayed(read, sent, until=until):
                 yield record
             continue
         for number, item in published:
