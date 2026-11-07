@@ -1062,6 +1062,55 @@ def test_passes_gh_api_when_read_or_clean(ws: Path, decide: Decide) -> None:
     assert decide([bash_at(command, ws) for command in commands]) == [None] * len(commands)
 
 
+# A `cd` or `export` inside a subshell (`( … )`, `$( … )`) ends with it: a later call runs in the
+# folder, and with the variables, from before; a `{ … }` group and arithmetic `(( … ))` are no
+# subshell. A file a command writes is matched to a message file by its normalized path.
+def test_restores_folder_when_subshell_ends(ws: Path, decide: Decide) -> None:
+    trunk = git_repo(ws / "main-repo", "trunk", OTHER)
+    git_repo(ws / "app", "me/dem-1-x", "me@example.com")
+    both = "GIT_AUTHOR_EMAIL=me@example.com GIT_COMMITTER_EMAIL=me@example.com"
+    cases = [
+        ("(cd ../app && true); git push", ("deny", PUSH_REASON.format("trunk"))),
+        ("echo $(cd ../app; pwd) && git push", ("deny", PUSH_REASON.format("trunk"))),
+        (
+            f"(export {both}); git commit -m x",
+            ("deny", IDENTITY_REASON.format("commit", OTHER, "author")),
+        ),
+        ("(cd ../app && git push)", None),
+        ("{ cd ../app; }; git push", None),
+        ("(( n = 1 )) && cd ../app && git push", None),
+        (f"(true); export {both}; git commit -m x", None),
+    ]
+
+    verdicts = decide([bash_at(command, trunk) for command, _ in cases])
+
+    assert verdicts == [verdict for _, verdict in cases]
+
+
+def test_reads_message_file_by_normalized_path_when_command_writes_it(
+    ws: Path, decide: Decide
+) -> None:
+    """pr.md on disk holds attribution; the command writes it again under another spelling."""
+    app = git_repo(ws / "app", "me/dem-1-x", "me@example.com")
+    put(app / "pr.md", GENERATED)
+    unread = "this command writes it from what the guard does not read"
+    cases = [
+        (
+            "curl -s https://example.com/x > ./pr.md; gh pr create -t x -F pr.md",
+            ("ask", UNCHECKED_REASON.format("pr.md", unread)),
+        ),
+        (
+            "cat /tmp/x > sub/../pr.md && gh pr create -t x -F ./pr.md",
+            ("ask", UNCHECKED_REASON.format("./pr.md", unread)),
+        ),
+        (f"echo Body > {app}/pr.md && gh pr create -t x -F pr.md", None),
+    ]
+
+    verdicts = decide([bash_at(command, app) for command, _ in cases])
+
+    assert verdicts == [verdict for _, verdict in cases]
+
+
 # A merge endpoint with a query string, a graphql query read from a file, a write whose ref names a
 # protected branch, a body given as `$(cat file)` and a text field nested in a GitHub MCP tool's
 # lists and objects are read too.
