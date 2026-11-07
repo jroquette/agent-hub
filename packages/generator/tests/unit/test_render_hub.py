@@ -5001,6 +5001,61 @@ def test_merges_superpowers_enable_line_when_project_settings_set(demo_config: H
     assert value == plain
 
 
+# AGH-699 E-8: a hub that enables a `superpowers@<marketplace>` key in its settings sibling (the
+# agent-hub hub pins `superpowers@agent-hub` to a vetted sha) gets that key in CLAUDE.md's enable
+# line; following the official key there would install a second, unpinned copy. A hub that
+# enables none keeps the official key, and its bytes.
+OFFICIAL_SUPERPOWERS = "superpowers@claude-plugins-official"
+PINNED_SUPERPOWERS = "superpowers@agent-hub"
+
+
+@pytest.mark.parametrize(
+    ("sibling", "key"),
+    [
+        (None, OFFICIAL_SUPERPOWERS),
+        (b'{"enabledPlugins": {"superpowers@agent-hub": true}}', PINNED_SUPERPOWERS),
+        (
+            b'{"enabledPlugins": {"hub-workflow@agent-hub": false, "superpowers@agent-hub": true}}',
+            PINNED_SUPERPOWERS,
+        ),
+        (b'{"enabledPlugins": {"superpowers@agent-hub": false}}', OFFICIAL_SUPERPOWERS),
+        (b'{"enabledPlugins": {"pyright-lsp@agent-hub": true}}', OFFICIAL_SUPERPOWERS),
+        (b'{"permissions": {"allow": ["Bash(make *)"]}}', OFFICIAL_SUPERPOWERS),
+    ],
+    ids=["no-sibling", "pinned", "pinned-among-others", "disabled", "other-plugin", "no-plugins"],
+)
+def test_names_enabled_superpowers_key_when_claude_rendered(
+    demo_config: HubConfig, sibling: bytes | None, key: str
+) -> None:
+    project_json = {} if sibling is None else {".claude/settings.project.json": sibling}
+    extensions = ExtensionInputs(project_json=project_json, agents=(), skills=())
+
+    claude = {file.path: file for file in render_hub(demo_config, extensions).files}["CLAUDE.md"]
+
+    [bullet] = [
+        bullet
+        for bullet in claude_notes_bullets(claude.content.decode("utf-8"))
+        if "superpowers" in bullet.lower()
+    ]
+    assert f'`"enabledPlugins": {{"{key}": true}}`' in bullet
+    assert f"`claude plugin install {key} --scope local`" in bullet
+    other = PINNED_SUPERPOWERS if key == OFFICIAL_SUPERPOWERS else OFFICIAL_SUPERPOWERS
+    assert other not in bullet
+    if key == OFFICIAL_SUPERPOWERS:
+        assert claude == {file.path: file for file in render_hub(demo_config).files}["CLAUDE.md"]
+
+
+def test_raises_merge_error_when_settings_sibling_unreadable(demo_config: HubConfig) -> None:
+    extensions = ExtensionInputs(
+        project_json={".claude/settings.project.json": b'{"enabledPlugins": '},
+        agents=(),
+        skills=(),
+    )
+
+    with pytest.raises(MergeError, match=r"^\.claude/settings\.project\.json: \$: "):
+        render_hub(demo_config, extensions)
+
+
 # AGH-699 E-24: cloud session instructions ask for a `claude/…` branch and a Co-Authored-By
 # trailer, which break hub rules 1 and 2. CLAUDE.md, loaded even where the hooks are not, says the
 # hub's rules win, in one Claude Code note before the double-wiring and superpowers bullets; the
