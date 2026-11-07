@@ -2,9 +2,10 @@
 # requires-python = ">=3.12"
 # dependencies = []
 # ///
-"""Find orphan, stale, duplicate and cyclic issues among those ``read.py`` printed, as JSON.
+"""Find orphan, stale, duplicate, cyclic and merged issues among those ``read.py`` printed.
 
-``hygiene.py [--stale-days N] [--today YYYY-MM-DD]``, cwd the hub, ``read.py``'s output on stdin.
+``hygiene.py [--stale-days N] [--today YYYY-MM-DD] [--config JSON]``, cwd the hub, ``read.py``'s
+output on stdin; ``JSON`` is what ``hub step config`` printed (each repo's default branch).
 Each finding names its evidence (the field and its value):
 
 - orphan: the state's type is ``started`` (or, with no type, the name is In Progress or In
@@ -17,11 +18,16 @@ Each finding names its evidence (the field and its value):
 - duplicates: equal titles once case, a leading ``type(scope):``, punctuation and repeated
   spaces are dropped;
 - cycles: groups of more than one issue that block each other through ``blocked_by`` and
-  ``blocks``, among the issues read.
+  ``blocks``, among the issues read;
+- merged: with ``--config``, an issue whose state is not completed or canceled and whose id
+  (any case, not inside a longer id) is in the subject of one of the last ``MAX_COMMITS`` commits
+  of a repo's default branch as last fetched (``origin/<branch>``, else the local ``<branch>``;
+  ``git log`` in ``../<dir>``, no network); the evidence is the newest such commit.
 
-Prints ``{"orphans", "stale", "duplicates", "cycles", "unreadable", "summary"}``; a repo whose refs
-cannot be read (``MAX_REFS`` at most, ``GIT_TIMEOUT`` seconds) is in ``unreadable`` and in each
-orphan's evidence. ``summary`` is the report's text, at most ``SUMMARY_CHARS``. Bad stdin or
+Prints ``{"orphans", "stale", "duplicates", "cycles", "merged", "unreadable", "summary"}``; a repo
+whose refs cannot be read (``MAX_REFS`` at most, ``GIT_TIMEOUT`` seconds) is in ``unreadable`` and
+in each orphan's evidence, and so is one whose default branch's commits cannot be read (not in an
+orphan's evidence). ``summary`` is the report's text, at most ``SUMMARY_CHARS``. Bad stdin or
 arguments exit 2 with ``hygiene.py: <reason>`` on stderr.
 """
 
@@ -38,11 +44,16 @@ from pathlib import Path
 UTC = timezone.utc  # noqa: UP017
 
 MAX_REFS = 20_000
+MAX_COMMITS = 5_000
 GIT_TIMEOUT = 30
 SUMMARY_CHARS = 16_000
 STARTED_NAMES = frozenset({"in progress", "in review"})
 GITHUB_LINK = re.compile(r"https://github\.com/[^/\s]+/[^/\s]+/(pull|tree)/\S+")
 CHANGE_PREFIX = re.compile(r"\s*[\w-]+(\([^)]*\))?!?:\s*")
+# An issue id in a commit subject, any case, not inside a longer id or word.
+SUBJECT_ID = re.compile(r"(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9]{0,9}-[1-9][0-9]{0,8})(?![0-9])")
+BRANCH = re.compile(r"[A-Za-z0-9._/-]{1,200}")
+CLOSED_TYPES = frozenset({"completed", "canceled"})
 CUT = "\n(cut)"
 
 Issue = dict[str, object]
@@ -123,6 +134,117 @@ def repo_refs(repos: list[str]) -> tuple[list[str], list[Finding]]:
         except RefsUnreadableError as error:
             unreadable.append({"repo": repo, "reason": str(error)})
     return refs, unreadable
+
+
+def default_branches(text: str) -> dict[str, str]:
+    """Each repo's default branch, by dir, from ``hub step config``'s output."""
+    try:
+        config = json.loads(text)
+    except ValueError as error:
+        raise BadInputError("--config is not JSON") from error
+    repos = config.get("repos") if isinstance(config, dict) else None
+    if not isinstance(repos, list):
+        raise BadInputError("--config has no repos list")
+    found: dict[str, str] = {}
+    for repo in repos:
+        if not isinstance(repo, dict):
+            continue
+        name, branch = repo.get("dir"), repo.get("default_branch")
+        if isinstance(name, str) and isinstance(branch, str):
+            if not BRANCH.fullmatch(branch) or ".." in branch or branch.startswith("-"):
+                raise BadInputError(f"--config: repo {name!r} has no valid default_branch")
+            found[name] = branch
+    return found
+
+
+def git_lines(repo_dir: Path, *args: str) -> list[str]:
+    """Git's stdout lines in the repo (no network); raises ``RefsUnreadableError`` when git
+    cannot run there or fails."""
+    try:
+        done = subprocess.run(  # noqa: S603 - fixed arguments, read-only, in a hub repo
+            ["git", *args],  # noqa: S607 - git from PATH, as for-each-ref runs it
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            timeout=GIT_TIMEOUT,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RefsUnreadableError(f"git {args[0]} took over {GIT_TIMEOUT} s") from error
+    except OSError as error:
+        raise RefsUnreadableError(error.strerror or "git cannot run there") from error
+    if done.returncode != 0:
+        first = (done.stderr.strip().splitlines() or [f"git {args[0]} failed"])[0]
+        raise RefsUnreadableError(first[:200])
+    return done.stdout.splitlines()
+
+
+def branch_commits(repo_dir: Path, branch: str) -> tuple[str, list[str]]:
+    """The fetched default branch's name and its last commits, newest first, as
+    ``<sha> <subject>``; raises ``RefsUnreadableError`` when no such branch can be read."""
+    for shown, ref in (
+        (f"origin/{branch}", f"refs/remotes/origin/{branch}"),
+        (branch, f"refs/heads/{branch}"),
+    ):
+        try:
+            git_lines(repo_dir, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+        except RefsUnreadableError:
+            continue
+        log = ("log", f"--max-count={MAX_COMMITS}", "--format=%H %s", ref, "--")
+        return shown, git_lines(repo_dir, *log)
+    raise RefsUnreadableError(f"no origin/{branch} or {branch} to read merged commits from")
+
+
+def named_commits(
+    repos: list[str], branches: dict[str, str], unreadable: list[Finding]
+) -> dict[str, Finding]:
+    """The newest default-branch commit naming each id (upper case), the first repo first."""
+    skipped = {entry["repo"] for entry in unreadable}
+    named: dict[str, Finding] = {}
+    for repo in repos:
+        branch = branches.get(repo)
+        if branch is None or repo in skipped:
+            continue
+        try:
+            shown, lines = branch_commits(Path("..") / repo, branch)
+        except RefsUnreadableError as error:
+            unreadable.append({"repo": repo, "reason": str(error)})
+            continue
+        for line in lines:
+            commit, _, subject = line.partition(" ")
+            for found in SUBJECT_ID.findall(subject):
+                where: Finding = {
+                    "repo": repo,
+                    "branch": shown,
+                    "commit": commit,
+                    "subject": subject,
+                }
+                named.setdefault(found.upper(), where)
+    return named
+
+
+def merged(issues: list[Issue], named: dict[str, Finding]) -> list[Finding]:
+    found: list[Finding] = []
+    for issue in issues:
+        issue_id = text(issue, "id")
+        where = named.get(issue_id.upper())
+        name, kind = state_of(issue)
+        if where is None or kind in CLOSED_TYPES:
+            continue
+        commit = str(where["commit"])
+        evidence = (
+            f"commit {commit[:12]} on {where['repo']} {where['branch']}: {where['subject']!r}"
+        )
+        found.append(
+            {
+                "id": issue_id,
+                "state": name,
+                "repo": where["repo"],
+                "commit": commit,
+                "evidence": evidence,
+            }
+        )
+    return found
 
 
 def is_started(issue: Issue) -> bool:
@@ -298,9 +420,10 @@ def summary_of(read: int, result: dict[str, list[Finding]], titles: dict[str, st
         plural(len(result["stale"]), "stale"),
         plural(len(result["duplicates"]), "duplicate group"),
         plural(len(result["cycles"]), "cycle"),
+        plural(len(result["merged"]), "merged issue"),
     ]
     lines = [f"Hygiene of {plural(read, 'issue')} read: {', '.join(counts)}."]
-    for kind in ("orphans", "stale"):
+    for kind in ("orphans", "stale", "merged"):
         for item in result[kind]:
             issue_id = str(item["id"])
             lines.append(f"- {kind} {issue_id} {titles.get(issue_id, '')!r}: {item['evidence']}")
@@ -328,10 +451,11 @@ def read_input(stdin: str) -> tuple[list[Issue], list[str], int]:
     return kept, [repo for repo in repos if isinstance(repo, str)], len(kept)
 
 
-def arguments(argv: list[str]) -> tuple[int, date]:
+def arguments(argv: list[str]) -> tuple[int, date, dict[str, str]]:
     parser = argparse.ArgumentParser(prog="hygiene.py")
     parser.add_argument("--stale-days", default="14")
     parser.add_argument("--today", default="")
+    parser.add_argument("--config", default="", help="What hub step config printed.")
     given = parser.parse_args(argv)
     days = given.stale_days
     if not (days.isascii() and days.isdecimal()) or not 1 <= int(days) <= 3650:
@@ -340,22 +464,27 @@ def arguments(argv: list[str]) -> tuple[int, date]:
         today = date.fromisoformat(given.today) if given.today else datetime.now(UTC).date()
     except ValueError as error:
         raise BadInputError(f"--today is not YYYY-MM-DD: {given.today!r}") from error
-    return int(days), today
+    branches = default_branches(given.config) if given.config else {}
+    return int(days), today, branches
 
 
 def main(argv: list[str]) -> int:
     try:
-        days, today = arguments(argv)
+        days, today, branches = arguments(argv)
         issues, repos, read = read_input(sys.stdin.read())
     except BadInputError as error:
         print(f"hygiene.py: {error}", file=sys.stderr)
         return 2
     refs, unreadable = repo_refs(repos)
+    found_orphans = orphans(issues, refs, unreadable)
+    # After the orphans: a default branch that cannot be read is no missing branch ref.
+    named = named_commits(repos, branches, unreadable)
     result: dict[str, list[Finding]] = {
-        "orphans": orphans(issues, refs, unreadable),
+        "orphans": found_orphans,
         "stale": stale(issues, today, days),
         "duplicates": duplicates(issues),
         "cycles": cycles(issues),
+        "merged": merged(issues, named),
         "unreadable": unreadable,
     }
     titles = {text(issue, "id"): text(issue, "title") for issue in issues}

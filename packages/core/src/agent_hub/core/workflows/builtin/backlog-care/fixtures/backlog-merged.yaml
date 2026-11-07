@@ -32,7 +32,7 @@ stubs:
   report:
     output:
       outcome: report_only
-      summary: "Backlog care.\nHygiene of 1 issue read: 0 orphans, 0 stale, 0 duplicate groups, 0 cycles, 1 merged issue.\n- merged DEM-8 'Add the export button': commit 0a1b2c3d4e5f on api origin/main: 'feat(api): add the export button (DEM-8)'\nNothing to apply: the tracker stays as it is."
+      summary: "Backlog care.\nNo open issue was left unread (1 of 1 read)\nHygiene of 1 issue read: 0 orphans, 0 stale, 0 duplicate groups, 0 cycles, 1 merged issue.\n- merged DEM-8 'Add the export button': commit 0a1b2c3d4e5f on api origin/main: 'feat(api): add the export button (DEM-8)'\nNo draft reached a gate.\nNothing to apply: the tracker stays as it is."
       apply: []
       skipped: []
 expect: {status: done, outcome: report_only}

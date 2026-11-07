@@ -162,6 +162,7 @@ DESIGN_PATHS = (
     # AGH-489: the built-in backlog-care pack, seeded.
     "workflows/backlog-care/backlog-care.yaml",
     "workflows/backlog-care/fixtures/backlog-approve-and-skip.yaml",
+    "workflows/backlog-care/fixtures/backlog-merged.yaml",
     "workflows/backlog-care/fixtures/backlog-mixed.yaml",
     "workflows/backlog-care/fixtures/backlog-over-limit.yaml",
     "workflows/backlog-care/fixtures/backlog-paused.yaml",

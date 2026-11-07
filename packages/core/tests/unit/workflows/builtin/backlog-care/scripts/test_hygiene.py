@@ -302,7 +302,7 @@ def test_reports_merged_issue_when_fetched_default_branch_names_it(
             "evidence": evidence,
         }
     ]
-    assert "1 cycle, 1 merged issue." in found["summary"]
+    assert "0 cycles, 1 merged issue." in found["summary"]
     assert f"- merged DEM-1 'Add the export button': {evidence}" in found["summary"]
 
 
