@@ -6,9 +6,10 @@ body, as one line to ``SPOOL_FILE`` in the spool folder, while it holds an ``flo
 aside under the same lock, to ``TAKEN_FILE`` (appended to it when an earlier take was never
 removed, unless the two would pass ``max_bytes``: the spool then waits for the take after the
 taken file is removed), so the sensor starts a new spool, then parses every line of it
-(``parse_spool``). The importer stores the events, then ``remove`` deletes the taken file, only
-when it is still the one read (same device, inode and size): a crash in between leaves it, the
-next take reads it again, and the store counts what it already holds as duplicates.
+(``parse_spool``), read up to the size its ``fstat`` saw: what another take appends meanwhile
+waits for the next take. The importer stores the events, then ``remove`` deletes the taken file,
+only when it is still the one read (same device, inode and size): a crash in between leaves it,
+the next take reads it again, and the store counts what it already holds as duplicates.
 
 The folder and each file are opened by name without following a link (``O_NOFOLLOW``) and must be
 this user's: a folder, and regular files of at most ``max_bytes``. Anything else raises
@@ -223,7 +224,8 @@ class HookSpool:
         try:
             info = os.fstat(descriptor)
             self._check_file(TAKEN_FILE, info)
-            data = _read_all(descriptor)
+            # Read outside the lock: another take may be appending; its bytes wait for the next.
+            data = _read_all(descriptor, info.st_size)
         finally:
             os.close(descriptor)
         device, inode, size = _identity(info)
@@ -232,8 +234,9 @@ class HookSpool:
     def _read(self, directory: int, name: str) -> bytes:
         descriptor = os.open(name, os.O_RDONLY | _FILE_FLAGS, dir_fd=directory)
         try:
-            self._check_file(name, os.fstat(descriptor))
-            return _read_all(descriptor)
+            info = os.fstat(descriptor)
+            self._check_file(name, info)
+            return _read_all(descriptor, info.st_size)
         finally:
             os.close(descriptor)
 
@@ -269,10 +272,13 @@ def _identity(info: os.stat_result) -> tuple[int, int, int]:
     return info.st_dev, info.st_ino, info.st_size
 
 
-def _read_all(descriptor: int) -> bytes:
+def _read_all(descriptor: int, size: int) -> bytes:
+    """The first ``size`` bytes of ``descriptor`` (fewer if it is shorter), never what was added
+    after its ``fstat``."""
     chunks: list[bytes] = []
-    while chunk := os.read(descriptor, _READ_CHUNK):
+    while size > 0 and (chunk := os.read(descriptor, min(_READ_CHUNK, size))):
         chunks.append(chunk)
+        size -= len(chunk)
     return b"".join(chunks)
 
 
