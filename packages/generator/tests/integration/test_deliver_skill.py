@@ -69,6 +69,9 @@ STEPS = {
             "Done",
             "only once the merge commit is green",
             "./hub worktree",
+            # AGH-699 X-2: one factual journal line per merged PR.
+            "append one line to the hub's `brain/journal/YYYY/MM/DD.md`",
+            "the PR, the issue and the result",
         ),
     ),
 }
