@@ -227,7 +227,12 @@ def _spool_or_exit(db: Path | None) -> AppendResult:
         return AppendResult(appended=0, duplicates=0)
     lines = taken.lines
     if lines.errors:
-        _fail(*(f"line {error.line_number}: {error.reason}" for error in lines.errors))
+        name = _quoted(spool.taken_file)
+        _fail(
+            *(f"{name}: line {error.line_number}: {error.reason}" for error in lines.errors),
+            f"{name}: fix or delete the lines above, then run hub collect --spool again "
+            "(hub web skips bad lines when it starts)",
+        )
     result = _ingest_hooks_or_exit(
         [item.envelope for item in lines.envelopes], _database(db), projects_root=projects_root
     )

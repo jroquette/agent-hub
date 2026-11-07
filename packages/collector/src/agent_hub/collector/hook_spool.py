@@ -4,10 +4,11 @@ The sensor (``event_sensor.py``) appends each envelope the server did not take, 
 body, as one line to ``SPOOL_FILE`` in the spool folder, while it holds an ``flock`` on
 ``LOCK_FILE``; a trim leaves a first line ``{"dropped": n}``. ``HookSpool.take`` moves the spool
 aside under the same lock, to ``TAKEN_FILE`` (appended to it when an earlier take was never
-removed), so the sensor starts a new spool, then parses every line of it (``parse_spool``). The
-importer stores the events, then ``remove`` deletes the taken file, only when it is still the one
-read (same device, inode and size): a crash in between leaves it, the next take reads it again,
-and the store counts what it already holds as duplicates.
+removed, unless the two would pass ``max_bytes``: the spool then waits for the take after the
+taken file is removed), so the sensor starts a new spool, then parses every line of it
+(``parse_spool``). The importer stores the events, then ``remove`` deletes the taken file, only
+when it is still the one read (same device, inode and size): a crash in between leaves it, the
+next take reads it again, and the store counts what it already holds as duplicates.
 
 The folder and each file are opened by name without following a link (``O_NOFOLLOW``) and must be
 this user's: a folder, and regular files of at most ``max_bytes``. Anything else raises
@@ -142,6 +143,11 @@ class HookSpool:
         self._folder = folder
         self._max_bytes = max_bytes
 
+    @property
+    def taken_file(self) -> Path:
+        """The file a take moves the spool to, and reads (for a message about its lines)."""
+        return self._folder / TAKEN_FILE
+
     def take(self) -> TakenSpool | None:
         """What was spooled and not yet removed, parsed; None when nothing was."""
         directory = self._open_folder()
@@ -187,13 +193,18 @@ class HookSpool:
         return directory
 
     def _move_spool(self, directory: int) -> None:
-        """The spool renamed to the taken file, or appended to it when one is left."""
+        """The spool renamed to the taken file, or appended to it when one is left and both fit
+        in ``max_bytes``; else left in place."""
         info = _stat_of(directory, SPOOL_FILE)
         if info is None:
             return
         self._check_file(SPOOL_FILE, info)
-        if _stat_of(directory, TAKEN_FILE) is None:
+        taken_info = _stat_of(directory, TAKEN_FILE)
+        if taken_info is None:
             os.rename(SPOOL_FILE, TAKEN_FILE, src_dir_fd=directory, dst_dir_fd=directory)
+            return
+        if taken_info.st_size + info.st_size > self._max_bytes:
+            # A taken file an import keeps failing on must stay readable: never past the bound.
             return
         data = self._read(directory, SPOOL_FILE)
         taken = os.open(TAKEN_FILE, os.O_WRONLY | os.O_APPEND | _FILE_FLAGS, dir_fd=directory)
