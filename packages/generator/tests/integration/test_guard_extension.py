@@ -1422,6 +1422,44 @@ def test_keeps_latency_ceiling_when_blocked_words_set(
     assert p95(samples) <= LATENCY_CEILING
 
 
+# AGH-699: the ceiling holds on the calls the guard reads git for, a commit (its identity, one
+# `git config` read) and a bare push (its branch, one `git symbolic-ref` read).
+@pytest.mark.serial
+def test_keeps_latency_ceiling_when_guard_reads_git(
+    *,
+    hook_python: str,
+    rendered_tree: Callable[..., Path],
+    run_hook_file: Callable[..., subprocess.CompletedProcess[bytes]],
+    tmp_path: Path,
+) -> None:
+    hub = render_at(rendered_tree, tmp_path / "ws" / "demo-hub")
+    git_env = {"PATH": os.environ.get("PATH", os.defpath), "HOME": str(tmp_path)}
+    git_env |= {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
+    for args in (
+        ["init", "-q", "-b", "jdoe/dem-1-x"],
+        ["config", "user.email", "jane@example.com"],
+    ):
+        subprocess.run(["git", *args], cwd=hub, check=True, env=git_env)  # noqa: S603, S607 - git from PATH
+    env = {"HOME": str(tmp_path)}
+    events = [bash("git commit -m x"), bash("git push")]
+    samples: list[float] = []
+
+    for _ in range(LATENCY_RUNS):
+        for event in events:
+            stdin = json.dumps(event | {"cwd": str(hub)}).encode()
+            start = time.perf_counter()
+            completed = run_hook_file(
+                hook_python, hub / HOOKS / "guard.py", stdin=stdin, cwd=hub, env=env
+            )
+            samples.append(time.perf_counter() - start)
+            assert completed.returncode == 0, completed.stderr
+            # the identity matches and the branch is a feature branch: both pass
+            assert completed.stdout == b"", completed.stdout
+
+    assert len(samples) == 2 * LATENCY_RUNS
+    assert p95(samples) <= LATENCY_CEILING
+
+
 # AGH-293 NFR: the ceiling holds with an MCP call whose input is walked (1,000 clean strings).
 @pytest.mark.serial
 def test_keeps_latency_ceiling_when_input_tool_scanned(
