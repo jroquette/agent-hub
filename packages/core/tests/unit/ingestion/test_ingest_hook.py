@@ -155,6 +155,22 @@ def test_tails_transcript_and_adds_its_events_when_mapping_names_one() -> None:
     assert _snapshot(counters) == (1, 3, 0, 0, 2)
 
 
+def test_reads_transcript_to_its_end_when_executed_to_end() -> None:
+    position = TailPosition(path="/home/demo/t.jsonl", version=2)
+    transcript_event = an_event(source="transcript", type="message", payload={"role": "user"})
+    mapping = _stop_mapping()
+    use_case, store, tailer, _ = _use_case(
+        mapping, TailResult(events=(transcript_event,), position=position)
+    )
+
+    result = use_case.execute(_envelope("Stop"), is_to_end=True)
+
+    assert result == AppendResult(appended=2, duplicates=0)
+    assert tailer.to_end_refs == [mapping.transcript]
+    assert store.read_all() == [*mapping.events, transcript_event]
+    assert tailer.committed == [position]
+
+
 def test_counts_refusal_when_transcript_path_refused() -> None:
     ref = TranscriptRef(project="demo", session="session-1", path="/etc/passwd", kind="main")
     use_case, store, _, counters = _use_case(

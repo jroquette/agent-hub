@@ -25,6 +25,7 @@ from agent_hub.core.events.event import Event
 from agent_hub.core.events.event_store import AppendResult
 from agent_hub.core.ingestion.hook_envelope import HookEnvelope
 from agent_hub.core.ingestion.ingest_hook import IngestHook
+from agent_hub.core.ingestion.ingestion_ports import HookMapping
 from agent_hub.core.ingestion.ingestion_status import IngestionCounters
 from agent_hub.core.testing.builders import an_event
 from agent_hub.core.testing.fakes import InMemoryEventStore
@@ -36,6 +37,7 @@ from agent_hub.core.testing.transcript_lines import (
     an_assistant_line,
     transcript_text,
 )
+from agent_hub.storage.errors import DatabaseAccessError
 from agent_hub.storage.event_store import open_event_store
 
 HOOKS = "/api/v1/events/hooks"
@@ -237,3 +239,103 @@ async def test_appends_in_bounded_batches_and_logs_size_first_when_spool_importe
     assert logged[0] == "hook spool import started: 5 envelopes, 1 bad lines"
     assert len(store.read_all()) == 5
     assert _left(spool_folder) == []
+
+
+def _ingest(
+    store: InMemoryEventStore,
+    tail: TranscriptTail,
+    *,
+    mapper: ClaudeHookMapper | None = None,
+) -> IngestHook:
+    return IngestHook(
+        store,
+        mapper or ClaudeHookMapper(),
+        tail,
+        status=IngestionCounters(clock=lambda: datetime(2026, 10, 11, tzinfo=UTC)),
+    )
+
+
+def _imported_log(caplog: pytest.LogCaptureFixture) -> str:
+    [message] = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == SpoolImport.__module__
+        and record.getMessage().startswith("hook spool imported")
+    ]
+    return message
+
+
+@pytest.mark.anyio
+async def test_reads_named_transcript_to_its_end_when_batch_conflicts_and_is_sent_one_at_a_time(
+    spool_folder: Path, projects_root: Path
+) -> None:
+    transcript = projects_root / "-work-demo-api" / f"{TRANSCRIPT_SESSION}.jsonl"
+    transcript.write_text(
+        transcript_text([a_user_line(f"prompt {n}") for n in range(30)]), encoding="utf-8"
+    )
+    store = InMemoryEventStore()
+    store.append(
+        [an_event(source_id="session-1:PreToolUse:toolu_spool_1", payload={"tool": "Read"})]
+    )
+    stop = an_envelope(a_hook_input("Stop", transcript_path=str(transcript)))
+    _spool(spool_folder, [_line(_tool_envelope(1)), _line(stop), _line(stop)])
+    tail = TranscriptTail(projects_root, max_bytes=transcript.stat().st_size // 3)
+
+    await SpoolImport(HookSpool(spool_folder), _ingest(store, tail)).start()
+
+    turns = [event.payload["turn"] for event in store.read_all() if event.source == "transcript"]
+    assert sorted(turns) == list(range(1, 31))
+    assert _left(spool_folder) == []
+
+
+class _FailingMapper(ClaudeHookMapper):
+    """Fails on the envelope of one tool use, as a bug on one odd input would."""
+
+    def map(self, envelope: HookEnvelope) -> HookMapping:
+        if envelope.hook.get("tool_use_id") == "toolu_spool_1":
+            raise ValueError
+        return super().map(envelope)
+
+
+@pytest.mark.anyio
+async def test_skips_and_counts_envelope_and_imports_the_rest_when_one_envelope_fails(
+    spool_folder: Path, projects_root: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    _spool(spool_folder, [_line(_tool_envelope(number)) for number in range(3)])
+    store = InMemoryEventStore()
+    ingest = _ingest(store, TranscriptTail(projects_root), mapper=_FailingMapper())
+    caplog.set_level(logging.INFO)
+
+    await SpoolImport(HookSpool(spool_folder), ingest).start()
+
+    assert sorted(event.source_id for event in store.read_all()) == [
+        "session-1:PreToolUse:toolu_spool_0",
+        "session-1:PreToolUse:toolu_spool_2",
+    ]
+    assert _imported_log(caplog) == (
+        "hook spool imported: appended 2, duplicates 0, conflicts 0, failed 1, bad lines 0, "
+        "dropped by the sensor 0"
+    )
+    assert _left(spool_folder) == []
+
+
+class _DownStore(InMemoryEventStore):
+    """A store that cannot be written, as a locked or unreadable database."""
+
+    def append(self, events: Sequence[Event]) -> AppendResult:
+        raise DatabaseAccessError
+
+
+@pytest.mark.anyio
+async def test_keeps_taken_file_and_stores_nothing_when_store_fails(
+    spool_folder: Path, projects_root: Path
+) -> None:
+    _spool(spool_folder, [_line(_tool_envelope(number)) for number in range(2)])
+    store = _DownStore()
+
+    await SpoolImport(
+        HookSpool(spool_folder), _ingest(store, TranscriptTail(projects_root))
+    ).start()
+
+    assert store.read_all() == []
+    assert _left(spool_folder) == ["hook-spool.taken.jsonl"]
