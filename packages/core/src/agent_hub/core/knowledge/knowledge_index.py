@@ -46,12 +46,13 @@ KINDS: Final[tuple[Kind, ...]] = get_args(Kind.__value__)
 
 # Bumped by any change to what is indexed or how (D-version): a hub whose rows hold another
 # version is rebuilt by the next search. 2: each document's links to brain notes are stored.
-INDEX_VERSION: Final = 2
+# 3: a text a secret rule matches is indexed redacted, no longer skipped (AGH-696).
+INDEX_VERSION: Final = 3
 
 # At most this many backlinks are answered for one note (D-backlinks-route), with the full count.
 MAX_BACKLINKS: Final = 100
 
-# A file's text hash: 64 lowercase hex digits of its sha256.
+# The hash of the text a document keeps (its redacted text): 64 lowercase hex digits of its sha256.
 type TextHash = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 

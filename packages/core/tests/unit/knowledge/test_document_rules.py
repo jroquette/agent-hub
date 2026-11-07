@@ -1,5 +1,6 @@
 """What a listed file becomes in the knowledge index (AGH-391, D-kind, D-meta, D-files,
-D-secret): its kind, title, frontmatter, and whether it is indexed or skipped and why."""
+D-secret, AGH-696): its kind, title, frontmatter, and whether it is indexed (its text redacted
+with r1) or skipped and why."""
 
 import hashlib
 
@@ -11,10 +12,10 @@ from agent_hub.core.knowledge.document_rules import (
     MAX_LISTING_BYTES,
     MAX_META_CHARS,
     NOT_UTF8,
-    RULE_MATCH,
     TOO_LARGE,
     document_from,
     document_meta,
+    document_text,
     is_indexed_name,
     kind_of,
 )
@@ -37,15 +38,11 @@ def test_states_bounds_when_constants_read() -> None:
     assert MAX_META_CHARS == 200
     assert MAX_LISTED_FILES == 20_000
     assert MAX_LISTING_BYTES == 64 * 1024 * 1024
-    assert INDEX_VERSION == 2
+    assert INDEX_VERSION == 3
     assert MAX_RESULTS == 50
     assert MAX_SNIPPET_CHARS == 160
     assert len(KINDS) == 10
-    assert (RULE_MATCH, TOO_LARGE, NOT_UTF8) == (
-        "matches a secret rule",
-        "larger than 256 KiB",
-        "not UTF-8",
-    )
+    assert (TOO_LARGE, NOT_UTF8) == ("larger than 256 KiB", "not UTF-8")
 
 
 @pytest.mark.parametrize(
@@ -204,14 +201,70 @@ def test_builds_document_when_file_eligible() -> None:
     )
 
 
-def test_skips_file_when_secret_rule_matches() -> None:
-    data = f"marker\nUse {_token()} to push.\n".encode()
+def test_indexes_redacted_text_when_secret_rule_matches() -> None:
+    data = f"---\nstatus: {_token()}\n---\n# Push with {_token()}\n\nUse {_token()}.\n".encode()
     path = "brain/_inbox/leak.md"
 
-    skipped = document_from(path, data, _fingerprint(data))
+    document = document_from(path, data, _fingerprint(data))
 
-    assert skipped == SkippedFile(path=path, fingerprint=_fingerprint(data), reason=RULE_MATCH)
-    assert _token() not in repr(skipped)
+    marker = "[redacted: github token]"
+    redacted = f"---\nstatus: {marker}\n---\n# Push with {marker}\n\nUse {marker}.\n"
+    assert document == IndexedDocument(
+        path=path,
+        kind="inbox",
+        title=f"Push with {marker}",
+        # The marker reads as a YAML flow list, not a text value: no status.
+        status=None,
+        provenance=None,
+        fingerprint=_fingerprint(data),
+        sha256=hashlib.sha256(redacted.encode()).hexdigest(),
+        body=f"# Push with {marker}\n\nUse {marker}.\n",
+    )
+    assert _token() not in repr(document)
+    assert document_text(path, data, _fingerprint(data)) == redacted
+
+
+# What SPEC.md, API.md and the brain hold today (AGH-696): placeholders and examples the rules
+# match. Each file is indexed; only the matched value becomes a marker, the words around it stay.
+@pytest.mark.parametrize(
+    ("line", "kept"),
+    [
+        (
+            "prints `http://127.0.0.1:<port>/?token=<token>` (a fresh session token)",
+            "prints `http://127.0.0.1:<port>/?token=[redacted: secret]",
+        ),
+        (
+            "(`scheme://user:pass@`) and `secret`",
+            "(`scheme://[redacted: url credentials]@`) and `secret`",
+        ),
+        (
+            "tokenize='porter unicode61 remove_diacritics 2'",
+            "tokenize='[redacted: secret]'",
+        ),
+        ("export GH_TOKEN=<fine-grained token>", "export GH_TOKEN=[redacted: secret]"),
+    ],
+    ids=["spec-session-url", "spec-url-credentials", "fts5-tokenizer", "playbook-gh-token"],
+)
+def test_indexes_doc_when_placeholder_matches_secret_rule(line: str, kept: str) -> None:
+    data = f"# Spec\n\nmarker {line}\n".encode()
+    path = "demo/docs/SPEC.md"
+
+    document = document_from(path, data, _fingerprint(data))
+
+    assert isinstance(document, IndexedDocument)
+    assert document.title == "Spec"
+    assert document.body.startswith(f"# Spec\n\nmarker {kept}")
+    assert "[redacted: " in document.body
+
+
+def test_hashes_file_bytes_when_no_rule_matches() -> None:
+    data = "# Café\n\nNo secret here.\n".encode()
+
+    document = document_from("brain/now.md", data, _fingerprint(data))
+
+    assert isinstance(document, IndexedDocument)
+    assert document.sha256 == hashlib.sha256(data).hexdigest()
+    assert document_text("brain/now.md", data, _fingerprint(data)) == data.decode()
 
 
 def test_skips_file_when_not_utf8() -> None:
@@ -251,34 +304,43 @@ def test_keeps_links_when_hub_folder_given() -> None:
     assert unlinked.links == ()
 
 
+def test_keeps_links_when_secret_rule_matches() -> None:
+    data = f"[now](../now.md) before {_token()}\n".encode()
+
+    document = document_from("brain/_inbox/leak.md", data, _fingerprint(data), hub_folder="h")
+
+    assert isinstance(document, IndexedDocument)
+    assert document.links == ("brain/now.md",)
+
+
 def test_keeps_no_links_when_file_skipped() -> None:
     link = b"[now](../now.md)\n"
-    leak = link + f"Use {_token()} to push.\n".encode()
+    latin = link + b"caf\xe9\n"
     big = link + b"x" * MAX_DOCUMENT_BYTES
 
     skipped = [
         document_from(path, data, _fingerprint(data), hub_folder="demo-hub")
-        for path, data in (("brain/_inbox/leak.md", leak), ("brain/_inbox/big.md", big))
+        for path, data in (("brain/_inbox/latin.md", latin), ("brain/_inbox/big.md", big))
     ]
 
     assert skipped == [
-        SkippedFile(path="brain/_inbox/leak.md", fingerprint=_fingerprint(leak), reason=RULE_MATCH),
+        SkippedFile(path="brain/_inbox/latin.md", fingerprint=_fingerprint(latin), reason=NOT_UTF8),
         SkippedFile(path="brain/_inbox/big.md", fingerprint=_fingerprint(big), reason=TOO_LARGE),
     ]
     # Where links could leak: files that linked before are skipped by the next sync.
-    hub, paths = "/w/demo-hub", ("brain/_inbox/big.md", "brain/_inbox/leak.md")
+    hub, paths = "/w/demo-hub", ("brain/_inbox/big.md", "brain/_inbox/latin.md")
     index, checkout = InMemoryKnowledgeIndex(), FakeKnowledgeCheckout()
     for path in paths:
         checkout.write(path, link)
     sync_knowledge(index, checkout, hub)
     linked = [item.path for item in index.backlinks(hub, "brain/now.md", limit=MAX_BACKLINKS).items]
-    checkout.write("brain/_inbox/leak.md", leak)
+    checkout.write("brain/_inbox/latin.md", latin)
     checkout.write("brain/_inbox/big.md", big)
 
     report = sync_knowledge(index, checkout, hub)
 
     assert linked == list(paths)
-    assert [file.reason for file in report.skipped] == [TOO_LARGE, RULE_MATCH]
+    assert [file.reason for file in report.skipped] == [TOO_LARGE, NOT_UTF8]
     backlinks = index.backlinks(hub, "brain/now.md", limit=MAX_BACKLINKS)
     assert (backlinks.items, backlinks.total) == ((), 0)
 

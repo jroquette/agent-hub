@@ -63,8 +63,8 @@ _SEARCH: Final = (
 _READ: Final = (
     "Read one Markdown file of the hub's brain/ (not brain/auto/) or of a repo's docs/, by its "
     "hub-relative path (at most 1024 characters, ending in .md). A file reached through a link, "
-    "not a regular file, larger than 256 KiB, not UTF-8, ignored by git or matching a secret "
-    "rule is refused."
+    "not a regular file, larger than 256 KiB, not UTF-8 or ignored by git is refused. Text a "
+    "secret rule matches comes back as a [redacted: <kind>] marker."
 )
 _PROPOSE: Final = (
     "Propose a learning: open a hub pull request that adds one note to brain/_inbox/ on a new "

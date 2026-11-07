@@ -639,7 +639,7 @@ describe("BrainScreen search", () => {
         results: [aKnowledgeResult({ provenance: "agent-from-external" })],
         warnings: ["demo-web: not checked out; its docs are not searched"],
         skipped: [
-          { path: "brain/_inbox/leak.md", reason: "secret" },
+          { path: "brain/latin.md", reason: "not UTF-8" },
           { path: "brain/big.md", reason: "too large" },
         ],
       }),
@@ -652,15 +652,13 @@ describe("BrainScreen search", () => {
     expect(warning.closest(".ah-banner")).not.toHaveAttribute("role");
     expect(within(text).getByText("External content · not verified")).toBeInTheDocument();
     expect(
-      within(text).getByText(
-        "2 files were not searched (a secret rule matched, too large, or unreadable).",
-      ),
+      within(text).getByText("2 files were not searched (too large, not UTF-8, or unreadable)."),
     ).toBeInTheDocument();
     const which = within(text).getByRole("button", { name: "Show which" });
     expect(which).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(which);
     expect(which).toHaveAttribute("aria-expanded", "true");
-    expect(within(text).getByText("brain/_inbox/leak.md · secret")).toBeInTheDocument();
+    expect(within(text).getByText("brain/latin.md · not UTF-8")).toBeInTheDocument();
     expect(within(text).getByText("brain/big.md · too large")).toBeInTheDocument();
   });
 

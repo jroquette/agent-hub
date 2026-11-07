@@ -129,10 +129,21 @@ def test_never_shows_auto_transcript_or_secret_when_backlinks_read(
     response = world.backlinks("now.md")
 
     found = answer(response)
-    assert found["items"] == [{"path": "brain/index.md", "kind": "doc", "title": "Index"}]
-    assert found["total"] == 1
+    # The note a secret rule matched is indexed redacted (AGH-696), so its link counts; the
+    # token itself is never stored or shown.
+    assert found["items"] == [
+        {"path": "brain/_inbox/leak.md", "kind": "inbox", "title": "Leak"},
+        {"path": "brain/index.md", "kind": "doc", "title": "Index"},
+    ]
+    assert found["total"] == 2
     assert token not in response.text
-    assert world.rows("SELECT source FROM knowledge_links") == [("brain/index.md",)]
+    assert world.rows("SELECT source FROM knowledge_links ORDER BY source") == [
+        ("brain/_inbox/leak.md",),
+        ("brain/index.md",),
+    ]
+    assert world.rows("SELECT body FROM knowledge_text WHERE body LIKE '%Leak%'") == [
+        ("# Leak\n\nmarker [redacted: github token] [now](../now.md)\n",)
+    ]
 
 
 def test_serves_local_only_when_host_or_origin_foreign(

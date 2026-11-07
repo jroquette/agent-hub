@@ -12,7 +12,7 @@ from typing import Final, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from agent_hub.core.knowledge.document_rules import NOT_UTF8, RULE_MATCH, TOO_LARGE
+from agent_hub.core.knowledge.document_rules import NOT_UTF8, TOO_LARGE
 from agent_hub.core.knowledge.knowledge_index import (
     Fingerprint,
     SkippedFile,
@@ -22,7 +22,7 @@ from agent_hub.core.knowledge.knowledge_index import (
 
 # The skip reasons a file's text decides. A row skipped for another reason (a link, not a
 # regular file, a read that failed) says nothing about the text of a regular file found there.
-_TEXT_REASONS: Final = frozenset({TOO_LARGE, NOT_UTF8, RULE_MATCH})
+_TEXT_REASONS: Final = frozenset({TOO_LARGE, NOT_UTF8})
 
 
 class _Frozen(BaseModel):

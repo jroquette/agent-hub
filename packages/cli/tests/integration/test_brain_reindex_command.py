@@ -128,21 +128,13 @@ def test_drops_rows_of_vanished_files_when_reindexed(
     assert hub_paths(hub) == ["brain/b.md"]
 
 
-def secret_token() -> str:
-    """A GitHub token shape r1 matches, built from parts so no literal is a token."""
-    return "gh" + "p_" + "A1b2C3d4E5f6G7h8" * 2 + "xyzw"
-
-
-def test_reports_secret_skip_again_when_reindexed(
+def test_reports_skip_again_when_reindexed(
     knowledge_hub: KnowledgeHubFactory, run_command: CommandRunner
 ) -> None:
     hub = knowledge_hub(
-        {
-            "brain/_inbox/leak.md": f"# Leak\n\nmarker {secret_token()}\n".encode(),
-            "brain/a.md": MARKER,
-        }
+        {"brain/_inbox/latin.md": b"# Latin\n\nmarker caf\xe9\n", "brain/a.md": MARKER}
     )
-    skip_line = "skipped brain/_inbox/leak.md: matches a secret rule\n"
+    skip_line = "skipped brain/_inbox/latin.md: not UTF-8\n"
     first = run_command(hub, "search", "marker")
     second = run_command(hub, "search", "marker")
 
