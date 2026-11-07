@@ -32,6 +32,7 @@ RELEASED_IDS = (
     "workflows.starts",
     "scenarios.graph_format",
     "workflows.shadow",
+    "instructions.read_cap",
     "brain.memory",
     "sandbox.workflow",
     "workflows.valid",
@@ -72,6 +73,7 @@ DESIGN_SEVERITIES = {
     "scenarios.graph_format": Severity.WARNING,
     "items.leftovers": Severity.WARNING,
     "workflows.shadow": Severity.WARNING,
+    "instructions.read_cap": Severity.WARNING,
 }
 
 

@@ -43,6 +43,7 @@ RULE_TABLE_IDS = [
     "workflows.starts",
     "scenarios.graph_format",
     "workflows.shadow",
+    "instructions.read_cap",
     "brain.memory",
     "sandbox.workflow",
     "workflows.valid",

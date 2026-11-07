@@ -2249,6 +2249,28 @@ def test_prints_fix_line_for_schedule_naming_unknown_workflow_when_doctor_runs(
     ]
 
 
+def test_warns_read_cap_when_repo_agents_points_to_big_spec(
+    demo_hub: Path, run_doctor: DoctorRunner, tmp_path: Path
+) -> None:
+    # The repo's AGENTS.md sends every task to a SPEC of 139,404 bytes, as agent-hub's did.
+    checkout = tmp_path / "demo-api"
+    (checkout / "AGENTS.md").write_text(
+        "# demo-api\n\nThe spec is in `docs/SPEC.md`: read it before any task.\n", encoding="utf-8"
+    )
+    (checkout / "docs").mkdir()
+    (checkout / "docs" / "SPEC.md").write_bytes(b"spec line\n" * 13_940 + b"end\n")
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "instructions.read_cap"), exit_code=0)
+
+    assert lines == [
+        "warning instructions.read_cap ../demo-api/AGENTS.md:3: sends agents to docs/SPEC.md"
+        " (139404 bytes), over the Read tool's cap of about 25000 tokens (65536 bytes): one"
+        " Read cannot hold it Fix: split docs/SPEC.md into docs under the cap, or name the"
+        " section to read (Read with offset and limit, or grep)",
+        "0 errors, 1 warning, 0 infos",
+    ]
+
+
 def test_warns_with_compare_fix_when_seeded_pack_differs_from_builtin(
     demo_hub: Path, run_doctor: DoctorRunner
 ) -> None:

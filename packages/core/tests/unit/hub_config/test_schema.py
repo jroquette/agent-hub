@@ -49,6 +49,12 @@ def test_lists_items_leftovers_as_rule_settings_when_schema_shipped() -> None:
     assert properties["items.leftovers"] == {"$ref": "#/$defs/RuleSettings"}
 
 
+def test_lists_instructions_read_cap_as_rule_settings_when_schema_shipped() -> None:
+    properties = read_shipped_schema()["$defs"]["DoctorRules"]["properties"]
+
+    assert properties["instructions.read_cap"] == {"$ref": "#/$defs/RuleSettings"}
+
+
 def test_lists_workflows_shadow_as_rule_settings_when_schema_shipped() -> None:
     properties = read_shipped_schema()["$defs"]["DoctorRules"]["properties"]
 
