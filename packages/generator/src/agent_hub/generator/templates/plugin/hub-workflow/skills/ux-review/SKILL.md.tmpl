@@ -15,7 +15,7 @@ Step types: `script` (commands, no judgement), `agent` (reasoning in the session
 1. `script` **Scope** the target, read-only:
    - none: the current worktree's diff against its default branch (`git diff origin/<default>...HEAD` plus uncommitted changes), front-end files only;
    - a screen name: its spec in the design system (its sitemap or navigation spec maps names to routes) and the code that renders it;
-   - a PR: `gh pr view <PR> --json number,title,body,headRefOid,files` and `gh pr diff <PR>`; code beyond the diff is read at the head commit (`git fetch origin pull/<n>/head`, then `git show <sha>:<path>`), never by checking it out;
+   - a PR: `gh pr view <PR> --json number,title,body,headRefOid,files` and `gh pr diff <PR>` (when `gh` answers that GraphQL is not available, the session's GitHub tools or `gh api repos/<github>/pulls/<n>`, its `/files`, and the diff with `-H 'Accept: application/vnd.github.diff'`); code beyond the diff is read at the head commit (`git fetch origin pull/<n>/head`, then `git show <sha>:<path>`), never by checking it out;
    - a branch: `git diff origin/<default>...<branch>`;
    - a path: the files under it as they are now (a whole-screen audit, not a diff).
    Read the tracker issue (@@{tracker_team_key}) when the branch, title or body names one, and `brain/features/<slug>/spec.md` and any `ux-*.md` design there when they exist. **Stop** when the target cannot be read, its repo is not in `hub.json`, or it touches no UI.

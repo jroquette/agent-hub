@@ -14,7 +14,7 @@ Step types: `script` (commands, no judgement), `agent` (reasoning in the session
 
 1. `script` **Scope** the target, read-only:
    - none: the current worktree's diff against its default branch (`git diff origin/<default>...HEAD` plus uncommitted changes);
-   - a PR: `gh pr view <PR> --json number,title,body,headRefOid,files` and `gh pr diff <PR>`; code beyond the diff is read at the head commit (`git fetch origin pull/<n>/head`, then `git show <sha>:<path>`), never by checking it out;
+   - a PR: `gh pr view <PR> --json number,title,body,headRefOid,files` and `gh pr diff <PR>` (when `gh` answers that GraphQL is not available, the session's GitHub tools or `gh api repos/<github>/pulls/<n>`, its `/files`, and the diff with `-H 'Accept: application/vnd.github.diff'`); code beyond the diff is read at the head commit (`git fetch origin pull/<n>/head`, then `git show <sha>:<path>`), never by checking it out;
    - a branch: `git diff origin/<default>...<branch>`;
    - a path: the files under it as they are now (a whole-module audit, not a diff).
    Read the tracker issue (@@{tracker_team_key}) when the branch, title or body names one, and `brain/features/<slug>/spec.md` and `plan.md` when they exist: they say what today's problem is. **Stop** when the target cannot be read or its repo is not in `hub.json`.
