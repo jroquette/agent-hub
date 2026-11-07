@@ -460,10 +460,11 @@ printed when it ends. `make check-changed`, a narrower run for one change, comes
   (the floors).
 
 The API's integration tests (including `test_performance.py`, the NFR budgets on 10,000 synthetic events, `serial`)
-run in `test-suite` and `test-suite-serial`, and the web smoke in `test-e2e-serial`. Its hook POST budget counts the
+run in `test-suite` and `test-suite-serial`, and the web smoke in `test-e2e-serial`. Its hook POST p95 counts the
 process's CPU time, not wall time: each POST commits with an fsync, and a runner's disk can stall one for 100 ms
-while the route's work takes 3 ms (AGH-506), so wall time there measures the disk, not the code. `test-fast`,
-`test-integration` and `test-e2e` stay for running one level by hand.
+while the route's work takes 3 ms (AGH-506), so a wall-time p95 there measures the disk, not the code. The wall
+time's median keeps the same 50 ms bound, so a wait on every POST still fails it. `test-fast`, `test-integration` and
+`test-e2e` stay for running one level by hand.
 
 `make check-changed` (while working, for one change; `scripts/check_changed.py`):
 
