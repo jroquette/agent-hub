@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 
 from agent_hub.api.settings import ApiSettings
-from agent_hub.api.spool_import import SpoolImport
+from agent_hub.api.spool_import import SPOOL_BATCH, SpoolImport
 from agent_hub.collector.claude_hooks import ClaudeHookMapper
 from agent_hub.collector.hook_spool import HookSpool
 from agent_hub.collector.transcript_tail import TranscriptTail
@@ -214,6 +214,10 @@ class _BatchStore(InMemoryEventStore):
     def append(self, events: Sequence[Event]) -> AppendResult:
         self.batches.append(len(events))
         return super().append(events)
+
+
+def test_stores_at_most_500_envelopes_per_transaction_when_no_batch_size_given() -> None:
+    assert SPOOL_BATCH == 500
 
 
 @pytest.mark.anyio

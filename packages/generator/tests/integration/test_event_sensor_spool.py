@@ -8,6 +8,7 @@ server error, the envelope goes to ``$XDG_STATE_HOME/agent-hub/hook-spool.jsonl`
 trim drops the oldest lines and counts them in a first line ``{"dropped": n}``.
 """
 
+import fcntl
 import json
 import os
 import stat
@@ -33,6 +34,14 @@ SPOOL = Path(".local", "state", "agent-hub", "hook-spool.jsonl")
 SESSION = "5e55a0b1-0000-4000-8000-000000000002"
 # A run of the sensor, startup included, ends within this: its send is bounded by 0.5 s.
 RUN_BOUND = 1.0
+# The spool's documented bounds (SPEC.md, "Hooks as sensors"), each stated once as a literal.
+SPOOL_LIMITS = {
+    "MAX_SPOOL_BYTES": 8_388_608,
+    "SPOOL_KEEP_BYTES": 6_291_456,
+    "SPOOL_LOCK_WAIT": 0.2,
+    "MAX_BODY_BYTES": 1_048_576,
+    "TIMEOUT": 0.5,
+}
 
 type RunHook = Callable[..., subprocess.CompletedProcess[bytes]]
 
@@ -207,6 +216,46 @@ def test_spools_nothing_when_no_absolute_home_or_state_folder(
     assert sorted(hub.parents[1].rglob("hook-spool*")) == []
 
 
+def test_pins_spool_limits_when_sensor_constants_read(
+    *, hub: Path, hook_python: str, run_python: Callable[..., Any]
+) -> None:
+    script = (
+        "import json, event_sensor\n"
+        f"print(json.dumps({{n: getattr(event_sensor, n) for n in {sorted(SPOOL_LIMITS)}}}))"
+    )
+
+    found = run_python(hook_python, script, path=hub / HOOKS)
+
+    assert found == SPOOL_LIMITS
+
+
+def test_drops_envelope_uncounted_and_exits_zero_when_another_writer_holds_spool_lock(
+    *,
+    hub: Path,
+    home: Path,
+    hook_python: str,
+    run_hook_file: RunHook,
+    server_down_env: dict[str, str],
+) -> None:
+    folder = (home / SPOOL).parent
+    folder.mkdir(parents=True, mode=0o700)
+    lock = os.open(folder / "hook-spool.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        completed = run(
+            run_hook_file,
+            hook_python,
+            hub / SENSOR,
+            stdin=a_tool_input(hub),
+            env=server_down_env | {"HOME": str(home)},
+        )
+    finally:
+        os.close(lock)
+
+    assert completed.stdout == b""
+    assert sorted(path.name for path in folder.iterdir()) == ["hook-spool.lock"]
+
+
 def test_drops_oldest_lines_and_counts_them_when_spool_over_cap(
     *,
     hub: Path,
@@ -242,6 +291,8 @@ def test_drops_oldest_lines_and_counts_them_when_spool_over_cap(
     assert kept_indices == list(range(dropped, len(filler)))
     assert HookEnvelope.model_validate_json(last).hook["tool_use_id"] == "toolu_spool_1"
     assert spool.stat().st_size <= cap
+    assert cap == SPOOL_LIMITS["MAX_SPOOL_BYTES"]
+    assert spool.stat().st_size <= SPOOL_LIMITS["SPOOL_KEEP_BYTES"] + len(first) + 1
     assert stat.S_IMODE(spool.stat().st_mode) == 0o600
     assert sorted(path.name for path in spool.parent.iterdir()) == [
         "hook-spool.jsonl",
@@ -363,9 +414,11 @@ def test_spools_decision_then_event_when_guard_denies_and_nothing_listens(
 class _FailingServer(BaseHTTPRequestHandler):
     """Answers every POST with 503, as ``hub web`` does when its store cannot be written."""
 
+    status = 503
+
     def do_POST(self) -> None:  # noqa: N802 - http.server's method name
         self.rfile.read(int(self.headers.get("Content-Length") or 0))
-        self.send_response(503)
+        self.send_response(self.status)
         self.send_header("Content-Length", "0")
         self.end_headers()
 
@@ -373,9 +426,14 @@ class _FailingServer(BaseHTTPRequestHandler):
         return
 
 
-@pytest.fixture
-def failing_url() -> Iterator[str]:
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _FailingServer)
+class _RefusingServer(_FailingServer):
+    """Answers every POST with 422, as ``hub web`` does for an envelope it refuses."""
+
+    status = 422
+
+
+def _serve(handler: type[BaseHTTPRequestHandler]) -> Iterator[str]:
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     httpd.daemon_threads = True
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
@@ -385,6 +443,16 @@ def failing_url() -> Iterator[str]:
         httpd.shutdown()
         httpd.server_close()
         thread.join(timeout=5)
+
+
+@pytest.fixture
+def failing_url() -> Iterator[str]:
+    yield from _serve(_FailingServer)
+
+
+@pytest.fixture
+def refusing_url() -> Iterator[str]:
+    yield from _serve(_RefusingServer)
 
 
 def test_spools_envelope_when_server_answers_server_error(
@@ -404,6 +472,26 @@ def test_spools_envelope_when_server_answers_server_error(
     )
 
     assert len(spooled(home / SPOOL)) == 1
+
+
+def test_spools_nothing_when_server_refuses_envelope_with_client_error(
+    *,
+    hub: Path,
+    home: Path,
+    hook_python: str,
+    run_hook_file: RunHook,
+    refusing_url: str,
+) -> None:
+    completed = run(
+        run_hook_file,
+        hook_python,
+        hub / SENSOR,
+        stdin=a_tool_input(hub),
+        env={URL_VARIABLE: refusing_url, "HOME": str(home)},
+    )
+
+    assert completed.stdout == b""
+    assert not (home / ".local").exists()
 
 
 @pytest.mark.serial

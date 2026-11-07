@@ -116,3 +116,7 @@ def test_returns_nothing_when_spool_empty() -> None:
     lines = parse_spool(b"")
 
     assert (lines.envelopes, lines.errors, lines.dropped) == ((), (), 0)
+
+
+def test_bounds_taken_file_at_64_mib_when_no_bound_given() -> None:
+    assert hook_spool.MAX_TAKEN_BYTES == 67_108_864
