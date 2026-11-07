@@ -344,9 +344,12 @@ below asks where the owner has a legitimate use for the call, and denies where t
   and `--all` are not read as a bare push.
 - **Git reads**: the bare push and the commit identity read git (the hook runs outside the sandbox). A read runs the
   hook's own `git`, by absolute path from the hook's `PATH`, with only the call's variables that pick git's config
-  and repository (`GIT_CONFIG*`, `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_CEILING_DIRECTORIES`,
-  `GIT_DISCOVERY_ACROSS_FILESYSTEM`, `HOME`, `XDG_CONFIG_HOME`). A call that sets `PATH`, `LD_*`, `DYLD_*`,
-  `GIT_EXEC_PATH` or `GIT_TRACE*` runs another git than the hook would read, so it asks and git is not run. One
+  and repository (`GIT_CONFIG*` such as `GIT_CONFIG_COUNT`, `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`,
+  `GIT_CEILING_DIRECTORIES`, `GIT_DISCOVERY_ACROSS_FILESYSTEM`), and with `GIT_TRACE`, `GIT_TRACE2`,
+  `GIT_TRACE2_EVENT` and `GIT_TRACE2_PERF` set to `0`, so no config or variable makes it trace. A call that sets
+  `PATH`, `LD_*`, `DYLD_*`, `GIT_EXEC_PATH` or `GIT_TRACE*` runs another git than the hook would read, and one that
+  sets `HOME`, `XDG_CONFIG_HOME`, `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM` or `GIT_CONFIG_NOSYSTEM` picks the global
+  or system config, whose trace2 targets would make the hook's git write any file: either asks and git is not run. One
   command makes at most four reads, each cut at 2 s and all within 4 s; past either it asks, naming the cause. The
   4 s, the project extension's 3 s and its 1 s kill wait add up to 8 s, inside the hook's 10 s timeout (past it the
   call would go through unchecked).

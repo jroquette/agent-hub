@@ -70,7 +70,8 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         with over 64 git and gh calls (past them, unread), a bare push whose branch cannot
         be told, a commit identity that cannot be (git config unreadable, an expansion, a folder that
         cannot be told, an --author with no email), either because git is not read (a call that sets PATH,
-        LD_*, DYLD_*, GIT_EXEC_PATH or GIT_TRACE*, past 4 reads or 4 s), a git push whose remote or refspec is a shell expansion
+        LD_*, DYLD_*, GIT_EXEC_PATH, GIT_TRACE*, or HOME, XDG_CONFIG_HOME or GIT_CONFIG_GLOBAL|SYSTEM|NOSYSTEM,
+        past 4 reads or 4 s; a read never traces), a git push whose remote or refspec is a shell expansion
         or that deletes a remote branch (--delete, -d, a :<branch> refspec), git push or commit or gh pr in
         the words after an interpreter or shell word (python*, node, deno, bun, perl, ruby, php, a shell, eval),
         with HUB_RUN_ENVIRONMENT naming a declared environment of access read or production (an agent
@@ -1335,7 +1336,8 @@ def _call_write_targets(cmd: str) -> list[str]:
         at = _program(words)[0]
         args = [text for text, _ in words[at + 1:] if not text.startswith("-")]
         name = words[at][0].rsplit("/", 1)[-1] if at < len(words) else ""
-        if name in WRITE_PROGRAMS or (name == "sed" and any(SED_IN_PLACE.fullmatch(text) for text, _ in words[at + 1:])):
+        in_place = name == "sed" and any(SED_IN_PLACE.fullmatch(text) for text, _ in words[at + 1:])
+        if name in WRITE_PROGRAMS or in_place:
             found += args
     return found
 
@@ -1509,13 +1511,21 @@ GIT_READS_CAP_CAUSE = f"over {GIT_READS_CAP} git reads in one command"
 GIT_OUT_OF_TIME_CAUSE = f"git reads took the guard's {GIT_READS_BUDGET} s"
 # A git read runs the hook's own git (by absolute path, from the hook's PATH) with only these of the
 # call's variables, the ones that pick git's config and repository; a call that sets one of
-# GIT_UNSAFE_VARIABLES runs another git than the hook would read (or traces it), so it is not read.
+# GIT_UNSAFE_VARIABLES runs another git than the hook would read (or traces it), and one that sets
+# one of GIT_GLOBAL_VARIABLES picks the global or system config, whose trace2 targets (read from
+# those two only) would make the hook's git write any file: neither is read. Every read also runs
+# with GIT_QUIET, so no config or variable of the hook's own makes it trace.
 GIT_READ_VARIABLES = LazyPattern(
     r"(?:GIT_CONFIG\w*|GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|GIT_CEILING_DIRECTORIES"
-    r"|GIT_DISCOVERY_ACROSS_FILESYSTEM|HOME|XDG_CONFIG_HOME)\Z"
+    r"|GIT_DISCOVERY_ACROSS_FILESYSTEM)\Z"
 )
 GIT_UNSAFE_VARIABLES = LazyPattern(r"(?:PATH|GIT_EXEC_PATH)\Z|LD_|DYLD_|GIT_TRACE")
 GIT_UNSAFE_CAUSE = "the command sets {}, which changes the git that runs"
+GIT_GLOBAL_VARIABLES = LazyPattern(
+    r"(?:HOME|XDG_CONFIG_HOME|GIT_CONFIG_GLOBAL|GIT_CONFIG_SYSTEM|GIT_CONFIG_NOSYSTEM)\Z"
+)
+GIT_GLOBAL_CAUSE = "the command sets {}, which picks git's global or system config (its trace targets write files)"
+GIT_QUIET = {"GIT_TRACE": "0", "GIT_TRACE2": "0", "GIT_TRACE2_EVENT": "0", "GIT_TRACE2_PERF": "0"}
 MESSAGE_READS_CAP = 8  # message files one command reads (each at most BLOCKED_FILE_CAP); past it a file asks
 # git and gh calls of one command the rules read (each reads the variables exported before it); past
 # it the command asks, so thousands of exports and calls stay linear.
@@ -1863,14 +1873,15 @@ class _Reads:
             env: dict[str, str | None]) -> tuple[int, str] | str | None:
         """(git's exit code, its stdout) for `git <location options> <args>` run in folder with the
         call's GIT_READ_VARIABLES; the cause, as text, when the guard does not run it (a call that
-        sets one of GIT_UNSAFE_VARIABLES, the cap, the budget spent); None when it cannot run or
+        sets one of GIT_UNSAFE_VARIABLES or GIT_GLOBAL_VARIABLES, the cap, the budget spent); None when it cannot run or
         answer (no folder, an expanded location, no git, its timeout)."""
         location = [f"{name}={value}" for name, (value, _) in options if name in GIT_LOCATION_OPTIONS]
         if folder is None or any(expanded for name, (_, expanded) in options if name in GIT_LOCATION_OPTIONS):
             return None
-        unsafe = next((name for name in env if GIT_UNSAFE_VARIABLES.match(name)), None)
+        unsafe = next((name for name in env
+                       if GIT_UNSAFE_VARIABLES.match(name) or GIT_GLOBAL_VARIABLES.match(name)), None)
         if unsafe:
-            return GIT_UNSAFE_CAUSE.format(unsafe)
+            return (GIT_UNSAFE_CAUSE if GIT_UNSAFE_VARIABLES.match(unsafe) else GIT_GLOBAL_CAUSE).format(unsafe)
         variables = {name: value for name, value in env.items() if value is not None and GIT_READ_VARIABLES.match(name)}
         key = (tuple(args), folder, tuple(location), tuple(sorted(variables.items())))
         if key not in self.done:
@@ -1893,14 +1904,15 @@ class _Reads:
     @staticmethod
     def _run(args: list[str], folder: str, variables: dict[str, str], timeout: float) -> tuple[int, str] | None:
         """(exit code, stdout) of the hook's git with args in folder, the hook's environment plus
-        variables, cut at timeout seconds; None when git is missing, cannot start or is cut."""
+        variables and GIT_QUIET, cut at timeout seconds; None when git is missing, cannot start or is cut."""
         import subprocess  # here, not at the top: a call with no git read never loads it
 
         program = _git_program()
         if program is None:
             return None
         try:
-            done = subprocess.run([program, *args], cwd=folder, env={**os.environ, **variables}, capture_output=True,
+            done = subprocess.run([program, *args], cwd=folder, env={**os.environ, **variables, **GIT_QUIET},
+                                  capture_output=True,
                                   stdin=subprocess.DEVNULL, timeout=timeout)
         except (OSError, ValueError, subprocess.TimeoutExpired):
             return None
