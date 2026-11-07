@@ -1243,8 +1243,8 @@ MESSAGE_FILE_REASON = "commits and PR text carry no AI attribution: {} is a comm
 NO_VERIFY_REASON = "`git {} {}` skips the repo's git hooks (pre-commit, commit-msg, pre-push); confirm"
 HOOKS_PATH_REASON = "core.hooksPath changes which git hooks run; confirm"
 PUSH_REASON = "pushing to {} is not allowed; open a PR from a {} branch"
-PUSH_UNKNOWN_REASON = ("the branch this `git push` sends cannot be told (no branch checked out there, or a folder the "
-                       "guard cannot read); confirm it is not a protected branch")
+PUSH_UNREAD_REASON = "the branch this `git push` sends cannot be told ({}); confirm it is not a protected branch"
+PUSH_UNKNOWN_REASON = PUSH_UNREAD_REASON.format("no branch checked out there, or a folder the guard cannot read")
 PUSH_HIDDEN_REASON = ("a `git push` remote or refspec is a shell expansion the guard cannot read; confirm the branch "
                       "it pushes")
 PUSH_DELETE_REASON = "`git push {}` deletes a remote branch; confirm"
@@ -1284,7 +1284,21 @@ SHELL_CALL_END = "\n;&|()"
 CALL_PREFIX_WORDS = INFRA_PREFIX_WORDS | {"{", "!", "exec", "nohup"}
 ENV_VALUE_OPTIONS = INFRA_ENV_VALUE | {"-u", "--unset"}
 GIT_READ_TIMEOUT = 2  # seconds for one git read: the branch a bare push sends, a commit's identities
-GIT_READS_CAP = 4  # git reads one command makes; past it a read asks, so all fit the hook's 10 s
+GIT_READS_CAP = 4  # git reads one command makes; past it a read asks
+# Seconds all git reads of one command take together: with the project extension's EXTENSION_TIMEOUT
+# and KILL_WAIT (4 + 3 + 1) they stay inside the hook's 10 s, past which the call goes unchecked.
+GIT_READS_BUDGET = 4
+GIT_READS_CAP_CAUSE = f"over {GIT_READS_CAP} git reads in one command"
+GIT_OUT_OF_TIME_CAUSE = f"git reads took the guard's {GIT_READS_BUDGET} s"
+# A git read runs the hook's own git (by absolute path, from the hook's PATH) with only these of the
+# call's variables, the ones that pick git's config and repository; a call that sets one of
+# GIT_UNSAFE_VARIABLES runs another git than the hook would read (or traces it), so it is not read.
+GIT_READ_VARIABLES = LazyPattern(
+    r"(?:GIT_CONFIG\w*|GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|GIT_CEILING_DIRECTORIES"
+    r"|GIT_DISCOVERY_ACROSS_FILESYSTEM|HOME|XDG_CONFIG_HOME)\Z"
+)
+GIT_UNSAFE_VARIABLES = LazyPattern(r"(?:PATH|GIT_EXEC_PATH)\Z|LD_|DYLD_|GIT_TRACE")
+GIT_UNSAFE_CAUSE = "the command sets {}, which changes the git that runs"
 MESSAGE_READS_CAP = 8  # message files one command reads (each at most BLOCKED_FILE_CAP); past it a file asks
 # git and gh calls of one command the rules read (each reads the variables exported before it); past
 # it the command asks, so thousands of exports and calls stay linear.
@@ -1503,14 +1517,16 @@ def _git_folder(here: str | None, options: list[tuple[str, tuple[str, bool]]]) -
 
 class _Reads:
     """One command's reads, bounded so they fit the hook's 10 s: git runs (each run once, by its
-    arguments, folder, location options and the call's variables; at most GIT_READS_CAP, each cut
-    at GIT_READ_TIMEOUT) and message files (at most MESSAGE_READS_CAP); and targets, the words the
-    command's redirections write to."""
+    arguments, folder, location options and the call's GIT_READ_VARIABLES; at most GIT_READS_CAP,
+    each cut at GIT_READ_TIMEOUT, all within GIT_READS_BUDGET) and message files (at most
+    MESSAGE_READS_CAP); and targets, the words the command's redirections write to."""
 
     def __init__(self, targets: set[str]) -> None:
         self.targets = targets
-        self.done: dict[tuple, tuple[int, str] | None] = {}
+        self.done: dict[tuple, tuple[int, str] | str | None] = {}
         self.messages = 0
+        self.runs = 0
+        self.deadline: float | None = None
 
     def message(self, path: str) -> tuple[str | None, str | None]:
         """_message_text(path), or (None, why) past MESSAGE_READS_CAP files."""
@@ -1520,29 +1536,61 @@ class _Reads:
         return _message_text(path)
 
     def git(self, args: list[str], folder: str | None, options: list[tuple[str, tuple[str, bool]]],
-            env: dict[str, str | None]) -> tuple[int, str] | None:
+            env: dict[str, str | None]) -> tuple[int, str] | str | None:
         """(git's exit code, its stdout) for `git <location options> <args>` run in folder with the
-        call's variables; None when it cannot run (no folder, an expanded location, no git, the
-        timeout, the cap reached)."""
+        call's GIT_READ_VARIABLES; the cause, as text, when the guard does not run it (a call that
+        sets one of GIT_UNSAFE_VARIABLES, the cap, the budget spent); None when it cannot run or
+        answer (no folder, an expanded location, no git, its timeout)."""
         location = [f"{name}={value}" for name, (value, _) in options if name in GIT_LOCATION_OPTIONS]
         if folder is None or any(expanded for name, (_, expanded) in options if name in GIT_LOCATION_OPTIONS):
             return None
-        variables = {name: value for name, value in env.items() if value is not None}
+        unsafe = next((name for name in env if GIT_UNSAFE_VARIABLES.match(name)), None)
+        if unsafe:
+            return GIT_UNSAFE_CAUSE.format(unsafe)
+        variables = {name: value for name, value in env.items() if value is not None and GIT_READ_VARIABLES.match(name)}
         key = (tuple(args), folder, tuple(location), tuple(sorted(variables.items())))
         if key not in self.done:
-            self.done[key] = self._run([*location, *args], folder, variables) if len(self.done) < GIT_READS_CAP else None
+            self.done[key] = self._read([*location, *args], folder, variables)
         return self.done[key]
 
-    @staticmethod
-    def _run(args: list[str], folder: str, variables: dict[str, str]) -> tuple[int, str] | None:
-        import subprocess  # here, not at the top: a call with no git read never loads it
+    def _read(self, args: list[str], folder: str, variables: dict[str, str]) -> tuple[int, str] | str | None:
+        """git run as git() says, or the cause it is not: GIT_READS_CAP runs made, or the
+        GIT_READS_BUDGET seconds (counted from the command's first run) spent."""
+        if self.runs >= GIT_READS_CAP:
+            return GIT_READS_CAP_CAUSE
+        now = time.monotonic()
+        self.deadline = now + GIT_READS_BUDGET if self.deadline is None else self.deadline
+        left = min(GIT_READ_TIMEOUT, self.deadline - now)
+        if left <= 0:
+            return GIT_OUT_OF_TIME_CAUSE
+        self.runs += 1
+        return _git_run(args, folder, variables, left)
 
-        try:
-            done = subprocess.run(["git", *args], cwd=folder, env={**os.environ, **variables}, capture_output=True,
-                                  stdin=subprocess.DEVNULL, timeout=GIT_READ_TIMEOUT)
-        except (OSError, ValueError, subprocess.TimeoutExpired):
-            return None
-        return done.returncode, done.stdout.decode("utf-8", "replace")
+
+def _git_program() -> str | None:
+    """git's absolute path on the hook's own PATH (an entry that is not absolute is skipped); None
+    when there is none."""
+    for entry in os.get_exec_path():
+        program = os.path.join(entry, "git")
+        if os.path.isabs(entry) and os.path.isfile(program) and os.access(program, os.X_OK):
+            return program
+    return None
+
+
+def _git_run(args: list[str], folder: str, variables: dict[str, str], timeout: float) -> tuple[int, str] | None:
+    """(exit code, stdout) of the hook's git with args in folder, the hook's environment plus
+    variables, cut at timeout seconds; None when git is missing, cannot start or is cut."""
+    import subprocess  # here, not at the top: a call with no git read never loads it
+
+    program = _git_program()
+    if program is None:
+        return None
+    try:
+        done = subprocess.run([program, *args], cwd=folder, env={**os.environ, **variables}, capture_output=True,
+                              stdin=subprocess.DEVNULL, timeout=timeout)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    return done.returncode, done.stdout.decode("utf-8", "replace")
 
 
 def _message_text(path: str) -> tuple[str | None, str | None]:
@@ -1608,6 +1656,8 @@ def _bare_push(flags: list[tuple[str, tuple[str, bool] | None]], operands: list[
     if any(spec not in ("HEAD", "@") for spec, _ in operands[1:]):
         return None
     read = reads.git(["symbolic-ref", "--quiet", "--short", "HEAD"], folder, options, env)
+    if isinstance(read, str):
+        return "ask", PUSH_UNREAD_REASON.format(read)
     branch = read[1].strip() if read and read[0] == 0 else ""
     if not branch:
         return "ask", PUSH_UNKNOWN_REASON
@@ -1622,11 +1672,14 @@ def _hub_author(cfg: Config) -> tuple[str, str]:
 
 
 def _config_emails(reads: _Reads, folder: str, options: list[tuple[str, tuple[str, bool]]],
-                   env: dict[str, str | None]) -> dict[str, str] | None:
+                   env: dict[str, str | None]) -> dict[str, str] | str | None:
     """git config's user, author and committer emails where the call runs, by lowercase key (a later
-    value wins, as in git); None when git config cannot be read."""
+    value wins, as in git); the cause when the guard does not run git (_Reads.git), None when git
+    config cannot be read."""
     read = reads.git(["config", "--null", "--get-regexp", IDENTITY_CONFIG], folder, options, env)
-    if read is None or read[0] not in (0, 1):  # 1: none set
+    if read is None or isinstance(read, str):
+        return read
+    if read[0] not in (0, 1):  # 1: none set
         return None
     found: dict[str, str] = {}
     for entry in read[1].split("\0"):
@@ -1675,8 +1728,9 @@ def _identity(sub: str, flags: list[tuple[str, tuple[str, bool] | None]], folder
                 elif key not in configured and files is None and folder is None:
                     cause = "the folder it runs in cannot be told"
                 elif key not in configured and files is None:
-                    files = _config_emails(reads, folder or "", options, env)
-                    cause = None if files is not None else "git config cannot be read"
+                    read = _config_emails(reads, folder or "", options, env)
+                    files = read if isinstance(read, dict) else None
+                    cause = None if files is not None else read or "git config cannot be read"
                 email = None if cause else configured[key] if key in configured else (files or {}).get(key)
                 if cause or email:
                     break
