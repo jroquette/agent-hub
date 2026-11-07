@@ -227,6 +227,8 @@ def test_states_every_output_cap_when_group_prompt_read() -> None:
     caps = prompt[prompt.index('{"groups": [') : prompt.index("The notes, as JSON")]
     assert f"at most {groups['maxItems']:,} groups" in caps
     assert f"at most {fields['notes']['maxItems']:,} notes per group" in caps
+    assert f"at least {fields['notes']['minItems']:,} note in each group" in caps
+    assert f"each note path at most {fields['notes']['items']['maxLength']:,} characters" in caps
     for field in ("target", "reason", "text"):
         assert f"`{field}` at most {fields[field]['maxLength']:,} characters" in caps, field
     check = prompt[prompt.index("- `check`:") : prompt.index("- `drop`:")]
