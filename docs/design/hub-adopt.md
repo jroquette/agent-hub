@@ -102,13 +102,24 @@ keeps the old `hub.lock` (absent or its prior bytes); a plain `--adopt` then end
 ### In the hub's CI
 
 Every hub's rendered `.github/workflows/ci.yml` (`init` and sync render the same file) has one job, `check`, run on
-pull requests to and pushes on the default branch with read-only `contents`; each action is pinned by commit SHA, its
-release in a comment (`# vX.Y.Z`). Steps: checkout (credentials not kept), setup-uv, credential, golden, `make check`.
+pull requests to (opened, synchronize, reopened, and edited, so a changed title or body is checked again) and pushes on
+the default branch with read-only `contents`; each action is pinned by commit SHA, its release in a comment
+(`# vX.Y.Z`). Steps: checkout (the whole history, credentials not kept), authorship (pull requests only), setup-uv,
+credential, repos, golden, `make check`.
+
+- **Authorship step** (`Authorship`, AGENTS.md rule 1, AGH-4): fails when the pull request's title, body or one of its
+  commit messages (`base..head` of the event) carries AI attribution (the guard's `AI_ATTRIBUTION`), or, when an author
+  email is known (`AUTHOR_EMAIL` in the step's env, else `hub.json`'s `project.author_email`), when one of its commits
+  is authored or committed with another email; GitHub's own committer (`noreply@github.com`, a web edit or "Update
+  branch") is let through. The title and body are read from the event file (`$GITHUB_EVENT_PATH`), never through an
+  expression in the run block, and only commit SHAs and emails are printed. The platform's own `ci.yml` runs the same
+  step, byte for byte, in its `authorship` job.
 
 - **Credential step** (`Platform read credential`): reads `AGENT_HUB_READ_TOKEN`, a secret of the hub repository
   (Settings → Secrets and variables → Actions): a fine-grained personal access token or a GitHub App token with
-  read-only Contents on the platform repository only. It reaches the step through `env`, the only `secrets.`
-  expression in the file. Empty or unset, the step does nothing: a public platform needs no secret. On a private
+  read-only Contents on the platform repository and, when they are private, on the hub's repos (the repos step). It
+  reaches each of those two steps through `env`, the only `secrets.` expressions in the file. Empty or unset, the step
+  does nothing: a public platform needs no secret. On a private
   platform the shim then cannot fetch the pin, the golden step exits 1 and the job fails; so do fork pull requests and
   Dependabot pull requests, which get no Actions secrets (Dependabot needs the same name under Dependabot secrets).
   A token holding anything outside `[A-Za-z0-9_]` exits 1 with `AGENT_HUB_READ_TOKEN: unexpected characters`, before
@@ -117,6 +128,17 @@ release in a comment (`# vX.Y.Z`). Steps: checkout (credentials not kept), setup
   to one carrying the token, and the hub's own GitHub URL mapped to itself (`insteadOf` takes the longest matching
   prefix, so the hub's own fetches never carry the token). The token is never written to a file in the repo: not in a
   URL, `hub.json` or `hub.lock`.
+- **Repos step** (`Repos beside the hub`, AGH-699 A-13): clones each repo of `hub.json` (`repos[]`, read when the step
+  runs) at its default branch (`repos[].default_branch`, else `project.default_branch`), depth 1, into `../<dir>` beside
+  the hub, where `hub doctor`'s repo rules (`brain.leak`, `links.dead`, `repos.agents`, `repos.ui_paths`) read it;
+  without it those rules see no checkout, report an `info` and `make check` passes. With `AGENT_HUB_READ_TOKEN` set,
+  each clone's `https://github.com/<owner>/<name>` maps to a URL carrying the token through `GIT_CONFIG_*` in the
+  step's own environment (one repo at a time; never an argument, a file or `$GITHUB_ENV`); unset, the clones are
+  anonymous, which reads public repos only. It fails, nothing echoed but the repo's `owner/name`, branch and folder,
+  on a token outside `[A-Za-z0-9_]` (the credential step's line), on a `repos` entry whose `dir`, `github` or branch
+  does not have the model's shape (`repos[<i>] in hub.json needs a dir, an owner/name github and a branch`, before
+  any clone), and on a repo it cannot clone (`cannot clone <owner/name> (<branch>) into ../<dir>;
+  AGENT_HUB_READ_TOKEN needs read access to it`).
 - **Golden step** (`Golden (hub sync --check)`): `./hub sync --check` through the pinned shim, before `make check`;
   it writes nothing, and any non-zero exit fails the job before `make check`. Exits (`--check`'s) and their fixes:
   - 0 up to date: the job goes on.

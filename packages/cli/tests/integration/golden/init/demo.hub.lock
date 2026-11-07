@@ -163,7 +163,7 @@
     ".github/workflows/ci.yml": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "10646a4ea355286edc565bd36414176c002fbb0d781be48ff507d5a18c565482"
+      "sha256": "31c0214b83cf5cdef84b1ef97df07b4947cc6479524bd8ae45101482bc5c56ca"
     },
     ".gitignore": {
       "ownership": "seeded"
@@ -176,7 +176,7 @@
     ".pre-commit-config.yaml": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "a01f3daba337f4ee98812705971eb55b6693a21df7014ea23f8bb9871fe9e701"
+      "sha256": "d623b0f030d6ebef13f572ac6e7c92e190a8cd82fc34cc601c4aac4ede7237fc"
     },
     "AGENTS.md": {
       "executable": false,
@@ -337,6 +337,11 @@
       "executable": false,
       "ownership": "managed",
       "sha256": "eee7b9c45495fda3e66ae433bc87dcadfd4bc53b5b9bab82531bac8b101b5ebf"
+    },
+    "plugin/hub-workflow/hooks/commit_msg.py": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "957902d46d8f64d45129755abd887352f932bee4864ba8292e186344308b7eb7"
     },
     "plugin/hub-workflow/hooks/event_sensor.py": {
       "executable": true,

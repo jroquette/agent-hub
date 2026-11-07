@@ -1,0 +1,93 @@
+"""Git commit-msg hook for the hub (AGENTS.md rule 1): Python 3.9+, stdlib only.
+
+.pre-commit-config.yaml runs it at the commit-msg stage (`pre-commit install` sets that stage up),
+from the hub root, with the commit message file as its one argument. It is the git-level barrier
+for commits made outside a guarded Claude Code session.
+
+Exit 1, one stderr line per reason, when the message carries AI attribution (the guard's
+AI_ATTRIBUTION: an AI co-author trailer, a "Generated with Claude" line, the robot emoji; the whole
+file is read, comments included), or, when the hub.json of the hub that holds this file names
+project.author_email, when the commit's author or committer email (`git var`, which sees
+`--author` and the GIT_* identity variables) is another one. An unreadable message or identity is
+a refusal too. Exit 0 otherwise. Managed by hub sync.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+
+HOOKS = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HOOKS)
+# A missing or broken hook file refuses the commit: the guard's own fallback on a partial install
+# exits 0, which here would let the commit through unchecked.
+try:
+    from guard import AI_ATTRIBUTION
+    from stdlib_reader import load_hub_file
+except BaseException as error:  # SystemExit(0) included
+    sys.exit(f"commit-msg: cannot load the hub's hooks ({type(error).__name__}); run hub sync")
+
+HUB_FILE = os.path.join(HOOKS, os.pardir, os.pardir, os.pardir, "hub.json")
+GIT_TIMEOUT = 10
+# Git's own identity variables, read through `git var`: (what the reason calls it, variable).
+IDENTITIES = (("author", "GIT_AUTHOR_IDENT"), ("committer", "GIT_COMMITTER_IDENT"))
+
+
+def _email(ident: str) -> str:
+    """The address inside the last ``<...>`` of a git ident line, else ``""``."""
+    start, end = ident.rfind("<"), ident.rfind(">")
+    return ident[start + 1 : end].strip() if 0 <= start < end else ""
+
+
+def identity_reasons(author_email: str) -> list[str]:
+    """A reason for each of the commit's author and committer whose email is not ``author_email``."""
+    reasons = []
+    for role, variable in IDENTITIES:
+        try:
+            completed = subprocess.run(
+                ["git", "var", variable],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=GIT_TIMEOUT,
+            )
+            email = _email(completed.stdout) if completed.returncode == 0 else ""
+        except (OSError, subprocess.SubprocessError):
+            email = ""
+        if not email:
+            reasons.append(f"commit-msg: cannot read the commit's {role} (git var {variable})")
+        elif email.lower() != author_email.lower():
+            reasons.append(
+                f"commit-msg: the {role} email {email} is not hub.json's project.author_email"
+                f" ({author_email}) (AGENTS.md rule 1): commit as the configured author"
+            )
+    return reasons
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 2:
+        print("commit-msg: usage: commit_msg.py <commit message file>", file=sys.stderr)
+        return 1
+    try:
+        with open(argv[1], "rb") as stream:
+            message = stream.read().decode("utf-8", errors="replace")
+    except OSError as error:
+        print(f"commit-msg: cannot read the message ({type(error).__name__})", file=sys.stderr)
+        return 1
+    reasons = []
+    if AI_ATTRIBUTION.search(message):
+        reasons.append(
+            "commit-msg: the message carries AI attribution (AGENTS.md rule 1): remove the AI"
+            " co-author trailer, the \"Generated with\" line or the robot emoji"
+        )
+    author_email = load_hub_file(HUB_FILE).project.author_email
+    if author_email:
+        reasons.extend(identity_reasons(author_email))
+    for reason in reasons:
+        print(reason, file=sys.stderr)
+    return 1 if reasons else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
