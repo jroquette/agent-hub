@@ -12,6 +12,11 @@ argument or any other payload text (ADR 0019).
 - **Agents.** A ``tool.call`` of ``Agent`` or ``Task`` with ``subagent_type``, counted from the
   ``resolve_facts`` winners (hook and transcript share ``tool_use_id``), each one a ``model``
   use; no window.
+- **Hub tools.** A ``tool.call`` of ``mcp__hub__search``, ``mcp__hub__read`` or
+  ``mcp__hub__propose`` (``HUB_TOOLS``, the hub's knowledge through ``hub mcp``), counted from
+  the same winners, by the main agent or by a subagent (``session_actors.is_main``): whether
+  sessions and their subagents consult the brain (AGH-699). Only the tool's name, the actor kind
+  and the time are read.
 
 Names are normalised by ``bare_name``. ``fold_skill_uses`` reads the signals at or after a
 ``start`` into each name's uses (``SkillUses``); ``usage_at`` counts them at a ``now``, keeping
@@ -39,9 +44,11 @@ from typing import Final
 from agent_hub.core.events.event import Event, EventType
 from agent_hub.core.events.stored_event import StoredEvent
 from agent_hub.core.readmodels.fact_keys import resolve_facts
+from agent_hub.core.sessions.session_actors import is_main
 from agent_hub.core.skills.skill_view import (
     USAGE_DAYS,
     USAGE_WINDOWS,
+    HubToolCalls,
     SkillUsage,
     Usage,
     UsageWindows,
@@ -54,6 +61,8 @@ LONGEST_WINDOW: Final = timedelta(days=max(USAGE_WINDOWS))
 MAX_USAGE_NAMES: Final = 500
 SKILL_TOOL: Final = "Skill"
 AGENT_TOOLS: Final = frozenset({"Agent", "Task"})
+# The hub's knowledge tools as Claude Code names them (``hub mcp``, server ``hub``; ADR 0044).
+HUB_TOOLS: Final = ("mcp__hub__search", "mcp__hub__read", "mcp__hub__propose")
 _USER_ROLE: Final = "user"
 
 
@@ -86,6 +95,8 @@ class SkillUses:
 
     skills: Mapping[str, tuple[_Use, ...]]
     agents: Mapping[str, tuple[_Use, ...]]
+    # Each hub tool's calls; ``typed`` marks a call of the main agent (no person types one).
+    hub_tools: Mapping[str, tuple[_Use, ...]] = field(default_factory=dict)
 
 
 def _name(value: object) -> str | None:
@@ -183,6 +194,25 @@ def _kept(
     return usage, recent_cut, windows, every_cut
 
 
+def _hub_tools(uses: Mapping[str, Sequence[_Use]], now: datetime) -> dict[str, HubToolCalls]:
+    """Each hub tool's calls at or after ``now - LONGEST_WINDOW``, by the main agent and by
+    subagents; a tool never called has zeros."""
+    found: dict[str, HubToolCalls] = {}
+    for tool in HUB_TOOLS:
+        kept = _since(uses.get(tool, ()), now - LONGEST_WINDOW)
+        found[tool] = HubToolCalls(
+            main=_calls([use for use in kept if use.typed], now),
+            subagents=_calls([use for use in kept if not use.typed], now),
+        )
+    return found
+
+
+def _calls(uses: Sequence[_Use], now: datetime) -> UsageWindows:
+    if not uses:
+        return UsageWindows(runs_7d=0, runs_30d=0, runs_90d=0, last_used_at=None)
+    return _windows(uses, now)
+
+
 def _frozen(tallies: Mapping[str, _Tally]) -> dict[str, tuple[_Use, ...]]:
     return {name: tuple(tally.uses) for name, tally in tallies.items()}
 
@@ -194,6 +224,7 @@ def fold_skill_uses(
     any order), from the signals at or after ``start``."""
     skills: dict[str, _Tally] = {}
     agents: dict[str, _Tally] = {}
+    hub_tools: dict[str, _Tally] = {}
     for group in sessions.values():
         events = [
             stored
@@ -202,13 +233,19 @@ def fold_skill_uses(
         ]
         if not events:
             continue
-        winners = [stored.event for stored in resolve_facts(events).winners]
+        resolved = resolve_facts(events).winners
+        winners = [stored.event for stored in resolved]
         _count_invocations((s for e in winners if (s := _skill_signal(e)) is not None), skills)
         for event in winners:
             name = _agent_name(event)
             if name is not None:
                 agents.setdefault(name, _Tally()).add(typed=False, at=event.timestamp)
-    return SkillUses(skills=_frozen(skills), agents=_frozen(agents))
+        for stored in resolved:
+            tool = stored.event.payload.get("tool")
+            if stored.event.type == EventType.TOOL_CALL and tool in HUB_TOOLS:
+                tally = hub_tools.setdefault(str(tool), _Tally())
+                tally.add(typed=is_main(stored), at=stored.event.timestamp)
+    return SkillUses(skills=_frozen(skills), agents=_frozen(agents), hub_tools=_frozen(hub_tools))
 
 
 def usage_at(uses: SkillUses, *, now: datetime) -> SkillUsage:
@@ -229,6 +266,7 @@ def usage_at(uses: SkillUses, *, now: datetime) -> SkillUsage:
         windows_by_skill=windows_by_skill,
         windows_by_agent=windows_by_agent,
         windows_truncated=skill_windows_cut or agent_windows_cut,
+        hub_tools=_hub_tools(uses.hub_tools, now),
     )
 
 

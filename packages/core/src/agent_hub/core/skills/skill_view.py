@@ -217,6 +217,15 @@ class UsageWindows(ViewModel):
     last_used_at: ApiTimestamp | None
 
 
+class HubToolCalls(ViewModel):
+    """The calls of one of the hub's knowledge tools (``hub mcp``'s ``search``, ``read`` and
+    ``propose``) over 7, 30 and 90 days, by the main sessions and by their subagents: counts and
+    a time only (ADR 0019)."""
+
+    main: UsageWindows
+    subagents: UsageWindows
+
+
 class SkillUsage(ViewModel):
     """Usage per bare name over the window from ``since`` (S8, P2); ``truncated`` when more than
     500 names of a kind were seen (the most used are kept).
@@ -224,6 +233,7 @@ class SkillUsage(ViewModel):
     ``windows_by_skill`` and ``windows_by_agent`` hold every name used in the last 90 days with
     its 7/30/90-day runs (AGH-482), at most 500 per kind by 90-day runs, ``windows_truncated``
     when more were seen; ``by_skill``, ``by_agent`` and ``truncated`` stay the 30-day window's.
+    ``hub_tools`` holds each hub knowledge tool (``HUB_TOOLS``), zeros when never called.
     """
 
     since: ApiTimestamp
@@ -233,6 +243,7 @@ class SkillUsage(ViewModel):
     windows_by_skill: dict[str, UsageWindows] = {}
     windows_by_agent: dict[str, UsageWindows] = {}
     windows_truncated: bool = False
+    hub_tools: dict[str, HubToolCalls] = {}
 
 
 class UsageRow(ViewModel):

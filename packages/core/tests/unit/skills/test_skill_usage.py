@@ -204,6 +204,14 @@ def test_holds_only_names_counts_and_times_when_folded() -> None:
         "windows_by_skill",
         "windows_by_agent",
         "windows_truncated",
+        "hub_tools",
+    }
+    assert {
+        kind: set(windows)
+        for kind, windows in usage.hub_tools["mcp__hub__search"].model_dump().items()
+    } == {
+        "main": {"runs_7d", "runs_30d", "runs_90d", "last_used_at"},
+        "subagents": {"runs_7d", "runs_30d", "runs_90d", "last_used_at"},
     }
     assert set(usage.windows_by_skill["feature"].model_dump()) == {
         "runs_7d",
