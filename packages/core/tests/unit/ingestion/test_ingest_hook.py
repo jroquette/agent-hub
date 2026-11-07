@@ -46,10 +46,16 @@ class _Tailer:
     def __init__(self, result: TailResult) -> None:
         self.result = result
         self.refs: list[TranscriptRef] = []
+        self.to_end_refs: list[TranscriptRef] = []
         self.committed: list[TailPosition] = []
 
     def read_new(self, ref: TranscriptRef) -> TailResult:
         self.refs.append(ref)
+        return self.result
+
+    def read_to_end(self, ref: TranscriptRef) -> TailResult:
+        self.refs.append(ref)
+        self.to_end_refs.append(ref)
         return self.result
 
     def commit(self, position: TailPosition) -> None:
@@ -255,6 +261,25 @@ def test_appends_every_envelope_and_transcript_in_one_batch_when_executed_all() 
     assert tailer.refs == [ref]
     assert tailer.committed == [position]
     assert _snapshot(counters) == (2, 3, 0, 0, 0)
+
+
+def test_reads_transcript_once_to_its_end_when_batch_names_it_twice() -> None:
+    stop = an_event(type="session.end", payload={"outcome": None})
+    transcript_event = an_event(source="transcript", type="message", payload={"role": "user"})
+    position = TailPosition(path="/home/demo/t.jsonl", version=1)
+    ref = TranscriptRef(project="demo", session="session-1", path="/home/demo/t.jsonl", kind="main")
+    use_case, store, tailer, _ = _batch_use_case(
+        {"Stop": HookMapping(events=(stop,), transcript=ref)},
+        TailResult(events=(transcript_event,), position=position),
+    )
+
+    result = use_case.execute_all([_envelope("Stop"), _envelope("Stop")])
+
+    assert tailer.to_end_refs == [ref]
+    assert tailer.refs == [ref]
+    assert store.batches == [[stop, transcript_event, stop]]
+    assert tailer.committed == [position]
+    assert result == AppendResult(appended=2, duplicates=1)
 
 
 def test_counts_duplicates_when_batch_repeats_envelope() -> None:

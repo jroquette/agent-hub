@@ -153,6 +153,47 @@ def test_reads_in_bounded_pieces_when_file_larger_than_max_bytes_offset(projects
     assert turns == list(range(1, 31))
 
 
+def test_reads_every_complete_line_in_one_result_when_read_to_end_of_file_larger_than_max_bytes(
+    projects: Path,
+) -> None:
+    path = projects / "-work-demo-api" / "big.jsonl"
+    whole = transcript_text([a_user_line(f"prompt {n}") for n in range(31)])
+    path.write_text(whole[:-10])
+    tail = _tail(projects, max_bytes=2_000)
+    ref = _ref(path)
+
+    result = tail.read_to_end(ref)
+    assert result.position is not None
+    tail.commit(result.position)
+    with path.open("a") as file:
+        file.write(whole[-10:])
+    after = tail.read_new(ref)
+
+    assert [event.payload["turn"] for event in result.events] == list(range(1, 31))
+    assert [event.payload["turn"] for event in after.events] == [31]
+
+
+def test_stores_each_transcript_event_once_when_batch_has_two_stops_naming_large_transcript(
+    projects: Path,
+) -> None:
+    path = projects / "-work-demo-api" / f"{TRANSCRIPT_SESSION}.jsonl"
+    path.write_text(transcript_text([a_user_line(f"prompt {n}") for n in range(40)]))
+    store = InMemoryEventStore()
+    ingest = IngestHook(
+        store,
+        ClaudeHookMapper(),
+        TranscriptTail(projects, max_bytes=path.stat().st_size // 3),
+        status=IngestionCounters(clock=lambda: datetime(2026, 10, 11, tzinfo=UTC)),
+    )
+    stop = an_envelope(a_hook_input("Stop", transcript_path=str(path)))
+
+    result = ingest.execute_all([stop, stop])
+
+    assert result == AppendResult(appended=40, duplicates=0)
+    turns = [event.payload["turn"] for event in store.read_all() if event.source == "transcript"]
+    assert sorted(turns) == list(range(1, 41))
+
+
 def test_skips_and_counts_line_when_longer_than_line_limit(projects: Path) -> None:
     path = projects / "-work-demo-api" / "long.jsonl"
     path.write_text(
