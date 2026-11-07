@@ -110,6 +110,8 @@ def _hub_web(root: Path, *, config: Path) -> Iterator[tuple[str, str]]:
     port = free_loopback_port()
     env = _claude_env(config) | {
         "XDG_CONFIG_HOME": str(root / "xdg-config"),
+        # hub web imports the hook spool of this folder at start: never the caller's.
+        "XDG_STATE_HOME": str(root / "xdg-state"),
         "AGENT_HUB_CLAUDE_PROJECTS": str(config / "projects"),
     }
     hub = Path(sys.executable).with_name("hub")
