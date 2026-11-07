@@ -436,6 +436,122 @@ def test_accepts_package_registered_when_package_in_sibling_or_optional_layer(la
     assert rule_hits({**REGISTERED, ".importlinter": importlinter}, "package-registered") == []
 
 
+# dependency-declared
+
+STORAGE_PYPROJECT = "packages/storage/pyproject.toml"
+STORAGE_MODULE = "packages/storage/src/agent_hub/storage/hub_registry.py"
+API_PYPROJECT = "packages/api/pyproject.toml"
+API_INIT = "packages/api/src/agent_hub/api/__init__.py"
+CLI_PYPROJECT = "packages/cli/pyproject.toml"
+CLI_MODULE = "packages/cli/src/agent_hub/cli/web_command.py"
+SESSIONS_PYPROJECT = "packages/claude_sessions/pyproject.toml"
+SESSIONS_INIT = "packages/claude_sessions/src/agent_hub/claude_sessions/__init__.py"
+# What importlib.metadata.packages_distributions() gives for these modules.
+PROVIDERS = {"yaml": ["PyYAML"], "pydantic": ["pydantic"], "sqlalchemy": ["SQLAlchemy"]}
+
+
+def pyproject(name: str, *requirements: str, extra: str = "") -> str:
+    listed = ", ".join(f'"{requirement}"' for requirement in requirements)
+    text = f'[project]\nname = "{name}"\ndependencies = [{listed}]\n'
+    if extra:
+        text += f'\n[project.optional-dependencies]\nsessions = ["{extra}"]\n'
+    return text
+
+
+def storage_importing(source: str, *requirements: str) -> dict[str, str]:
+    declared = requirements or ("agent-hub-core", "sqlalchemy>=2")
+    return {
+        **REGISTERED,
+        STORAGE_PYPROJECT: pyproject("agent-hub-storage", *declared),
+        STORAGE_MODULE: source,
+    }
+
+
+def dependency_hits(files: Mapping[str, str]) -> list[Violation]:
+    violations = find_violations(files, providers=PROVIDERS)
+    return [violation for violation in violations if violation.rule == "dependency-declared"]
+
+
+def test_reports_dependency_declared_when_src_imports_undeclared_distribution() -> None:
+    files = storage_importing("import sqlalchemy\nfrom pydantic import BaseModel\n")
+
+    violations = dependency_hits(files)
+
+    assert [violation.path for violation in violations] == [STORAGE_PYPROJECT]
+    assert violations[0].message == f"lacks pydantic, which {STORAGE_MODULE} imports"
+
+
+def test_reports_dependency_declared_when_import_is_inside_function() -> None:
+    source = "def load() -> None:\n    import yaml\n"
+
+    violations = dependency_hits(storage_importing(source))
+
+    assert [violation.message for violation in violations] == [
+        f"lacks pyyaml, which {STORAGE_MODULE} imports"
+    ]
+
+
+def test_accepts_dependency_declared_when_module_and_distribution_names_differ() -> None:
+    files = storage_importing("import yaml\n", "agent-hub-core", "PyYAML>=6.0.2")
+
+    assert dependency_hits(files) == []
+
+
+def test_reports_dependency_declared_when_src_imports_undeclared_workspace_package() -> None:
+    files = {
+        **REGISTERED,
+        API_PYPROJECT: pyproject("agent-hub-api", "agent-hub-core"),
+        API_INIT: "",
+        CLI_PYPROJECT: pyproject("agent-hub-cli", "agent-hub-core"),
+        CLI_MODULE: "from agent_hub.api.server import serve_on\n",
+    }
+
+    violations = dependency_hits(files)
+
+    assert [violation.path for violation in violations] == [CLI_PYPROJECT]
+    assert violations[0].message == f"lacks agent-hub-api, which {CLI_MODULE} imports"
+
+
+def test_accepts_dependency_declared_when_distribution_is_an_optional_dependency() -> None:
+    files = {
+        **REGISTERED,
+        SESSIONS_PYPROJECT: pyproject("agent-hub-claude-sessions", "agent-hub-core"),
+        SESSIONS_INIT: "",
+        API_PYPROJECT: pyproject(
+            "agent-hub-api", "agent-hub-core", extra="agent-hub-claude-sessions"
+        ),
+        API_INIT: "from agent_hub.claude_sessions import sdk_driver\n",
+    }
+
+    assert dependency_hits(files) == []
+
+
+def test_ignores_dependency_declared_when_import_is_stdlib_relative_or_own_package() -> None:
+    source = (
+        "import json\nimport os.path\nfrom . import db\nfrom agent_hub.storage.db import x\n"
+        "from agent_hub.core.events import y\nimport agent_hub\n"
+        "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from _typeshed import Incomplete\n"
+    )
+
+    assert dependency_hits(storage_importing(source)) == []
+
+
+def test_ignores_dependency_declared_when_module_is_under_testing() -> None:
+    files = storage_importing("")
+    files["packages/storage/src/agent_hub/storage/testing/fixtures.py"] = "import pytest\n"
+
+    assert dependency_hits(files) == []
+
+
+def test_reports_dependency_declared_when_pyproject_is_not_toml() -> None:
+    files = {**storage_importing(""), STORAGE_PYPROJECT: "[project\n"}
+
+    violations = dependency_hits(files)
+
+    assert [violation.path for violation in violations] == [STORAGE_PYPROJECT]
+    assert violations[0].message.startswith("cannot be read as TOML: ")
+
+
 # reading the repo
 
 
