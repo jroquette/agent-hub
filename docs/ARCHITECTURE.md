@@ -197,7 +197,10 @@ for `propose`. The meta-package `agent-hub` only bundles the distributions for i
 
 Adding a package: create `packages/<pkg>/` with the shape above, then register it in `mypy.ini` (`files` and
 `mypy_path`), in both `.importlinter` contracts (core's forbidden list and the layers list) and in the Makefile `COV`
-list. The layout checker rule `package-registered` fails `make check-fast` until all of these are done. Then add it to
+list. The layout checker rule `package-registered` fails `make check-fast` until all of these are done. Its
+`pyproject.toml` declares every distribution its src imports outside `testing/`, workspace siblings included (with a
+`{ workspace = true }` source), never relying on one that arrives transitively: the rule `dependency-declared` fails
+otherwise. Then add it to
 the PR-title scopes (`SCOPES` in `scripts/check_pr_title.py` and the list in CONTRIBUTING.md) and create its
 `pkg:<name>` area label; the `tracker_*` adapters share the `tracker` scope and the `pkg:tracker` label.
 

@@ -5,7 +5,7 @@ test files and the gate configs need real contents) and returns the violations. 
 the repo files with git, prints ``<path>: <rule> <message>`` per violation and exits 1 if any.
 
 Rules: level-folder, test-file-name, mirror, test-name, ticket-name, generic-name,
-numbered-name, forbidden-module, package-registered.
+numbered-name, forbidden-module, package-registered, dependency-declared.
 
 The level of a test comes from ``scripts.pytest_levels.level_of``, the function the marker
 plugin uses, so a test the checker accepts always gets the marker the checker expects.
@@ -17,8 +17,10 @@ import configparser
 import re
 import subprocess
 import sys
-from collections.abc import Iterable, Iterator, Mapping
+import tomllib
+from collections.abc import Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass
+from importlib.metadata import packages_distributions
 from pathlib import Path, PurePosixPath
 
 from scripts.pytest_levels import level_of
@@ -40,6 +42,12 @@ MAKEFILE = "Makefile"
 COV_VARIABLE = re.compile(r"^COV\s*:?=((?:.*\\\n)*.*)$", re.MULTILINE)
 COV_MODULE = re.compile(r"--cov=(agent_hub\.\w+)")
 CORE = "core"
+PYPROJECT = re.compile(r"^packages/([^/]+)/pyproject\.toml$")
+REQUIREMENT_NAME = re.compile(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
+# typeshed's stub-only stdlib module: imported under TYPE_CHECKING, never at run time.
+STDLIB_MODULES = sys.stdlib_module_names | {"_typeshed"}
+# agent_hub.<name>.testing holds test support, which no wheel ships.
+TESTING_PACKAGE = "testing"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -55,13 +63,21 @@ class Violation:
         return f"{self.path}: {self.rule} {self.message}"
 
 
-def find_violations(files: Mapping[str, str]) -> list[Violation]:
-    """Return every layout violation in ``files`` (repo-relative path -> file contents)."""
+def find_violations(
+    files: Mapping[str, str], providers: Mapping[str, Collection[str]] | None = None
+) -> list[Violation]:
+    """Return every layout violation in ``files`` (repo-relative path -> file contents).
+
+    ``providers`` maps a top-level module to the distributions that install it (the shape of
+    ``importlib.metadata.packages_distributions()``); a module missing from it is taken as a
+    distribution of the same name.
+    """
     violations: list[Violation] = []
     for path, source in sorted(files.items()):
         violations.extend(_check_test_file(path, source, files))
         violations.extend(_check_forbidden_module(path))
     violations.extend(_check_packages_registered(files))
+    violations.extend(_check_dependencies_declared(files, providers or {}))
     return violations
 
 
@@ -91,7 +107,8 @@ def split_git_listing(listing: str) -> list[str]:
 
 def main(files: Mapping[str, str] | None = None) -> int:
     """Print the violations in ``files`` (default: the repo) and return the exit code."""
-    violations = find_violations(_read_repo_files() if files is None else files)
+    repo_files = _read_repo_files() if files is None else files
+    violations = find_violations(repo_files, packages_distributions())
     for violation in violations:
         print(violation)
     return 1 if violations else 0
@@ -303,6 +320,118 @@ def _contract_option(
     return None
 
 
+# Package dependencies: dependency-declared.
+
+
+@dataclass(frozen=True)
+class _Package:
+    """A workspace member: its folder under packages/, distribution and declared requirements."""
+
+    folder: str
+    distribution: str
+    declared: frozenset[str]
+
+
+def _check_dependencies_declared(
+    files: Mapping[str, str], providers: Mapping[str, Collection[str]]
+) -> Iterator[Violation]:
+    """Each package's src, outside ``testing/``, imports only distributions it declares."""
+    members: list[_Package] = []
+    for path in sorted(files):
+        match = PYPROJECT.match(path)
+        if match is None:
+            continue
+        try:
+            members.append(_read_package(match.group(1), files[path]))
+        except tomllib.TOMLDecodeError as error:
+            yield Violation(path, "dependency-declared", f"cannot be read as TOML: {error}")
+    owners = _workspace_modules(files, members)
+    for member in members:
+        yield from _check_member_imports(files, member, owners, providers)
+
+
+def _read_package(folder: str, text: str) -> _Package:
+    project = tomllib.loads(text).get("project", {})
+    requirements = list(project.get("dependencies", []))
+    for extra in project.get("optional-dependencies", {}).values():
+        requirements.extend(extra)
+    names = (REQUIREMENT_NAME.match(requirement) for requirement in requirements)
+    declared = frozenset(_canonical(match.group(1)) for match in names if match is not None)
+    return _Package(folder, _canonical(str(project.get("name", ""))), declared)
+
+
+def _workspace_modules(files: Iterable[str], members: Iterable[_Package]) -> dict[str, str]:
+    """Map each ``agent_hub.<name>`` to the distribution of the member whose src holds it."""
+    distributions = {f"packages/{member.folder}/src": member.distribution for member in members}
+    return {
+        f"agent_hub.{name}": distributions[src]
+        for name, src in discover_packages(files).items()
+        if src in distributions
+    }
+
+
+def _check_member_imports(
+    files: Mapping[str, str],
+    member: _Package,
+    owners: Mapping[str, str],
+    providers: Mapping[str, Collection[str]],
+) -> Iterator[Violation]:
+    missing: dict[str, str] = {}
+    for path in _member_sources(files, member.folder):
+        for module in _imported_modules(path, files[path]):
+            needed = _distributions_of(module, owners, providers)
+            if member.distribution in needed or needed & member.declared:
+                continue
+            missing.setdefault(min(needed), path)
+    pyproject = f"packages/{member.folder}/pyproject.toml"
+    for distribution, path in sorted(missing.items()):
+        message = f"lacks {distribution}, which {path} imports"
+        yield Violation(pyproject, "dependency-declared", message)
+
+
+def _member_sources(files: Iterable[str], folder: str) -> list[str]:
+    prefix = f"packages/{folder}/src/"
+    return sorted(
+        path
+        for path in files
+        if path.startswith(prefix)
+        and path.endswith(".py")
+        and PurePosixPath(path).parts[5:6] != (TESTING_PACKAGE,)
+    )
+
+
+def _imported_modules(path: str, source: str) -> set[str]:
+    """Top-level modules (``agent_hub.<name>`` for the namespace) imported anywhere in it."""
+    try:
+        tree = ast.parse(source, filename=path)
+    except SyntaxError:
+        return set()  # ruff reports it earlier in the gate
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            modules.add(node.module)
+    return {
+        ".".join(module.split(".")[:2]) if module.startswith("agent_hub.") else module.split(".")[0]
+        for module in modules
+        if module.split(".")[0] not in STDLIB_MODULES and module != "agent_hub"
+    }
+
+
+def _distributions_of(
+    module: str, owners: Mapping[str, str], providers: Mapping[str, Collection[str]]
+) -> frozenset[str]:
+    if module in owners:
+        return frozenset({owners[module]})
+    return frozenset(_canonical(name) for name in providers.get(module, [module]))
+
+
+def _canonical(name: str) -> str:
+    """A distribution name as PEP 503 compares it."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
 def _parse_config(files: Mapping[str, str], path: str) -> configparser.ConfigParser | None:
     if path not in files:
         return None
@@ -333,11 +462,20 @@ def _read_repo_files() -> dict[str, str]:
         full = REPO_ROOT / path
         if not full.is_file():
             continue  # deleted but still in the index
-        needs_source = path in {MYPY_CONFIG, IMPORT_CONFIG, MAKEFILE} or _is_test_location(
-            PurePosixPath(path)
-        )
-        files[path] = full.read_text(encoding="utf-8") if needs_source else ""
+        files[path] = full.read_text(encoding="utf-8") if _needs_source(path) else ""
     return files
+
+
+def _needs_source(path: str) -> bool:
+    pure = PurePosixPath(path)
+    parts = pure.parts
+    is_package_source = parts[0] == "packages" and parts[2:3] == ("src",) and pure.suffix == ".py"
+    return (
+        path in {MYPY_CONFIG, IMPORT_CONFIG, MAKEFILE}
+        or PYPROJECT.match(path) is not None
+        or is_package_source
+        or _is_test_location(pure)
+    )
 
 
 if __name__ == "__main__":

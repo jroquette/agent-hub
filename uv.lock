@@ -87,6 +87,8 @@ dependencies = [
     { name = "agent-hub-storage" },
     { name = "agent-hub-tracker-linear" },
     { name = "fastapi" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
     { name = "starlette" },
     { name = "uvicorn" },
 ]
@@ -106,6 +108,8 @@ requires-dist = [
     { name = "agent-hub-storage", editable = "packages/storage" },
     { name = "agent-hub-tracker-linear", editable = "packages/tracker_linear" },
     { name = "fastapi", specifier = "==0.141.1" },
+    { name = "pydantic", specifier = ">=2" },
+    { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "starlette", specifier = "==1.7.0" },
     { name = "uvicorn", specifier = "==0.54.0" },
 ]
@@ -118,12 +122,14 @@ source = { editable = "packages/claude_sessions" }
 dependencies = [
     { name = "agent-hub-core" },
     { name = "claude-agent-sdk" },
+    { name = "pydantic" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "agent-hub-core", editable = "packages/core" },
     { name = "claude-agent-sdk", specifier = "==0.2.165" },
+    { name = "pydantic", specifier = ">=2" },
 ]
 
 [[package]]
@@ -131,23 +137,29 @@ name = "agent-hub-cli"
 version = "0.33.0"
 source = { editable = "packages/cli" }
 dependencies = [
+    { name = "agent-hub-api" },
     { name = "agent-hub-collector" },
     { name = "agent-hub-core" },
     { name = "agent-hub-generator" },
     { name = "agent-hub-hub-git" },
+    { name = "agent-hub-mcp-server" },
     { name = "agent-hub-storage" },
     { name = "agent-hub-tracker-linear" },
+    { name = "pydantic" },
     { name = "typer" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "agent-hub-api", editable = "packages/api" },
     { name = "agent-hub-collector", editable = "packages/collector" },
     { name = "agent-hub-core", editable = "packages/core" },
     { name = "agent-hub-generator", editable = "packages/generator" },
     { name = "agent-hub-hub-git", editable = "packages/hub_git" },
+    { name = "agent-hub-mcp-server", editable = "packages/mcp_server" },
     { name = "agent-hub-storage", editable = "packages/storage" },
     { name = "agent-hub-tracker-linear", editable = "packages/tracker_linear" },
+    { name = "pydantic", specifier = ">=2" },
     { name = "typer" },
 ]
 
@@ -172,10 +184,14 @@ version = "0.1.0"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "pydantic" },
+    { name = "pydantic-core" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pydantic", specifier = ">=2" }]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2" },
+    { name = "pydantic-core" },
+]
 
 [[package]]
 name = "agent-hub-generator"
@@ -185,6 +201,7 @@ dependencies = [
     { name = "agent-hub-core" },
     { name = "jsonschema" },
     { name = "pyyaml" },
+    { name = "referencing" },
 ]
 
 [package.metadata]
@@ -192,6 +209,7 @@ requires-dist = [
     { name = "agent-hub-core", editable = "packages/core" },
     { name = "jsonschema", specifier = ">=4.26" },
     { name = "pyyaml", specifier = ">=6.0.2" },
+    { name = "referencing", specifier = ">=0.28.4" },
 ]
 
 [[package]]
@@ -212,14 +230,18 @@ source = { editable = "packages/mcp_server" }
 dependencies = [
     { name = "agent-hub-core" },
     { name = "agent-hub-hub-git" },
+    { name = "anyio" },
     { name = "mcp" },
+    { name = "pydantic" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "agent-hub-core", editable = "packages/core" },
     { name = "agent-hub-hub-git", editable = "packages/hub_git" },
+    { name = "anyio", specifier = ">=4.10" },
     { name = "mcp", specifier = "==2.3.0" },
+    { name = "pydantic", specifier = ">=2" },
 ]
 
 [[package]]
@@ -229,6 +251,7 @@ source = { editable = "packages/storage" }
 dependencies = [
     { name = "agent-hub-core" },
     { name = "alembic" },
+    { name = "pydantic" },
     { name = "sqlalchemy" },
 ]
 
@@ -236,6 +259,7 @@ dependencies = [
 requires-dist = [
     { name = "agent-hub-core", editable = "packages/core" },
     { name = "alembic" },
+    { name = "pydantic", specifier = ">=2" },
     { name = "sqlalchemy", specifier = ">=2" },
 ]
 
@@ -245,10 +269,14 @@ version = "0.1.0"
 source = { editable = "packages/tracker_linear" }
 dependencies = [
     { name = "agent-hub-core" },
+    { name = "pydantic" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "agent-hub-core", editable = "packages/core" }]
+requires-dist = [
+    { name = "agent-hub-core", editable = "packages/core" },
+    { name = "pydantic", specifier = ">=2" },
+]
 
 [[package]]
 name = "alembic"

@@ -5,7 +5,8 @@ description = "The hub command line interface of agent-hub."
 license = "Apache-2.0"
 requires-python = ">=3.14"
 dependencies = ["agent-hub-core", "agent-hub-storage", "agent-hub-collector", "agent-hub-generator",
-                "agent-hub-hub-git", "agent-hub-tracker-linear", "typer"]
+                "agent-hub-hub-git", "agent-hub-tracker-linear", "agent-hub-api", "agent-hub-mcp-server",
+                "pydantic>=2", "typer"]
 
 [tool.uv.sources]
 agent-hub-core = { workspace = true }
@@ -14,6 +15,8 @@ agent-hub-collector = { workspace = true }
 agent-hub-generator = { workspace = true }
 agent-hub-hub-git = { workspace = true }
 agent-hub-tracker-linear = { workspace = true }
+agent-hub-api = { workspace = true }
+agent-hub-mcp-server = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

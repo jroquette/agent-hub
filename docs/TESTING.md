@@ -244,6 +244,7 @@ violation and exits 1 if there is any. Run it alone with `$R python -m scripts.c
 | `numbered-name` | a test file or function name ends a part in `_<digits>` |
 | `forbidden-module` | a module or folder in `scripts/`, `tests/` or a package's `src/`/`tests/` is named `utils`, `util`, `helpers`, `helper`, `common` or `misc` |
 | `package-registered` | a `packages/*/src/agent_hub/<name>/` package is missing from `mypy.ini` (`files`, `mypy_path`), from the `.importlinter` contracts or from the Makefile `COV` list |
+| `dependency-declared` | a module under `packages/<dir>/src/`, outside `agent_hub/<name>/testing/`, imports (anywhere in the module, lazy imports included) a distribution that `packages/<dir>/pyproject.toml` does not declare in `dependencies` or an extra; workspace packages by their `agent_hub.<name>`, others by the installed distributions (`importlib.metadata.packages_distributions()`), stdlib skipped |
 
 At most one of `ticket-name`, `generic-name` and `numbered-name` is reported per name, in that order. The checker's own
 tests (`tests/unit/scripts/test_check_test_layout.py`) have a failing and a passing case for every rule.
