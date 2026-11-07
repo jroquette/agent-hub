@@ -31,8 +31,6 @@ from agent_hub.core.features.output_paths import ACS_ALL_TAG as ACS_ALL_TAG
 from agent_hub.core.features.output_paths import ACS_LIST_TAG as ACS_LIST_TAG
 from agent_hub.core.features.scope_rules import AC_ID_PATTERN, COMMIT_PATTERN
 
-REVIEW_SCHEMA_ID: Final = "agent-hub/review/1"
-EVAL_SCHEMA_ID: Final = "agent-hub/eval/1"
 EVAL_V2_SCHEMA_ID: Final = "agent-hub/eval/2"
 PREFLIGHT_V2_SCHEMA_ID: Final = "agent-hub/preflight/2"
 # An output over this size is refused before it is parsed.
