@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from agent_hub.collector.claude_hooks import ClaudeHookMapper
-from agent_hub.collector.transcript_tail import TranscriptTail
+from agent_hub.collector.transcript_tail import MAX_TO_END_BYTES, TranscriptTail
 from agent_hub.core.events.event import Event
 from agent_hub.core.events.event_store import AppendResult
 from agent_hub.core.ingestion.ingest_hook import IngestHook
@@ -192,6 +192,69 @@ def test_stores_each_transcript_event_once_when_batch_has_two_stops_naming_large
     assert result == AppendResult(appended=40, duplicates=0)
     turns = [event.payload["turn"] for event in store.read_all() if event.source == "transcript"]
     assert sorted(turns) == list(range(1, 41))
+
+
+def _same_size_lines(path: Path, count: int) -> int:
+    """``count`` user lines written to ``path``; the bytes of each (they all have that size)."""
+    lines = [transcript_text([a_user_line(f"prompt {n:02d}")]) for n in range(count)]
+    sizes = {len(line.encode()) for line in lines}
+    assert len(sizes) == 1
+    path.write_text("".join(lines))
+    return sizes.pop()
+
+
+def test_stops_at_budget_and_next_read_continues_there_when_read_to_end_passes_byte_budget(
+    projects: Path,
+) -> None:
+    path = projects / "-work-demo-api" / "big.jsonl"
+    line = _same_size_lines(path, 12)
+    # Each read takes two lines and half of the third, so five lines' bytes are two reads that
+    # move the offset four lines: the budget counts the bytes read, not the lines consumed.
+    tail = _tail(projects, max_bytes=2 * line + line // 2, max_to_end_bytes=5 * line)
+    ref = _ref(path)
+
+    reads: list[list[object]] = []
+    for _ in range(3):
+        result = tail.read_to_end(ref)
+        assert result.position is not None
+        tail.commit(result.position)
+        reads.append([event.payload["turn"] for event in result.events])
+    last = tail.read_new(ref)
+
+    assert reads == [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]]
+    assert last.events == ()
+
+
+def test_stores_next_piece_when_later_batch_names_transcript_over_to_end_budget(
+    projects: Path,
+) -> None:
+    path = projects / "-work-demo-api" / f"{TRANSCRIPT_SESSION}.jsonl"
+    line = _same_size_lines(path, 6)
+    store = InMemoryEventStore()
+    ingest = IngestHook(
+        store,
+        ClaudeHookMapper(),
+        TranscriptTail(projects, max_bytes=line, max_to_end_bytes=4 * line),
+        status=IngestionCounters(clock=lambda: datetime(2026, 10, 11, tzinfo=UTC)),
+    )
+    stop = an_envelope(a_hook_input("Stop", transcript_path=str(path)))
+
+    first = ingest.execute_all([stop])
+    first_turns = _transcript_turns(store.read_all())
+    second = ingest.execute_all([stop])
+
+    assert first == AppendResult(appended=4, duplicates=0)
+    assert first_turns == [1, 2, 3, 4]
+    assert second == AppendResult(appended=2, duplicates=0)
+    assert _transcript_turns(store.read_all()) == [1, 2, 3, 4, 5, 6]
+
+
+def test_reads_at_most_256_mib_when_read_to_end_given_no_budget() -> None:
+    assert MAX_TO_END_BYTES == 256 * 1_048_576
+
+
+def _transcript_turns(events: Sequence[Event]) -> list[object]:
+    return sorted(event.payload["turn"] for event in events if event.source == "transcript")
 
 
 def test_skips_and_counts_line_when_longer_than_line_limit(projects: Path) -> None:
