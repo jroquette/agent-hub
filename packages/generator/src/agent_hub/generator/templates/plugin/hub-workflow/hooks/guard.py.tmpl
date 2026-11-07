@@ -1283,6 +1283,19 @@ SHELL_DQ_ESCAPE = LazyPattern(r"\\([$`\"\\\n])")
 SHELL_CALL_END = "\n;&|()"
 CALL_PREFIX_WORDS = INFRA_PREFIX_WORDS | {"{", "!", "exec", "nohup"}
 ENV_VALUE_OPTIONS = INFRA_ENV_VALUE | {"-u", "--unset"}
+# Wrappers that run the call after their options, with the options that take the next word;
+# timeout's first operand is its duration.
+WRAPPER_VALUE_OPTIONS = {
+    "timeout": frozenset(("-s", "--signal", "-k", "--kill-after")),
+    "nice": frozenset(("-n", "--adjustment")),
+    "sudo": frozenset(("-u", "--user", "-g", "--group", "-C", "--close-from", "-D", "--chdir", "-h", "--host",
+                       "-p", "--prompt", "-r", "--role", "-t", "--type", "-U", "--other-user", "-T",
+                       "--command-timeout", "-R", "--chroot")),
+}
+# Messages given as a file's text: `$(cat <file>)` or `$(< file)`, read as -F's file.
+CAT_SUBSTITUTION = LazyPattern(r"\$\([ \t]*(?:cat[ \t]+|<[ \t]*)(['\"]?)([^\s'\"<>|;&()$`]+)\1[ \t]*\)")
+GITHUB_INPUT_REASON = "commits and PR text carry no AI attribution"
+WRITTEN_UNREAD_CAUSE = "this command writes it from what the guard does not read"
 GIT_READ_TIMEOUT = 2  # seconds for one git read: the branch a bare push sends, a commit's identities
 GIT_READS_CAP = 4  # git reads one command makes; past it a read asks
 # Seconds all git reads of one command take together: with the project extension's EXTENSION_TIMEOUT
@@ -1354,21 +1367,70 @@ def _dq_unescaped(found: re.Match[str]) -> str:
     return "" if found.group(1) == "\n" else found.group(1)
 
 
-def _shell_calls(cmd: str) -> tuple[list[list[tuple[str, bool]]], set[str]]:
+class _Call:
+    """What one call of a command does besides its words: the files its output redirections write
+    (each with whether it appends), whether it reads a file (`<`) or a here-document or
+    here-string, and whether what it writes is only text of the command (_from_text; a
+    here-document body that expands clears it)."""
+
+    def __init__(self) -> None:
+        self.writes: list[tuple[str, bool]] = []
+        self.reads = self.here = False
+        self.text = True
+
+
+def _from_text(words: list[tuple[str, bool]], call: _Call) -> bool:
+    """Whether a call's output is only text of the command: echo or printf, or cat of its stdin
+    (no file operand) fed by a here-document or here-string, with no expansion and no `<` file."""
+    at, _ = _program(words)
+    if at >= len(words) or call.reads or any(expanded for _, expanded in words[at:]):
+        return False
+    name = words[at][0].rsplit("/", 1)[-1]
+    operands = [text for text, _ in words[at + 1:] if text == "-" or not text.startswith("-")]
+    return name in ("echo", "printf") or (name == "cat" and call.here and all(text == "-" for text in operands))
+
+
+def _skip_bodies(cmd: str, pos: int, heredocs: list[tuple[str, bool, bool, _Call]]) -> int:
+    """Where the here-document bodies that start at pos end, read in order: each to a line that is
+    its delimiter (leading tabs dropped for `<<-`), or to cmd's end. A body whose delimiter is not
+    quoted expands: one that holds `$` or a backtick makes its call's text not the command's."""
+    for delimiter, strip, quoted, call in heredocs:
+        while pos < len(cmd):
+            end = cmd.find("\n", pos)
+            end = len(cmd) if end < 0 else end
+            line = cmd[pos:end]
+            pos = end + 1
+            if (line.lstrip("\t") if strip else line) == delimiter:
+                break
+            if not quoted and ("$" in line or "`" in line):
+                call.text = False
+    return min(pos, len(cmd))
+
+
+def _shell_calls(cmd: str) -> tuple[list[list[tuple[str, bool]]], dict[str, bool]]:
     """cmd's calls, each its words as (text, whether it holds an expansion) with quotes removed as
-    bash removes them and redirections left out, and the words redirections write to. A `#` at a
-    word's start comments to the line's end; a call ends at a newline, `;`, `&`, `|`, `(` or `)`,
-    but a `&` or `|` right after `<` or `>`, or a `&` before `>`, is the redirection's."""
+    bash removes them and redirections left out, and the files output redirections (`>`, `>>`,
+    `&>`) write to, each with whether every write puts only text of the command there (_from_text,
+    no append). A `#` at a word's start comments to the line's end; a call ends at a newline, `;`,
+    `&`, `|`, `(` or `)`, but a `&` or `|` right after `<` or `>`, or a `&` before `>`, is the
+    redirection's. A here-document's body (from the line after its `<<` to its delimiter) is the
+    text of its call, not calls, unless a call with one on that line holds an interpreter or shell
+    word (INTERPRETER), which runs it: then the bodies are read as calls."""
     calls: list[list[tuple[str, bool]]] = []
-    targets: set[str] = set()
+    writes: list[tuple[str, bool, _Call]] = []
     words: list[tuple[str, bool]] = []
     parts: list[str] = []
-    expanded = started = redirect = False
+    expanded = started = quoted = keep_bodies = False
+    redirect = ""  # the redirection operator whose word comes next
+    operator_end = -1  # where the last `<` or `>` ended: one right after it extends the operator
+    call = _Call()
+    heredocs: list[tuple[str, bool, bool, _Call]] = []  # (delimiter, `<<-`, quoted, its call) of this line
+    line_heredocs = 0  # how many of them the current call added
     pos = 0
     while pos <= len(cmd):
         piece = SHELL_PIECE.match(cmd, pos) if pos < len(cmd) else None
         text = piece.group(0) if piece else "\n"  # the end of cmd ends its last word and call
-        pos = piece.end() if piece else pos + 1
+        start, pos = pos, piece.end() if piece else pos + 1
         first = text[0]
         if text == "\\\n":
             continue
@@ -1381,28 +1443,50 @@ def _shell_calls(cmd: str) -> tuple[list[list[tuple[str, bool]]], set[str]]:
                 continue  # `&>file`: the `>` starts the redirection
             if started:
                 word = "".join(parts)
-                if redirect:
-                    targets.add(word)
-                    redirect = False
+                if redirect in ("<<", "<<-"):
+                    heredocs.append((word, redirect == "<<-", quoted, call))
+                    call.here = True
+                elif redirect == "<<<":
+                    call.here, call.text = True, call.text and not expanded
+                elif redirect == "<":
+                    call.reads = True
+                elif redirect:
+                    call.writes.append((word, redirect != ">"))
                 else:
                     words.append((word, expanded))
-            parts, expanded, started = [], False, False
+                redirect = ""
+            parts, expanded, started, quoted = [], False, False, False
             if first in "<>":
-                redirect = True
+                redirect = redirect + first if start == operator_end else first
+                operator_end = pos
+                if redirect == "<<" and cmd.startswith("-", pos):
+                    redirect, pos = "<<-", pos + 1
             elif first in SHELL_CALL_END:
-                redirect = False
+                redirect = ""
+                if call.writes:
+                    call.text = call.text and _from_text(words, call)
+                    writes.extend((target, append, call) for target, append in call.writes)
+                if len(heredocs) > line_heredocs:
+                    at = _program(words)[0]
+                    runs = any(INTERPRETER.match(word.rsplit("/", 1)[-1]) for word, _ in words[at:])
+                    keep_bodies, line_heredocs = keep_bodies or runs, len(heredocs)
                 if words:
                     calls.append(words)
-                words = []
+                words, call = [], _Call()
+                if first == "\n" and heredocs:
+                    pos = pos if keep_bodies else _skip_bodies(cmd, pos, heredocs)
+                    heredocs, keep_bodies, line_heredocs = [], False, 0
         elif first == "#" and not started:
             end = cmd.find("\n", pos - len(text))
             pos = len(cmd) if end < 0 else end
         else:
             started = True
             closed = len(text) > 1 and text[-1] == first
+            quoted = quoted or first in "'\"\\"
             if first == "'":
                 parts.append(text[1:-1] if closed else text[1:])
             elif text.startswith("$'"):
+                quoted = True
                 parts.append(text[2:-1] if len(text) > 2 and text[-1] == "'" else text[2:])
             elif first == '"':
                 inner = text[1:-1] if closed else text[1:]
@@ -1414,23 +1498,29 @@ def _shell_calls(cmd: str) -> tuple[list[list[tuple[str, bool]]], set[str]]:
             else:
                 expanded = expanded or first in "$`"
                 parts.append(text)
+    targets: dict[str, bool] = {}
+    for target, append, writer in writes:
+        targets[target] = targets.get(target, True) and not append and writer.text
     return calls, targets
 
 
 def _program(words: list[tuple[str, bool]]) -> tuple[int, dict[str, str | None]]:
     """The index of a call's program word, after its assignments, keywords (`if`, `then`, `{`, `!`)
-    and wrappers (`command`, `exec`, `time`, `env` and env's options), and the variables it sets
-    (None for a value that is an expansion)."""
+    and wrappers (`command`, `exec`, `time`, `env`, `timeout`, `nice`, `sudo` and their options,
+    timeout's duration), and the variables it sets (None for a value that is an expansion)."""
     env: dict[str, str | None] = {}
     at = 0
     while at < len(words):
         text, expanded = words[at]
         name = INFRA_ASSIGNMENT.match(text)
+        base = text.rsplit("/", 1)[-1]
         if name:
             env[text[: name.end()].rstrip("+=")] = None if expanded else text[name.end():]
-        elif text.rsplit("/", 1)[-1] == "env":
+        elif base == "env" or base in WRAPPER_VALUE_OPTIONS:
+            values = ENV_VALUE_OPTIONS if base == "env" else WRAPPER_VALUE_OPTIONS[base]
             while at + 1 < len(words) and words[at + 1][0].startswith("-"):
-                at += 2 if words[at + 1][0] in ENV_VALUE_OPTIONS else 1
+                at += 2 if words[at + 1][0] in values else 1
+            at += 1 if base == "timeout" else 0
         elif text not in CALL_PREFIX_WORDS:
             break
         at += 1
@@ -1519,10 +1609,13 @@ class _Reads:
     """One command's reads, bounded so they fit the hook's 10 s: git runs (each run once, by its
     arguments, folder, location options and the call's GIT_READ_VARIABLES; at most GIT_READS_CAP,
     each cut at GIT_READ_TIMEOUT, all within GIT_READS_BUDGET) and message files (at most
-    MESSAGE_READS_CAP); and targets, the words the command's redirections write to."""
+    MESSAGE_READS_CAP); targets, the files the command's redirections write to (_shell_calls); and
+    the command's text, for a target written from it."""
 
-    def __init__(self, targets: set[str]) -> None:
+    def __init__(self, targets: dict[str, bool], cmd: str) -> None:
         self.targets = targets
+        self.cmd = cmd
+        self.cmd_attributed: bool | None = None
         self.done: dict[tuple, tuple[int, str] | str | None] = {}
         self.messages = 0
         self.runs = 0
@@ -1616,14 +1709,21 @@ def _message_text(path: str) -> tuple[str | None, str | None]:
 def _message_files(files: list[tuple[str, bool]], folder: str | None, reason: str, reads: _Reads) -> Verdict:
     """A deny when a message file holds AI attribution; an ask when one cannot be read (stdin, an
     expansion, a folder that cannot be told, a file that is unreadable, not regular or over 1 MiB,
-    too many files). A file the same command writes is skipped: its text was read as the command's."""
+    too many files). A file the same command writes is not read: written only from the command's
+    text, that text is checked; written any other way, it asks."""
     verdict: Verdict = None
     for path, expanded in files:
         if path == "-":
             cause = "stdin"
         elif expanded:
             cause = "a shell expansion"
+        elif path in reads.targets and not reads.targets[path]:
+            cause = WRITTEN_UNREAD_CAUSE
         elif path in reads.targets:
+            if reads.cmd_attributed is None:
+                reads.cmd_attributed = ai_attributed(reads.cmd)
+            if reads.cmd_attributed:
+                return "deny", HELD_BY_REASON.format(reason, _infra_value(path))
             continue
         elif folder is None and not os.path.isabs(os.path.expanduser(path)):
             cause = "a folder the guard cannot read"
@@ -1742,6 +1842,12 @@ def _identity(sub: str, flags: list[tuple[str, tuple[str, bool] | None]], folder
     return unchecked
 
 
+def _substituted(values: list[tuple[str, bool]]) -> list[tuple[str, bool]]:
+    """The files message values give as their text (CAT_SUBSTITUTION), as message files."""
+    return [(found.group(2), False) for text, expanded in values if expanded
+            for found in CAT_SUBSTITUTION.finditer(text)]
+
+
 def _git_call(words: list[tuple[str, bool]], at: int, env: dict[str, str | None], here: str | None, cfg: Config,
               reads: _Reads) -> Verdict:
     """The change-flow rules on one git call (words[at] is git)."""
@@ -1769,8 +1875,11 @@ def _git_call(words: list[tuple[str, bool]], at: int, env: dict[str, str | None]
         if deleted:
             verdict = tighten(verdict, ("ask", PUSH_DELETE_REASON.format(_infra_value(deleted, _code_escaped))))
         return tighten(verdict, _bare_push(flags, operands, folder, options, env, cfg, reads))
+    if any(ai_attributed(text) for text, _ in args):  # git's own options may stand before the subcommand
+        return "deny", COMMIT_ATTRIBUTION_REASON
+    messages = [value for name, value in flags if name in ("-m", "--message") and value is not None]
     files = [value for name, value in flags if name in ("-F", "--file") and value is not None]
-    verdict = tighten(verdict, _message_files(files, folder, COMMIT_ATTRIBUTION_REASON, reads))
+    verdict = tighten(verdict, _message_files(files + _substituted(messages), folder, COMMIT_ATTRIBUTION_REASON, reads))
     if verdict and verdict[0] == "deny":
         return verdict
     return tighten(verdict, _identity(sub, flags, folder, options, env, cfg, reads))
@@ -1813,8 +1922,9 @@ def check_github_tool(tool: str, ti: dict, cfg: Config) -> Verdict:
 def _gh_api(args: list[tuple[str, bool]], here: str | None, cfg: Config, reads: _Reads) -> Verdict:
     """The change-flow rules on a gh api call: a merge (PUT or POST on pulls/<n>/merge, POST on merges,
     a graphql mergePullRequest or enablePullRequestAutoMerge) denies; then _github_fields on its -f/-F
-    fields (a -F value `@file` read as a message file), and a write to git/refs/heads/<protected>.
-    The method is -X/--method, else POST with fields or --input, else GET."""
+    fields (a -F value `@file` read as a message file), the --input file of a write read as a
+    message file, and a write to git/refs/heads/<protected>. The method is -X/--method, else POST
+    with fields or --input, else GET."""
     flags, operands = _parsed(args, GH_API_SHORT_VALUES, "", GH_API_LONG_VALUES)
     endpoint = operands[0][0] if operands else ""
     methods = [value[0].upper() for name, value in flags if name in ("-X", "--method") and value is not None]
@@ -1837,6 +1947,9 @@ def _gh_api(args: list[tuple[str, bool]], here: str | None, cfg: Config, reads: 
         else:
             named.append((name, value))
     writes = method != "GET"
+    inputs = [value for name, value in flags if name == "--input" and value is not None]
+    if writes and inputs:
+        verdict = tighten(verdict, _message_files(inputs, here, GITHUB_INPUT_REASON, reads))
     at = endpoint.find(GH_API_BRANCH_REF)
     if writes and at >= 0 and (at == 0 or endpoint[at - 1] == "/"):
         named.append(("branch", endpoint[at + len(GH_API_BRANCH_REF):].split("?", 1)[0].rstrip("/")))
@@ -1858,17 +1971,25 @@ def _interpreted(words: list[tuple[str, bool]], at: int) -> Verdict:
 
 
 def _gh_call(words: list[tuple[str, bool]], at: int, here: str | None, cfg: Config, reads: _Reads) -> Verdict:
-    """The change-flow rules on one gh call (words[at] is gh)."""
+    """The change-flow rules on one gh call (words[at] is gh); gh pr's verb follows its -R/--repo."""
     args = words[at + 1:]
-    if len(args) >= 2 and args[0][0] == "pr" and args[1][0] == "merge":
-        return "deny", MERGE_REASON.format("gh pr merge")
-    if len(args) >= 2 and args[0][0] == "pr" and args[1][0] in GH_PR_ARGUMENTS:
-        flags, _ = _parsed(args[2:], GH_PR_ARGUMENTS[args[1][0]], "", GH_LONG_VALUES)
-        files = [value for name, value in flags if name in ("-F", "--body-file") and value is not None]
-        return _message_files(files, here, PR_ATTRIBUTION_REASON, reads)
     if args and args[0][0] == "api":
         return _gh_api(args[1:], here, cfg, reads)
-    return None
+    if not args or args[0][0] != "pr":
+        return None
+    rest = args[1:]
+    while rest and rest[0][0].startswith("-"):
+        rest = rest[2:] if rest[0][0] in ("-R", "--repo") else rest[1:]
+    if rest and rest[0][0] == "merge":
+        return "deny", MERGE_REASON.format("gh pr merge")
+    if not rest or rest[0][0] not in GH_PR_ARGUMENTS:
+        return None
+    if any(ai_attributed(text) for text, _ in rest[1:]):
+        return "deny", PR_ATTRIBUTION_REASON
+    flags, _ = _parsed(rest[1:], GH_PR_ARGUMENTS[rest[0][0]], "", GH_LONG_VALUES)
+    bodies = [value for name, value in flags if name in ("-b", "--body") and value is not None]
+    files = [value for name, value in flags if name in ("-F", "--body-file") and value is not None]
+    return _message_files(files + _substituted(bodies), here, PR_ATTRIBUTION_REASON, reads)
 
 
 def check_change_flow(cmd: str, cfg: Config, cwd: str | None = None) -> Verdict:
@@ -1881,7 +2002,7 @@ def check_change_flow(cmd: str, cfg: Config, cwd: str | None = None) -> Verdict:
     calls, targets = _shell_calls(cmd)
     here: str | None = cwd or os.getcwd()
     exported: dict[str, str | None] = {}
-    reads = _Reads(targets)
+    reads = _Reads(targets, cmd)
     verdict: Verdict = None
     read_calls = 0
     for words in calls:
