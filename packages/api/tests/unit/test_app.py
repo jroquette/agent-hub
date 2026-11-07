@@ -88,6 +88,8 @@ BODIES: dict[tuple[str, str], object] = {
     ("post", "/api/v1/features/{project}/{slug}/change-requests/{n}/decision"): {
         "decision": "approved"
     },
+    # The owner sign-off is a strict item write (AGH-695): JSON even when bodiless.
+    ("post", "/api/v1/features/{project}/{slug}/owner-signoff"): {},
     ("post", "/api/v1/projects/{project}/config/environments"): {
         "op": "remove_environment",
         "scope": "local",

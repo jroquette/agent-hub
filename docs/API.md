@@ -529,6 +529,12 @@ ACs, with no tickets, and answers 409, writing nothing, for an unknown or withdr
 `delivery`, for `done` over an AC whose latest eval is NO-SHIP, when the note would not rank newer than an eval
 naming one of them (undated, or dated at or after now), and when not every eval was read. An empty list is 422.
 
+The sign-off is a strict write that needs `hub web`'s launch cookie, as a restore (`ITEM_WRITES`, [Local
+security](#local-security), AGH-695): this server's `Origin` and a JSON body, else 403 or 415; no cookie or a wrong
+one, 401; nothing is written then. A sign-off without a body is sent as `{}`. In the container it answers 409
+`hub_read_only`. So an agent session, which knows `AGENT_HUB_WEB_URL` but never the token, cannot sign off for the
+owner.
+
 `GET /api/v1/features/{project}/{slug}/mockups/{name}` (AGH-687) reads one UX design's mockup as a `UxMockup`:
 `project`, `slug`, `name`, `html` (the file as UTF-8 text), `size` (bytes) and `sha256`. `name` must match
 `^ux-[A-Za-z0-9][A-Za-z0-9._-]*\.html$` and be at most 200 characters, else 400 naming it, before anything is read.
@@ -1205,16 +1211,18 @@ run writes (`RUN_WRITES`: start, cancel, resume and abandon a run, a gate's deci
 change request's decision, and the scenario writes: a plan, a start, an investigation's session and answer, a
 finding's issue and inbox note; and, with AGH-507, a run's breakpoints, Step and Continue), the restores,
 the Publish, the scenario builder's save, proposal dismiss and action writes (AGH-521), a scenario's migrate
-(AGH-507) and its delete (AGH-596) (`ITEM_WRITES`) need that cookie too, as does the read of a scenario run's values
+(AGH-507) and its delete (AGH-596), and the owner sign-off (AGH-695) (`ITEM_WRITES`) need that cookie too, as does
+the read of a scenario run's values
 (`RUN_READS`, with the agent-session reads' Origin rules) ([Workflow run commands](#workflow-run-commands), [Skills](#skills),
-[Workflows](#workflows)); every other route is unchanged and needs no cookie. In the container (`AGENT_HUB_IN_CONTAINER=1`, where no token is
-minted and the hubs are mounted read-only) a restore, a publish or a scenario builder write (a migrate and a delete
-included) answers 409 `hub_read_only` before the cookie is checked, and a run write or the values read 404 `run-control-off`.
+[Workflows](#workflows), [Feature detail](#feature-detail)); every other route is unchanged and needs no cookie. In the container (`AGENT_HUB_IN_CONTAINER=1`, where no token is
+minted and the hubs are mounted read-only) a restore, a publish, a scenario builder write (a migrate and a delete
+included) or an owner sign-off answers 409 `hub_read_only` before the cookie is checked, and a run write or the
+values read 404 `run-control-off`.
 
 The learning decisions (accept, reject and, since AGH-687, their batch), which reach the network, the four workflow
 run commands and a workflow gate's decision,
-which start or stop processes, and the two restores and the Publish (`ITEM_WRITES`), which write into a hub's tree,
-take a strict rule
+which start or stop processes, and the two restores, the Publish and the owner sign-off (`ITEM_WRITES`), which write
+into a hub's tree, take a strict rule
 on top (`STRICT_WRITES` in `agent_hub/api/local_security.py`), checked before the route runs, so a refused request
 pushes, stores, writes and starts nothing:
 
