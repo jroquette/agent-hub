@@ -1,8 +1,8 @@
 """The owner's writes on the composed app (AGH-699, audit C-2).
 
-The Hub config writes, the hub actions, the learning decisions, the Linear key, a feature's
-nickname and the owner sign-off are made only from the owner's own page, which holds the launch
-cookie. This server's exact ``Origin`` is not enough: any local process can send it. So without
+The Hub config writes, the hub actions, the learning decisions, the Linear key and a feature's
+nickname are made only from the owner's own page, which holds the launch cookie (the owner
+sign-off is an item write, AGH-695). This server's exact ``Origin`` is not enough: any local process can send it. So without
 the cookie each one answers 401 before its route runs and nothing changes on disk, and in the
 container, where no token is minted, each one is off (404 ``owner-writes-off``), as
 ``docs/API.md`` (Local security) says.
@@ -72,12 +72,6 @@ OWNER_WRITES = [
         "/api/v1/feature-names",
         {"project": "demo", "slug": "demo-feature", "name": "Mallory"},
         id="feature-name",
-    ),
-    pytest.param(
-        "POST",
-        "/api/v1/features/demo/demo-feature/owner-signoff",
-        {"acs": ["AC-1"], "decision": "done"},
-        id="owner-signoff",
     ),
 ]
 

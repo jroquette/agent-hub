@@ -101,7 +101,6 @@ BODIES: dict[tuple[str, str], object] = {
     ("put", "/api/v1/projects/{project}/config/local"): {},
     ("put", "/api/v1/tracker/linear"): {"api_key": "lin_api_" + "x" * 40},
     ("put", "/api/v1/feature-names"): {"project": "demo", "slug": "demo-feature", "name": "Demo"},
-    ("post", "/api/v1/features/{project}/{slug}/owner-signoff"): {},
 }
 OWN_ORIGIN = {"Origin": "http://127.0.0.1:7420"}
 QUERIES = {
