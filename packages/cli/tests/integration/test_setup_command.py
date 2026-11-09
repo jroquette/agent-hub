@@ -162,8 +162,15 @@ def _edit_hub_json(hub: Path, change: Callable[[dict[str, Any]], None]) -> None:
 
 class TestFixtures:
     def test_logs_env_and_runs_git_when_env_traced_git_used(
-        self, demo_workspace: Workspace, env_traced_git: TracedGit, tmp_path: Path
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        tmp_path: Path,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        # The second call expects no key: one exported in the caller's shell must not reach it.
+        monkeypatch.delenv("LINEAR_API_KEY", raising=False)
         demo_workspace.rewrite_github()
         demo_workspace.init_hub_repo("git@github.com:acme/demo-hub.git")
         git = str(env_traced_git.bin_dir / "git")
