@@ -117,9 +117,10 @@ ALLOW_BASH = [
 type Evaluate = Callable[..., list[Any]]
 
 
-def bash(command: str, *, cfg: bool = True) -> str:
-    """The expression ``check_bash(command[, cfg])``."""
-    return f"check_bash({command!r}{', cfg' if cfg else ''})"
+def bash(command: str, *, cfg: bool = True, cwd: Path | None = None) -> str:
+    """The expression ``check_bash(command[, cfg][, cwd=cwd])``."""
+    folder = f", cwd={str(cwd)!r}" if cwd is not None else ""
+    return f"check_bash({command!r}{', cfg' if cfg else ''}{folder})"
 
 
 def file(tool: str, tool_input: Mapping[str, str], *, cfg: bool = True) -> str:
@@ -3362,6 +3363,323 @@ def test_asks_when_hub_checkout_named_apart_from_project(
         or "brain/ is curated" not in verdict[1]
         or "@hub/brain/decisions" in verdict[1]
     ] == []
+
+
+# The Bash rule for the curated brain reads each word after a write as a path and asks only when
+# it lands in the hub's brain/ outside its open folders, or is brain/ itself, as the file tools'
+# rule does (_brain_rel). It used to ask on any `brain/` in the text, so a cp and a redirect into
+# the web app's Brain screen (apps/web/src/screens/brain/) were refused in a repo worktree. A
+# relative word is read from the event's cwd, or from a leading `cd <folder> &&`; when the command
+# changes folder any other way, or the word holds $ or a backtick, it is read as text, as before.
+BRAIN_CURATED_REASON = (
+    "brain/ is curated: agents write only now.md, journal/, _inbox/, auto/ and features/; "
+    "propose via /learn or confirm"
+)
+BRAIN_UNRESOLVED_REASON = BRAIN_CURATED_REASON + (
+    " ({} may be the hub's brain/: the guard reads a word with $ or a backtick, or a relative one"
+    " in a command that changes folder other than by a leading `cd <folder> &&`, as text; a literal"
+    " path outside the hub's brain/ passes)"
+)
+BRAIN_SCREEN = "apps/web/src/screens/brain/x.tsx"
+BRAIN_DECISION = "brain/decisions/x.md"
+BRAIN_OPEN_PATHS = (
+    "brain/_inbox/x.md",
+    "brain/journal/2026/11/06.md",
+    "brain/now.md",
+    "brain/features/dem-1-x/plan.md",
+    "brain/auto/workspace/x.md",
+)
+
+
+def repo_worktree(workspace: Path) -> Path:
+    """A worktree of the workspace's ``app`` repo, as ``hub worktree`` places it."""
+    return workspace / "app" / ".claude" / "worktrees" / "dem-1-x"
+
+
+def test_passes_bash_write_when_brain_folder_is_not_hubs(
+    evaluate: Evaluate, workspace: Path
+) -> None:
+    """Regression: AGH-720."""
+    hub, app, worktree = workspace / "demo-hub", workspace / "app", repo_worktree(workspace)
+    runs = [
+        *(
+            (write.format(BRAIN_SCREEN), folder)
+            for write in BASH_WRITES
+            for folder in (worktree, app)
+        ),
+        (f"git show HEAD:{BRAIN_SCREEN} > {BRAIN_SCREEN}", worktree),
+        (f"cp /tmp/x {worktree / BRAIN_SCREEN}", hub),
+        ("rm -rf apps/web/src/screens/brain", worktree),
+        # a brain/ whose parent holds no hub.json, in a curated-looking path
+        (f"echo x > vendor/{BRAIN_DECISION}", app),
+        # a leading cd: to a relative folder, an absolute one with a blank, or home
+        ("cd apps/web/src/screens && cp /tmp/x brain/x.tsx", worktree),
+        ("cd ../.. && echo x > apps/web/src/screens/brain/x.tsx", worktree / "apps" / "web"),
+        (f'cd "{worktree}/a b" && cp /tmp/x {BRAIN_SCREEN}', hub),
+        (f"cd ~ && echo x > {BRAIN_DECISION}", worktree),
+        # a chain break after the leading cd: the word is read from both folders
+        (f"cd {worktree} && make; cp /tmp/x {BRAIN_SCREEN}", hub),
+    ]
+    calls = [bash(command, cwd=folder) for command, folder in runs]
+    # without the event's cwd, a leading cd to an absolute folder still gives it
+    calls.append(bash(f"cd {worktree} && cp /tmp/x {BRAIN_SCREEN}"))
+
+    verdicts = evaluate(calls)
+
+    assert dict(zip(calls, verdicts, strict=True)) == dict.fromkeys(calls)
+
+
+def test_asks_when_bash_write_lands_in_hub_curated_brain(
+    evaluate: Evaluate, workspace: Path
+) -> None:
+    """Regression: AGH-720 (the hub's curated folders still ask, however the path is reached)."""
+    hub, app, worktree = workspace / "demo-hub", workspace / "app", repo_worktree(workspace)
+    runs = [
+        *(
+            (write.format(BRAIN_DECISION), folder)
+            for write in BASH_WRITES
+            for folder in (hub, hub / WORKTREE)
+        ),
+        (f"echo x > {hub / BRAIN_DECISION}", worktree),
+        (f"cp /tmp/x {hub / WORKTREE / 'brain' / 'index.md'}", worktree),
+        (f"cd ../../../../demo-hub && echo x > {BRAIN_DECISION}", worktree),
+        (f"cd '{hub}' && cp /tmp/x brain/index.md", worktree),
+        ("cp /tmp/x brain/_inbox/../decisions/x.md", hub),
+        ("cp --target-directory=brain/decisions /tmp/x", hub),
+        (f"echo x >| {BRAIN_DECISION}", hub),
+        ('echo x > br""ain/decisions/x.md', hub),
+        ("rm -rf brain/journal", hub),
+        ("echo x > x.md", hub / "brain" / "decisions"),
+        # brain/ itself
+        ("rm -rf brain", hub),
+        ("cp /tmp/x brain/", hub),
+        ("cp /tmp/x ../demo-hub/brain/", app),
+        # after a `;`, a newline, `||` or a lone `&`, a command may run in the session's folder: the
+        # leading cd failed, or its chain went to the background
+        (f"cd ../app && sleep 1 & echo x > {BRAIN_DECISION}", hub),
+        (f"cd ../app-typo && make; echo x >> {BRAIN_DECISION}", hub),
+        (f"cd ../app && make\necho x > {BRAIN_DECISION}", hub),
+        (f"cd /nonexistent && true || echo x > {BRAIN_DECISION}", hub),
+    ]
+
+    verdicts = evaluate([bash(command, cwd=folder) for command, folder in runs])
+
+    assert dict(zip(runs, verdicts, strict=True)) == dict.fromkeys(
+        runs, ("ask", BRAIN_CURATED_REASON)
+    )
+
+
+def test_passes_bash_write_when_hub_brain_folder_open(evaluate: Evaluate, workspace: Path) -> None:
+    hub = workspace / "demo-hub"
+    runs = [
+        *((write.format(path), hub) for write in BASH_WRITES for path in BRAIN_OPEN_PATHS),
+        (f"echo x > {hub / 'brain' / '_inbox' / 'x.md'}", repo_worktree(workspace)),
+        ("echo x > x.md", hub / "brain" / "_inbox"),
+    ]
+
+    verdicts = evaluate([bash(command, cwd=folder) for command, folder in runs])
+
+    assert dict(zip(runs, verdicts, strict=True)) == dict.fromkeys(runs)
+
+
+def test_asks_on_text_when_bash_write_folder_unknown(evaluate: Evaluate, workspace: Path) -> None:
+    """A word with $ or a backtick, or a relative one when its folder is not known (no cwd, or a
+    command that changes folder other than by a leading `cd <folder> &&`), is read as text, as
+    before: it asks on a `brain/` part outside the open folders (`..` parts resolved), naming the
+    word, capped at 100 characters."""
+    app, worktree = workspace / "app", repo_worktree(workspace)
+    decision = BRAIN_DECISION
+    long_word = "$HUB/" + "a/" * 60 + decision
+    asked = [
+        ('echo x > "$HUB/brain/decisions/x.md"', worktree, "$HUB/brain/decisions/x.md"),
+        ("cp /tmp/x `pwd`/brain/decisions/x.md", worktree, "`pwd`/brain/decisions/x.md"),
+        (
+            "cp /tmp/x $HUB/brain/_inbox/../decisions/x.md",
+            worktree,
+            "$HUB/brain/_inbox/../decisions/x.md",
+        ),
+        (f"echo x > {long_word}", worktree, long_word[:97] + "..."),
+        # a cd the guard does not follow: not a literal, not leading, in a subshell or a child shell
+        (f'cd "$HUB" && echo x > {decision}', worktree, decision),
+        (f"cd $WT && cp /tmp/x {BRAIN_SCREEN}", worktree, BRAIN_SCREEN),
+        (f'cd ../"demo-hub" && echo x > {decision}', app, decision),
+        (f"cd - && echo x > {decision}", app, decision),
+        (f"pushd ../demo-hub && echo x > {decision}", app, decision),
+        (f"true;cd ../demo-hub && echo x > {decision}", app, decision),
+        (f"make&&cd ../demo-hub&&echo x > {decision}", app, decision),
+        (
+            f"(cd apps && make) && cd ../../../../demo-hub && cp /tmp/x {decision}",
+            worktree,
+            decision,
+        ),
+        (f"bash -c 'cd ../demo-hub && echo x > {decision}'", app, decision),
+        (f'eval "cd ../demo-hub"; echo x > {decision}', app, decision),
+        # a cd spelled with quotes or a backslash
+        (f"c''d ../demo-hub && echo x > {decision}", app, decision),
+        (f'"c"d ../demo-hub && echo x > {decision}', app, decision),
+        (f"c\\d ../demo-hub && echo x > {decision}", app, decision),
+        # an option or a variable that sets another folder
+        (f"git -C ../demo-hub rm {decision}", app, decision),
+        (f"env --chdir=../demo-hub sed -i s/a/b/ {decision}", app, decision),
+        (f"GIT_WORK_TREE=../demo-hub git rm {decision}", app, decision),
+        (f"pnpm --dir ../demo-hub exec rm {decision}", app, decision),
+        (f"make -sC ../demo-hub && rm {decision}", app, decision),
+        # no cwd in the event
+        (f"echo x > {BRAIN_SCREEN}", None, BRAIN_SCREEN),
+    ]
+    passed = [
+        ('echo x > "$HUB/brain/_inbox/x.md"', worktree),
+        ('cd "$HUB" && echo x > brain/journal/2026/11/06.md', worktree),
+        ("cd $WT && cp /tmp/x apps/web/src/screens/x.tsx", worktree),
+        ("echo x > brain/_inbox/x.md", None),
+    ]
+    calls = [bash(command, cwd=folder) for command, folder, _ in asked]
+    calls += [bash(command, cwd=folder) for command, folder in passed]
+
+    verdicts = evaluate(calls)
+
+    expected = [("ask", BRAIN_UNRESOLVED_REASON.format(word)) for _, _, word in asked]
+    expected += [None] * len(passed)
+    assert dict(zip(calls, verdicts, strict=True)) == dict(zip(calls, expected, strict=True))
+
+
+def test_passes_hook_when_agent_in_repo_worktree_writes_brain_screen(
+    workspace: Path, guard: Guard
+) -> None:
+    """Regression: AGH-720. The hook, in auto mode, on the event's cwd: the writes that were denied
+    in a repo worktree pass, and the hub's curated folders still ask (a deny in auto mode)."""
+    hub, worktree = workspace / "demo-hub", repo_worktree(workspace)
+    (worktree / BRAIN_SCREEN).parent.mkdir(parents=True)
+    auto = {"permission_mode": "auto"}
+    screen = [
+        bash_run(command, worktree)
+        for command in (
+            f"cp /tmp/x {BRAIN_SCREEN}",
+            f"git show HEAD:{BRAIN_SCREEN} > {BRAIN_SCREEN}",
+            f"echo x | tee {BRAIN_SCREEN}",
+            f"cd {worktree} && cp /tmp/x {BRAIN_SCREEN}",
+        )
+    ]
+    curated = [bash_run(write.format(BRAIN_DECISION), hub) for write in BASH_WRITES]
+    curated += [bash_run(f"echo x > {hub / BRAIN_DECISION}", worktree)]
+
+    verdicts = guard(hub / HOOKS, [(event | auto, cwd) for event, cwd in [*screen, *curated]])
+
+    assert verdicts[: len(screen)] == [None] * len(screen)
+    assert [verdict and verdict[0] for verdict in verdicts[len(screen) :]] == ["deny"] * len(
+        curated
+    )
+    assert [
+        verdict
+        for verdict in verdicts[len(screen) :]
+        if not verdict or not verdict[1].startswith("[hub guard] " + BRAIN_CURATED_REASON)
+    ] == []
+
+
+# The rule's work is linear in the command's length: the child counts the characters of every
+# path _brain_write hands to normpath and to _brain_rel, on the shapes that were slow in review
+# (a long leading folder joined to many words; many cds after one; a folder inside brain/ with
+# many words; many brain/ words). Each word is read in a few forms (_tokens), and the folders
+# joined to words add at most BRAIN_JOIN_CAP characters, so the count stays under a fixed multiple
+# of the length plus the cap. The child builds each command from (text, times) pieces, each text
+# formatted with its index, so the words differ (equal words are checked once).
+BRAIN_READS = """
+import json, posixpath
+from pathlib import Path
+import guard
+from hubhooks import load_config
+hub = Path(sys.argv[1])
+cfg = load_config(hub)
+read = []
+normpath, brain_rel = posixpath.normpath, guard._brain_rel
+def counted_normpath(path):
+    read.append(len(path))
+    return normpath(path)
+def counted_brain_rel(path, cfg):
+    read.append(len(path))
+    return brain_rel(path, cfg)
+guard.os.path.normpath = counted_normpath
+guard._brain_rel = counted_brain_rel
+found = []
+for pieces, cwd in json.loads(sys.argv[2]):
+    command = "".join(text.format(i) for text, times in pieces for i in range(times))
+    del read[:]
+    verdict = guard._brain_write(command, cfg, cwd)
+    found.append([verdict and verdict[0], sum(read), len(command)])
+print(json.dumps([found, guard.BRAIN_JOIN_CAP]))
+"""
+
+
+def test_reads_linear_characters_when_brain_write_command_long(
+    workspace: Path, *, hook_python: str, run_python: Callable[..., Any], tmp_path: Path
+) -> None:
+    hub, worktree = workspace / "demo-hub", repo_worktree(workspace)
+    shapes = [
+        (
+            [("cd /", 1), ("a/", 20000), ("brain/x && cp /tmp/x ", 1), ("f{} ", 20000)],
+            worktree,
+            None,
+        ),
+        (
+            [("cd /", 1), ("a", 4000), (" && ", 1), ("cd . ; ", 12000), ("echo > brain/x", 1)],
+            worktree,
+            "ask",
+        ),
+        ([("cp /tmp/x ", 1), ("w{} ", 12000)], hub / "brain" / "_inbox", None),
+        ([("cp /tmp/x ", 1), ("brain/{} ", 9000)], worktree, None),
+    ]
+    batch = [[pieces, str(folder)] for pieces, folder, _ in shapes]
+
+    found, cap = run_python(
+        hook_python,
+        BRAIN_READS,
+        path=hub / HOOKS,
+        args=[str(hub), json.dumps(batch)],
+        cwd=tmp_path,
+        env={"HOME": str(tmp_path)},
+    )
+
+    assert [verdict for verdict, _, _ in found] == [verdict for _, _, verdict in shapes]
+    assert [length > 60000 for _, _, length in found] == [True] * len(shapes)
+    assert [read <= cap + 10 * length for _, read, length in found] == [True] * len(shapes)
+
+
+# The old rule's regex took 13 s on 3.9 on these 80 KB of dense redirects, past the hook's 10 s
+# timeout; the whole Bash check now takes a fraction of the budget.
+BRAIN_TIMED = """
+import json, time
+from pathlib import Path
+from guard import check_bash
+from hubhooks import load_config
+hub, cwd = Path(sys.argv[1]), sys.argv[2]
+command = "echo " + "> a " * 20000 + "brain/_inbox/x"
+cfg = load_config(hub)
+started = time.perf_counter()
+verdict = check_bash(command, cfg, cwd)
+print(json.dumps([verdict, time.perf_counter() - started, len(command)]))
+"""
+BRAIN_RULE_BUDGET = 2.0  # seconds
+
+
+@pytest.mark.serial
+def test_decides_in_time_when_bash_write_command_dense(
+    workspace: Path, *, hook_python: str, run_python: Callable[..., Any], tmp_path: Path
+) -> None:
+    hub = workspace / "demo-hub"
+
+    verdict, seconds, length = run_python(
+        hook_python,
+        BRAIN_TIMED,
+        path=hub / HOOKS,
+        args=[str(hub), str(repo_worktree(workspace))],
+        cwd=tmp_path,
+        env={"HOME": str(tmp_path)},
+        timeout=GUARD_HOOK_TIMEOUT,
+    )
+
+    assert verdict is None
+    assert length > 80000
+    assert seconds < BRAIN_RULE_BUDGET
 
 
 # Review fixes: each only adds a path form the guard sees through, or an ask.
