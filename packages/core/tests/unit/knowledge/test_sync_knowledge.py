@@ -4,7 +4,7 @@ D-reindex, D-version, D-skipreport, AM-1): over the in-memory index and checkout
 import pytest
 
 from agent_hub.core.knowledge import document_rules
-from agent_hub.core.knowledge.document_rules import RULE_MATCH, THROUGH_LINK, UNREADABLE
+from agent_hub.core.knowledge.document_rules import NOT_UTF8, THROUGH_LINK, UNREADABLE
 from agent_hub.core.knowledge.knowledge_index import (
     INDEX_VERSION,
     MAX_BACKLINKS,
@@ -41,6 +41,10 @@ class _CountingIndex(InMemoryKnowledgeIndex):
 def _token() -> str:
     """A GitHub token shape r1 matches, built from parts so no literal is a token."""
     return "gh" + "p_" + "A1b2C3d4E5f6G7h8" * 2 + "xyzw"
+
+
+# A text r1 never matches that is not UTF-8: a file skipped for its text.
+LATIN: bytes = b"marker \xe9"
 
 
 def _checkout(**files: str) -> FakeKnowledgeCheckout:
@@ -100,9 +104,10 @@ def test_updates_fingerprint_only_when_hash_unchanged() -> None:
 
 def test_reports_skipped_file_once_when_unchanged() -> None:
     index = InMemoryKnowledgeIndex()
-    checkout = _checkout(leak=f"marker {_token()}")
+    checkout = _checkout()
+    checkout.write("brain/playbooks/latin.md", LATIN)
     checkout.skip_when_listed(
-        "brain/link.md", THROUGH_LINK, fingerprint=checkout.fingerprint("brain/playbooks/leak.md")
+        "brain/link.md", THROUGH_LINK, fingerprint=checkout.fingerprint("brain/playbooks/latin.md")
     )
 
     first = sync_knowledge(index, checkout, HUB)
@@ -110,11 +115,31 @@ def test_reports_skipped_file_once_when_unchanged() -> None:
 
     assert [(skip.path, skip.reason) for skip in first.skipped] == [
         ("brain/link.md", THROUGH_LINK),
-        ("brain/playbooks/leak.md", RULE_MATCH),
+        ("brain/playbooks/latin.md", NOT_UTF8),
     ]
     assert second.skipped == ()
     assert second.read == 0
     assert _paths(index, "marker") == []
+
+
+def test_indexes_redacted_text_when_secret_rule_matches() -> None:
+    index = _CountingIndex()
+    checkout = _checkout(leak=f"marker\nUse {_token()} to push.\n")
+
+    report = sync_knowledge(index, checkout, HUB)
+    hits = index.search(HUB, ("marker",), limit=MAX_RESULTS)
+    # Another token of the same shape: the text kept is the same, so only the fingerprint moves.
+    rotated = _token().replace("A1", "Z9")
+    checkout.write("brain/playbooks/leak.md", f"marker\nUse {rotated} to push.\n".encode())
+    again = sync_knowledge(index, checkout, HUB)
+
+    assert (report.indexed, report.skipped) == (1, ())
+    assert [hit.path for hit in hits] == ["brain/playbooks/leak.md"]
+    assert hits[0].snippet == "marker Use [redacted: github token] to push."
+    assert (again.read, again.indexed, again.skipped) == (1, 0, ())
+    assert set(index.applied[-1].touched) == {"brain/playbooks/leak.md"}
+    assert _token() not in repr(index.applied)
+    assert rotated not in repr(index.applied)
 
 
 def test_reports_unreadable_file_again_when_unchanged() -> None:
@@ -176,7 +201,8 @@ def test_drops_row_when_file_no_longer_listed() -> None:
 
 def test_rebuilds_hub_when_reindex_requested() -> None:
     index = InMemoryKnowledgeIndex()
-    checkout = _checkout(a="alpha", leak=f"marker {_token()}")
+    checkout = _checkout(a="alpha")
+    checkout.write("brain/playbooks/latin.md", LATIN)
     other = _checkout(z="alpha")
     sync_knowledge(index, other, OTHER)
     sync_knowledge(index, checkout, HUB)
@@ -187,7 +213,7 @@ def test_rebuilds_hub_when_reindex_requested() -> None:
     report = sync_knowledge(index, checkout, HUB, rebuild=True)
 
     assert (report.listed, report.read, report.indexed) == (2, 2, 1)
-    assert [skip.path for skip in report.skipped] == ["brain/playbooks/leak.md"]
+    assert [skip.path for skip in report.skipped] == ["brain/playbooks/latin.md"]
     assert _paths(index, "omega") == ["brain/playbooks/a.md"]
     assert _paths(index, "alpha") == []
     other_hits = index.search(OTHER, ("alpha",), limit=MAX_RESULTS)

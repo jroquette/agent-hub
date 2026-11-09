@@ -425,7 +425,9 @@ Two `GET` routes (`KNOWLEDGE_PATHS`, AGH-393) read a project's hub through the k
 `hub mcp` use ([ADR 0044](adr/0044-team-memory-git-source-local-index-and-hub-mcp.md)). Each first syncs the index
 with the checkout of the project's registered hub (`git ls-files` of its `brain/` and of each repo's `docs/`; only new
 or changed files are read), then answers. The rows are keyed by the registered hub's path, so a hub registered at its
-main checkout shares its rows with `hub search`. Neither route writes the hub or a repo.
+main checkout shares its rows with `hub search`. Neither route writes the hub or a repo. The index holds each file's
+text redacted with `r1` (a match becomes `[redacted: <kind>]`), so titles and snippets never show a secret; a file is
+`skipped` only when it is over 256 KiB, not UTF-8, a link, not a regular file or unreadable (AGH-696).
 
 - `GET /api/v1/projects/{project}/knowledge/search?q=&kind=&limit=` → `KnowledgeSearch`: `project`, `query`,
   `results` (each `path`, `kind`, `title`, `status`, `provenance`, a one-line plain-text `snippet`), `sync` (`listed`,

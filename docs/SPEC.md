@@ -528,7 +528,11 @@ A web app reads the hubs and the agents' events and answers five questions, one 
 Git stays the source of truth. Each developer's database holds a derived full-text index (SQLite FTS5) of the hub's
 `brain/` (except `brain/auto/`) and each repo's `docs/`, synced with the checkout on every search and rebuilt by
 `hub brain reindex`. `hub search` and the MCP server `hub mcp` (tools `search`, `read`, `propose`) query it; every
-result names its path and a snippet. A query is its runs of letters and digits, all required, never FTS5 syntax: one
+result names its path and a snippet. A text a rule of the redaction set `r1` matches is indexed, and served by `read`,
+with each match replaced by its `[redacted: <kind>]` marker, as ingestion does (AGH-696,
+[ADR 0058](adr/0058-knowledge-index-keeps-redacted-text.md)): no secret enters the index,
+and a placeholder such as `?token=<token>` costs one marker instead of the whole file. A file over 256 KiB or not
+UTF-8 is skipped and named. A query is its runs of letters and digits, all required, never FTS5 syntax: one
 with no word (`!!!`, `(`) exits 2, and one that starts with `-` goes after `--` (`hub search -- -foo`). `propose`
 writes a new `brain/_inbox/` note on a branch `<prefix>learning-propose-<slug>` and opens a hub pull request through
 `hub_git`, never the default branch; its `kind` names the brain folder the note would join (`learning`, `playbook`,
@@ -999,8 +1003,10 @@ before anything is appended, and the data stays on the machine in v1:
 - **Outside the events** (not an exception to the rules above, which are about what sessions and hooks send): the
   database also keeps the text of hub files in two derived stores, item versions ([ADR 0039](adr/0039-item-versions-and-server-writes-to-the-hub.md))
   and the knowledge index ([ADR 0044](adr/0044-team-memory-git-source-local-index-and-hub-mcp.md)), both read from
-  files the developer already has and kept out when a rule of the redaction set `r1` matches (`has_secret_match`); no
-  transcript or session content enters them.
+  files the developer already has. Item versions keep out a unit when a rule of the redaction set `r1` matches
+  (`has_secret_match`); the knowledge index keeps a file's text redacted with `r1`, every field of its row (title,
+  frontmatter values, body, links and hash) taken from the redacted text (AGH-696). No transcript or session content
+  enters them.
 
 **Payload kept** (every short text is redacted, then truncated; "chars" are characters):
 
@@ -1208,7 +1214,8 @@ Continuity between sessions comes from the brain and the summaries, not from rer
 - The team shares by `git pull`; there is no central store. Each developer's index (SQLite FTS5, in the database
   `hub web` uses) is derived from the checkout, synced on each search and disposable (`hub brain reindex`).
 - Agents reach it through `hub mcp`, a stdio MCP server that `hub sync` declares in the hub's `.mcp.json`: `search`
-  (always with path and snippet), `read` (brain and docs only) and `propose` (a hub pull request through `hub_git`
+  (always with path and snippet), `read` (brain and docs only, the text as indexed: redacted with `r1`,
+  [ADR 0058](adr/0058-knowledge-index-keeps-redacted-text.md)) and `propose` (a hub pull request through `hub_git`
   on `<prefix>learning-propose-<slug>`, never the default branch). The app repos get no MCP configuration, so direction 2 holds.
 - `hub mcp` sends server instructions on connect: search the brain for the task's topic in 2 to 4 key words before planning,
   `read` what matters, weigh `kind` and `status`, file learnings with `propose`, and fall back to `./hub search`

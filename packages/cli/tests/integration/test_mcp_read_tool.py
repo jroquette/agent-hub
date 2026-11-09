@@ -203,7 +203,6 @@ NOT_ALLOWED = "path not allowed"
         ("brain/big.md", "larger than 256 KiB"),
         ("brain/latin.md", "not UTF-8"),
         ("brain/ignored.md", "not tracked or ignored by git"),
-        ("brain/_inbox/leak.md", "matches a secret rule"),
     ],
 )
 def test_refuses_path_when_rule_breaks(
@@ -218,6 +217,37 @@ def test_refuses_path_when_rule_breaks(
     assert text_of(result) == f"read: {reason}"
     assert CONTENT not in result.model_dump_json()
     assert secret_token() not in result.model_dump_json()
+
+
+def test_reads_redacted_text_when_secret_rule_matches(
+    knowledge_hub: KnowledgeHubFactory, tmp_path: Path
+) -> None:
+    spec = b"# Spec\n\nIt prints `http://127.0.0.1:<port>/?token=<token>` at start.\n"
+    hub = knowledge_hub(
+        {
+            "brain/_inbox/leak.md": f"# Leak\n\n{CONTENT} {secret_token()}\n".encode(),
+            "demo-api/docs/SPEC.md": spec,
+        }
+    )
+
+    leak, spec_read = served(
+        hub_env(hub, tmp_path),
+        ("read", {"path": "brain/_inbox/leak.md"}),
+        ("read", {"path": "demo-api/docs/SPEC.md"}),
+    )
+
+    assert found_by(leak) == {
+        "path": "brain/_inbox/leak.md",
+        "kind": "inbox",
+        "title": "Leak",
+        "status": None,
+        "provenance": None,
+        "text": f"# Leak\n\n{CONTENT} [redacted: github token]\n",
+    }
+    assert secret_token() not in leak.model_dump_json()
+    assert found_by(spec_read)["text"] == (
+        "# Spec\n\nIt prints `http://127.0.0.1:<port>/?token=[redacted: secret] at start.\n"
+    )
 
 
 def test_refuses_fifo_without_blocking_when_read(
