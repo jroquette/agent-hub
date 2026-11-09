@@ -346,7 +346,7 @@
     "plugin/hub-workflow/hooks/event_sensor.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "7f35221e775e749a16432715675fa13f2f3ac7039669fc5b97f1cea37b811563"
+      "sha256": "2bf801615ee93997c23b0b3fc4c50d3ef193669fcdaf9526cc833849ffd2b1ac"
     },
     "plugin/hub-workflow/hooks/guard.py": {
       "executable": true,
