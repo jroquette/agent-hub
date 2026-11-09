@@ -41,6 +41,11 @@ def test_uses_projects_variable_when_absolute(tmp_path: Path) -> None:
     assert claude_projects_root(environ) == tmp_path / "projects"
 
 
+def test_raises_when_no_home_for_projects_root_resolvable() -> None:
+    with pytest.raises(HomeDirectoryNotFoundError):
+        claude_projects_root({"HOME": ""}, account_home=lambda: None)
+
+
 def test_raises_when_projects_variable_relative() -> None:
     with pytest.raises(ProjectsRootError):
         claude_projects_root({"AGENT_HUB_CLAUDE_PROJECTS": "claude/projects", "HOME": "/home/x"})

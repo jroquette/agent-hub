@@ -330,6 +330,20 @@ def test_exits_one_when_no_home_directory_found(
     assert served.app is None
 
 
+def test_exits_one_when_no_home_directory_found_and_config_home_set(
+    served: ServedApp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # CI runners set XDG_CONFIG_HOME, so the registry needs no home; the projects root still does.
+    monkeypatch.setattr(web_command, "account_home_directory", lambda: None)
+    env = {"HOME": "", "XDG_DATA_HOME": "", "XDG_CONFIG_HOME": str(tmp_path / "config")}
+
+    result = _web(["--port", str(_free_port())], env=env)
+
+    assert result.exit_code == 1
+    assert result.stderr.startswith("error: ")
+    assert served.app is None
+
+
 def test_serves_wired_routes_on_its_database_when_started(
     served: ServedApp, tmp_path: Path
 ) -> None:
