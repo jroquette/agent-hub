@@ -981,13 +981,27 @@ export function ScenarioBuilder({
     setAwaiting(true);
     setDescribing(false);
   };
-  const proposed = offered?.document && !tree ? toDocument(offered.document) : null;
+  // Read once per proposal (the query keeps its answer while it is equal), not on each render:
+  // programOf names each If and At the same time afresh, so a program read again would remount
+  // those blocks with their rows, drop the focus in them and lose a click between its press and
+  // its release.
+  const proposed = useMemo(
+    () => (offered?.document && !tree ? toDocument(offered.document) : null),
+    [offered, tree],
+  );
   // Written as blocks: the proposal's stages, and its changes by block address.
-  const proposedTree = offered?.document && tree ? toTreeDocument(offered.document) : null;
+  const proposedTree = useMemo(
+    () => (offered?.document && tree ? toTreeDocument(offered.document) : null),
+    [offered, tree],
+  );
   // A proposal for a scenario written as blocks that holds no stages (a graph of `nodes`, the
   // other format): reviewed as it is, every stage is removed.
   const proposedGraph = proposedTree !== null && !Array.isArray(proposedTree.stages);
   const theirStages = useMemo(() => (proposedTree ? stagesOf(proposedTree) : null), [proposedTree]);
+  const theirProgram = useMemo(
+    () => (proposed ? programOf(proposed.nodes).main : null),
+    [proposed],
+  );
   const proposalText = useMemo(() => JSON.stringify(proposedTree), [proposedTree]);
   const rawText = JSON.stringify(raw);
   const underway =
@@ -1202,9 +1216,7 @@ export function ScenarioBuilder({
         </div>
       </section>
     ) : null;
-  const reviewProgram = underReview
-    ? (theirStages ?? (proposed ? programOf(proposed.nodes).main : null))
-    : null;
+  const reviewProgram = underReview ? (theirStages ?? theirProgram) : null;
 
   // Keys on the builder (never while typing in a field): Delete removes the selected block (with
   // an Undo toast), Alt+↑/↓ moves it in its list, ⌘D duplicates it, ⌘Z/⇧⌘Z undo and redo, ⌘S

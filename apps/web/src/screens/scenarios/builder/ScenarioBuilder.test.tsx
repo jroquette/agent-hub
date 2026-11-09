@@ -3953,6 +3953,33 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(values).not.toHaveTextContent("target");
   });
 
+  it("scenario builder keeps a step's row, and the focus on it, while Claude's proposal is under review", async () => {
+    // Regression: AGH-659. Under review a graph's At the same time block took a new key on each
+    // render, so each render remounted it with its rows: the focus fell to the page, and a click
+    // whose press and release a render came between (the draft's check, on a busy runner)
+    // selected nothing.
+    const user = userEvent.setup();
+    renderBuilder({
+      [`${DETAIL}/proposal`]: {
+        path: ".agent-runs/proposals/scenarios/orders/order-lifecycle.yaml",
+        document: {
+          ...document,
+          nodes: [...document.nodes, { id: "notify", type: "action", action: "get-order-by-ref" }],
+        },
+        check: { loads: true, yaml: "", problems: [], nodes: [] },
+        problem: null,
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: "Review" }));
+    const row = screen.getByRole("treeitem", { name: FETCH });
+
+    await user.click(row);
+
+    expect(row).toBeInTheDocument();
+    expect(row).toHaveAttribute("aria-selected", "true");
+    expect(row).toHaveFocus();
+  });
+
   it("scenario builder's open step needs a value the environment gives only through a scenario input, as its Script tab", async () => {
     // AC-596.3.23: an environment value for an input the scenario does not declare gives the
     // step nothing: Needs a value here, Missing in the Script tab.
