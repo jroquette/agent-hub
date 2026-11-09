@@ -5,11 +5,11 @@ from the hub root, with the commit message file as its one argument. It is the g
 for commits made outside a guarded Claude Code session.
 
 Exit 1, one stderr line per reason, when the message carries AI attribution (the guard's
-AI_ATTRIBUTION: an AI co-author trailer, a "Generated with Claude" line, the robot emoji; the whole
-file is read, comments included), or, when the hub.json of the hub that holds this file names
-project.author_email, when the commit's author or committer email (`git var`, which sees
-`--author` and the GIT_* identity variables) is another one. An unreadable message or identity is
-a refusal too. Exit 0 otherwise. Managed by hub sync.
+AI_ATTRIBUTION: an AI co-author trailer, a "Generated with Claude" line, a cloud session's footer
+or session trailer, the robot emoji; the whole file is read, comments included), or, when the
+hub.json of the hub that holds this file names project.author_email, when the commit's author or
+committer email (`git var`, which sees `--author` and the GIT_* identity variables) is another
+one. An unreadable message or identity is a refusal too. Exit 0 otherwise. Managed by hub sync.
 """
 
 from __future__ import annotations
@@ -79,7 +79,8 @@ def main(argv: list[str]) -> int:
     if AI_ATTRIBUTION.search(message):
         reasons.append(
             "commit-msg: the message carries AI attribution (AGENTS.md rule 1): remove the AI"
-            " co-author trailer, the \"Generated with\" line or the robot emoji"
+            " co-author trailer, the \"Generated with\" line, the session trailer or the robot"
+            " emoji"
         )
     author_email = load_hub_file(HUB_FILE).project.author_email
     if author_email:

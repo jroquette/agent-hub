@@ -163,7 +163,7 @@
     ".github/workflows/ci.yml": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "31c0214b83cf5cdef84b1ef97df07b4947cc6479524bd8ae45101482bc5c56ca"
+      "sha256": "97d8134ab4f9fe371532603975f35453e9cb029b2bfceb1fb59af5812741227f"
     },
     ".gitignore": {
       "ownership": "seeded"
@@ -341,7 +341,7 @@
     "plugin/hub-workflow/hooks/commit_msg.py": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "957902d46d8f64d45129755abd887352f932bee4864ba8292e186344308b7eb7"
+      "sha256": "2905eb30b0e2fdab0c34fe58c1e0bc1f94f9a0f30100cf60040c1730d357afc0"
     },
     "plugin/hub-workflow/hooks/event_sensor.py": {
       "executable": true,
@@ -351,7 +351,7 @@
     "plugin/hub-workflow/hooks/guard.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "3006bc6c6dd403fc2abf28a6c754316b4f2bce9b1d11e3499f1385d4c4beba87"
+      "sha256": "85e401b60b3c6ce0371bc35b7ffb9f7224468f65250f310f9dd87a6a535dce64"
     },
     "plugin/hub-workflow/hooks/hooks.json": {
       "executable": false,
