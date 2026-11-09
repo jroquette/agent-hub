@@ -37,7 +37,9 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         deleting or sed-editing tests from Bash, editing the hub's guard files: plugin/hub-workflow/hooks/,
         plugin/<project>/hooks/, .claude/settings*.json, hub.lock, hub.json and hub.local.json, in the hub or a hub worktree,
         and the hub/agent launchers (a Bash write asks only when one is its target, so running them never asks);
-        editing paths in guard.ask_before_edit, writing brain/ outside now.md, journal/, _inbox/, auto/, features/,
+        editing paths in guard.ask_before_edit, writing the hub's brain/ (its checkout or a hub worktree, or a
+        brain/ beside a hub.json; a Bash word read from the event's cwd and each cd in the command, by its text
+        when it holds $ or a backtick or its folder is not known) outside now.md, journal/, _inbox/, auto/, features/,
         a mutating hub env (add, set, remove, service add|remove; list and show pass) or hub repo
         (add, set, remove; list passes),
         with HUB_RUN_ENVIRONMENT naming a declared environment of access read or production (an agent
@@ -284,6 +286,18 @@ SETTINGS_FILE = LazyPattern(r"\.claude/settings[^/]*\.json")
 LAUNCHERS = ("hub", "agent")
 WRITE_TARGET = LazyPattern(r">>?\s*([^\s;&|<>()`]+)")
 WRITE_ARGS = LazyPattern(r"\b(?:tee|sed\s+(?:-\w*i\w*|--in-place)|rm|mv|cp|truncate|ln)\b(.*)")
+BRAIN_CURATED_REASON = ("brain/ is curated: agents write only now.md, journal/, _inbox/, auto/ and features/; "
+                        "propose via /learn or confirm")
+BRAIN_UNRESOLVED_REASON = BRAIN_CURATED_REASON + (" ({} may be the hub's brain/: the guard does not resolve a $ or "
+                                                  "backtick word, nor a relative one after a cd it cannot read; a "
+                                                  "literal path outside the hub's brain/ passes)")
+BRAIN_OPEN = LazyPattern(r"now\.md|journal/|_inbox/|auto/|features/")  # matched at the start of a path in brain/
+# A word in a folder the guard cannot resolve: a `brain` part, then a path outside the open folders.
+BRAIN_TEXT = LazyPattern(r"(?:^|/)brain/(?!now\.md|journal/|_inbox/|auto/|features/).")
+BRAIN_DYNAMIC = LazyPattern(r"[$`]")
+BRAIN_DIRS_CAP = 8  # folders _shell_dirs lists (the session's, then each cd's) before one is not known
+CD_END = LazyPattern(r"[;&|)}]")  # where a cd word, or its folder, ends
+CD_UNREAD = LazyPattern(r"[$`*?\[{\\]")  # a cd folder holding one of these is not read
 HUB_PREFIX = "@hub"
 # A `hub env` verb that writes hub.json or hub.local.json, behind a launcher path (`./hub`, a tool
 # runner's `--from x hub`), searched in each of the blocked-words rule's command views, so quotes and
@@ -1057,7 +1071,8 @@ def check_infra(cmd: str, cfg: Config) -> Verdict:
     return None
 
 
-def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
+def check_bash(cmd: str, cfg: Config | None = None, cwd: str | None = None) -> Verdict:
+    """The Bash rules on cmd; cwd is the folder the command runs in (the event's), None when not known."""
     cfg = cfg or Config()
     c = cmd.replace("\\\n", " ")
     # longest first, so release/2 is named before release
@@ -1079,13 +1094,13 @@ def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
     infra = check_infra(cmd, cfg)
     if infra and infra[0] == "deny":
         return infra
-    return tighten(infra, _after_infra(c, cfg))
+    return tighten(infra, _after_infra(c, cfg, cwd))
 
 
-def _after_infra(c: str, cfg: Config) -> Verdict:
+def _after_infra(c: str, cfg: Config, cwd: str | None = None) -> Verdict:
     """check_bash's rules after the infra rule (secrets, attribution, claude/ branches, .git,
     deny_paths, guard files, tests, brain, ask_before_edit, a mutating hub env or hub repo): an infra ask or allow does not end the
-    check, so a later deny wins and a later ask keeps the infra reason."""
+    check, so a later deny wins and a later ask keeps the infra reason. cwd is the command's folder (None: not known)."""
     for seg in re.split(r"&&|\|\||[;|\n]", c):
         words = seg.split()
         if not words or words[0] in SAFE_ON_SECRETS:
@@ -1127,8 +1142,9 @@ def _after_infra(c: str, cfg: Config) -> Verdict:
                     return "ask", GUARD_PARENT_REASON.format(tok, held or "the hub")
     if re.search(r"\b(rm|mv|truncate)\b[^;&|\n]*\s" + TEST_PATH, c) or re.search(r"\bsed\s+(-\w*i\w*|--in-place)\b[^;&|\n]*\s" + TEST_PATH, c):
         return "ask", "deleting or sed-editing tests from Bash bypasses the assertion guard; use Edit, or confirm this is intended"
-    if "brain/" in c and re.search(r"(>>?|\btee\b(\s+-a)?|\bsed\s+-\w*i\w*|\b(rm|mv|cp)\b)[^;&|\n]*\bbrain/(?!(now\.md|journal/|_inbox/|auto/|features/))\S+", c):
-        return "ask", "brain/ is curated: agents write only now.md, journal/, _inbox/, auto/ and features/; propose via /learn or confirm"
+    brain = _brain_write(c, cfg, cwd)
+    if brain:
+        return brain
     if cfg.ask_before_edit:
         for seg in segments:
             if not BASH_WRITE.search(seg):
@@ -1162,6 +1178,103 @@ def _brain_rel(path: str, cfg: Config) -> str | None:
     m = re.search(r"^brain/(.+)$", path)
     if m and os.path.isdir("brain"):
         return m.group(1)
+    return None
+
+
+def _shell_dirs(c: str, cwd: str | None) -> tuple[list[str], bool]:
+    """The folders a relative word of command c may be read from, and whether one is not known.
+
+    They are the session's folder (cwd, when absolute) and each folder a cd or pushd in c names,
+    a relative one joined to every folder listed before it: a cd in a subshell or after `||` may
+    not run, so none replaces another. A folder is not known without an absolute cwd, after a cd
+    to a word with $, a backtick, a glob, a brace, a backslash or an open quote, or past
+    BRAIN_DIRS_CAP folders. `cd -` and `pushd`, bare or with +N, go back to a folder already listed."""
+    dirs = [os.path.normpath(cwd)] if cwd and os.path.isabs(cwd) else []
+    unknown = not dirs
+    if "cd" not in c:
+        return dirs, unknown
+    words = c.split()
+    for i, word in enumerate(words):
+        head = word.lstrip("({'\"`")
+        name = CD_END.split(head, 1)[0]
+        if name.rstrip("'\"") not in ("cd", "pushd"):
+            continue
+        arg = ""
+        if name == head:  # not `cd;`: its folder is the next word that is not an option
+            j = i + 1
+            while j < len(words) and words[j].startswith("-") and words[j] != "-":
+                j += 1
+            arg = CD_END.split(words[j], 1)[0] if j < len(words) else ""
+        if arg[:1] in ("'", '"'):
+            if len(arg) < 2 or arg[-1] != arg[0]:  # a quoted folder with a blank in it
+                unknown = True
+                continue
+            arg = arg[1:-1]
+        if arg == "-" or arg[:1] == "+" or (not arg and name.startswith("pushd")):
+            continue
+        if CD_UNREAD.search(arg):
+            unknown = True
+            continue
+        try:
+            arg = os.path.expanduser(arg or "~")
+        except ValueError:  # a NUL byte in a ~name
+            arg = "~"
+        if arg.startswith("~"):
+            unknown = True
+            continue
+        for found in [arg] if os.path.isabs(arg) else [os.path.join(d, arg) for d in dirs]:
+            found = os.path.normpath(found)
+            if found in dirs:
+                continue
+            if len(dirs) >= BRAIN_DIRS_CAP:
+                return dirs, True
+            dirs.append(found)
+    return dirs, unknown
+
+
+def _brain_write(c: str, cfg: Config, cwd: str | None) -> Verdict:
+    """The curated-brain ask for Bash: a word after a segment's first write (a redirection, tee,
+    sed -i, rm, mv, cp, truncate or ln; an option's =value included) whose path is in the hub's
+    brain/ (_brain_rel), outside its open folders. A relative word is read from each folder of
+    _shell_dirs (cwd: the session's folder). A word with $ or a backtick, or a relative one while
+    a folder is not known, is judged on its normalized text (BRAIN_TEXT), as the rule did before it
+    resolved paths; its reason names the word, escaped and capped as an infra value. So
+    apps/web/src/screens/brain/x.tsx in a repo passes. Linear in the command's length."""
+    if "brain" not in c and "brain" not in (cwd or "") and "brain" not in os.path.expanduser("~"):
+        return None
+    dirs: list[str] | None = None
+    unknown = False
+    seen: set[str] = set()
+    for seg in _segments(c):
+        write = BASH_WRITE.search(seg)
+        if not write:
+            continue
+        for tok in _tokens(seg[write.start():].replace("=", " ")):
+            if tok in seen:
+                continue
+            seen.add(tok)
+            if BRAIN_DYNAMIC.search(tok):
+                if BRAIN_TEXT.search(os.path.normpath(tok)):
+                    return "ask", BRAIN_UNRESOLVED_REASON.format(_infra_value(tok, _printable))
+                continue
+            try:
+                path = os.path.normpath(os.path.expanduser(tok))
+            except ValueError:  # a NUL byte in a ~name
+                path = os.path.normpath(tok)
+            if os.path.isabs(path):
+                fulls = [path]
+            else:
+                if dirs is None:
+                    dirs, unknown = _shell_dirs(c, cwd)
+                if unknown and BRAIN_TEXT.search(path):
+                    return "ask", BRAIN_UNRESOLVED_REASON.format(_infra_value(tok, _printable))
+                # path is normalized: only a leading `.` or `..` part needs another pass once joined
+                up = path.startswith(".")
+                fulls = [os.path.normpath(os.path.join(d, path)) if up else os.path.join(d, path) for d in dirs]
+            for full in fulls:
+                rel = _brain_rel(full, cfg) if "brain" in full else None
+                if rel is not None and not BRAIN_OPEN.match(rel):
+                    return "ask", BRAIN_CURATED_REASON
     return None
 
 
@@ -1213,8 +1326,8 @@ def check_file(tool: str, ti: dict, cfg: Config | None = None) -> Verdict:
     if pat:
         return "ask", f"{path} matches guard.ask_before_edit `{pat}` (hub.json): plan and approval first; confirm this change is intended"
     rel = _brain_rel(path, cfg)
-    if rel is not None and not re.match(r"(now\.md|journal/|_inbox/|auto/|features/)", rel):
-        return "ask", "brain/ is curated: agents write only now.md, journal/, _inbox/, auto/ and features/; propose via /learn or confirm"
+    if rel is not None and not BRAIN_OPEN.match(rel):
+        return "ask", BRAIN_CURATED_REASON
     return None
 
 
@@ -2051,7 +2164,7 @@ def decide(data: dict, cfg: Config, environ: dict | None = None) -> Verdict:
         return env_file
     blocked = tighten(tighten(blocked, env_file), check_environment_endpoint(tool, ti, cfg, environ))
     if tool == "Bash":
-        return tighten(blocked, check_bash(_str(ti.get("command")), cfg))
+        return tighten(blocked, check_bash(_str(ti.get("command")), cfg, cwd))
     return tighten(blocked, check_file(tool, ti, cfg))
 
 

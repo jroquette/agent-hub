@@ -117,9 +117,10 @@ ALLOW_BASH = [
 type Evaluate = Callable[..., list[Any]]
 
 
-def bash(command: str, *, cfg: bool = True) -> str:
-    """The expression ``check_bash(command[, cfg])``."""
-    return f"check_bash({command!r}{', cfg' if cfg else ''})"
+def bash(command: str, *, cfg: bool = True, cwd: Path | None = None) -> str:
+    """The expression ``check_bash(command[, cfg][, cwd=cwd])``."""
+    folder = f", cwd={str(cwd)!r}" if cwd is not None else ""
+    return f"check_bash({command!r}{', cfg' if cfg else ''}{folder})"
 
 
 def file(tool: str, tool_input: Mapping[str, str], *, cfg: bool = True) -> str:
@@ -3362,6 +3363,236 @@ def test_asks_when_hub_checkout_named_apart_from_project(
         or "brain/ is curated" not in verdict[1]
         or "@hub/brain/decisions" in verdict[1]
     ] == []
+
+
+# The Bash rule for the curated brain reads each word after a write as a path, from the command's
+# folder (the event's cwd, then each cd in the command), and asks only when _brain_rel puts it in
+# the hub's brain/, outside its open folders, as the file tools' rule does. It used to ask on any
+# `brain/` in the text, so a cp and a redirect into the web app's Brain screen
+# (apps/web/src/screens/brain/) were refused in a repo worktree.
+BRAIN_CURATED_REASON = (
+    "brain/ is curated: agents write only now.md, journal/, _inbox/, auto/ and features/; "
+    "propose via /learn or confirm"
+)
+BRAIN_UNRESOLVED_REASON = BRAIN_CURATED_REASON + (
+    " ({} may be the hub's brain/: the guard does not resolve a $ or backtick word, nor a relative"
+    " one after a cd it cannot read; a literal path outside the hub's brain/ passes)"
+)
+BRAIN_SCREEN = "apps/web/src/screens/brain/x.tsx"
+BRAIN_OPEN_PATHS = (
+    "brain/_inbox/x.md",
+    "brain/journal/2026/11/06.md",
+    "brain/now.md",
+    "brain/features/dem-1-x/plan.md",
+    "brain/auto/workspace/x.md",
+)
+
+
+def repo_worktree(workspace: Path) -> Path:
+    """A worktree of the workspace's ``app`` repo, as ``hub worktree`` places it."""
+    return workspace / "app" / ".claude" / "worktrees" / "dem-1-x"
+
+
+def test_passes_bash_write_when_brain_folder_is_not_hubs(
+    evaluate: Evaluate, workspace: Path
+) -> None:
+    """Regression: AGH-720."""
+    hub, worktree = workspace / "demo-hub", repo_worktree(workspace)
+    runs = [
+        *(
+            (write.format(BRAIN_SCREEN), folder)
+            for write in BASH_WRITES
+            for folder in (worktree, workspace / "app")
+        ),
+        (f"git show HEAD:{BRAIN_SCREEN} > {BRAIN_SCREEN}", worktree),
+        (f"cp /tmp/x {worktree / BRAIN_SCREEN}", hub),
+        ("cd apps/web/src/screens && cp /tmp/x brain/x.tsx", worktree),
+        ("cd ../.. && echo x > apps/web/src/screens/brain/x.tsx", worktree / "apps" / "web"),
+        # a brain/ whose parent holds no hub.json, in a curated-looking path
+        ("echo x > vendor/brain/decisions/x.md", hub.parent / "app"),
+    ]
+
+    verdicts = evaluate([bash(command, cwd=folder) for command, folder in runs])
+
+    assert dict(zip(runs, verdicts, strict=True)) == dict.fromkeys(runs)
+
+
+def test_asks_when_bash_write_lands_in_hub_curated_brain(
+    evaluate: Evaluate, workspace: Path
+) -> None:
+    """Regression: AGH-720 (the hub's curated folders still ask, however the path is reached)."""
+    hub, worktree = workspace / "demo-hub", repo_worktree(workspace)
+    decision = "brain/decisions/x.md"
+    runs = [
+        *(
+            (write.format(decision), folder)
+            for write in BASH_WRITES
+            for folder in (hub, hub / WORKTREE)
+        ),
+        (f"echo x > {hub / decision}", worktree),
+        (f"cp /tmp/x {hub / WORKTREE / 'brain' / 'index.md'}", worktree),
+        ("cd ../../../../demo-hub && echo x > brain/decisions/x.md", worktree),
+        # a cd in a subshell may not change the folder of what follows: every folder is tried
+        (
+            "(cd apps && make) && cd ../../../../demo-hub && cp /tmp/x brain/decisions/x.md",
+            worktree,
+        ),
+        (f"bash -c 'cd {hub} && echo x > brain/decisions/x.md'", worktree),
+        ("cp /tmp/x brain/_inbox/../decisions/x.md", hub),
+        ("cp --target-directory=brain/decisions /tmp/x", hub),
+        ("rm -rf brain/journal", hub),
+        ("echo x > x.md", hub / "brain" / "decisions"),
+    ]
+
+    verdicts = evaluate([bash(command, cwd=folder) for command, folder in runs])
+
+    assert dict(zip(runs, verdicts, strict=True)) == dict.fromkeys(
+        runs, ("ask", BRAIN_CURATED_REASON)
+    )
+
+
+def test_passes_bash_write_when_hub_brain_folder_open(evaluate: Evaluate, workspace: Path) -> None:
+    hub = workspace / "demo-hub"
+    runs = [
+        *((write.format(path), hub) for write in BASH_WRITES for path in BRAIN_OPEN_PATHS),
+        (f"echo x > {hub / 'brain' / '_inbox' / 'x.md'}", repo_worktree(workspace)),
+        ("echo x > x.md", hub / "brain" / "_inbox"),
+    ]
+
+    verdicts = evaluate([bash(command, cwd=folder) for command, folder in runs])
+
+    assert dict(zip(runs, verdicts, strict=True)) == dict.fromkeys(runs)
+
+
+def test_asks_on_text_when_bash_write_folder_unknown(evaluate: Evaluate, workspace: Path) -> None:
+    """A word with $ or a backtick, or a relative one after a cd the guard cannot read or with no
+    cwd at all, is judged on its text, as before: it asks on a `brain/` part outside the open
+    folders (`..` parts resolved), naming the word, capped at 100 characters."""
+    worktree = repo_worktree(workspace)
+    long_word = "$HUB/" + "a/" * 60 + "brain/decisions/x.md"
+    asked = {
+        'echo x > "$HUB/brain/decisions/x.md"': "$HUB/brain/decisions/x.md",
+        "cp /tmp/x `pwd`/brain/decisions/x.md": "`pwd`/brain/decisions/x.md",
+        "cp /tmp/x $HUB/brain/_inbox/../decisions/x.md": "$HUB/brain/_inbox/../decisions/x.md",
+        f"echo x > {long_word}": long_word[:97] + "...",
+        'cd "$HUB" && echo x > brain/decisions/x.md': "brain/decisions/x.md",
+        f"cd $WT && cp /tmp/x {BRAIN_SCREEN}": BRAIN_SCREEN,
+        f'cd "{worktree}/a b" && cp /tmp/x {BRAIN_SCREEN}': BRAIN_SCREEN,
+    }
+    passed = [
+        'echo x > "$HUB/brain/_inbox/x.md"',
+        'cd "$HUB" && echo x > brain/journal/2026/11/06.md',
+        "cd $WT && cp /tmp/x apps/web/src/screens/x.tsx",
+    ]
+    calls = [
+        *(bash(command, cwd=worktree) for command in [*asked, *passed]),
+        bash(f"echo x > {BRAIN_SCREEN}"),
+        bash("echo x > brain/_inbox/x.md"),
+    ]
+
+    verdicts = evaluate(calls)
+
+    expected = [
+        *(("ask", BRAIN_UNRESOLVED_REASON.format(word)) for word in asked.values()),
+        *(None for _ in passed),
+        ("ask", BRAIN_UNRESOLVED_REASON.format(BRAIN_SCREEN)),
+        None,
+    ]
+    assert verdicts == expected
+
+
+def test_passes_hook_when_agent_in_repo_worktree_writes_brain_screen(
+    workspace: Path, guard: Guard
+) -> None:
+    """Regression: AGH-720. The hook, in auto mode, on the event's cwd: the writes that were denied
+    in a repo worktree pass, and the hub's curated folders still ask (a deny in auto mode)."""
+    hub, worktree = workspace / "demo-hub", repo_worktree(workspace)
+    (worktree / BRAIN_SCREEN).parent.mkdir(parents=True)
+    auto = {"permission_mode": "auto"}
+    screen = [
+        bash_run(command, worktree)
+        for command in (
+            f"cp /tmp/x {BRAIN_SCREEN}",
+            f"git show HEAD:{BRAIN_SCREEN} > {BRAIN_SCREEN}",
+            f"echo x | tee {BRAIN_SCREEN}",
+        )
+    ]
+    curated = [bash_run(write.format("brain/decisions/x.md"), hub) for write in BASH_WRITES]
+    curated += [bash_run(f"echo x > {hub / 'brain' / 'decisions' / 'x.md'}", worktree)]
+
+    verdicts = guard(hub / HOOKS, [(event | auto, cwd) for event, cwd in [*screen, *curated]])
+
+    assert verdicts[: len(screen)] == [None] * len(screen)
+    assert [verdict and verdict[0] for verdict in verdicts[len(screen) :]] == ["deny"] * len(
+        curated
+    )
+    assert [
+        verdict
+        for verdict in verdicts[len(screen) :]
+        if not verdict or not verdict[1].startswith("[hub guard] " + BRAIN_CURATED_REASON)
+    ] == []
+
+
+# The rule stays linear in the command's length: on 3.9 the old regex took 10.8 s on the dense
+# redirects below (80 KB), past the hook's timeout; each of these takes under 1 s there now. The
+# child builds the command from (text, times) pieces, each text formatted with its index, so the
+# words differ (one argument would exceed the OS limit, and equal words are checked once).
+BRAIN_TIMED = """
+import json, time
+from pathlib import Path
+from guard import check_bash
+from hubhooks import load_config
+hub, cwd = Path(sys.argv[1]), sys.argv[2]
+command = "".join(text.format(i) for text, times in json.loads(sys.argv[3]) for i in range(times))
+cfg = load_config(hub)
+started = time.perf_counter()
+verdict = check_bash(command, cfg, cwd)
+print(json.dumps([verdict, time.perf_counter() - started, len(command)]))
+"""
+BRAIN_RULE_BUDGET = 2.0  # seconds
+
+
+@pytest.mark.serial
+@pytest.mark.parametrize(
+    ("pieces", "where"),
+    [
+        pytest.param([("echo ", 1), ("> a ", 20000), ("brain", 1)], "repo", id="dense-redirects"),
+        pytest.param([("cp /tmp/x ", 1), ("brain/{} ", 8000)], "repo", id="brain-words"),
+        pytest.param(
+            [("cd /tmp/d{}; ", 7), ("cp /tmp/x ", 1), ("brain/{} ", 7000)],
+            "repo",
+            id="brain-words-from-eight-folders",
+        ),
+        pytest.param(
+            [("cp /tmp/x ", 1), ("brain/_inbox/{} ", 5000)], "hub", id="open-words-in-hub"
+        ),
+    ],
+)
+def test_decides_in_time_when_bash_write_command_dense(
+    pieces: list[tuple[str, int]],
+    where: str,
+    workspace: Path,
+    *,
+    hook_python: str,
+    run_python: Callable[..., Any],
+    tmp_path: Path,
+) -> None:
+    hub = workspace / "demo-hub"
+    folder = hub if where == "hub" else repo_worktree(workspace)
+
+    verdict, seconds, length = run_python(
+        hook_python,
+        BRAIN_TIMED,
+        path=hub / HOOKS,
+        args=[str(hub), str(folder), json.dumps(pieces)],
+        cwd=tmp_path,
+        env={"HOME": str(tmp_path)},
+        timeout=GUARD_HOOK_TIMEOUT,
+    )
+
+    assert verdict is None
+    assert length > 60000
+    assert seconds < BRAIN_RULE_BUDGET
 
 
 # Review fixes: each only adds a path form the guard sees through, or an ask.
