@@ -13,6 +13,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
+- PR bodies no longer hold "Checks" or "Before merge" sections. The `plain-language` skill's PR bodies rules keep
+  the ticket link, what the PR depends on, what changed for the user and links to its records; `/implement` and `/fix`
+  put the checks they ran, the owner steps and the follow-ups in a comment on the tracker issue. `hub run` and
+  `hub step pr` drop the body's `## Verification` section; `hub run` names the gate in its tracker comment instead.
+  Run `hub sync` after bumping `platform.version` to get the new skill texts (AGH-778).
 - The knowledge index keeps a file a secret rule matches, redacted, instead of skipping it (AGH-696). `hub search`,
   `hub mcp` and the `hub web` Brain search index its text with each match replaced by its `[redacted: <kind>]`
   marker, as event ingestion does, and `hub mcp`'s `read` returns that redacted text. Docs with placeholders such as

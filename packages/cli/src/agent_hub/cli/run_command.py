@@ -194,13 +194,13 @@ def _print_dry_run(
     body = pr_body(
         issue_id=issue.id,
         summary=DRY_RUN_TEXT,
-        gate=children.gate,
         workspace=str(children.workspace),
     )
     typer.echo(would_run_line(children.pr_argv(title=DRY_RUN_TITLE, body=body), cwd=worktree))
     comment = success_comment(
         run_id=run_id,
         pr_url=DRY_RUN_TEXT,
+        gate=children.gate,
         summary=DRY_RUN_TEXT,
         workspace=str(children.workspace),
     )
