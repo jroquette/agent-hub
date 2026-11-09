@@ -1140,6 +1140,36 @@ def test_ends_server_when_block_fails(tmp_path: Path) -> None:
     assert beats.stat().st_size == seen
 
 
+# AGH-699: hub web imports the hook spool of its XDG_STATE_HOME when it starts, so the scratch
+# hub web must not take the developer's spooled events into the demo database.
+def test_keeps_hook_spool_under_work_when_demo_web_serves_scratch_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    servers: dict[str, Mapping[str, str]] = {}
+
+    def run(command: list[str], **_options: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    @contextmanager
+    def background(command: Any, *, env: Mapping[str, str], cwd: Path, log: Path) -> Iterator[None]:
+        servers[log.name] = env
+        yield
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "developer-state"))
+    monkeypatch.setattr("scripts.playground_export.shutil.which", lambda _name: "/usr/bin/npm")
+    monkeypatch.setattr("scripts.playground_export.free_port", iter((5002, 5001)).__next__)
+    monkeypatch.setattr("scripts.playground_export.wait_until_up", lambda _url: None)
+    monkeypatch.setattr("scripts.playground_export.background", background)
+    monkeypatch.setattr("scripts.playground_export.subprocess.run", run)
+    work = tmp_path / "work"
+    work.mkdir()
+
+    with demo_web(tmp_path / "tree", work):
+        pass
+
+    assert Path(servers["api.log"]["XDG_STATE_HOME"]).parent == work
+
+
 # AC-PG-39.2: run_playwright passes the capture's variables on to Playwright's environment.
 def test_passes_capture_variables_when_playwright_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

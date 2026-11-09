@@ -89,6 +89,7 @@ from agent_hub.api.scenario_investigation import (
 )
 from agent_hub.api.scheduled_starts_runtime import ScheduledStartsRuntime
 from agent_hub.api.settings import ApiSettings, utc_now
+from agent_hub.api.spool_import import SpoolImport
 from agent_hub.api.start_ledger import FileStartLedger
 from agent_hub.api.static_files import WEB_DIST
 from agent_hub.api.ticket_snapshots import (
@@ -99,6 +100,7 @@ from agent_hub.api.ticket_snapshots import (
 from agent_hub.api.ticket_warmer import WARM_SECONDS, TicketWarmer
 from agent_hub.api.workdir_listing import RegisteredWorkdirs
 from agent_hub.collector.claude_hooks import ClaudeHookMapper
+from agent_hub.collector.hook_spool import HookSpool
 from agent_hub.collector.transcript_tail import TranscriptTail
 from agent_hub.core.agent_sessions.cloud import CloudLauncher, CloudSessions
 from agent_hub.core.agent_sessions.control import AgentSessionControl, WorkdirSource
@@ -727,11 +729,14 @@ def build_app(
     hub_reader: HubFileReader | None = None,
     refresh_ticker: Ticker | None = None,
     warm_ticker: Ticker | None = None,
+    spool_folder: Path | None = None,
 ) -> FastAPI:
     """The app of ``hub web``: every route wired to the real adapters.
 
     ``projects_root`` is Claude Code's transcripts folder (default ``~/.claude/projects``):
-    the live tail reads only under it. ``brain_changes`` opens the learning decisions' hub pull
+    the live tail reads only under it. ``spool_folder`` holds the hook sensor's spool, which
+    the app imports through the hook route's ``IngestHook`` when it starts (``SpoolImport``);
+    None (the default) imports nothing. ``brain_changes`` opens the learning decisions' hub pull
     requests (default: ``git`` and ``gh`` through ``hub_git``). The tickets route reads Linear
     with ``LINEAR_API_KEY`` from ``environ`` (default this process's environment, read at call
     time) through ``linear_post`` (default ``urllib``), or ``tracker_reader`` when given (tests).
@@ -748,11 +753,11 @@ def build_app(
     cache warm while a tab holds the global stream open (``ConnectedBrowsers``, whose first
     open wakes it), ticked by ``warm_ticker`` (default a ``DaemonTicker`` every
     ``WARM_SECONDS``).
-    The lifespan starts the parts in order and stops them last started first: the ticket
-    warmer, the background doctor, the scheduled starts, the agent sessions' shutdown, then the
-    stores close. Neither background part's stop waits for a read in progress, so the stores can
-    close under it: they read hub files (registry, ``hub.json``, ``hub.lock``, the doctor's
-    reads, feature folders, git) and Linear only, never a store.
+    The lifespan starts the parts in order, the spool's import first, and stops them last
+    started first: the ticket warmer, the background doctor, the scheduled starts, the agent
+    sessions' shutdown, then the stores close. Neither background part's stop waits for a read
+    in progress, so the stores can close under it: they read hub files (registry, ``hub.json``,
+    ``hub.lock``, the doctor's reads, feature folders, git) and Linear only, never a store.
     ``DatabaseAccessError`` when the store cannot be opened.
     """
     store = open_event_store(settings.db_path)
@@ -958,6 +963,7 @@ def build_app(
         # scheduler have ended. The background parts stop first, without waiting for a read.
         lifecycle=_lifecycle(
             _CloseOnStop(*closers),
+            None if spool_folder is None else SpoolImport(HookSpool(spool_folder), ingest),
             None if sessions is None else sessions.runtime,
             scheduler,
             refresher,

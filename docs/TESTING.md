@@ -17,8 +17,9 @@ Makefile uses.
   or `~/.claude`; files go under pytest's `tmp_path`. The real database is the file `hub collect` picks: `--db PATH`,
   else `AGENT_HUB_DB`, else `$XDG_DATA_HOME/agent-hub/agent-hub.db` (when `XDG_DATA_HOME` is absolute), else
   `~/.local/share/agent-hub/agent-hub.db`, where `~` is `HOME` when it is non-empty and absolute, else the account's
-  home from the password database. `packages/cli/tests/conftest.py` has an autouse fixture that points `HOME`
-  and `XDG_DATA_HOME` under `tmp_path` and unsets `AGENT_HUB_DB` for every cli test; a test that needs other values
+  home from the password database. `packages/cli/tests/conftest.py` has an autouse fixture that points `HOME`,
+  `XDG_DATA_HOME` and `XDG_STATE_HOME` (the hook spool's folder, which `hub web` imports at start) under `tmp_path`
+  and unsets `AGENT_HUB_DB` for every cli test; a test that needs other values
   passes them to `CliRunner.invoke(env=...)`. JSON Lines inputs are written to `tmp_path` at test time from the
   builders (`an_event`, `events_to_jsonl`); no `*.jsonl` file is committed. A test that runs a child process and
   must show it stays off the network uses the outbound probe, `agent_hub.core.testing.outbound_probe`: the child gets
@@ -128,7 +129,9 @@ call allowed is SessionStart's detached refresh running `uvx … hub brief --wri
 commands. The hooks file gives each case its own `TMPDIR`, since some hooks keep state there. A characterization
 case compares a hook's or script's exit code, stdout, stderr, files and calls to fake tools with
 `packages/generator/tests/integration/golden/<file>/<case>.golden`, stored byte-exact (`-text` in `.gitattributes`).
-`GOLDEN_UPDATE=1` rewrites the goldens (refused under `CI`; review and commit the diff) and `GOLDEN_KEEP=1` keeps each
+The files are those under the case's root, less the harness's own `bin/`, `log/` and `state/` (the case's
+`XDG_STATE_HOME`, where the sensor spools what the event server did not take, so a case reads the same with the
+server up or down). `GOLDEN_UPDATE=1` rewrites the goldens (refused under `CI`; review and commit the diff) and `GOLDEN_KEEP=1` keeps each
 case's temporary root and prints its path. The `hub init` golden,
 `packages/cli/tests/integration/golden/init/demo.hub.lock`, is the synthetic `demo` init's `hub.lock` with
 `platform_version` as `<VERSION>` and every hash kept, so a template change shows as a reviewed hash diff; it is `-text`

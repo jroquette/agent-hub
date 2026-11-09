@@ -24,6 +24,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   built-in until you delete it.
 - `hub skill-usage` and the `hub web` Toolkit count the calls of the hub's knowledge tools (`mcp__hub__search`,
   `read` and `propose`), by main session and by subagent, names and counts only (AGH-699).
+- Hook events outlive a stopped control plane (AGH-699): the event sensor keeps each event `hub web` does not take in
+  `~/.local/state/agent-hub/hook-spool.jsonl` (or under `$XDG_STATE_HOME`; mode 0600, at most 8 MiB, the oldest
+  dropped and counted), outside every hub and repo. `hub web` imports it when it starts, and `hub collect --spool`
+  imports it without `hub web`, all or nothing, with the transcripts its Stop hooks name. Arrives after you bump
+  `platform.version` and run `hub sync`.
 
 ### Fixed
 

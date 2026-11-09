@@ -242,6 +242,8 @@ def hub_web(
         "HOME": str(tmp_path / "home"),
         "XDG_DATA_HOME": str(tmp_path / "xdg-data"),
         "XDG_CONFIG_HOME": str(tmp_path / "xdg-config"),
+        # hub web imports the hook spool of this folder at start: never the caller's.
+        "XDG_STATE_HOME": str(tmp_path / "xdg-state"),
         **web_extra_env,
     }
     command = [str(installed_hub.executable), "web", "--port", str(port), "--db", str(db_path)]

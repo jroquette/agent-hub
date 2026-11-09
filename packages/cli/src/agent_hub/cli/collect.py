@@ -1,9 +1,12 @@
 """``hub collect``: ingest events into the event database, all or nothing.
 
-Three inputs, one at a time: canonical events as JSON Lines (FILE or stdin), a Claude Code
-transcript (``--transcript FILE``, mapped to metadata-only events) or ``hub run`` records
-(``--runs PATH``, a ``.agent-runs`` file or folder). Every event is redacted on the way in
-(``IngestEvents``). A bad line, an over-bound input or a conflict writes nothing and exits 1.
+Four inputs, one at a time: canonical events as JSON Lines (FILE or stdin), a Claude Code
+transcript (``--transcript FILE``, mapped to metadata-only events), ``hub run`` records
+(``--runs PATH``, a ``.agent-runs`` file or folder) or the hook sensor's spool (``--spool``, the
+envelopes ``hub web`` did not take, mapped as the hook route maps them, with the transcripts
+their Stop hooks name read under the Claude projects folder). Every event is redacted on the way
+in (``IngestEvents``). A bad line, an over-bound input or a conflict writes nothing and exits 1;
+the spool's lines then stay where ``HookSpool.take`` moved them, for the next import.
 
 Transcripts and run records name no project: ``--project`` does, else the ``hub.json`` of the hub
 that holds the ``.agent-runs`` folder, else that of the hub root (``AGENT_HUB_ROOT`` or the cwd).
@@ -18,6 +21,7 @@ import os
 import stat
 import sys
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Final, NoReturn
 
@@ -25,6 +29,7 @@ import typer
 
 from agent_hub.cli.database_path import default_database_path
 from agent_hub.cli.errors import CliError
+from agent_hub.cli.hook_paths import claude_projects_root, default_spool_folder
 from agent_hub.cli.hub_config_reader import FILE_LABEL, read_hub_bytes
 from agent_hub.cli.hub_root import HUB_ROOT_VARIABLE
 from agent_hub.cli.transcript_repo import first_cwd, repo_of
@@ -32,7 +37,10 @@ from agent_hub.collector.errors import CollectorError, InputNotFoundError, Input
 from agent_hub.core.errors import EventConflictError
 from agent_hub.core.events.event import MAX_ID_CHARS, Event, longer_than_cap
 from agent_hub.core.events.event_store import AppendResult
+from agent_hub.core.ingestion.hook_envelope import HookEnvelope
 from agent_hub.core.ingestion.ingest_events import IngestEvents
+from agent_hub.core.ingestion.ingest_hook import IngestHook
+from agent_hub.core.ingestion.ingestion_status import IngestionCounters
 from agent_hub.core.json_form import JsonValue
 from agent_hub.storage.errors import StorageError
 
@@ -49,6 +57,7 @@ RUNS_FOLDER: Final = ".agent-runs"
 RUN_FILE_SUFFIX: Final = ".jsonl"
 TRANSCRIPT_AGENT: Final = "main"
 ONE_INPUT: Final = "use only one of FILE, --transcript and --runs"
+SPOOL_ALONE: Final = "--spool takes no FILE, --transcript or --runs"
 NO_PROJECT: Final = "error: no project: pass --project NAME or run in a hub folder"
 # O_NONBLOCK: a FIFO swapped in after the check cannot block the open; fstat then refuses it.
 _OPEN_FLAGS: Final = os.O_RDONLY | os.O_NONBLOCK
@@ -88,6 +97,16 @@ def collect(
             help="Agent of --transcript events: main, or a subagent transcript's agent type.",
         ),
     ] = TRANSCRIPT_AGENT,
+    spool: Annotated[
+        bool,
+        typer.Option(
+            "--spool",
+            help=(
+                "Import the hook sensor's spool ($XDG_STATE_HOME/agent-hub, else "
+                "~/.local/state/agent-hub), then empty it."
+            ),
+        ),
+    ] = False,
     project: Annotated[
         str | None,
         typer.Option(
@@ -110,9 +129,14 @@ def collect(
     ] = None,
 ) -> None:
     """Ingest events (JSON Lines, a transcript or run records), all or nothing."""
-    if sum(given is not None for given in (file, transcript, runs)) > 1:
+    inputs = sum(given is not None for given in (file, transcript, runs))
+    if spool and inputs:
+        context.fail(SPOOL_ALONE)
+    if inputs > 1:
         context.fail(ONE_INPUT)
-    if transcript is not None:
+    if spool:
+        result = _spool_or_exit(db)
+    elif transcript is not None:
         events = _transcript_events(
             transcript, project=_project_or_exit(project, runs=None), agent=agent
         )
@@ -187,6 +211,67 @@ def _run_events(path: Path, *, project: str) -> list[Event]:
     if errors:
         _fail(*errors)
     return events
+
+
+def _spool_or_exit(db: Path | None) -> AppendResult:
+    """Import the hook spool as one batch, then remove what was taken (see the module docstring)."""
+    from agent_hub.collector.hook_spool import HookSpool  # noqa: PLC0415 - only hub collect --spool reads it
+
+    try:
+        spool = HookSpool(default_spool_folder(os.environ))
+        projects_root = claude_projects_root(os.environ)
+        taken = spool.take()
+    except (CliError, CollectorError) as error:
+        _fail(f"error: {error}")
+    if taken is None:
+        return AppendResult(appended=0, duplicates=0)
+    lines = taken.lines
+    if lines.errors:
+        name = _quoted(spool.taken_file)
+        _fail(
+            *(f"{name}: line {error.line_number}: {error.reason}" for error in lines.errors),
+            f"{name}: fix or delete the lines above, then run hub collect --spool again "
+            "(hub web skips bad lines when it starts)",
+        )
+    result = _ingest_hooks_or_exit(
+        [item.envelope for item in lines.envelopes], _database(db), projects_root=projects_root
+    )
+    try:
+        spool.remove(taken)
+    except CollectorError as error:
+        _fail(f"error: {error}")
+    if lines.dropped:
+        typer.echo(
+            f"warning: the hook spool was full: {lines.dropped} older events were dropped",
+            err=True,
+        )
+    return result
+
+
+def _ingest_hooks_or_exit(
+    envelopes: Sequence[HookEnvelope], db_path: Path, *, projects_root: Path
+) -> AppendResult:
+    from agent_hub.collector.claude_hooks import ClaudeHookMapper  # noqa: PLC0415 - only hub collect --spool maps hooks
+    from agent_hub.collector.transcript_tail import TranscriptTail  # noqa: PLC0415 - only hub collect --spool tails
+    from agent_hub.storage.event_store import open_event_store  # noqa: PLC0415 - only an ingest opens it
+
+    try:
+        ingest = IngestHook(
+            open_event_store(db_path),
+            ClaudeHookMapper(),
+            # Each named transcript is read as far as --transcript would take it.
+            TranscriptTail(projects_root, max_to_end_bytes=MAX_TRANSCRIPT_BYTES),
+            status=IngestionCounters(clock=lambda: datetime.now(UTC)),
+        )
+        return ingest.execute_all(envelopes)
+    except EventConflictError as error:
+        # source_id comes from the input: quoted and escaped, so it stays on this one line.
+        _fail(
+            f"error: conflict: event ({error.source}, {json.dumps(error.source_id)}) differs "
+            "from an event with the same key"
+        )
+    except StorageError as error:
+        _fail(f"error: {error}")
 
 
 def _record(line: str) -> dict[str, JsonValue]:

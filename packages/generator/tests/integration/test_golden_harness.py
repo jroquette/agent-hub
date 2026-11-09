@@ -430,6 +430,7 @@ CASE_ENV_KEYS = {
     "PATH",
     "HOME",
     "XDG_CONFIG_HOME",
+    "XDG_STATE_HOME",
     "TZ",
     "PYTHONUTF8",
     "PYTHONHASHSEED",
@@ -507,6 +508,8 @@ def test_builds_root_layout_when_workspace_created(
     }
     assert env["PATH"] == f"{root}/bin:/usr/bin:/bin:/usr/sbin:/sbin"
     assert env["HOME"] == str(root / "home")
+    # The sensor's spool goes to <ROOT>/state, outside the snapshot (FS_EXCLUDED_TOP).
+    assert env["XDG_STATE_HOME"] == str(root / "state")
     assert (env["TZ"], env["PYTHONHASHSEED"], env["GIT_ALLOW_PROTOCOL"]) == ("UTC", "0", "file")
     assert env["PYTHONPATH"] == str(tmp_path / "support" / "clock")
     assert env["GIT_AUTHOR_DATE"] == env["GIT_COMMITTER_DATE"] == "2026-01-15T10:30:00Z"

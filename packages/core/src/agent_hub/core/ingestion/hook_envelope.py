@@ -14,6 +14,38 @@ MAX_STRING_BYTES = 65_536
 # A body nested deeper than this is refused (bounded recursion while parsing).
 MAX_JSON_DEPTH = 64
 
+_QUOTE = ord('"')
+_BACKSLASH = ord("\\")
+_NESTING = {ord("["): 1, ord("{"): 1, ord("]"): -1, ord("}"): -1}
+
+
+def json_depth_exceeds(body: bytes, limit: int = MAX_JSON_DEPTH) -> bool:
+    """Whether ``body`` nests arrays and objects deeper than ``limit``, read without parsing.
+
+    Brackets inside strings do not count. One linear pass over at most 1 MiB (the hook route's
+    body, a spooled line); it keeps the JSON parser's recursion bounded.
+    """
+    depth = 0
+    in_string = escaped = False
+    for byte in body:
+        if in_string:
+            in_string, escaped = _string_state(byte, escaped=escaped)
+            continue
+        in_string = byte == _QUOTE
+        depth += _NESTING.get(byte, 0)
+        if depth > limit:
+            return True
+    return False
+
+
+def _string_state(byte: int, *, escaped: bool) -> tuple[bool, bool]:
+    # (still in the string, next byte escaped) after ``byte`` inside a string.
+    if escaped:
+        return True, False
+    if byte == _BACKSLASH:
+        return True, True
+    return byte != _QUOTE, False
+
 
 class HookDecision(BaseModel):
     """What the guard or the Stop gate decided, sent with the hook input that caused it."""

@@ -10,6 +10,7 @@ from agent_hub.core.ingestion.hook_envelope import (
     MAX_STRING_BYTES,
     HookDecision,
     HookEnvelope,
+    json_depth_exceeds,
 )
 
 
@@ -117,3 +118,24 @@ def test_exposes_bounds_when_constants_read() -> None:
 def test_rejects_envelope_when_id_longer_than_cap(overrides: dict[str, Any], field: str) -> None:
     with pytest.raises(ValidationError, match=f"{field}: longer than 200 characters"):
         HookEnvelope.model_validate(an_envelope_document(**overrides))
+
+
+@pytest.mark.parametrize(
+    ("body", "exceeds"),
+    [
+        (b'{"a": [1, {"b": 2}]}', False),
+        (b"[" * 64 + b"]" * 64, False),
+        (b"[" * 65 + b"]" * 65, True),
+        (b'{"a": "' + b"[" * 100 + b'"}', False),
+        (b'{"a": "\\"' + b"[" * 100 + b'"}', False),
+        (b'{"a": "\\\\"' + b", " + b"[" * 70, True),
+    ],
+)
+def test_measures_nesting_outside_strings_when_maps_body_checked(
+    *, body: bytes, exceeds: bool
+) -> None:
+    assert json_depth_exceeds(body) is exceeds
+
+
+def test_counts_depth_against_given_limit_when_limit_given() -> None:
+    assert json_depth_exceeds(b"[[[]]]", limit=2)

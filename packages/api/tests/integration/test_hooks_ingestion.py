@@ -35,6 +35,9 @@ class NoTranscript:
     def read_new(self, ref: TranscriptRef) -> TailResult:
         return TailResult(events=())
 
+    def read_to_end(self, ref: TranscriptRef) -> TailResult:
+        return TailResult(events=())
+
     def commit(self, position: TailPosition) -> None:
         return None
 
