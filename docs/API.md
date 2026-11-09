@@ -719,8 +719,9 @@ the ring still holds, then live frames:
   that block's completed `text` record instead.
 
 `Last-Event-ID` (or `?after=`, the header wins) is `<seq>` or `<seq>.<n>`, at most 32 characters. Frames sent live
-carry the original text; a replay carries the stored, redacted copy. An unknown session is a 404 problem before any
-byte; an ended session's stream replays its log and ends.
+carry the original text; a replay carries the stored, redacted copy. A live session's replay stops at the last record
+the session had when the stream connected, so every later record comes live. An unknown session is a 404 problem
+before any byte; an ended session's stream replays its log and ends.
 
 **Access.** Every route of the family needs the cookie `agent_hub_<port>`, reads included: `hub web` mints a token
 per launch and prints `/?token=<token>`; a `GET` or `HEAD` of a page with `token` answers 303 to the same address

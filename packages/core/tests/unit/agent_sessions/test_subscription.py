@@ -1,3 +1,5 @@
+import asyncio
+import threading
 from collections.abc import AsyncIterator, Callable
 
 import pytest
@@ -14,7 +16,8 @@ from agent_hub.core.agent_sessions.records import (
     StreamItem,
     StreamPosition,
 )
-from agent_hub.core.testing.agent_session_rig import Rig
+from agent_hub.core.agent_sessions.subscription import REPLAY_PAGE
+from agent_hub.core.testing.agent_session_rig import WAIT_SECONDS, Rig
 from agent_hub.core.testing.session_driver_fakes import Hold, Turn
 
 type MakeRig = Callable[..., Rig]
@@ -139,6 +142,46 @@ async def test_streams_raw_live_and_replays_redacted_when_text_holds_token(
     assert isinstance(stored_text, LogRecord)
     assert live_text.body["text"] == secret
     assert GITHUB_TOKEN not in str(stored_text.body)
+
+
+async def test_streams_raw_live_when_record_stored_during_replay(
+    make_rig: MakeRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: AGH-725. A record stored while a new stream replays the store reaches that
+    stream live and raw, not from the store and redacted: the replay stops at the last record
+    the session had when the stream attached, and later records come from the live frames."""
+    secret = f"token {GITHUB_TOKEN}"
+    rig = make_rig(replies={"Show it.": (Hold(), TextBlock(block=0, text=secret))})
+    created = await rig.create("Show it.")
+    await rig.until(lambda: "init" in rig.kinds(created.id))
+    stored_records = rig.store.records
+    reading, go_on = threading.Event(), threading.Event()
+
+    def held_replay(*args: object, **kwargs: object) -> tuple[LogRecord, ...]:
+        # The replay's first page (read in a worker thread) waits until the turn is stored.
+        if kwargs.get("limit") == REPLAY_PAGE and not reading.is_set():
+            reading.set()
+            go_on.wait(WAIT_SECONDS)
+        return stored_records(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(rig.store, "records", held_replay)
+    stream = aiter(await rig.control.subscribe(created.id, StreamPosition(seq=0)))
+    first = asyncio.ensure_future(anext(stream))
+    await rig.until(reading.is_set)
+    rig.driver.release(rig.handle())
+    await rig.until(lambda: "text" in [record.kind for record in stored_records(created.id)])
+    go_on.set()
+    items = [await first]
+    async with asyncio.timeout(WAIT_SECONDS):
+        while not (isinstance(items[-1], LogRecord) and items[-1].kind == "text"):
+            items.append(await anext(stream))
+
+    # The replay ends before the status frame; what follows it is live.
+    labels = [_label(item) for item in items]
+    assert labels[:2] == ["1:user.message", "2:init"]
+    assert isinstance(items[2], StatusFrame)
+    assert labels[3:] == ["3:text"]
+    assert items[-1].body["text"] == secret  # type: ignore[union-attr]
 
 
 async def test_ends_stream_after_status_when_session_ended(make_rig: MakeRig) -> None:
