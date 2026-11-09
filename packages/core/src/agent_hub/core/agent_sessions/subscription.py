@@ -7,7 +7,10 @@
    (steps 4 and 5), and the client reloads the snapshot and the log;
 2. the stored records after the position's ``seq``, in pages, as the store holds them
    (redacted, E9); no position (None) means live frames only: no replay and no ring deltas
-   (the API route sends its own reset for a malformed ``Last-Event-ID``);
+   (the API route sends its own reset for a malformed ``Last-Event-ID``). While the session is
+   live, the replay stops at the last ``seq`` the session had when the stream attached: a
+   record stored then is already published, and every later record is published after the
+   attach, so it comes in step 5, raw, and never from the store while the stream is connected;
 3. while the session is live, the deltas of its open block that the ring still holds after the
    position (``<seq>.<n>``); when the ring dropped one of them, none: the completed ``text``
    record brings the content instead;
@@ -16,8 +19,9 @@
    in-process (S7). Records the replay already sent and deltas older than the last record sent
    are skipped, so nothing comes twice and ``seq`` never goes back.
 
-A subscriber that falls behind the live buffer replays the store again from its last record
-(no record is lost); a subscriber detached by a newer one (the cap) gets a reset and ends. The
+A subscriber that falls behind the live buffer replays the store again from its last record up
+to the session's last record at that moment, and reads the later ones live (no record is lost);
+a subscriber detached by a newer one (the cap) gets a reset and ends. The
 stream ends after the session's last frame, or after step 4 for an ended session.
 """
 
@@ -88,7 +92,8 @@ async def frames(
         position = after if after is not None and replay else StreamPosition(seq=last_seq)
         sent = _Sent(position)
         if replay:
-            async for item in _replayed(read, sent, ring=None if live is None else live.ring):
+            ring, until = (None, None) if live is None else (live.ring, last_seq)
+            async for item in _replayed(read, sent, ring=ring, until=until):
                 yield item
         if live is None or subscriber is None:
             yield StatusFrame(status=session.status, end_reason=session.end_reason)
@@ -106,15 +111,18 @@ def _new[T: StreamItem](items: Iterable[T], sent: _Sent) -> Iterator[T]:
 
 
 async def _replayed(
-    read: RecordReader, sent: _Sent, *, ring: DeltaRing | None = None
+    read: RecordReader, sent: _Sent, *, ring: DeltaRing | None = None, until: int | None = None
 ) -> AsyncIterator[StreamItem]:
-    """The stored records after the last one sent, in pages; then, given the ring, the deltas
-    it still holds after the position (none when it dropped one)."""
+    """The stored records after the last one sent, in pages, up to ``seq`` ``until`` when given;
+    then, given the ring, the deltas it still holds after the position (none when it dropped
+    one)."""
     position = (sent.seq, sent.delta)
     after = sent.seq
-    while True:
+    while until is None or after < until:
         page = await read(after, REPLAY_PAGE)
-        for record in _new(page, sent):
+        # Cut before ``_new``: it notes each record it passes as sent.
+        upto = page if until is None else [record for record in page if record.seq <= until]
+        for record in _new(upto, sent):
             yield record
         if len(page) < REPLAY_PAGE:
             break
@@ -132,9 +140,10 @@ async def _live(
     while not subscriber.detached:
         published = live.frames_after(subscriber.cursor)
         if published is None:
-            # Behind the live buffer: replay what the store has since the last record sent.
+            # Behind the live buffer: replay what the store has since the last record sent, up to
+            # the last record now; later ones are published after this cursor, so they come live.
             subscriber.cursor = live.published
-            async for record in _replayed(read, sent):
+            async for record in _replayed(read, sent, until=live.last_seq):
                 yield record
             continue
         for number, item in published:

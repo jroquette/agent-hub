@@ -1,3 +1,5 @@
+import asyncio
+import threading
 from collections.abc import AsyncIterator, Callable
 
 import pytest
@@ -6,6 +8,7 @@ from agent_hub.core.agent_sessions.agent_session import AgentSessionStatus, Send
 from agent_hub.core.agent_sessions.driver import TextBlock, TextDelta
 from agent_hub.core.agent_sessions.errors import AgentSessionNotFoundError
 from agent_hub.core.agent_sessions.limits import SessionLimits
+from agent_hub.core.agent_sessions.live_session import LIVE_BUFFER
 from agent_hub.core.agent_sessions.records import (
     DeltaFrame,
     LogRecord,
@@ -14,7 +17,8 @@ from agent_hub.core.agent_sessions.records import (
     StreamItem,
     StreamPosition,
 )
-from agent_hub.core.testing.agent_session_rig import Rig
+from agent_hub.core.agent_sessions.subscription import REPLAY_PAGE
+from agent_hub.core.testing.agent_session_rig import WAIT_SECONDS, Rig
 from agent_hub.core.testing.session_driver_fakes import Hold, Turn
 
 type MakeRig = Callable[..., Rig]
@@ -58,6 +62,13 @@ async def _streaming(make_rig: MakeRig, *, more: Turn = (), **options: object) -
     live = rig.control._live[created.id]  # noqa: SLF001 -- wait until the deltas are in
     await rig.until(lambda: live.ring.since(2) is not None and len(live.ring.since(2) or []) == 3)
     return rig, created.id
+
+
+async def _until_seq(rig: Rig, session_id: str, seq: int) -> None:
+    """Waits until the live session's ``last_seq`` (what a new stream reads) is ``seq``. The store
+    is no proxy for it: a record is stored in a worker thread before the loop moves ``last_seq``."""
+    live = rig.control._live[session_id]  # noqa: SLF001 -- no public view of the live last_seq
+    await rig.until(lambda: live.last_seq == seq)
 
 
 async def test_replays_store_then_ring_when_reconnected(make_rig: MakeRig) -> None:
@@ -126,7 +137,7 @@ async def test_streams_raw_live_and_replays_redacted_when_text_holds_token(
     secret = f"token {GITHUB_TOKEN}"
     rig = make_rig(replies={"Show it.": (Hold(), TextBlock(block=0, text=secret))})
     created = await rig.create("Show it.")
-    await rig.until(lambda: "init" in rig.kinds(created.id))
+    await _until_seq(rig, created.id, 2)
     stream = await rig.control.subscribe(created.id, StreamPosition(seq=2))
     await _take(stream, "status:running")
 
@@ -139,6 +150,86 @@ async def test_streams_raw_live_and_replays_redacted_when_text_holds_token(
     assert isinstance(stored_text, LogRecord)
     assert live_text.body["text"] == secret
     assert GITHUB_TOKEN not in str(stored_text.body)
+
+
+async def test_streams_raw_live_when_record_stored_during_replay(
+    make_rig: MakeRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: AGH-725. A record stored while a new stream replays the store reaches that
+    stream live and raw, not from the store and redacted: the replay stops at the last record
+    the session had when the stream attached, and later records come from the live frames."""
+    secret = f"token {GITHUB_TOKEN}"
+    rig = make_rig(replies={"Show it.": (Hold(), TextBlock(block=0, text=secret))})
+    created = await rig.create("Show it.")
+    await _until_seq(rig, created.id, 2)
+    stored_records = rig.store.records
+    reading, go_on = threading.Event(), threading.Event()
+
+    def held_replay(*args: object, **kwargs: object) -> tuple[LogRecord, ...]:
+        # The replay's first page (read in a worker thread) waits until the turn is stored.
+        if kwargs.get("limit") == REPLAY_PAGE and not reading.is_set():
+            reading.set()
+            go_on.wait(WAIT_SECONDS)
+        return stored_records(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(rig.store, "records", held_replay)
+    stream = aiter(await rig.control.subscribe(created.id, StreamPosition(seq=0)))
+    first = asyncio.ensure_future(anext(stream))
+    await rig.until(reading.is_set)
+    rig.driver.release(rig.handle())
+    await rig.until(lambda: "text" in [record.kind for record in stored_records(created.id)])
+    go_on.set()
+    items = [await first]
+    async with asyncio.timeout(WAIT_SECONDS):
+        while not (isinstance(items[-1], LogRecord) and items[-1].kind == "text"):
+            items.append(await anext(stream))
+
+    # The replay ends before the status frame; what follows it is live.
+    labels = [_label(item) for item in items]
+    assert labels[:2] == ["1:user.message", "2:init"]
+    assert isinstance(items[2], StatusFrame)
+    assert labels[3:] == ["3:text"]
+    assert items[-1].body["text"] == secret  # type: ignore[union-attr]
+
+
+async def test_streams_raw_live_when_record_stored_during_catch_up_replay(
+    make_rig: MakeRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: AGH-725. A stream that fell behind the live buffer replays the store up to the
+    session's last record at that moment; a record stored during that replay still comes live
+    and raw."""
+    secret = f"token {GITHUB_TOKEN}"
+    deltas = tuple(TextDelta(block=0, index=n, text="x") for n in range(LIVE_BUFFER + 88))
+    turn = (*deltas, TextBlock(block=0, text="First."), Hold(), TextBlock(block=1, text=secret))
+    rig = make_rig(replies={"Go.": turn})
+    created = await rig.create("Go.")
+    stream = aiter(await rig.control.subscribe(created.id, None))
+    await anext(stream)  # the status: attached, and it reads nothing more until the turn holds
+    await _until_seq(rig, created.id, 3)
+    stored_records = rig.store.records
+    reading, go_on = threading.Event(), threading.Event()
+
+    def held_replay(*args: object, **kwargs: object) -> tuple[LogRecord, ...]:
+        # The catch-up replay's first page (read in a worker thread) waits until 4 is stored.
+        if kwargs.get("limit") == REPLAY_PAGE and not reading.is_set():
+            reading.set()
+            go_on.wait(WAIT_SECONDS)
+        return stored_records(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(rig.store, "records", held_replay)
+    caught_up = asyncio.ensure_future(anext(stream))
+    await rig.until(reading.is_set)
+    rig.driver.release(rig.handle())
+    await rig.until(lambda: len(stored_records(created.id)) >= 4)
+    go_on.set()
+    items = [await caught_up]
+    async with asyncio.timeout(WAIT_SECONDS):
+        while not (isinstance(items[-1], LogRecord) and items[-1].seq == 4):
+            items.append(await anext(stream))
+
+    records = [_label(item) for item in items if isinstance(item, LogRecord)]
+    assert records[-2:] == ["3:text", "4:text"]
+    assert items[-1].body["text"] == secret  # type: ignore[union-attr]
 
 
 async def test_ends_stream_after_status_when_session_ended(make_rig: MakeRig) -> None:
