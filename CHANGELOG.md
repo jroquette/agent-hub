@@ -29,12 +29,48 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   dropped and counted), outside every hub and repo. `hub web` imports it when it starts, and `hub collect --spool`
   imports it without `hub web`, all or nothing, with the transcripts its Stop hooks name. Arrives after you bump
   `platform.version` and run `hub sync`.
+- Hub CI fails a pull request whose title, body or commits carry AI attribution or a commit author other than
+  `project.author_email`; the platform's CI runs the same check (AGH-699). Arrives after you bump `platform.version`
+  and run `hub sync`.
+- A commit-msg hook, `plugin/hub-workflow/hooks/commit_msg.py`, refuses the same attribution and a foreign author
+  (AGH-699). Nothing installs it yet: add it as your clone's commit-msg hook to use it.
+- Hub CI clones the hub's repos beside it, so `hub doctor`'s rules that read a repo run in CI too (AGH-699).
+- `/handoff` moves merged issues with green checks to Done, `/deliver` names the issues it leaves open and journals
+  the merged pull request, and the release bump keeps `brain/now.md` current (AGH-699).
+
+### Changed
+
+- `hub web`: writes to the config, environments, repos, platform sync, doctor fix, learning decisions and the Linear
+  key now need the launch cookie and a JSON body (`Content-Type: application/json`), like the other strict writes; a
+  same-origin request without the cookie gets 403, and a test pins the protection of every write route (AGH-699).
+  A script that calls these routes must send the cookie.
+- `hub search` and the `hub mcp` `search` tool rank curated knowledge (ADRs, decisions, learnings, playbooks, domain
+  and system notes) first, then notes whose `status` is approved or active, then the text match; the output does not
+  change (AGH-699).
+- `hub mcp`'s `propose`, `hub ship` and `hub run` open and find pull requests through GitHub's REST API (`gh api`),
+  so they work where `gh`'s GraphQL is refused, as in cloud sessions (AGH-699). Skills say the same for the
+  pull requests they open, edit and read.
+- The managed `CLAUDE.md` says the hub's rules 1 and 2 (authorship, branches) win over a session's own branch and
+  attribution instructions, and names the superpowers key the hub enables (AGH-699).
+- Every package declares the distributions it imports, and `make layout` fails on one that is missing; the
+  agent-hub-core and agent-hub-claude-sessions wheels no longer ship their `testing` modules; typer is bounded to the
+  tested range (AGH-699).
+- `make check-changed` runs only the web checks and tests that a change to the web app's `.tsx` files reaches
+  (AGH-699).
 
 ### Fixed
 
 - The brain-care `inbox` workflow's `group` step states every output cap in its prompt, so a long `target` no longer
   fails its output contract (AGH-504). Your hub's `workflows/brain-care` copy runs instead of the built-in until you
   delete it.
+- Portfolio and Project overview show their counts as soon as the page connects, not after the first change
+  (AGH-699).
+- A live session stream no longer drops a frame published while it replays the stored ones (AGH-699).
+- `make check` no longer leaves `vite preview` servers running (AGH-699).
+
+### Security
+
+- vite 8.3.5, vitest 5.0.5, undici 7.30.2 and certifi 2026.10.23, past their published advisories (AGH-699).
 
 ## [0.33.0] - 2026-11-06
 
