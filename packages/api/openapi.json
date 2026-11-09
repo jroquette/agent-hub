@@ -22674,7 +22674,7 @@
     },
     "/api/v1/projects/{project}/knowledge/search": {
       "get": {
-        "description": "The hub's notes and repo docs holding every word of ``q``, best first, after the index\nis brought up to date with the checkout; ``q``'s words only, never search syntax.",
+        "description": "The hub's notes and repo docs holding every word of ``q``, in the index's order (curated\nknowledge first, then by status, then best match), after the index is brought up to date\nwith the checkout; ``q``'s words only, never search syntax.",
         "operationId": "search_project_knowledge_api_v1_projects__project__knowledge_search_get",
         "parameters": [
           {
