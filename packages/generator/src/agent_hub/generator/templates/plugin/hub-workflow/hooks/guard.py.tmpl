@@ -358,8 +358,10 @@ FEATURE_EVALS_FOLDER = LazyPattern(r"(?:^|/)brain/features/[^/]+/evals/?$")
 OWNER_SIGNOFF_NAME = LazyPattern(r"(?:^|/)owner-signoff[^/]*$", re.I)
 # A provenance field, read as core reads it (each line's value, stripped and unquoted, is `owner`)
 # and more leniently: blanks before the key and around the colon, any quotes and blanks around the value.
+# The value is read with one fullmatch, whose repeats stand beside a literal they cannot match: time
+# linear in the line (stripping its edges with a search from each start was quadratic in a blank run).
 PROVENANCE_FIELD = LazyPattern(r"\s*provenance\s*:(.*)")
-OWNER_VALUE_EDGES = LazyPattern(r"^[\s'\"]+|[\s'\"]+\Z")
+OWNER_VALUE = LazyPattern(r"[\s'\"]*owner[\s'\"]*")
 # A Bash write's new text is the command's, quoted and escaped (echo, printf's `\n`, sed's s///):
 # there the value counts wherever it stands, and so does `owner` itself with the command's quotes and
 # backslashes removed (`s/agent/owner/`, `printf '%s' owner`, `ow''ner`).
@@ -380,7 +382,9 @@ PRINTF_DIRECTIVE = LazyPattern(r"(%%|%s)")
 SIMPLE_ESCAPE = LazyPattern(r"\\(.)", re.S)
 SIMPLE_ESCAPES = {"\\": "\\", "a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r",
                   "t": "\t", "v": "\v", '"': '"', "'": "'", "?": "?"}
-SED_IN_PLACE = LazyPattern(r"-\w*i.*|--in-place(?:=.*)?")
+# sed's in-place option, matched at a word's start (the rest is its suffix, a newline included, as
+# sed reads it): a fullmatch of `-\w*i.*` went back over a word that ends in a newline from each `i`.
+SED_IN_PLACE = LazyPattern(r"-\w*i|--in-place(?:=|\Z)")
 WRITE_PROGRAMS = ("tee", "rm", "mv", "cp", "truncate", "ln")
 AUTO_MODE_SUFFIX = (
     " (denied in auto mode, which never stops to confirm: take another way, or ask the user to"
@@ -433,7 +437,7 @@ def _says_owner(text: str) -> bool:
         return False
     for line in text.splitlines():
         found = PROVENANCE_FIELD.match(line)
-        if found and OWNER_VALUE_EDGES.sub("", found.group(1)) == "owner":
+        if found and OWNER_VALUE.fullmatch(found.group(1)):
             return True
     return False
 
@@ -463,7 +467,8 @@ def _file_owner_signoff(tool: str, ti: dict, path: str, cfg: Config) -> Verdict:
     """The owner sign-off rule on a Write, Edit or MultiEdit of path: an ask when path is a feature
     eval named owner-signoff[-rN], or its text after the change says provenance: owner (_says_owner:
     Write's content; an edit's new strings, or the file's text with the edits applied as the tool
-    applies them), or that text cannot be told (the file cannot be read, past EVAL_EDITS_CAP edits)."""
+    applies them), or that text cannot be told (the file cannot be read, past EVAL_EDITS_CAP edits,
+    or an edit would make it over 1 MiB: its size is told from the edit's count before it is applied)."""
     if not _owner_signoff(path, _new_text(tool, ti), cfg):
         if tool not in ("Edit", "MultiEdit") or not _feature_evals(path, cfg):
             return None
@@ -473,10 +478,12 @@ def _file_owner_signoff(tool: str, ti: dict, path: str, cfg: Config) -> Verdict:
             text, cause = None, f"over {EVAL_EDITS_CAP} edits"
         for edit in edits if text is not None else ():
             old, new = _str(edit.get("old_string")), _str(edit.get("new_string"))
-            text = text.replace(old, new) if edit.get("replace_all") is True else text.replace(old, new, 1)
-            if len(text) > BLOCKED_FILE_CAP:
+            every = edit.get("replace_all") is True
+            count = text.count(old) if every else int(old in text)
+            if len(text) + count * (len(new) - len(old)) > BLOCKED_FILE_CAP:
                 text, cause = None, "over 1 MiB"
                 break
+            text = text.replace(old, new) if every else text.replace(old, new, 1)
         if text is None:
             return "ask", OWNER_UNCHECKED_REASON.format(path, cause)
         if not _says_owner(text):
@@ -1327,7 +1334,7 @@ def _bash_eval_write(tok: str, single: tuple[list[str], list[tuple[str, bool, bo
             before = text if writes[0][1] else ""
             return ("ask", OWNER_SIGNOFF_REASON.format(tok)) if any(_says_owner(before + w) for w in written) else None
     elif tok in args and not writes and (program == "rm" or (program == "sed" and not os.path.lexists(path)
-                                                             and any(SED_IN_PLACE.fullmatch(a) for a in args))):
+                                                             and any(SED_IN_PLACE.match(a) for a in args))):
         return None
     return "ask", OWNER_UNCHECKED_REASON.format(tok, UNSEEN_WRITE_CAUSE)
 
@@ -1341,7 +1348,7 @@ def _call_write_targets(cmd: str) -> list[str]:
         at = _program(words)[0]
         args = [text for text, _ in words[at + 1:] if not text.startswith("-")]
         name = words[at][0].rsplit("/", 1)[-1] if at < len(words) else ""
-        in_place = name == "sed" and any(SED_IN_PLACE.fullmatch(text) for text, _ in words[at + 1:])
+        in_place = name == "sed" and any(SED_IN_PLACE.match(text) for text, _ in words[at + 1:])
         if name in WRITE_PROGRAMS or in_place:
             found += args
     return found
