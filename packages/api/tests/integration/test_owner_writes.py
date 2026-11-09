@@ -2,10 +2,10 @@
 
 The Hub config writes, the hub actions, the learning decisions, the Linear key and a feature's
 nickname are made only from the owner's own page, which holds the launch cookie (the owner
-sign-off is an item write, AGH-695). This server's exact ``Origin`` is not enough: any local process can send it. So without
-the cookie each one answers 401 before its route runs and nothing changes on disk, and in the
-container, where no token is minted, each one is off (404 ``owner-writes-off``), as
-``docs/API.md`` (Local security) says.
+sign-off is an item write, AGH-695). This server's exact ``Origin`` is not enough: any local
+process can send it. So without the cookie each one answers 401 before its route runs and
+nothing changes on disk, and in the container, where no token is minted, each one is off (404
+``owner-writes-off``), as ``docs/API.md`` (Local security) says.
 """
 
 from collections.abc import Callable
