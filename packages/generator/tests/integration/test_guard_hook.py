@@ -3417,6 +3417,8 @@ def test_passes_bash_write_when_brain_folder_is_not_hubs(
         ("cd ../.. && echo x > apps/web/src/screens/brain/x.tsx", worktree / "apps" / "web"),
         (f'cd "{worktree}/a b" && cp /tmp/x {BRAIN_SCREEN}', hub),
         (f"cd ~ && echo x > {BRAIN_DECISION}", worktree),
+        # a chain break after the leading cd: the word is read from both folders
+        (f"cd {worktree} && make; cp /tmp/x {BRAIN_SCREEN}", hub),
     ]
     calls = [bash(command, cwd=folder) for command, folder in runs]
     # without the event's cwd, a leading cd to an absolute folder still gives it
@@ -3452,6 +3454,12 @@ def test_asks_when_bash_write_lands_in_hub_curated_brain(
         ("rm -rf brain", hub),
         ("cp /tmp/x brain/", hub),
         ("cp /tmp/x ../demo-hub/brain/", app),
+        # after a `;`, a newline, `||` or a lone `&`, a command may run in the session's folder: the
+        # leading cd failed, or its chain went to the background
+        (f"cd ../app && sleep 1 & echo x > {BRAIN_DECISION}", hub),
+        (f"cd ../app-typo && make; echo x >> {BRAIN_DECISION}", hub),
+        (f"cd ../app && make\necho x > {BRAIN_DECISION}", hub),
+        (f"cd /nonexistent && true || echo x > {BRAIN_DECISION}", hub),
     ]
 
     verdicts = evaluate([bash(command, cwd=folder) for command, folder in runs])
@@ -3506,10 +3514,16 @@ def test_asks_on_text_when_bash_write_folder_unknown(evaluate: Evaluate, workspa
         ),
         (f"bash -c 'cd ../demo-hub && echo x > {decision}'", app, decision),
         (f'eval "cd ../demo-hub"; echo x > {decision}', app, decision),
+        # a cd spelled with quotes or a backslash
+        (f"c''d ../demo-hub && echo x > {decision}", app, decision),
+        (f'"c"d ../demo-hub && echo x > {decision}', app, decision),
+        (f"c\\d ../demo-hub && echo x > {decision}", app, decision),
         # an option or a variable that sets another folder
         (f"git -C ../demo-hub rm {decision}", app, decision),
         (f"env --chdir=../demo-hub sed -i s/a/b/ {decision}", app, decision),
         (f"GIT_WORK_TREE=../demo-hub git rm {decision}", app, decision),
+        (f"pnpm --dir ../demo-hub exec rm {decision}", app, decision),
+        (f"make -sC ../demo-hub && rm {decision}", app, decision),
         # no cwd in the event
         (f"echo x > {BRAIN_SCREEN}", None, BRAIN_SCREEN),
     ]
