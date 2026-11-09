@@ -17,7 +17,7 @@
   [
    "comment",
    "DEM-1",
-   "Run <run> opened https://github.com/acme/demo-api/pull/99. feat(api): synthetic change (DEM-1)"
+   "Run <run> opened https://github.com/acme/demo-api/pull/99. Gates green: `make check`. feat(api): synthetic change (DEM-1)"
   ]
  ],
  "events": [

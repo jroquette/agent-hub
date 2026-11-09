@@ -37,7 +37,10 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         deleting or sed-editing tests from Bash, editing the hub's guard files: plugin/hub-workflow/hooks/,
         plugin/<project>/hooks/, .claude/settings*.json, hub.lock, hub.json and hub.local.json, in the hub or a hub worktree,
         and the hub/agent launchers (a Bash write asks only when one is its target, so running them never asks);
-        editing paths in guard.ask_before_edit, writing brain/ outside now.md, journal/, _inbox/, auto/, features/,
+        editing paths in guard.ask_before_edit, writing the hub's brain/ (its checkout or a hub worktree, or a
+        brain/ beside a hub.json; a relative Bash word read from the event's cwd or a leading `cd <folder> &&`,
+        and by its text when it holds $ or a backtick or the command changes folder otherwise) or brain/ itself
+        outside now.md, journal/, _inbox/, auto/, features/,
         a mutating hub env (add, set, remove, service add|remove; list and show pass) or hub repo
         (add, set, remove; list passes),
         with HUB_RUN_ENVIRONMENT naming a declared environment of access read or production (an agent
@@ -284,6 +287,27 @@ SETTINGS_FILE = LazyPattern(r"\.claude/settings[^/]*\.json")
 LAUNCHERS = ("hub", "agent")
 WRITE_TARGET = LazyPattern(r">>?\s*([^\s;&|<>()`]+)")
 WRITE_ARGS = LazyPattern(r"\b(?:tee|sed\s+(?:-\w*i\w*|--in-place)|rm|mv|cp|truncate|ln)\b(.*)")
+BRAIN_CURATED_REASON = ("brain/ is curated: agents write only now.md, journal/, _inbox/, auto/ and features/; "
+                        "propose via /learn or confirm")
+BRAIN_UNRESOLVED_REASON = BRAIN_CURATED_REASON + (" ({} may be the hub's brain/: the guard reads a word with $ or a "
+                                                  "backtick, or a relative one in a command that changes folder other "
+                                                  "than by a leading `cd <folder> &&`, as text; a literal path outside "
+                                                  "the hub's brain/ passes)")
+BRAIN_OPEN = LazyPattern(r"now\.md|journal/|_inbox/|auto/|features/")  # matched at the start of a path in brain/
+# A word in a folder the guard cannot resolve: a `brain` part, then a path outside the open folders.
+BRAIN_TEXT = LazyPattern(r"(?:^|/)brain/(?!now\.md|journal/|_inbox/|auto/|features/).")
+BRAIN_DYNAMIC = LazyPattern(r"[$`]")
+BRAIN_JOIN_CAP = 1 << 20  # folder characters joined to relative words; past it, they are read as text
+# A leading `cd <folder> &&`: a literal folder (no option, quote, $, backtick, glob, brace or #),
+# or one in single quotes, or in double quotes without $, a backtick or a backslash.
+LEAD_CD = LazyPattern(r"\s*cd[ \t]+(?:((?!-)[^\s;&|()<>$`'\"\\*?\[{}#]+)|'([^'\n]*)'|\"([^\"$`\\\n]*)\")[ \t]*&&")
+# Anything that may change the folder a word is read from (a superset: more only asks on text),
+# searched in the command without its quotes and backslashes (c''d is cd).
+FOLDER_CHANGE = LazyPattern(r"(?<![\w./-])(?:cd|pushd|popd)(?![\w./-])|(?<![\w-])-[A-Za-z]*C|--(?:chdir|work-tree|"
+                            r"git-dir|directory|dir|workdir|working-directory|cwd|prefix)(?![\w-])|\bGIT_(?:WORK_TREE|DIR)\b")
+# What ends a leading cd's `&&` chain: after it, a command may run in the session's folder (the cd
+# failed, or its chain went to the background): `;`, a newline, `||` or a lone `&`.
+CHAIN_BREAK = LazyPattern(r";|\n|\|\||(?<![&>|])&(?![&>])")
 HUB_PREFIX = "@hub"
 # A `hub env` verb that writes hub.json or hub.local.json, behind a launcher path (`./hub`, a tool
 # runner's `--from x hub`), searched in each of the blocked-words rule's command views, so quotes and
@@ -1057,7 +1081,8 @@ def check_infra(cmd: str, cfg: Config) -> Verdict:
     return None
 
 
-def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
+def check_bash(cmd: str, cfg: Config | None = None, cwd: str | None = None) -> Verdict:
+    """The Bash rules on cmd; cwd is the folder the command runs in (the event's), None when not known."""
     cfg = cfg or Config()
     c = cmd.replace("\\\n", " ")
     # longest first, so release/2 is named before release
@@ -1079,13 +1104,13 @@ def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
     infra = check_infra(cmd, cfg)
     if infra and infra[0] == "deny":
         return infra
-    return tighten(infra, _after_infra(c, cfg))
+    return tighten(infra, _after_infra(c, cfg, cwd))
 
 
-def _after_infra(c: str, cfg: Config) -> Verdict:
+def _after_infra(c: str, cfg: Config, cwd: str | None = None) -> Verdict:
     """check_bash's rules after the infra rule (secrets, attribution, claude/ branches, .git,
     deny_paths, guard files, tests, brain, ask_before_edit, a mutating hub env or hub repo): an infra ask or allow does not end the
-    check, so a later deny wins and a later ask keeps the infra reason."""
+    check, so a later deny wins and a later ask keeps the infra reason. cwd is the command's folder (None: not known)."""
     for seg in re.split(r"&&|\|\||[;|\n]", c):
         words = seg.split()
         if not words or words[0] in SAFE_ON_SECRETS:
@@ -1127,8 +1152,9 @@ def _after_infra(c: str, cfg: Config) -> Verdict:
                     return "ask", GUARD_PARENT_REASON.format(tok, held or "the hub")
     if re.search(r"\b(rm|mv|truncate)\b[^;&|\n]*\s" + TEST_PATH, c) or re.search(r"\bsed\s+(-\w*i\w*|--in-place)\b[^;&|\n]*\s" + TEST_PATH, c):
         return "ask", "deleting or sed-editing tests from Bash bypasses the assertion guard; use Edit, or confirm this is intended"
-    if "brain/" in c and re.search(r"(>>?|\btee\b(\s+-a)?|\bsed\s+-\w*i\w*|\b(rm|mv|cp)\b)[^;&|\n]*\bbrain/(?!(now\.md|journal/|_inbox/|auto/|features/))\S+", c):
-        return "ask", "brain/ is curated: agents write only now.md, journal/, _inbox/, auto/ and features/; propose via /learn or confirm"
+    brain = _brain_write(c, cfg, cwd)
+    if brain:
+        return brain
     if cfg.ask_before_edit:
         for seg in segments:
             if not BASH_WRITE.search(seg):
@@ -1162,6 +1188,105 @@ def _brain_rel(path: str, cfg: Config) -> str | None:
     m = re.search(r"^brain/(.+)$", path)
     if m and os.path.isdir("brain"):
         return m.group(1)
+    return None
+
+
+def _unquoted(text: str) -> str:
+    """text without its quotes and backslashes: the word the shell runs (br""ain is brain)."""
+    return text.replace("'", "").replace('"', "").replace("\\", "")
+
+
+def _command_dirs(c: str, cwd: str | None) -> list[str] | None:
+    """The folders a relative write word of command c may be read from, or None when one is not known.
+
+    It is the session's folder (cwd, when absolute). A leading `cd <folder> &&` (LEAD_CD: a literal,
+    a ~ path or a quoted folder without $ or a backtick) gives its folder, joined to the session's,
+    instead; or as well when the rest of c holds a CHAIN_BREAK, after which a command may run in the
+    session's folder. None without a cwd where one is needed, or when c changes folder anywhere else
+    (FOLDER_CHANGE, on c without quotes and backslashes: cd, pushd, popd, -C, --chdir, GIT_DIR, ...):
+    a cd that may or may not run, in a subshell, a `bash -c` or after `||`, would leave two folders,
+    so the guard does not follow it."""
+    here = cwd if cwd and os.path.isabs(cwd) else None
+    folders = [here]
+    rest = 0
+    lead = LEAD_CD.match(c)
+    if lead:
+        bare, single, double = lead.groups()
+        arg = single if single is not None else double if double is not None else bare
+        if bare is not None:
+            try:
+                arg = os.path.expanduser(arg)
+            except ValueError:  # a NUL byte or a lone surrogate in a ~name
+                return None
+            if arg.startswith("~"):
+                return None
+        there = arg if os.path.isabs(arg) else os.path.join(here, arg) if here else None
+        rest = lead.end()
+        folders = [there, here] if CHAIN_BREAK.search(c, rest) else [there]
+    if None in folders or FOLDER_CHANGE.search(_unquoted(c[rest:])):
+        return None
+    return list(dict.fromkeys(os.path.normpath(folder) for folder in folders if folder))
+
+
+def _curated_brain(path: str, cfg: Config) -> bool:
+    """Whether absolute, normalized path is in the hub's brain/ (_brain_rel) outside its open
+    folders, or is that brain/ folder itself (`rm -rf brain`, `cp x brain/`)."""
+    rel = _brain_rel(path, cfg)
+    if rel is None and path.endswith("/brain") and _brain_rel(path + "/x", cfg) == "x":
+        return True
+    return rel is not None and not BRAIN_OPEN.match(rel)
+
+
+def _brain_write(c: str, cfg: Config, cwd: str | None) -> Verdict:
+    """The curated-brain ask for Bash: a word after a segment's first write (a redirection, >|
+    included, tee, sed -i, rm, mv, cp, truncate or ln; an option's =value included) whose path is
+    in the hub's brain/ outside its open folders (_curated_brain). A relative word is joined to each
+    of _command_dirs' folders, at most BRAIN_JOIN_CAP folder characters in all. A word with $ or a
+    backtick, or a relative one while a folder is not known or the cap is spent, is judged on its
+    normalized text (BRAIN_TEXT), as the rule did before it resolved paths; that reason names the
+    word, escaped and capped as an infra value. So apps/web/src/screens/brain/x.tsx in a repo
+    passes. Linear in the command's length."""
+    c = c.replace(">|", "> ")
+    if "brain" not in _unquoted(c) and "brain" not in (cwd or "") and "brain" not in os.path.expanduser("~"):
+        return None
+    folders: list[str] | None = None
+    looked = False
+    spent = 0
+    seen: set[str] = set()
+    for seg in _segments(c):
+        write = BASH_WRITE.search(seg)
+        if not write:
+            continue
+        for tok in _tokens(seg[write.start():].replace("=", " ")):
+            if tok in seen:
+                continue
+            seen.add(tok)
+            if BRAIN_DYNAMIC.search(tok):
+                if BRAIN_TEXT.search(os.path.normpath(tok)):
+                    return "ask", BRAIN_UNRESOLVED_REASON.format(_infra_value(tok, _printable))
+                continue
+            try:
+                path = os.path.normpath(os.path.expanduser(tok))
+            except ValueError:  # a NUL byte or a lone surrogate in a ~name
+                path = os.path.normpath(tok)
+            fulls = [path]
+            if not os.path.isabs(path):
+                if not looked:
+                    folders, looked = _command_dirs(c, cwd), True
+                if folders is not None:
+                    spent += sum(len(folder) for folder in folders)
+                    if spent > BRAIN_JOIN_CAP:
+                        folders = None
+                if folders is None:
+                    if BRAIN_TEXT.search(path):
+                        return "ask", BRAIN_UNRESOLVED_REASON.format(_infra_value(tok, _printable))
+                    continue
+                # path is normalized: only a leading `.` or `..` part needs another pass once joined
+                up = path.startswith(".")
+                fulls = [os.path.normpath(os.path.join(d, path)) if up else os.path.join(d, path) for d in folders]
+            for full in fulls:
+                if "brain" in full and _curated_brain(full, cfg):
+                    return "ask", BRAIN_CURATED_REASON
     return None
 
 
@@ -1213,8 +1338,8 @@ def check_file(tool: str, ti: dict, cfg: Config | None = None) -> Verdict:
     if pat:
         return "ask", f"{path} matches guard.ask_before_edit `{pat}` (hub.json): plan and approval first; confirm this change is intended"
     rel = _brain_rel(path, cfg)
-    if rel is not None and not re.match(r"(now\.md|journal/|_inbox/|auto/|features/)", rel):
-        return "ask", "brain/ is curated: agents write only now.md, journal/, _inbox/, auto/ and features/; propose via /learn or confirm"
+    if rel is not None and not BRAIN_OPEN.match(rel):
+        return "ask", BRAIN_CURATED_REASON
     return None
 
 
@@ -2051,7 +2176,7 @@ def decide(data: dict, cfg: Config, environ: dict | None = None) -> Verdict:
         return env_file
     blocked = tighten(tighten(blocked, env_file), check_environment_endpoint(tool, ti, cfg, environ))
     if tool == "Bash":
-        return tighten(blocked, check_bash(_str(ti.get("command")), cfg))
+        return tighten(blocked, check_bash(_str(ti.get("command")), cfg, cwd))
     return tighten(blocked, check_file(tool, ti, cfg))
 
 

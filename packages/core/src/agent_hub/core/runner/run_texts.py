@@ -1,7 +1,8 @@
 """The texts ``hub run`` writes for others: the PR body, the tracker comments, the inbox line.
 
 The PR body and the comments are the user's (spec D14, D-comment). The PR body stays short: the
-issue, the feature record's link when the caller knows the feature, the summary and the gate.
+issue, the feature record's link when the caller knows the feature, and the summary; the gate
+that passed goes in the tracker comment.
 Every builder that takes text from the implementing session, a commit or a gate cleans it first
 (``sanitized_summary``): paths under the workspace become workspace-relative, control and bidi
 characters go, and every line ``hub doctor``'s ``attribution.ai`` rule would flag, or that holds
@@ -117,11 +118,10 @@ def _cleaned_first_line(subject: str, *, workspace: str) -> str:
     return next((line for line in lines if line), "")
 
 
-def pr_body(
-    *, issue_id: str, summary: str, gate: str, workspace: str, record_url: str | None = None
-) -> str:
-    """The PR body: the issue id, the feature record's link when ``record_url`` is given, the
-    summary (cleaned, cut at its cap) and the gate that passed; nothing else.
+def pr_body(*, issue_id: str, summary: str, workspace: str, record_url: str | None = None) -> str:
+    """The PR body: the issue id, the feature record's link when ``record_url`` is given and the
+    summary (cleaned, cut at its cap); nothing else. The gate's result is no part of it: CI shows
+    the checks, and ``success_comment`` names the gate on the tracker issue.
 
     ``record_url`` is the feature folder in the hub (``record_links.feature_url``). ``hub run``
     passes none: it knows the issue, not the feature the issue may belong to, so its body links
@@ -129,13 +129,14 @@ def pr_body(
     """
     shown = sanitized_summary(summary, workspace=workspace)[:MAX_PR_SUMMARY_CHARS]
     record = "" if record_url is None else f"\nFeature record: {record_url}"
-    return f"{issue_id}{record}\n\n{shown}\n\n## Verification\nGates green: `{gate}`."
+    return f"{issue_id}{record}\n\n{shown}"
 
 
-def success_comment(*, run_id: str, pr_url: str, summary: str, workspace: str) -> str:
-    """The tracker comment of a run that opened its PR; the summary cleaned and cut."""
+def success_comment(*, run_id: str, pr_url: str, gate: str, summary: str, workspace: str) -> str:
+    """The tracker comment of a run that opened its PR: the gate that passed, then the summary
+    cleaned and cut."""
     shown = sanitized_summary(summary, workspace=workspace)[:MAX_SUCCESS_SUMMARY_CHARS]
-    return f"Run {run_id} opened {pr_url}. {shown}"
+    return f"Run {run_id} opened {pr_url}. Gates green: `{gate}`. {shown}"
 
 
 def failure_comment(*, run_id: str, stage: str, reason: str, workspace: str) -> str:

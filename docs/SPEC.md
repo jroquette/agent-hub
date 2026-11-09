@@ -230,12 +230,14 @@ the fetch, the push and `gh` get a GitHub token.
 
 The PR bodies `hub run` and `hub step pr` write stay short: the issue, the feature record's link
 (`https://github.com/<project.hub_repo>/blob/<project.default_branch>/brain/features/<slug>/`, only with
-`--feature`, which the `implement` workflow passes), the summary and the gate that passed. `hub run` and
+`--feature`, which the `implement` workflow passes) and the summary; `hub run` names the gate that passed in its
+tracker comment, not in the body. `hub run` and
 `issue-to-pr` know the issue, not a feature, so they link no record and ask the session for a summary that says what
 changed for the user and cites no AC, decision or plan step id. The skills that write a PR body (`/implement`,
-`/feature`, `/fix`) follow the `plain-language` skill's PR bodies rules: the ticket link, what changed for the user,
-the checks with their results, what is left before merge; no placeholders or process notes; every cited AC, decision
-or plan step linked to its record in the hub. So the records land first: once its spec, plan and tickets are
+`/feature`, `/fix`) follow the `plain-language` skill's PR bodies rules: the ticket link and what the PR depends on,
+what changed for the user, and links to the records that explain it; no placeholders, process notes, or "Checks" and
+"Before merge" sections (CI shows the checks; the commands run, owner steps and follow-ups go in a comment on the
+tracker issue); every cited AC, decision or plan step linked to its record in the hub. So the records land first: once its spec, plan and tickets are
 approved, `/feature` opens a hub PR with `brain/features/<slug>/` (its Records PR), and Build starts after the owner
 merges it; a later amendment or plan change goes the same way. Before a code PR, `/implement` checks each cited record
 on the hub's default branch and, when one is missing, asks the owner, who may let the PR open as a draft.

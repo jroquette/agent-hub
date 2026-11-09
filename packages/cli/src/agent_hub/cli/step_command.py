@@ -385,7 +385,6 @@ def pr(
         body = pr_body(
             issue_id=issue,
             summary=summary,
-            gate=facts.gate,
             workspace=workspace,
             record_url=record_url,
         )

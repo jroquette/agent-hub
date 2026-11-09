@@ -403,13 +403,15 @@ class TestDryRun:
             " -f 'title=(dry run: subject of the last commit)' -f head=jdoe/dem-1 -f base=trunk"
             " -F body=@- <<< "
         )
-        assert "Gates green: `make check`." in lines[4]
+        assert "Gates green" not in lines[4]
         assert lines[5:7] == [
             "would call: move_state(DEM-1, In Review)",
             "would call: remove_label(DEM-1, agent-failed)",
         ]
         comment = re.fullmatch(
-            r"would call: comment\(DEM-1, Run (\w+) opened \(dry run\)\. \(dry run\)\)", lines[7]
+            r"would call: comment\(DEM-1, Run (\w+) opened \(dry run\)\."
+            r" Gates green: `make check`\. \(dry run\)\)",
+            lines[7],
         )
         assert comment is not None, lines[7]
         assert RUN_ID.fullmatch(comment.group(1))
@@ -1045,12 +1047,14 @@ class TestLiveSuccess:
             *("-f", f"title={COMMIT_SUBJECT}", "-f", "head=jdoe/dem-1", "-f", "base=trunk"),
             *("-F", "body=@-"),
         ]
-        assert gh["stdin"] == f"DEM-1\n\n{SUMMARY}\n\n## Verification\nGates green: `make check`."
+        assert gh["stdin"] == f"DEM-1\n\n{SUMMARY}"
         run_id = run_id_of(run_workspace)
         backend = run_tracker.backend
         assert backend.issues["DEM-1"].state == "In Review"
         assert "agent-failed" not in backend.issues["DEM-1"].labels
-        assert backend.comments == [("DEM-1", f"Run {run_id} opened {PR_URL}. {SUMMARY}")]
+        assert backend.comments == [
+            ("DEM-1", f"Run {run_id} opened {PR_URL}. Gates green: `make check`. {SUMMARY}")
+        ]
         assert [call[0] for call in run_tracker.calls] == [
             "get_issue",
             "move_state",
@@ -1311,7 +1315,9 @@ class TestRerun:
         comments = [body for _, body in run_tracker.backend.comments]
         assert len(comments) == 2
         assert re.fullmatch(
-            rf"Run [0-9a-f]{{8}} opened {re.escape(PR_URL)}\. {SUMMARY}", comments[1]
+            rf"Run [0-9a-f]{{8}} opened {re.escape(PR_URL)}\."
+            rf" Gates green: `make check`\. {SUMMARY}",
+            comments[1],
         )
         views = [
             call["argv"]
@@ -2064,9 +2070,9 @@ class TestVerdict:
             if call["argv"][:3] == ["api", "--method", "POST"]
         ]
         body = create["stdin"]
-        assert body == f"DEM-1\n\n{COMMIT_SUBJECT}\n\n## Verification\nGates green: `make check`."
+        assert body == f"DEM-1\n\n{COMMIT_SUBJECT}"
         (comment,) = [body for _, body in run_tracker.backend.comments]
-        assert comment.endswith(f"opened {PR_URL}. {COMMIT_SUBJECT}")
+        assert comment.endswith(f"opened {PR_URL}. Gates green: `make check`. {COMMIT_SUBJECT}")
         assert_outcome(run_workspace.workspace, "delivered")
 
     @pytest.mark.parametrize("mode", ["silent", "done-no-commit"], ids=["no-verdict", "done"])
@@ -2191,7 +2197,9 @@ class TestVerdict:
         assert run_workspace.calls("claude") == []
         assert [call["argv"] for call in run_workspace.calls("make")] == [["check"]]
         (comment,) = [body for _, body in run_tracker.backend.comments]
-        assert comment.endswith(f"opened {PR_URL}. feat(api): done before (DEM-1)")
+        assert comment.endswith(
+            f"opened {PR_URL}. Gates green: `make check`. feat(api): done before (DEM-1)"
+        )
 
     def test_fails_pr_open_when_gh_prints_no_url(
         self,
@@ -2672,12 +2680,12 @@ class TestSecrecy:
             if call["argv"][:3] == ["api", "--method", "POST"]
         ]
         body = create["stdin"]
-        assert body == (
-            "DEM-1\n\nEdits demo-api/src/x.py and hub/brain/now.md.\n\n"
-            "## Verification\nGates green: `make check`."
-        )
+        assert body == "DEM-1\n\nEdits demo-api/src/x.py and hub/brain/now.md."
         (comment,) = [text for _, text in run_tracker.backend.comments]
-        assert comment.endswith(f"opened {PR_URL}. Edits demo-api/src/x.py and hub/brain/now.md.")
+        assert comment.endswith(
+            f"opened {PR_URL}. Gates green: `make check`."
+            " Edits demo-api/src/x.py and hub/brain/now.md."
+        )
         for text in (body, comment):
             assert ws not in text
             assert "Authored-By" not in text

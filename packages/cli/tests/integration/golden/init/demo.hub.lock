@@ -351,7 +351,7 @@
     "plugin/hub-workflow/hooks/guard.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "b154c7ad64bde740428de61a35c8dfec23853db5711ec2b4b7417d1f800f6ea2"
+      "sha256": "3006bc6c6dd403fc2abf28a6c754316b4f2bce9b1d11e3499f1385d4c4beba87"
     },
     "plugin/hub-workflow/hooks/hooks.json": {
       "executable": false,
@@ -451,12 +451,12 @@
     "plugin/hub-workflow/skills/feature/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "1b3f427510e5cc2d82e570611bb18e7107ffa2d0be298c5e0325a0d3c9ed76ef"
+      "sha256": "2269aab763508094f693bdf869989bb26623c13eeefdc5ede805a4f7aedebc37"
     },
     "plugin/hub-workflow/skills/fix/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "f13c1dce274e41b2672591166c8a795c298f15ce406af7106aea1d6673241156"
+      "sha256": "de67cf3163f9169cdd4baabcc17879519027d9078dbbff60a9af23ce45e2ddae"
     },
     "plugin/hub-workflow/skills/handoff/SKILL.md": {
       "executable": false,
@@ -466,7 +466,7 @@
     "plugin/hub-workflow/skills/implement/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "c8504db53f785f6a5e4fa1e99b1b68e8902e97b87b75524233b85c1f8014b4d5"
+      "sha256": "c0eb00cf242d7943903588d8ce14414f066af5313bcf0236f62fcf26586b9abd"
     },
     "plugin/hub-workflow/skills/incident/SKILL.md": {
       "executable": false,
@@ -506,7 +506,7 @@
     "plugin/hub-workflow/skills/plain-language/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "36cefcda9667fa1e5fa5d847df2097e2586121bf64f16a5ba382dc5ba03671e9"
+      "sha256": "acdb227eae9c4483e674b976a092bc329eebbfb2557c476679371c04129c7583"
     },
     "plugin/hub-workflow/skills/premortem/SKILL.md": {
       "executable": false,

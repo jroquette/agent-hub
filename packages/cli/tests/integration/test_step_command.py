@@ -268,7 +268,7 @@ class TestPr:
             *("-f", f"title={SUBJECT}", "-f", "head=jdoe/dem-1", "-f", "base=trunk"),
             *("-F", "body=@-"),
         ]
-        assert gh["stdin"] == "DEM-1\n\nAdds it.\n\n## Verification\nGates green: `make check`."
+        assert gh["stdin"] == "DEM-1\n\nAdds it."
         assert "GH_TOKEN" in gh["env"]
         assert KEY_VARIABLE not in gh["env"]
 

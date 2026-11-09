@@ -2522,11 +2522,18 @@ FIX_STEP_PHRASES = {
     5: (
         "`check_fast`, then its `check`",
         "`hub.json`",
-        "an empty one is a missing gate: say so in the PR body",
+        "an empty one is a missing gate: say so in the step 8 comment",
     ),
     6: ("`quality-reviewer`", "diff", "Minor findings", "follow-ups"),
     7: ("PR", NO_AI_ATTRIBUTION, "No push to the default branch, no force-push"),
-    8: ("In Review", "PR link", "`quality-reviewer` verdict, with its findings and fixes"),
+    8: (
+        "In Review",
+        "PR link",
+        "the RED command and the failing assertion line",
+        "the gates with their results",
+        "`quality-reviewer` verdict with its findings and fixes",
+        "what is left before merge",
+    ),
 }
 FIX_SWITCH_PHRASES = (
     "**Stop and switch to `/feature`**",
@@ -2546,7 +2553,7 @@ FIX_RECORD_PHRASES = (
     "the fix summary",
     "the `quality-reviewer` verdict",
     "no `brain/features/<slug>/` folder",
-    "if nothing can be tested, say so in one line of the PR body",
+    "if nothing can be tested, say so in the step 8 comment",
     "`check_fast`, `check` and the review still apply",
     "On `FAIL` with `blocking` findings",
     "re-run `check_fast` and `check`",
