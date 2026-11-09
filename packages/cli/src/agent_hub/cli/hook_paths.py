@@ -32,12 +32,15 @@ def default_spool_folder(
     return home / ".local" / "state" / SPOOL_DIR
 
 
-def claude_projects_root(environ: Mapping[str, str]) -> Path:
+def claude_projects_root(
+    environ: Mapping[str, str], *, account_home: Callable[[], str | None] | None = None
+) -> Path:
     """The only folder the transcript tail reads (D9): ``AGENT_HUB_CLAUDE_PROJECTS`` when set
-    (absolute only), else ``~/.claude/projects``."""
+    (absolute only), else ``~/.claude/projects``, the home directory found as for the spool."""
     configured = environ.get(PROJECTS_VARIABLE, "")
     if configured:
         if not Path(configured).is_absolute():
             raise ProjectsRootError
         return Path(configured)
-    return home_directory(environ, account_home=account_home_directory) / ".claude" / "projects"
+    home = home_directory(environ, account_home=account_home or account_home_directory)
+    return home / ".claude" / "projects"

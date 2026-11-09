@@ -260,9 +260,9 @@ def web(
     extra_hosts = _allowed_hosts_or_exit(os.environ, port)
     try:
         db_path = db or default_database_path(os.environ)
-        # This module's account lookup, as for the projects root: one seam for both.
+        # This module's account lookup for every path under the home directory: one seam.
         registry_path = default_registry_path(os.environ, account_home=account_home_directory)
-        projects_root = claude_projects_root(os.environ)
+        projects_root = claude_projects_root(os.environ, account_home=account_home_directory)
         spool_folder = default_spool_folder(os.environ, account_home=account_home_directory)
     except CliError as error:
         fail(f"error: {error}")
