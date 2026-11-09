@@ -79,12 +79,10 @@ def test_cuts_commit_summary_when_over_cap() -> None:
     assert commit_summary(" feat: x\n\nbody\n", workspace=WORKSPACE) == "feat: x\n\nbody"
 
 
-def test_builds_pr_body_when_gate_green() -> None:
-    body = pr_body(
-        issue_id="DEM-1", summary="Adds the parser.", gate="make check", workspace=WORKSPACE
-    )
+def test_builds_pr_body_without_checks_when_summary_given() -> None:
+    body = pr_body(issue_id="DEM-1", summary="Adds the parser.", workspace=WORKSPACE)
 
-    assert body == "DEM-1\n\nAdds the parser.\n\n## Verification\nGates green: `make check`."
+    assert body == "DEM-1\n\nAdds the parser."
 
 
 def test_links_feature_record_when_pr_body_given_record_url() -> None:
@@ -93,41 +91,37 @@ def test_links_feature_record_when_pr_body_given_record_url() -> None:
     body = pr_body(
         issue_id="DEM-1",
         summary="Adds the parser.",
-        gate="make check",
         workspace=WORKSPACE,
         record_url=record,
     )
 
-    assert body == (
-        f"DEM-1\nFeature record: {record}\n\nAdds the parser.\n\n"
-        "## Verification\nGates green: `make check`."
-    )
+    assert body == f"DEM-1\nFeature record: {record}\n\nAdds the parser."
 
 
 def test_cuts_pr_summary_when_over_cap() -> None:
     body = pr_body(
         issue_id="DEM-1",
         summary="s" * (MAX_PR_SUMMARY_CHARS + 1),
-        gate="make check",
         workspace=WORKSPACE,
     )
 
-    assert body == (
-        f"DEM-1\n\n{'s' * MAX_PR_SUMMARY_CHARS}\n\n## Verification\nGates green: `make check`."
-    )
+    assert body == f"DEM-1\n\n{'s' * MAX_PR_SUMMARY_CHARS}"
 
 
 def test_writes_neutral_comment_when_run_succeeds() -> None:
     comment = success_comment(
         run_id="ab12cd34",
         pr_url=URL,
+        gate="make check",
         summary="x" * (MAX_SUCCESS_SUMMARY_CHARS + 1),
         workspace=WORKSPACE,
     )
 
-    assert comment == f"Run ab12cd34 opened {URL}. {'x' * MAX_SUCCESS_SUMMARY_CHARS}"
+    assert comment == (
+        f"Run ab12cd34 opened {URL}. Gates green: `make check`. {'x' * MAX_SUCCESS_SUMMARY_CHARS}"
+    )
     assert "Agent" not in success_comment(
-        run_id="ab12cd34", pr_url=URL, summary="Done.", workspace=WORKSPACE
+        run_id="ab12cd34", pr_url=URL, gate="make check", summary="Done.", workspace=WORKSPACE
     )
 
 
@@ -273,14 +267,16 @@ def test_cleans_summary_when_commit_summary_built() -> None:
 def test_cleans_texts_when_pr_body_and_comments_built() -> None:
     dirty = f"Edits {WORKSPACE}/demo-api/x.py\u202e.\n" + ATTRIBUTION_LINES["generated"]
 
-    body = pr_body(issue_id="DEM-1", summary=dirty, gate="make check", workspace=WORKSPACE)
-    opened = success_comment(run_id="ab12cd34", pr_url=URL, summary=dirty, workspace=WORKSPACE)
+    body = pr_body(issue_id="DEM-1", summary=dirty, workspace=WORKSPACE)
+    opened = success_comment(
+        run_id="ab12cd34", pr_url=URL, gate="make check", summary=dirty, workspace=WORKSPACE
+    )
     failed = failure_comment(
         run_id="ab12cd34", stage="VERIFYING", reason=dirty, workspace=WORKSPACE
     )
 
-    assert body == "DEM-1\n\nEdits demo-api/x.py.\n\n## Verification\nGates green: `make check`."
-    assert opened == f"Run ab12cd34 opened {URL}. Edits demo-api/x.py."
+    assert body == "DEM-1\n\nEdits demo-api/x.py."
+    assert opened == f"Run ab12cd34 opened {URL}. Gates green: `make check`. Edits demo-api/x.py."
     assert failed == "Run ab12cd34 failed at VERIFYING. Diagnosis: Edits demo-api/x.py."
     no_changes = no_changes_comment(
         run_id="ab12cd34", stage="IMPLEMENTING", reason=dirty, workspace=WORKSPACE

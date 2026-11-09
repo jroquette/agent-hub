@@ -79,15 +79,15 @@ These apply to all text for people.
 
 ## PR bodies
 
-A PR body tells a reviewer what changed and what is left. It holds only:
+A PR body tells a reviewer what changed and why. It holds only:
 
-- the ticket link;
+- the ticket link, and a line for any PR or deploy this one depends on;
 - what changed, for the user;
-- the checks you ran, each with its result;
-- what is left to do before merge, if anything.
+- links to the records that explain it (spec, design, plan).
 
-No placeholders, templates or sections that nobody will fill in. No process notes, such as review rounds or
-agent decisions: they live in the hub's records.
+No placeholders, templates or sections that nobody will fill in. No "Checks" or "Before merge" sections: CI shows
+the checks, and the commands you ran, the owner steps and the follow-ups go in a comment on the tracker issue.
+No process notes, such as review rounds or agent decisions: they live in the hub's records.
 Link every AC, decision or plan step that the body cites to its record in the hub:
 `@@{hub_features_url}/<slug>/<file>#<section>`.
 A record reaches the hub's default branch through a hub PR when its decision closes, before the code PR.

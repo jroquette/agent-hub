@@ -263,7 +263,7 @@ class TestPr:
         )
         (gh,) = run_workspace.calls("gh")
         assert gh["cwd"] == str(worktree_of(workspace))
-        assert gh["argv"][-1] == "DEM-1\n\nAdds it.\n\n## Verification\nGates green: `make check`."
+        assert gh["argv"][-1] == "DEM-1\n\nAdds it."
         assert "GH_TOKEN" in gh["env"]
         assert KEY_VARIABLE not in gh["env"]
 

@@ -166,6 +166,7 @@ class LiveRun:
         comment = success_comment(
             run_id=self.log.run_id,
             pr_url=self.pr_url,
+            gate=self.children.gate,
             summary=self.summary,
             workspace=self._workspace,
         )

@@ -179,10 +179,11 @@ def test_states_agents_plain_language_rule_when_agents_rendered(
 
 # The PR body rule, with the hub's records link built from hub.json (demo: acme/demo-hub, main).
 PR_BODY_PHRASES = (
-    "the ticket link",
+    "the ticket link, and a line for any PR or deploy this one depends on",
     "what changed, for the user",
-    "the checks you ran, each with its result",
-    "what is left to do before merge",
+    "links to the records that explain it (spec, design, plan)",
+    'No "Checks" or "Before merge" sections: CI shows the checks',
+    "the owner steps and the follow-ups go in a comment on the tracker issue",
     "No placeholders, templates or sections that nobody will fill in",
     "No process notes, such as review rounds or agent decisions",
     "Link every AC, decision or plan step that the body cites to its record in the hub",
@@ -246,6 +247,19 @@ def test_checks_cited_records_on_hub_branch_when_implement_rendered(
     assert "`git fetch origin main` (a call of its own)" in text
     assert "`git ls-tree origin/main -- brain/features/<slug>/<file>`" in text
     assert "open this PR with `--draft` only if they say so" in text
+
+
+@pytest.mark.parametrize(("skill", "anchor"), PR_BODY_STEPS)
+def test_keeps_checks_out_of_pr_body_when_pr_steps_rendered(
+    demo_config: HubConfig, skill: str, anchor: str
+) -> None:
+    text = rendered_text(demo_config, f"plugin/hub-workflow/skills/{skill}/SKILL.md")
+    [line] = [line for line in text.splitlines() if anchor in line]
+    body = line[line.index("PR bodies rules") :]
+
+    assert "the check and its result, what is left" not in body
+    assert "the gates with their results, what is left" not in body
+    assert "tracker" in flat(text[text.index(anchor) :]).lower()
 
 
 @pytest.mark.parametrize(("skill", "anchor"), CITATIONS)
