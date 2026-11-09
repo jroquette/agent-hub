@@ -20,8 +20,8 @@ export function hasWord(query: string): boolean {
 }
 
 /**
- * The AGH-391 index's matches for `q` in the project's hub and its repos' docs, best first
- * (AGH-393). Nothing is fetched while `enabled` is false; `limit` is the route's, 50 by default.
+ * The AGH-391 index's matches for `q` in the project's hub and its repos' docs, in the index's
+ * order: curated knowledge first, then by status, then best match (AGH-393). Nothing is fetched while `enabled` is false; `limit` is the route's, 50 by default.
  */
 export function useKnowledgeSearch(
   project: string,

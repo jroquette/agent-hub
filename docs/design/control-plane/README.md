@@ -88,8 +88,9 @@ AGH-201 (control-plane clarity) changes the design further
   gate's decision) and the two restores (AGH-297). The launch cookie is needed by the agent-session routes (AGH-165,
   which also need the server's own `Origin`), the same workflow run writes and the restores
   ([API.md](../../API.md#local-security)); the CSP is unchanged. Since AGH-699 the learning POSTs are owner writes,
-  with the Hub config writes, the hub actions (platform sync, doctor fix), the Linear key, a feature's nickname and
-  the owner sign-off: strict and behind the launch cookie, and off (404 `owner-writes-off`) in the container.
+  with the Hub config writes, the hub actions (platform sync, doctor fix), the Linear key and a feature's nickname:
+  strict and behind the launch cookie, and off (404 `owner-writes-off`) in the container. The owner sign-off stays an
+  item write (AGH-695): strict and behind the launch cookie, and 409 `hub_read_only` in the container.
 
 AGH-422 (the chat redesign: the Discuss panel, the reading anatomy, the composer, the chat's header and the sessions
 rail, [specs/20-chat.md](specs/20-chat.md)) records the owner's answers to its design:

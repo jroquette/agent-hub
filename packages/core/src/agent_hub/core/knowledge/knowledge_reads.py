@@ -107,7 +107,8 @@ class KnowledgeReads(Protocol):
     def search(
         self, project: str, *, query: str, kinds: tuple[Kind, ...] = (), limit: int = MAX_RESULTS
     ) -> KnowledgeSearch:
-        """The hub's documents holding every word of ``query``, best first, at most ``limit``;
+        """The hub's documents holding every word of ``query``, in the index's order (curated
+        knowledge first, then by status, then best match), at most ``limit``;
         ``EntityNotFoundError`` for an unknown project."""
         ...
 

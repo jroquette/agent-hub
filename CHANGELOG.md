@@ -33,8 +33,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `project.author_email`; the platform's CI runs the same check (AGH-699). Arrives after you bump `platform.version`
   and run `hub sync`.
 - A commit-msg hook, `plugin/hub-workflow/hooks/commit_msg.py`, refuses the same attribution and a foreign author
-  (AGH-699). Nothing installs it yet: add it as your clone's commit-msg hook to use it.
-- Hub CI clones the hub's repos beside it, so `hub doctor`'s rules that read a repo run in CI too (AGH-699).
+  (AGH-699). Arrives after you bump `platform.version` and run `hub sync`. Nothing runs it for you yet: run
+  `pre-commit install` in the hub once (the managed `.pre-commit-config.yaml` installs the commit-msg stage too).
 - `/handoff` moves merged issues with green checks to Done, `/deliver` names the issues it leaves open and journals
   the merged pull request, and the release bump keeps `brain/now.md` current (AGH-699).
 
@@ -45,19 +45,22 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   put the checks they ran, the owner steps and the follow-ups in a comment on the tracker issue. `hub run` and
   `hub step pr` drop the body's `## Verification` section; `hub run` names the gate in its tracker comment instead.
   Run `hub sync` after bumping `platform.version` to get the new skill texts (AGH-778).
+- Hub CI clones the hub's repos beside it, so `hub doctor`'s rules that read a repo run in CI too (AGH-699). A hub
+  with private repos must give the `AGENT_HUB_READ_TOKEN` secret read access to each repo in `hub.json`, or hub CI
+  fails. Arrives after you bump `platform.version` and run `hub sync`.
 - The knowledge index keeps a file a secret rule matches, redacted, instead of skipping it (AGH-696). `hub search`,
   `hub mcp` and the `hub web` Brain search index its text with each match replaced by its `[redacted: <kind>]`
   marker, as event ingestion does, and `hub mcp`'s `read` returns that redacted text. Docs with placeholders such as
   `?token=<token>` or `scheme://user:pass@`, `docs/SPEC.md` among them, are now found and read; no secret is stored.
   `propose` still refuses a text with a secret. The index version moves to 3, so the first search after you bump
   `platform.version` rebuilds the index.
-- `hub web`: writes to the config, environments, repos, platform sync, doctor fix, learning decisions and the Linear
-  key now need the launch cookie and a JSON body (`Content-Type: application/json`), like the other strict writes; a
-  same-origin request without the cookie gets 403, and a test pins the protection of every write route (AGH-699).
-  A script that calls these routes must send the cookie.
-- `hub search` and the `hub mcp` `search` tool rank curated knowledge (ADRs, decisions, learnings, playbooks, domain
-  and system notes) first, then notes whose `status` is approved or active, then the text match; the output does not
-  change (AGH-699).
+- `hub web`: writes to the config, environments, repos, platform sync, doctor fix, learning decisions, the Linear
+  key and a feature's nickname now need the launch cookie and a JSON body (`Content-Type: application/json`), like
+  the other strict writes; a request without the cookie gets 401, and a test pins the protection of every write route
+  (AGH-699). A script that calls these routes must send the cookie.
+- `hub search`, the `hub mcp` `search` tool and the `hub web` Brain search rank curated knowledge (ADRs, decisions,
+  learnings, playbooks, domain and system notes) first, then notes whose `status` is approved or active, with draft
+  or proposed notes last, then the text match; the output does not change (AGH-699).
 - `hub mcp`'s `propose`, `hub ship` and `hub run` open and find pull requests through GitHub's REST API (`gh api`),
   so they work where `gh`'s GraphQL is refused, as in cloud sessions (AGH-699). Skills say the same for the
   pull requests they open, edit and read.
@@ -74,8 +77,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - The brain-care `inbox` workflow's `group` step states every output cap in its prompt, so a long `target` no longer
   fails its output contract (AGH-504). Your hub's `workflows/brain-care` copy runs instead of the built-in until you
   delete it.
-- Portfolio and Project overview show their counts as soon as the page connects, not after the first change
-  (AGH-699).
+- The sidebar badges show their counts as soon as the app connects, and Portfolio and Project overview refresh on
+  the first change after that (AGH-699).
 - A live session stream no longer drops a frame published while it replays the stored ones (AGH-699).
 - `make check` no longer leaves `vite preview` servers running (AGH-699).
 

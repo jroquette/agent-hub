@@ -142,9 +142,9 @@ jobs:
             printf '%s\n' "GIT_CONFIG_VALUE_1=$hub"
           } >> "$GITHUB_ENV"
       # The hub's repos (hub.json → repos, read when the step runs), each cloned read-only at its
-      # default branch into ../<dir> beside the hub, where hub doctor's repo rules (brain.leak,
-      # links.dead) read it: without them doctor skips those rules with an info and make check
-      # passes. With AGENT_HUB_READ_TOKEN set (it then needs read-only Contents on the private
+      # default branch into ../<dir> beside the hub, where hub doctor's repo rules (such as
+      # brain.leak, links.dead) read it: without them doctor skips those rules with an info and
+      # make check passes. With AGENT_HUB_READ_TOKEN set (it then needs read-only Contents on the private
       # repos too), each clone's GitHub URL maps to one carrying the token, through git config in
       # this step's own environment only: never an argument, a file or the job's environment. A
       # token outside GitHub's [A-Za-z0-9_], a repos entry without the model's shape (never echoed)

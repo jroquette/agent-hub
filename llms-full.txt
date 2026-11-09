@@ -2677,14 +2677,14 @@ credential, repos, golden, `make check`.
   URL, `hub.json` or `hub.lock`.
 - **Repos step** (`Repos beside the hub`, AGH-699 A-13): clones each repo of `hub.json` (`repos[]`, read when the step
   runs) at its default branch (`repos[].default_branch`, else `project.default_branch`), depth 1, into `../<dir>` beside
-  the hub, where `hub doctor`'s repo rules (`brain.leak`, `links.dead`, `repos.agents`, `repos.ui_paths`) read it;
-  without it those rules see no checkout, report an `info` and `make check` passes. With `AGENT_HUB_READ_TOKEN` set,
-  each clone's `https://github.com/<owner>/<name>` maps to a URL carrying the token through `GIT_CONFIG_*` in the
-  step's own environment (one repo at a time; never an argument, a file or `$GITHUB_ENV`); unset, the clones are
-  anonymous, which reads public repos only. It fails, nothing echoed but the repo's `owner/name`, branch and folder,
-  on a token outside `[A-Za-z0-9_]` (the credential step's line), on a `repos` entry whose `dir`, `github` or branch
-  does not have the model's shape (`repos[<i>] in hub.json needs a dir, an owner/name github and a branch`, before
-  any clone), and on a repo it cannot clone (`cannot clone <owner/name> (<branch>) into ../<dir>;
+  the hub, where `hub doctor`'s repo rules (`brain.leak`, `instructions.read_cap`, `links.dead`, `repos.agents`,
+  `repos.ui_paths`) read it; without it those rules see no checkout, report an `info` and `make check` passes. With
+  `AGENT_HUB_READ_TOKEN` set, each clone's `https://github.com/<owner>/<name>` maps to a URL carrying the token through
+  `GIT_CONFIG_*` in the step's own environment (one repo at a time; never an argument, a file or `$GITHUB_ENV`); unset,
+  the clones are anonymous, which reads public repos only. It fails, nothing echoed but the repo's `owner/name`, branch
+  and folder, on a token outside `[A-Za-z0-9_]` (the credential step's line), on a `repos` entry whose `dir`, `github`
+  or branch does not have the model's shape (`repos[<i>] in hub.json needs a dir, an owner/name github and a branch`,
+  before any clone), and on a repo it cannot clone (`cannot clone <owner/name> (<branch>) into ../<dir>;
   AGENT_HUB_READ_TOKEN needs read access to it`).
 - **Golden step** (`Golden (hub sync --check)`): `./hub sync --check` through the pinned shim, before `make check`;
   it writes nothing, and any non-zero exit fails the job before `make check`. Exits (`--check`'s) and their fixes:

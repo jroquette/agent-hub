@@ -163,7 +163,7 @@
     ".github/workflows/ci.yml": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "97d8134ab4f9fe371532603975f35453e9cb029b2bfceb1fb59af5812741227f"
+      "sha256": "267e592c4ce852878227fe8b886c753c38a778bcdf02e8181159ab6367d7d56f"
     },
     ".gitignore": {
       "ownership": "seeded"
