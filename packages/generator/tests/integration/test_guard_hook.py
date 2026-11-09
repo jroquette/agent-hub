@@ -2874,6 +2874,175 @@ def test_passes_when_bash_writes_plain_agent_text_to_eval(
     assert evaluate([bash(command) for command in commands]) == [None] * len(commands)
 
 
+# The owner sign-off rule reads a provenance value and a sed word in time linear in them, so a long
+# one cannot run the hook past its timeout (a value's blanks stripped from each start, or a word
+# ending in a newline matched to its end from each `i`, took 14 s on 70,000 characters). Each is
+# read with one anchored match, one start, of a pattern whose repeats stand beside a literal they
+# cannot match, so the engine gives back each character at most once. The child records every
+# pattern method _says_owner and _call_write_targets call on a 10,000-blank value and a
+# 10,000-letter sed word, and checks both rules against the earlier patterns on samples; a sed word
+# with a newline after its `-i` counts as sed reads it (an in-place edit, the rest its suffix).
+# argv: none. Prints [says owner, value reads, write targets, sed word methods, patterns,
+# [same value verdict per sample], [same in-place verdict per sample], [in place per newline word]].
+ANCHORED_READS = r"""
+import json, re, shlex
+import guard
+from stdlib_reader import LazyPattern
+reads = []
+
+
+class Recorded:
+    def __init__(self, name, inner):
+        self.name, self.inner = name, inner
+
+    def __getattr__(self, attribute):
+        found = getattr(self.inner, attribute)
+        if not callable(found):
+            return found
+
+        def recorded(*args, **kwargs):
+            reads.append([self.name, attribute])
+            return found(*args, **kwargs)
+
+        return recorded
+
+
+for name, value in list(vars(guard).items()):
+    if isinstance(value, LazyPattern):
+        setattr(guard, name, Recorded(name, value))
+says = guard._says_owner("provenance: a" + " " * 10000 + "b")
+value_reads = reads[:]
+del reads[:]
+targets = guard._call_write_targets('sed -e s/a/b/ "-' + "i" * 10000 + '\n" f.txt')
+sed_reads = sorted({attribute for name, attribute in reads if name == "SED_IN_PLACE"})
+patterns = [
+    getattr(getattr(guard, name, None), "pattern", None) for name in ("OWNER_VALUE", "SED_IN_PLACE")
+]
+edges = re.compile(r"^[\s'\"]+|[\s'\"]+\Z")
+values = [
+    "owner", " owner ", "'owner'", '"owner"', " ' owner ' ", "\u00a0owner\u00a0",
+    "\t\"'owner'\"\t", "\u2003owner\u3000\x1f", "owner-review", "owners", "own er",
+    "'owner", "agent", "", "   ", "''", "x owner", "owner x", "' owner' x", "a" + " " * 50 + "b",
+    " " * 50 + "owner" + " " * 50,
+]
+same_values = [
+    guard._says_owner("provenance:" + v) == (edges.sub("", v) == "owner") for v in values
+]
+
+
+def in_place(word):
+    return "f.txt" in guard._call_write_targets("sed " + shlex.quote(word) + " f.txt")
+
+
+earlier = re.compile(r"-\w*i.*|--in-place(?:=.*)?")
+words = [
+    "-i", "-i.bak", "-ni", "-Ei.orig", "-e", "-n", "-", "-in", "-x-i", "-\u00e9i", "--in-place",
+    "--in-place=.b", "--in-placed", "--in-pl", "i", "s/-i/x/", "-i'x'",
+]
+same_words = [in_place(w) == bool(earlier.fullmatch(w)) for w in words]
+newline_words = [in_place(w) for w in ["-i\n", "-ni.b\n", "--in-place=\n", "-\ni", "--in-place\n"]]
+print(json.dumps(
+    [says, value_reads, targets, sed_reads, patterns, same_values, same_words, newline_words]
+))
+"""
+
+
+def test_reads_owner_value_and_sed_word_in_one_anchored_match_when_long(
+    workspace: Path, tmp_path: Path, *, hook_python: str, run_python: Callable[..., Any]
+) -> None:
+    found = run_python(
+        hook_python, ANCHORED_READS, path=workspace / "demo-hub" / HOOKS, cwd=tmp_path
+    )
+
+    assert found == [
+        False,
+        [["PROVENANCE_FIELD", "match"], ["OWNER_VALUE", "fullmatch"]],
+        ["s/a/b/", "f.txt"],
+        ["match"],
+        [r"[\s'\"]*owner[\s'\"]*", r"-\w*i|--in-place(?:=|\Z)"],
+        [True] * 21,
+        [True] * 17,
+        [True, True, True, False, False],
+    ]
+
+
+# An Edit's or MultiEdit's result size is told from its counts (len(text) + count(old) x
+# (len(new) - len(old))) before the edit is applied, so an edit that would grow the eval past 1 MiB
+# asks without building the result (replace_all of one letter with 4 KiB on a 1 MiB eval built
+# 4 GiB). The child hands the rule an eval text that counts its replace calls. argv: the hub, the
+# eval's path, and cases as [tool, [[old, new letter, new length, replace_all], ...]]. Prints
+# [verdict, replace calls] per case.
+EDIT_REPLAYS = r"""
+import json
+from pathlib import Path
+import guard
+from hubhooks import load_config
+replaced = [0]
+
+
+class Text(str):
+    def replace(self, *args):
+        replaced[0] += 1
+        return Text(str.replace(self, *args))
+
+
+read = guard._eval_text
+
+
+def counted(path):
+    text, cause = read(path)
+    return (None if text is None else Text(text)), cause
+
+
+guard._eval_text = counted
+cfg = load_config(Path(sys.argv[1]))
+found = []
+for tool, edits in json.loads(sys.argv[3]):
+    built = [{"old_string": old, "new_string": letter * length, "replace_all": every}
+             for old, letter, length, every in edits]
+    ti = {"file_path": sys.argv[2], "edits": built}
+    if tool == "Edit":
+        ti = dict(built[0], file_path=sys.argv[2])
+    replaced[0] = 0
+    found.append([guard.check_file(tool, ti, cfg), replaced[0]])
+print(json.dumps(found))
+"""
+
+
+def test_asks_before_applying_edit_when_eval_would_grow_past_cap(
+    workspace: Path, tmp_path: Path, *, hook_python: str, run_python: Callable[..., Any]
+) -> None:
+    # 51 + 205 + 256 x 4095 is 1 MiB exactly
+    agent = str(an_eval(workspace, "ac-1.md", AGENT_EVAL + "y" * 205 + "z" * 256))
+    cases = {
+        "at the cap": ["Edit", [["z", "x", 4095, True]]],
+        "past the cap": ["Edit", [["z", "x", 4096, True]]],
+        "past it at the second edit": ["MultiEdit", [["y", "w", 1, False], ["z", "x", 4096, True]]],
+        "first only": ["Edit", [["z", "x", 1 << 20, False]]],
+    }
+
+    home = tmp_path / "home"
+    home.mkdir()
+
+    found = run_python(
+        hook_python,
+        EDIT_REPLAYS,
+        path=workspace / "demo-hub" / HOOKS,
+        args=[str(workspace / "demo-hub"), agent, json.dumps(list(cases.values()))],
+        cwd=tmp_path,
+        env={"HOME": str(home)},
+    )
+
+    over = ["ask", OWNER_UNCHECKED_REASON.format(agent, "over 1 MiB")]
+    assert len(AGENT_EVAL) == 51
+    assert dict(zip(cases, found, strict=True)) == {
+        "at the cap": [None, 1],
+        "past the cap": [over, 0],
+        "past it at the second edit": [over, 1],
+        "first only": [over, 0],
+    }
+
+
 def test_denies_write_when_git_internals_targeted(evaluate: Evaluate) -> None:
     denied = [
         "rm .git",
