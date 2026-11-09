@@ -288,8 +288,11 @@ def test_never_shows_auto_transcript_or_secret_when_searched(
     response = world.search("marker")
 
     found = answer(response)
-    assert paths(found) == ["brain/index.md"]
-    assert found["skipped"] == [{"path": "brain/_inbox/leak.md", "reason": "matches a secret rule"}]
+    # The note a secret rule matched is found, redacted (AGH-696); the token never shows.
+    assert sorted(paths(found)) == ["brain/_inbox/leak.md", "brain/index.md"]
+    assert found["skipped"] == []
+    leak = next(hit for hit in found["results"] if hit["path"] == "brain/_inbox/leak.md")
+    assert leak["snippet"] == "# Leak marker [redacted: github token] [now](../now.md)"
     assert token not in response.text
     assert token.encode() not in database_bytes(world.app.settings.db_path)
 

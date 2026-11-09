@@ -428,7 +428,9 @@ Two `GET` routes (`KNOWLEDGE_PATHS`, AGH-393) read a project's hub through the k
 `hub mcp` use ([ADR 0044](adr/0044-team-memory-git-source-local-index-and-hub-mcp.md)). Each first syncs the index
 with the checkout of the project's registered hub (`git ls-files` of its `brain/` and of each repo's `docs/`; only new
 or changed files are read), then answers. The rows are keyed by the registered hub's path, so a hub registered at its
-main checkout shares its rows with `hub search`. Neither route writes the hub or a repo.
+main checkout shares its rows with `hub search`. Neither route writes the hub or a repo. The index holds each file's
+text redacted with `r1` (a match becomes `[redacted: <kind>]`), so titles and snippets never show a secret; a file is
+`skipped` only when it is over 256 KiB, not UTF-8, a link, not a regular file or unreadable (AGH-696).
 
 - `GET /api/v1/projects/{project}/knowledge/search?q=&kind=&limit=` → `KnowledgeSearch`: `project`, `query`,
   `results` (each `path`, `kind`, `title`, `status`, `provenance`, a one-line plain-text `snippet`), `sync` (`listed`,
@@ -532,8 +534,11 @@ acceptance criteria rows, the records and every eval, it carries:
 ACs, with no tickets, and answers 409, writing nothing, for an unknown or withdrawn AC, for `acs` together with
 `delivery`, for `done` over an AC whose latest eval is NO-SHIP, when the note would not rank newer than an eval
 naming one of them (undated, or dated at or after now), and when not every eval was read. An empty list is 422.
-The sign-off is an owner write (AGH-699, [Local security](#local-security)): it needs the launch cookie (401
-without it), this server's `Origin` and a JSON body, and answers 404 `owner-writes-off` in the container.
+The sign-off is a strict write that needs `hub web`'s launch cookie, as a restore (`ITEM_WRITES`, [Local
+security](#local-security), AGH-695): this server's `Origin` and a JSON body, else 403 or 415; no cookie or a wrong
+one, 401; nothing is written then. A sign-off without a body is sent as `{}`. In the container it answers 409
+`hub_read_only`. So an agent session, which knows `AGENT_HUB_WEB_URL` but never the token, cannot sign off for the
+owner.
 
 `GET /api/v1/features/{project}/{slug}/mockups/{name}` (AGH-687) reads one UX design's mockup as a `UxMockup`:
 `project`, `slug`, `name`, `html` (the file as UTF-8 text), `size` (bytes) and `sha256`. `name` must match
@@ -1211,21 +1216,21 @@ run writes (`RUN_WRITES`: start, cancel, resume and abandon a run, a gate's deci
 change request's decision, and the scenario writes: a plan, a start, an investigation's session and answer, a
 finding's issue and inbox note; and, with AGH-507, a run's breakpoints, Step and Continue), the restores,
 the Publish, the scenario builder's save, proposal dismiss and action writes (AGH-521), a scenario's migrate
-(AGH-507) and its delete (AGH-596) (`ITEM_WRITES`) need that cookie too, as does the read of a scenario run's values
+(AGH-507) and its delete (AGH-596), and the owner sign-off (AGH-695) (`ITEM_WRITES`) need that cookie too, as does
+the read of a scenario run's values
 (`RUN_READS`, with the agent-session reads' Origin rules) ([Workflow run commands](#workflow-run-commands), [Skills](#skills),
-[Workflows](#workflows)). So do the owner's writes (`OWNER_WRITES`, AGH-699), the writes only the owner's own page
+[Workflows](#workflows), [Feature detail](#feature-detail)). So do the owner's writes (`OWNER_WRITES`, AGH-699), the writes only the owner's own page
 makes: the three Hub config writes (`PUT /projects/{project}/config/local`, `POST /projects/{project}/config/environments`
 and `…/config/repos`), the hub actions (`POST /hubs/{hub_id}/platform-sync` and `…/doctor-fix`), the learning decisions
 (`POST /learnings/{learning_id}/accept`, `…/reject` and `POST /learnings/decisions`), the Linear key
-(`PUT` and `DELETE /tracker/linear`), a feature's nickname (`PUT /feature-names`) and the owner sign-off
-(`POST /features/{project}/{slug}/owner-signoff`). This server's exact `Origin` alone is not enough for them: any local
+(`PUT` and `DELETE /tracker/linear`), and a feature's nickname (`PUT /feature-names`). This server's exact `Origin` alone is not enough for them: any local
 process can send it. Without the cookie each one answers 401 `urn:agent-hub:problem:agent-session-unauthorized`
 before its route runs, so it writes, pushes and starts nothing. Every other route is unchanged and needs no cookie:
 the hub registry writes keep their exact-`Origin` check (scripts such as `make connect` and the demo seed call them),
 and the hook sensor's `POST /events/hooks` and `POST …/scenarios/validate` (which writes nothing) keep the basic
 checks. In the container (`AGENT_HUB_IN_CONTAINER=1`, where no token is
-minted and the hubs are mounted read-only) a restore, a publish or a scenario builder write (a migrate and a delete
-included) answers 409 `hub_read_only` before the cookie is checked, a run write or the values read 404 `run-control-off`,
+minted and the hubs are mounted read-only) a restore, a publish, a scenario builder write (a migrate and a delete
+included) or an owner sign-off answers 409 `hub_read_only` before the cookie is checked, a run write or the values read 404 `run-control-off`,
 and an owner write 404 `urn:agent-hub:problem:owner-writes-off` ("Owner writes are off"), cookie or not: no request
 there could hold the cookie, and the Linear key comes from the container's `LINEAR_API_KEY` instead.
 Every `POST`, `PUT`, `PATCH` and `DELETE` route is listed with its class (cookie and strict, exact `Origin`, or basic
@@ -1234,8 +1239,8 @@ lacks and probes each route for its class's answers (AGH-699): a new write route
 
 The owner's writes, which write hub files, reach the network or run the CLI in a hub, the four workflow
 run commands and a workflow gate's decision,
-which start or stop processes, and the two restores and the Publish (`ITEM_WRITES`), which write into a hub's tree,
-take a strict rule
+which start or stop processes, and the two restores, the Publish and the owner sign-off (`ITEM_WRITES`), which write
+into a hub's tree, take a strict rule
 on top (`STRICT_WRITES` in `agent_hub/api/local_security.py`), checked before the route runs, so a refused request
 pushes, stores, writes and starts nothing:
 

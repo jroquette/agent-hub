@@ -3,12 +3,12 @@
 The server binds 127.0.0.1 only, but a page on any site can still make the browser send it a
 request. So: the ``Host`` must name the loopback at this port (DNS rebinding), a ``POST`` or
 ``DELETE`` carrying an ``Origin`` must come from this origin (cross-site writes), the
-workflow-run writes, a workflow gate's decision, the item writes (a Restore or a Publish into a
-hub's tree) and the owner's writes (the Hub config writes, the hub actions, the learning
-decisions, the Linear key, a feature's nickname, the owner sign-off) also need that ``Origin``,
-a same-origin fetch and a JSON body (S7), so do the hub registry writes (``POST /hubs``,
-``DELETE /hubs/{id}``; a missing ``Origin`` is refused too, A11: a registered hub is a folder
-sessions may start in), bodies stop at 1 MiB
+workflow-run writes, a workflow gate's decision, the item writes (a Restore, a Publish or an
+owner sign-off into a hub's tree) and the owner's writes (the Hub config writes, the hub
+actions, the learning decisions, the Linear key, a feature's nickname) also need that
+``Origin``, a same-origin fetch and a JSON body (S7), so do the hub registry writes (``POST
+/hubs``, ``DELETE /hubs/{id}``; a missing ``Origin`` is refused too, A11: a registered hub is a
+folder sessions may start in), bodies stop at 1 MiB
 (160 MiB for ``POST /agent-sessions`` and its messages, which may carry images and files), API
 answers are never cached, a CSP keeps the app to its own origin, and no CORS header is ever
 sent. No route speaks WebSocket (ADR 0031, D3): any ``websocket`` scope is closed with 1008
@@ -61,12 +61,16 @@ RUN_WRITES = re.compile(
 # Restore of a Toolkit item's or a hub workflow's version, the Studio's Publish of a draft, the
 # scenario builder's save and a scenario's delete (a PUT or a DELETE of
 # ``/scenarios/{project}/{name}``; its GET is a read) and a scenario's migrate to blocks (ADR 0049).
+# The owner sign-off (AGH-695) writes the owner's SHIP or NO-SHIP eval into the feature's
+# ``evals/``: without the cookie, an agent session that knows ``AGENT_HUB_WEB_URL`` could settle
+# the owner's own acceptance gate.
 ITEM_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/((projects/[^/]+/skills/[^/]+/[^/]+/[^/]+"
     r"|workflows/[^/]+/[^/]+)/versions/[^/]+/restore"
     r"|projects/[^/]+/skills/drafts/[^/]+/publish"
     r"|scenarios/[^/]+/[^/]+(/proposal/dismiss|/migrate)?"
-    r"|projects/[^/]+/actions(/[^/]+/[^/]+)?)$"
+    r"|projects/[^/]+/actions(/[^/]+/[^/]+)?"
+    r"|features/[^/]+/[^/]+/owner-signoff)$"
 )
 # The run reads that need the launch cookie (ADR 0049): a paused scenario run's values (its
 # action inputs and outputs), which no other local process may read; off in the container.
@@ -80,15 +84,14 @@ CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 # The Hub config writes (``hub.local.json``; ``hub.json``'s or ``hub.local.json``'s environments
 # and services; ``hub.json``'s repos), the hub actions (pin the hub and run ``hub sync`` in it;
 # ``hub doctor --fix``), the learning decisions (a hub pull request each, S7), the Linear key
-# saved on this machine (``PUT`` and ``DELETE``), a feature's nickname and the owner sign-off (an
-# eval written into the hub).
+# saved on this machine (``PUT`` and ``DELETE``) and a feature's nickname. The owner sign-off is an
+# item write (AGH-695): it writes an eval into the hub's tree.
 OWNER_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/(projects/[^/]+/config/(local|environments|repos)"
     r"|hubs/[^/]+/(platform-sync|doctor-fix)"
     r"|learnings/([^/]+/(accept|reject)|decisions)"
     r"|tracker/linear"
-    r"|feature-names"
-    r"|features/[^/]+/[^/]+/owner-signoff)$"
+    r"|feature-names)$"
 )
 STRICT_WRITES = re.compile(rf"{RUN_WRITES.pattern}|{ITEM_WRITES.pattern}|{OWNER_WRITES.pattern}")
 # The hub registry writes (A11): this server's exact ``Origin`` is required, a missing one too.

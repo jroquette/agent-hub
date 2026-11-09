@@ -689,8 +689,9 @@ def test_passes_playground_hub_write_when_own_origin_and_json(
 
 
 # The owner's writes (AGH-699, audit C-2): the Hub config writes, the hub actions, the learning
-# decisions, the Linear key, a feature's nickname and the owner sign-off. Only the owner's own
-# page makes them: they take the strict rule here and the launch cookie (``session_access``).
+# decisions, the Linear key and a feature's nickname. Only the owner's own page makes them: they
+# take the strict rule here and the launch cookie (``session_access``). The owner sign-off is an
+# item write (AGH-695).
 OWNER_WRITES = (
     *PLAYGROUND_HUB_WRITES,
     ("POST", "/api/v1/learnings/learning-1/accept"),
@@ -699,7 +700,6 @@ OWNER_WRITES = (
     ("PUT", "/api/v1/tracker/linear"),
     ("DELETE", "/api/v1/tracker/linear"),
     ("PUT", "/api/v1/feature-names"),
-    ("POST", "/api/v1/features/demo/demo-feature/owner-signoff"),
 )
 
 
@@ -719,6 +719,7 @@ def test_marks_strict_owner_write_when_owner_page_write(method: str, path: str) 
         ("POST", "/api/v1/tracker/linear/extra"),
         ("PUT", "/api/v1/feature-names/demo"),
         ("POST", "/api/v1/features/demo/a/b/owner-signoff"),
+        ("POST", "/api/v1/features/demo/demo-feature/owner-signoff"),
         ("POST", "/api/v1/hubs"),
         ("DELETE", "/api/v1/hubs/hub-1"),
         ("POST", "/api/v1/events/hooks"),
@@ -789,6 +790,77 @@ def test_turns_check_run_off_when_sessions_off(api_settings: ApiSettings, web_di
     assert response.json()["type"] == "urn:agent-hub:problem:run-control-off"
 
 
+OWNER_SIGNOFF = "/api/v1/features/demo/demo-feature/owner-signoff"
+
+
+# AGH-695: the owner sign-off writes the owner's eval into the hub's tree, so it is a strict item
+# write, which needs the launch cookie as a restore or a change request's decision does.
+def test_marks_strict_item_write_when_post_to_owner_signoff() -> None:
+    assert is_item_write("POST", OWNER_SIGNOFF)
+    assert is_strict_write("POST", OWNER_SIGNOFF)
+    assert not is_run_write("POST", OWNER_SIGNOFF)
+
+
+# AGH-695: only that exact method and path shape is marked.
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", OWNER_SIGNOFF),
+        ("POST", "/api/v1/features/demo/owner-signoff"),
+        ("POST", "/api/v1/features/demo//owner-signoff"),
+        ("POST", "/api/v1/features/demo/a/b/owner-signoff"),
+        ("POST", f"{OWNER_SIGNOFF}/extra"),
+        ("POST", f"{OWNER_SIGNOFF}s"),
+    ],
+)
+def test_keeps_other_checks_when_not_owner_signoff(method: str, path: str) -> None:
+    assert not is_item_write(method, path)
+    assert not is_strict_write(method, path)
+
+
+# AGH-695: the strict rule (own Origin, same-origin fetch, JSON body) comes before the route; the
+# audit's request, with no Origin and no body, is refused by it.
+@pytest.mark.parametrize(
+    ("headers", "status"),
+    [
+        ({}, 403),
+        ({"Content-Type": "application/json"}, 403),
+        ({**OWN_JSON, "Origin": "http://127.0.0.1:7421"}, 403),
+        ({**OWN_JSON, "Sec-Fetch-Site": "same-site"}, 403),
+        ({**OWN_JSON, "Content-Type": "text/plain"}, 415),
+        (OWN_JSON, 501),
+    ],
+)
+def test_applies_strict_rule_when_owner_signoff_sent(
+    client: TestClient, headers: dict[str, str], status: int
+) -> None:
+    response = client.post(OWNER_SIGNOFF, content=b"{}", headers=headers)
+
+    assert response.status_code == status
+
+
+# AGH-695: from this server's own page but without the launch cookie, it is 401.
+def test_requires_launch_cookie_when_owner_signoff_sent(client: TestClient) -> None:
+    client.cookies.clear()
+
+    response = client.post(OWNER_SIGNOFF, content=b"{}", headers=OWN_JSON)
+
+    assert response.status_code == 401
+    assert response.json()["type"] == "urn:agent-hub:problem:agent-session-unauthorized"
+
+
+# AGH-695: in the container the hubs are read-only, so it is 409 hub_read_only, as a restore.
+def test_refuses_owner_signoff_as_read_only_when_sessions_off(
+    api_settings: ApiSettings, web_dist: Path
+) -> None:
+    app = create_app(replace(api_settings, sessions_off=True), web_dist=web_dist)
+    with TestClient(app, base_url="http://127.0.0.1:7420") as off:
+        response = off.post(OWNER_SIGNOFF, content=b"{}", headers=OWN_JSON)
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "hub_read_only"
+
+
 # Starlette's router matches a path against ``^…$``, whose ``$`` also matches before a trailing
 # newline, while the classifiers above fullmatch it: a path holding a control character is
 # refused before anything reads it, so no route is reached without its checks.
@@ -814,6 +886,7 @@ NEWLINE_ROUTES = (
     *BUILDER_WRITES,
     *PLAYGROUND_HUB_WRITES,
     ("POST", CHECK_RUN),
+    ("POST", OWNER_SIGNOFF),
     ("POST", "/api/v1/hubs"),
     ("DELETE", "/api/v1/hubs/hub-1"),
     ("POST", "/api/v1/agent-sessions"),

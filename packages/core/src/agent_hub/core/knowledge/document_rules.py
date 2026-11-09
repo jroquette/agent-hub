@@ -3,7 +3,9 @@
 A path is hub-relative with ``/`` separators: ``brain/…`` for the hub's brain, ``<dir>/docs/…``
 for a repo's docs. Its kind comes from its folder (D-kind); only ``.md`` names outside
 ``brain/auto/`` are indexed (D-files). The bounds of the untrusted input live here (AM-1), and so
-do the reasons a skipped file is reported with (D-skipreport, AM-2).
+do the reasons a skipped file is reported with (D-skipreport, AM-2). A text a rule of r1 matches
+is kept redacted, each match replaced by its marker as ingestion does, never skipped (AGH-696):
+the index and ``read`` hold only the redacted text.
 """
 
 import hashlib
@@ -12,8 +14,6 @@ from typing import Final
 
 from agent_hub.core.brain.brain_path import BRAIN_FOLDER, NOTE_SUFFIX, is_personal_folder
 from agent_hub.core.brain.frontmatter import split_frontmatter
-from agent_hub.core.item_versions.secret_match import has_secret_match
-from agent_hub.core.item_versions.unit_content import UnitContent, UnitFile
 from agent_hub.core.knowledge.document_links import document_links
 from agent_hub.core.knowledge.knowledge_index import (
     Fingerprint,
@@ -22,6 +22,7 @@ from agent_hub.core.knowledge.knowledge_index import (
     SkippedFile,
 )
 from agent_hub.core.readmodels.view_types import ViewModel
+from agent_hub.core.redaction.redact import redact_text
 
 # A file larger than this is skipped (D-files): the brain's note bound, 256 KiB.
 MAX_DOCUMENT_BYTES: Final = 262_144
@@ -32,8 +33,8 @@ MAX_LISTED_FILES: Final = 20_000
 # Each source's listing is read up to this many bytes (AM-1).
 MAX_LISTING_BYTES: Final = 64 * 1024 * 1024
 
-# Why a listed file is skipped (D-skipreport, AM-2), as reported.
-RULE_MATCH: Final = "matches a secret rule"
+# Why a listed file is skipped (D-skipreport, AM-2), as reported. A secret rule's match is no
+# reason: the text is kept redacted (AGH-696).
 TOO_LARGE: Final = "larger than 256 KiB"
 NOT_UTF8: Final = "not UTF-8"
 NOT_REGULAR: Final = "not a regular file"
@@ -115,23 +116,31 @@ def document_meta(text: str, name: str) -> DocumentMeta:
     )
 
 
-def document_from(
-    path: str, data: bytes, fingerprint: Fingerprint, *, hub_folder: str | None = None
-) -> IndexedDocument | SkippedFile:
-    """The file at ``path`` as a document to index, or as a skipped file and why: larger than
-    ``MAX_DOCUMENT_BYTES``, not UTF-8, or matched by a secret rule of r1 (P-4). A skipped file
-    keeps nothing of ``data``. With ``hub_folder`` (the name of the hub's folder in the
-    workspace) the document keeps its links into the brain (``document_links``); without, none."""
+def document_text(path: str, data: bytes, fingerprint: Fingerprint) -> str | SkippedFile:
+    """The text the index keeps of the file at ``path``: ``data`` as UTF-8 with every secret r1
+    recognises replaced by its ``[redacted: <kind>]`` marker (AGH-696), or the file as skipped and
+    why: larger than ``MAX_DOCUMENT_BYTES`` or not UTF-8. A skipped file keeps nothing of
+    ``data``. The markers can make the text a little longer than the file."""
     if len(data) > MAX_DOCUMENT_BYTES:
         return SkippedFile(path=path, fingerprint=fingerprint, reason=TOO_LARGE)
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         return SkippedFile(path=path, fingerprint=fingerprint, reason=NOT_UTF8)
-    name = path.rsplit("/", 1)[-1]
-    if has_secret_match(UnitContent(files=(UnitFile(path=name, content=data),))):
-        return SkippedFile(path=path, fingerprint=fingerprint, reason=RULE_MATCH)
-    meta = document_meta(text, name)
+    return redact_text(text)
+
+
+def document_from(
+    path: str, data: bytes, fingerprint: Fingerprint, *, hub_folder: str | None = None
+) -> IndexedDocument | SkippedFile:
+    """The file at ``path`` as a document to index, or as a skipped file and why
+    (``document_text``). Every field comes from the redacted text, its hash too, so nothing a
+    secret rule matched is stored. With ``hub_folder`` (the name of the hub's folder in the
+    workspace) the document keeps its links into the brain (``document_links``); without, none."""
+    text = document_text(path, data, fingerprint)
+    if isinstance(text, SkippedFile):
+        return text
+    meta = document_meta(text, path.rsplit("/", 1)[-1])
     return IndexedDocument(
         path=path,
         kind=kind_of(path),
@@ -139,7 +148,8 @@ def document_from(
         status=meta.status,
         provenance=meta.provenance,
         fingerprint=fingerprint,
-        sha256=hashlib.sha256(data).hexdigest(),
+        # The hash of the text kept: the file's own when no rule matched (UTF-8 round-trips).
+        sha256=hashlib.sha256(text.encode()).hexdigest(),
         body=meta.body,
         links=() if hub_folder is None else document_links(path, text, hub_folder=hub_folder),
     )

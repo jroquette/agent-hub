@@ -209,7 +209,6 @@ OWNER_WRITES = (
     ("PUT", "/api/v1/tracker/linear"),
     ("DELETE", "/api/v1/tracker/linear"),
     ("PUT", "/api/v1/feature-names"),
-    ("POST", "/api/v1/features/demo/demo-feature/owner-signoff"),
 )
 
 

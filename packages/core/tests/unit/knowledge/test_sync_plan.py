@@ -3,7 +3,7 @@ D-skipreport): only what changed since the rows were written."""
 
 import pytest
 
-from agent_hub.core.knowledge.document_rules import NOT_REGULAR, RULE_MATCH, THROUGH_LINK
+from agent_hub.core.knowledge.document_rules import NOT_REGULAR, NOT_UTF8, THROUGH_LINK
 from agent_hub.core.knowledge.knowledge_index import (
     INDEX_VERSION,
     Fingerprint,
@@ -49,12 +49,12 @@ def _read(file: ListedFile) -> FileToRead:
 def test_plans_nothing_when_fingerprints_match() -> None:
     stored = _stored(
         _indexed("brain/a.md"),
-        _skipped("brain/leak.md", RULE_MATCH),
+        _skipped("brain/latin.md", NOT_UTF8),
         _skipped("brain/link.md", THROUGH_LINK),
     )
     listed = (
         _listed("brain/a.md"),
-        _listed("brain/leak.md"),
+        _listed("brain/latin.md"),
         _listed("brain/link.md", _print(), THROUGH_LINK),
     )
 
@@ -81,7 +81,7 @@ def test_reads_file_when_new() -> None:
 
 
 def test_drops_row_when_file_no_longer_listed() -> None:
-    stored = _stored(_indexed("brain/a.md"), _skipped("brain/b.md", RULE_MATCH))
+    stored = _stored(_indexed("brain/a.md"), _skipped("brain/b.md", NOT_UTF8))
 
     plan = plan_sync(stored, (), version=INDEX_VERSION)
 
@@ -114,17 +114,17 @@ def test_plans_nothing_when_hub_has_no_row_and_nothing_listed() -> None:
 
 def test_reexamines_skipped_file_when_fingerprint_changed() -> None:
     stored = _stored(
-        _skipped("brain/leak.md", RULE_MATCH),
+        _skipped("brain/latin.md", NOT_UTF8),
         _skipped("brain/link.md", THROUGH_LINK),
         _skipped("brain/pipe.md", NOT_REGULAR),
     )
-    leak = _listed("brain/leak.md", _print(mtime_ns=2))
+    latin = _listed("brain/latin.md", _print(mtime_ns=2))
     link = _listed("brain/link.md", _print(mtime_ns=2), THROUGH_LINK)
     pipe = _listed("brain/pipe.md", _print(), THROUGH_LINK)
 
-    plan = plan_sync(stored, (leak, link, pipe), version=INDEX_VERSION)
+    plan = plan_sync(stored, (latin, link, pipe), version=INDEX_VERSION)
 
-    assert plan.to_read == (_read(leak),)
+    assert plan.to_read == (_read(latin),)
     assert plan.skipped_now == (
         SkippedFile(path="brain/link.md", fingerprint=_print(mtime_ns=2), reason=THROUGH_LINK),
         SkippedFile(path="brain/pipe.md", fingerprint=_print(), reason=THROUGH_LINK),

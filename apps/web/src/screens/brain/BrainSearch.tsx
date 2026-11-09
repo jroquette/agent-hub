@@ -183,8 +183,8 @@ function Skipped({ skipped }: { skipped: KnowledgeSearch["skipped"] }) {
   return (
     <div className="ah-stack" style={{ gap: 4 }}>
       <p className="ah-small ah-muted" style={{ margin: 0 }}>
-        {plural(skipped.length, "file was", "files were")} not searched (a secret rule matched, too
-        large, or unreadable).
+        {plural(skipped.length, "file was", "files were")} not searched (too large, not UTF-8, or
+        unreadable).
       </p>
       <Button
         size="sm"

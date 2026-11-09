@@ -370,17 +370,26 @@ class KnowledgeIndexContract:
         _check(stored == expected, f"the new fingerprint, the same hash: {stored}")
         _check(_paths(knowledge_index, "marker") == [document.path], "the text is kept")
 
+    def test_keeps_marker_when_body_redacted(self, knowledge_index: KnowledgeIndex) -> None:
+        # A text a secret rule matched is indexed redacted (AGH-696): the marker stays as
+        # written, and the words around it are found.
+        body = "push with [redacted: github token] after review"
+        _index(knowledge_index, _document("brain/playbooks/push.md", body=body))
+
+        hits = knowledge_index.search(HUB, ("review",), limit=MAX_RESULTS)
+
+        _check([hit.snippet for hit in hits] == [body], f"the marker as written: {hits}")
+        _check(_paths(knowledge_index, "redacted") == ["brain/playbooks/push.md"], "its words")
+
     def test_stores_skipped_file_without_text_when_skip_applied(
         self, knowledge_index: KnowledgeIndex
     ) -> None:
-        leak = _document("brain/_inbox/leak.md", body="marker text")
+        latin = _document("brain/_inbox/latin.md", body="marker text")
         gone = _document("brain/gone.md", body="marker text")
-        _index(knowledge_index, leak, gone)
+        _index(knowledge_index, latin, gone)
         big = Fingerprint(size=262_145, mtime_ns=_MTIME_NS)
         skipped = (
-            SkippedFile(
-                path=leak.path, fingerprint=leak.fingerprint, reason="matches a secret rule"
-            ),
+            SkippedFile(path=latin.path, fingerprint=latin.fingerprint, reason="not UTF-8"),
             SkippedFile(path="brain/big.md", fingerprint=big, reason="larger than 256 KiB"),
             SkippedFile(path=gone.path, fingerprint=None, reason="cannot be read"),
         )
@@ -389,8 +398,8 @@ class KnowledgeIndexContract:
 
         files = knowledge_index.stored(HUB).files
         expected = {
-            leak.path: StoredFile(
-                path=leak.path, fingerprint=leak.fingerprint, skip_reason="matches a secret rule"
+            latin.path: StoredFile(
+                path=latin.path, fingerprint=latin.fingerprint, skip_reason="not UTF-8"
             ),
             "brain/big.md": StoredFile(
                 path="brain/big.md", fingerprint=big, skip_reason="larger than 256 KiB"
@@ -483,14 +492,12 @@ class KnowledgeLinksContract:
     ) -> None:
         sources = [
             _document(f"brain/playbooks/{name}.md", body="text", links=(NOW,))
-            for name in ("dropped", "leak", "gone", "kept")
+            for name in ("dropped", "latin", "gone", "kept")
         ]
         _index(knowledge_index, *sources)
-        dropped, leak, gone, kept = sources
+        dropped, latin, gone, kept = sources
         skipped = (
-            SkippedFile(
-                path=leak.path, fingerprint=leak.fingerprint, reason="matches a secret rule"
-            ),
+            SkippedFile(path=latin.path, fingerprint=latin.fingerprint, reason="not UTF-8"),
             SkippedFile(path=gone.path, fingerprint=None, reason="cannot be read"),
         )
 

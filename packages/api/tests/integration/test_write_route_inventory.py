@@ -96,6 +96,7 @@ WRITE_ROUTES: Mapping[tuple[str, str], Protection] = {
     ("DELETE", "/api/v1/scenarios/{project}/{name}"): COOKIE,
     ("POST", "/api/v1/scenarios/{project}/{name}/migrate"): COOKIE,
     ("POST", "/api/v1/scenarios/{project}/{name}/proposal/dismiss"): COOKIE,
+    ("POST", "/api/v1/features/{project}/{slug}/owner-signoff"): COOKIE,
     # The owner writes (OWNER_WRITES, AGH-699): only the owner's own page makes them.
     ("PUT", "/api/v1/projects/{project}/config/local"): COOKIE,
     ("POST", "/api/v1/projects/{project}/config/environments"): COOKIE,
@@ -108,7 +109,6 @@ WRITE_ROUTES: Mapping[tuple[str, str], Protection] = {
     ("PUT", "/api/v1/tracker/linear"): COOKIE,
     ("DELETE", "/api/v1/tracker/linear"): COOKIE,
     ("PUT", "/api/v1/feature-names"): COOKIE,
-    ("POST", "/api/v1/features/{project}/{slug}/owner-signoff"): COOKIE,
     # The hub registry writes (A11): scripts register a hub with this server's Origin.
     ("POST", "/api/v1/hubs"): EXACT_ORIGIN,
     ("DELETE", "/api/v1/hubs/{hub_id}"): EXACT_ORIGIN,

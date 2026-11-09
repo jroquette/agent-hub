@@ -547,7 +547,11 @@ result names its path and a snippet. Results come curated knowledge first (ADRs,
 domain and system notes), then the docs, the journal, feature records and inbox notes, whatever their text match;
 inside each of these two tiers a note whose `status` starts with approved or active comes first and one whose `status`
 starts with draft or proposed last; then the best text match (`bm25`, the title above the body), then the path
-(AGH-699). A query is its runs of letters and digits, all required, never FTS5 syntax: one
+(AGH-699). A text a rule of the redaction set `r1` matches is indexed, and served by `read`,
+with each match replaced by its `[redacted: <kind>]` marker, as ingestion does (AGH-696,
+[ADR 0058](adr/0058-knowledge-index-keeps-redacted-text.md)): no secret enters the index,
+and a placeholder such as `?token=<token>` costs one marker instead of the whole file. A file over 256 KiB or not
+UTF-8 is skipped and named. A query is its runs of letters and digits, all required, never FTS5 syntax: one
 with no word (`!!!`, `(`) exits 2, and one that starts with `-` goes after `--` (`hub search -- -foo`). `propose`
 writes a new `brain/_inbox/` note on a branch `<prefix>learning-propose-<slug>` and opens a hub pull request through
 `hub_git`, never the default branch; its `kind` names the brain folder the note would join (`learning`, `playbook`,
@@ -579,7 +583,7 @@ before any other check, 1 MiB request bodies (160 MiB for
 text files attached in the chat), no CORS, and a CSP that keeps the app on its own origin (a UX mockup's own page
 keeps a narrower one: inline styles and `data:` only, no script, no request; AGH-687). The writes only the owner's
 page makes, the owner writes (`OWNER_WRITES`, AGH-699: the Hub config writes, a hub's platform sync and doctor fix,
-the learning decisions, the Linear key, a feature's nickname, the owner sign-off), need the launch cookie on top of
+the learning decisions, the Linear key, a feature's nickname), need the launch cookie on top of
 this server's exact `Origin`, a same-origin fetch and a JSON body, as the run and item writes do: an `Origin` alone is
 something any local process can send. In the container, which mints no token, they answer 404 `owner-writes-off`
 ([API.md](API.md#local-security)). A checked-in table names every write route's class, and a test fails for a write
@@ -892,7 +896,8 @@ AGH-458.
   can get a nickname kept on this machine (`GET`/`PUT /feature-names`). **Feature detail**: a calm golden path, one
   Waiting for you banner pointing to each owner wait (a plan change request first, which opens its ticket's panel;
   each acceptance prompt is on the Eval tab: the owner sign-off, `POST /features/{project}/{slug}/owner-signoff`, a
-  SHIP eval with `provenance: owner`), a ticket panel per ticket (its preflight runs, local notes and discoveries from
+  SHIP eval with `provenance: owner`; since AGH-695 a strict write that needs `hub web`'s launch cookie, as a restore,
+  so an agent session cannot sign off for the owner), a ticket panel per ticket (its preflight runs, local notes and discoveries from
   `GET …/tickets/{ticket}`, and a plan change request's Approve or Decline with a note: through its run's gate, or,
   when the run is gone, `POST …/change-requests/{n}/decision`, which creates the request's decision file once), an
   Eval tab with history per scope and who ran each eval, Approve at the end of the spec, research and plan
@@ -1025,8 +1030,10 @@ before anything is appended, and the data stays on the machine in v1:
 - **Outside the events** (not an exception to the rules above, which are about what sessions and hooks send): the
   database also keeps the text of hub files in two derived stores, item versions ([ADR 0039](adr/0039-item-versions-and-server-writes-to-the-hub.md))
   and the knowledge index ([ADR 0044](adr/0044-team-memory-git-source-local-index-and-hub-mcp.md)), both read from
-  files the developer already has and kept out when a rule of the redaction set `r1` matches (`has_secret_match`); no
-  transcript or session content enters them.
+  files the developer already has. Item versions keep out a unit when a rule of the redaction set `r1` matches
+  (`has_secret_match`); the knowledge index keeps a file's text redacted with `r1`, every field of its row (title,
+  frontmatter values, body, links and hash) taken from the redacted text (AGH-696). No transcript or session content
+  enters them.
 
 **Payload kept** (every short text is redacted, then truncated; "chars" are characters):
 
@@ -1234,7 +1241,8 @@ Continuity between sessions comes from the brain and the summaries, not from rer
 - The team shares by `git pull`; there is no central store. Each developer's index (SQLite FTS5, in the database
   `hub web` uses) is derived from the checkout, synced on each search and disposable (`hub brain reindex`).
 - Agents reach it through `hub mcp`, a stdio MCP server that `hub sync` declares in the hub's `.mcp.json`: `search`
-  (always with path and snippet), `read` (brain and docs only) and `propose` (a hub pull request through `hub_git`
+  (always with path and snippet), `read` (brain and docs only, the text as indexed: redacted with `r1`,
+  [ADR 0058](adr/0058-knowledge-index-keeps-redacted-text.md)) and `propose` (a hub pull request through `hub_git`
   on `<prefix>learning-propose-<slug>`, never the default branch). The app repos get no MCP configuration, so direction 2 holds.
 - `hub mcp` sends server instructions on connect: search the brain for the task's topic in 2 to 4 key words before planning,
   `read` what matters, weigh `kind` and `status`, file learnings with `propose`, and fall back to `./hub search`

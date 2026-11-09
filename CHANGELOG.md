@@ -40,6 +40,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
+- The knowledge index keeps a file a secret rule matches, redacted, instead of skipping it (AGH-696). `hub search`,
+  `hub mcp` and the `hub web` Brain search index its text with each match replaced by its `[redacted: <kind>]`
+  marker, as event ingestion does, and `hub mcp`'s `read` returns that redacted text. Docs with placeholders such as
+  `?token=<token>` or `scheme://user:pass@`, `docs/SPEC.md` among them, are now found and read; no secret is stored.
+  `propose` still refuses a text with a secret. The index version moves to 3, so the first search after you bump
+  `platform.version` rebuilds the index.
 - `hub web`: writes to the config, environments, repos, platform sync, doctor fix, learning decisions and the Linear
   key now need the launch cookie and a JSON body (`Content-Type: application/json`), like the other strict writes; a
   same-origin request without the cookie gets 403, and a test pins the protection of every write route (AGH-699).
