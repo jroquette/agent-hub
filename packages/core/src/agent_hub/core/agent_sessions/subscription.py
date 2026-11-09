@@ -19,8 +19,9 @@
    in-process (S7). Records the replay already sent and deltas older than the last record sent
    are skipped, so nothing comes twice and ``seq`` never goes back.
 
-A subscriber that falls behind the live buffer replays the store again from its last record
-(no record is lost); a subscriber detached by a newer one (the cap) gets a reset and ends. The
+A subscriber that falls behind the live buffer replays the store again from its last record up
+to the session's last record at that moment, and reads the later ones live (no record is lost);
+a subscriber detached by a newer one (the cap) gets a reset and ends. The
 stream ends after the session's last frame, or after step 4 for an ended session.
 """
 
@@ -139,9 +140,10 @@ async def _live(
     while not subscriber.detached:
         published = live.frames_after(subscriber.cursor)
         if published is None:
-            # Behind the live buffer: replay what the store has since the last record sent.
+            # Behind the live buffer: replay what the store has since the last record sent, up to
+            # the last record now; later ones are published after this cursor, so they come live.
             subscriber.cursor = live.published
-            async for record in _replayed(read, sent):
+            async for record in _replayed(read, sent, until=live.last_seq):
                 yield record
             continue
         for number, item in published:
