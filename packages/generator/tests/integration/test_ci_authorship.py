@@ -40,6 +40,9 @@ CLEAN_BODY = "## Summary\n\nThe endpoint checks the session.\n"
 # Built from fragments, so this file holds no attribution line a reader could take for one.
 FOOTER = "\U0001f916 Generated " + "with [Claude Code](https://claude.com/claude-code)"
 TRAILER = "Co-Authored-" + "By: Claude <noreply@anthropic.com>"
+# The footer and trailer a Claude Code cloud session adds, built from fragments too.
+CLOUD_FOOTER = "_Generated " + "by [Claude Code](https://claude.ai/code/session_0123)_"
+SESSION_TRAILER = "Claude-" + "Session: https://claude.ai/code/session_0123"
 UNREADABLE_EVENT = "Authorship: cannot read the pull request from the event file\n"
 
 
@@ -183,6 +186,26 @@ def test_fails_when_body_carries_footer_then_passes_when_edited(
     assert footer.stderr == "Authorship: the pull request body carries AI attribution\n"
     assert edited.returncode == 0, edited.stderr
     assert edited.stdout == "Authorship: the title, the body and 1 commit(s) are clean\n"
+
+
+def test_fails_when_body_carries_cloud_session_footer(pull_request: PullRequest) -> None:
+    pull_request.commit("feat(api): add the login endpoint")
+
+    completed = pull_request.run_step(body=f"{CLEAN_BODY}\n---\n{CLOUD_FOOTER}\n")
+
+    assert completed.returncode == 1
+    assert completed.stderr == "Authorship: the pull request body carries AI attribution\n"
+
+
+def test_fails_when_commit_carries_session_trailer(pull_request: PullRequest) -> None:
+    sha = pull_request.commit(f"feat(api): add the login endpoint\n\n{SESSION_TRAILER}")
+
+    completed = pull_request.run_step()
+
+    assert completed.returncode == 1
+    assert (
+        completed.stderr == f"Authorship: commit {sha[:12]}: the message carries AI attribution\n"
+    )
 
 
 @pytest.mark.parametrize("title", [f"feat: login {FOOTER[0]}", f"feat: login ({TRAILER})"])
