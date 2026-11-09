@@ -49,6 +49,7 @@
             "features.tracker": null,
             "hooks.guard-extension": null,
             "instructions.duplicates": null,
+            "instructions.read_cap": null,
             "instructions.refs": null,
             "instructions.size": null,
             "items.leftovers": null,
@@ -66,6 +67,7 @@
             "secrets.config": null,
             "settings.valid": null,
             "settings.weakening": null,
+            "workflows.shadow": null,
             "workflows.starts": null,
             "workflows.valid": null
           }
@@ -271,6 +273,9 @@
             "instructions.duplicates": {
               "$ref": "#/$defs/RuleSettings"
             },
+            "instructions.read_cap": {
+              "$ref": "#/$defs/RuleSettings"
+            },
             "instructions.refs": {
               "$ref": "#/$defs/RuleSettings"
             },
@@ -320,6 +325,9 @@
               "$ref": "#/$defs/RuleSettings"
             },
             "settings.weakening": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "workflows.shadow": {
               "$ref": "#/$defs/RuleSettings"
             },
             "workflows.starts": {
@@ -851,6 +859,9 @@
             "instructions.duplicates": {
               "$ref": "#/$defs/RuleSettings"
             },
+            "instructions.read_cap": {
+              "$ref": "#/$defs/RuleSettings"
+            },
             "instructions.refs": {
               "$ref": "#/$defs/RuleSettings"
             },
@@ -900,6 +911,9 @@
               "$ref": "#/$defs/RuleSettings"
             },
             "settings.weakening": {
+              "$ref": "#/$defs/RuleSettings"
+            },
+            "workflows.shadow": {
               "$ref": "#/$defs/RuleSettings"
             },
             "workflows.starts": {

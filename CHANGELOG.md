@@ -11,6 +11,26 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- `hub doctor` warns `workflows.shadow` for each hub workflow that overrides the built-in of its name (AGH-699). A
+  copy identical to the built-in gets "delete it", one that differs gets "compare it". `hub init` copies every
+  built-in pack, so a fresh hub lists one warning per copied workflow: delete each `workflows/<pack>/` you do not
+  change, and the hub runs the built-in, which each release updates (`hub sync` does not bring it back).
+- `hub doctor` warns `instructions.read_cap` when an instruction file sends agents to a doc over the Read tool's cap
+  of about 25,000 tokens (pinned at 65,536 bytes), with the doc and its size (AGH-699).
+- The backlog-care pass lists `merged` issues: open issues whose id is in a commit on a repo's default branch, as
+  last fetched, with that commit as evidence (AGH-699). Your hub's `workflows/backlog-care` copy runs instead of the
+  built-in until you delete it.
+- `hub skill-usage` and the `hub web` Toolkit count the calls of the hub's knowledge tools (`mcp__hub__search`,
+  `read` and `propose`), by main session and by subagent, names and counts only (AGH-699).
+
+### Fixed
+
+- The brain-care `inbox` workflow's `group` step states every output cap in its prompt, so a long `target` no longer
+  fails its output contract (AGH-504). Your hub's `workflows/brain-care` copy runs instead of the built-in until you
+  delete it.
+
 ## [0.33.0] - 2026-11-06
 
 ### Added

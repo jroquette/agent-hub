@@ -1549,6 +1549,7 @@ export function aSkillCatalog(overrides: Partial<SkillCatalog> = {}): SkillCatal
       anAgentItem(),
       aHookItem(),
     ],
+    hub_tools: {},
     notice: null,
     project: "demo",
     truncated: false,

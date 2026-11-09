@@ -1219,6 +1219,14 @@ def test_counts_skill_usage_when_project_events_folded() -> None:
             }
         },
         "windows_truncated": False,
+        # The store holds no hub knowledge tool call: each one at zero.
+        "hub_tools": {
+            tool: {
+                kind: {"runs_7d": 0, "runs_30d": 0, "runs_90d": 0, "last_used_at": None}
+                for kind in ("main", "subagents")
+            }
+            for tool in ("mcp__hub__search", "mcp__hub__read", "mcp__hub__propose")
+        },
     }
 
 

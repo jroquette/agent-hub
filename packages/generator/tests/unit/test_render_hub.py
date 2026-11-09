@@ -163,6 +163,7 @@ DESIGN_PATHS = (
     # AGH-489: the built-in backlog-care pack, seeded.
     "workflows/backlog-care/backlog-care.yaml",
     "workflows/backlog-care/fixtures/backlog-approve-and-skip.yaml",
+    "workflows/backlog-care/fixtures/backlog-merged.yaml",
     "workflows/backlog-care/fixtures/backlog-mixed.yaml",
     "workflows/backlog-care/fixtures/backlog-over-limit.yaml",
     "workflows/backlog-care/fixtures/backlog-paused.yaml",
@@ -5555,6 +5556,8 @@ ADAPTER_MODULES = frozenset(
         "workflow_discovery.py",
         "workflow_fixtures.py",
         "workflow_source.py",
+        # Compares a hub pack with the built-in it overrides, for hub doctor.
+        "workflow_shadows.py",
         "action_discovery.py",
         "git_answers.py",
         "env_file_reader.py",

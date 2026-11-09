@@ -120,11 +120,30 @@ def run(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
     read: dict[str, Any],
+    *argv: str,
 ) -> dict[str, Any]:
     monkeypatch.setattr(sys, "stdin", StringIO(json.dumps(read)))
-    assert load().main(["--stale-days", "14", "--today", TODAY]) == 0
+    assert load().main(["--stale-days", "14", "--today", TODAY, *argv]) == 0
     found: dict[str, Any] = json.loads(capsys.readouterr().out)
     return found
+
+
+def a_config(branch: str = "main") -> str:
+    """What ``hub step config`` prints, cut to what ``hygiene.py`` reads: each repo's branch."""
+    return json.dumps(
+        {"default_branch": "main", "repos": [{"dir": "api", "default_branch": branch}]}
+    )
+
+
+def head(repo: Path, ref: str) -> str:
+    done = subprocess.run(  # noqa: S603 - git with fixed arguments in a temp repo
+        ["git", "rev-parse", ref],  # noqa: S607 - git from PATH, as the script runs it
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return done.stdout.strip()
 
 
 def test_reports_orphan_stale_duplicate_and_cycle_when_backlog_mixed(
@@ -152,8 +171,9 @@ def test_reports_orphan_stale_duplicate_and_cycle_when_backlog_mixed(
     assert "DEM-5 blocked by DEM-6" in cycle["evidence"]
     assert "DEM-6 blocked by DEM-5" in cycle["evidence"]
     assert found["unreadable"] == []
+    assert found["merged"] == []
     assert found["summary"].startswith(
-        "Hygiene of 7 issues read: 1 orphan, 1 stale, 1 duplicate group, 1 cycle."
+        "Hygiene of 7 issues read: 1 orphan, 1 stale, 1 duplicate group, 1 cycle, 0 merged issues."
     )
     for evidence in (orphan, stale, duplicate, cycle):
         assert evidence["evidence"] in found["summary"]
@@ -249,6 +269,150 @@ def test_reports_one_cycle_when_three_issues_block_in_a_ring(
     )
 
 
+def test_reports_merged_issue_when_fetched_default_branch_names_it(
+    hub: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = hub.parent / "api"
+    subject = "feat(api): add the export button (DEM-1)"
+    git(repo, "commit", "-q", "--allow-empty", "-m", subject)
+    git(repo, "commit", "-q", "--allow-empty", "-m", "fix(api): pad the totals (DEM-30)")
+    git(repo, "commit", "-q", "--allow-empty", "-m", "fix: close the old one (DEM-4)")
+    git(repo, "update-ref", "refs/remotes/origin/main", "HEAD~1")
+    # Not fetched: a commit on the local branch only does not count.
+    git(repo, "commit", "-q", "--allow-empty", "-m", "wip (DEM-2)")
+    issues = [
+        an_issue(
+            "DEM-1", "Add the export button", state={"name": "In Progress", "type": "started"}
+        ),
+        an_issue("DEM-2", "Fix the login timeout"),
+        an_issue("DEM-3", "Pad the totals"),
+        an_issue("DEM-4", "Close it", state={"name": "Done", "type": "completed"}),
+    ]
+
+    found = run(capsys, monkeypatch, a_read(issues), "--config", a_config())
+
+    commit = head(repo, "origin/main~1")
+    evidence = f"commit {commit[:12]} on api origin/main: {subject!r}"
+    assert found["merged"] == [
+        {
+            "id": "DEM-1",
+            "state": "In Progress",
+            "repo": "api",
+            "commit": commit,
+            "evidence": evidence,
+        }
+    ]
+    assert "0 cycles, 1 merged issue." in found["summary"]
+    assert f"- merged DEM-1 'Add the export button': {evidence}" in found["summary"]
+
+
+def test_reads_local_branch_when_repo_has_no_remote_branch(
+    hub: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = hub.parent / "api"
+    git(repo, "commit", "-q", "--allow-empty", "-m", "Merge pull request #7 from jo/dem-1-export")
+
+    (merged,) = run(
+        capsys, monkeypatch, a_read([an_issue("DEM-1", "Export")]), "--config", a_config()
+    )["merged"]
+
+    assert merged["commit"] == head(repo, "main")
+    assert merged["evidence"].startswith(f"commit {merged['commit'][:12]} on api main: ")
+
+
+def test_reports_merged_issue_when_git_prints_subject_not_in_utf8(
+    hub: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = hub.parent / "api"
+    # git re-encodes each subject to this encoding, so "é" reaches the script as byte 0xE9.
+    git(repo, "config", "i18n.logOutputEncoding", "latin1")
+    git(repo, "commit", "-q", "--allow-empty", "-m", "feat(api): export the café menu (DEM-1)")
+
+    (merged,) = run(
+        capsys, monkeypatch, a_read([an_issue("DEM-1", "Export")]), "--config", a_config()
+    )["merged"]
+
+    assert merged["commit"] == head(repo, "main")
+    assert merged["evidence"].endswith("'feat(api): export the caf� menu (DEM-1)'")
+
+
+def test_names_newest_commit_when_two_commits_name_issue(
+    hub: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = hub.parent / "api"
+    git(repo, "commit", "-q", "--allow-empty", "-m", "feat(api): export (DEM-1)")
+    git(repo, "commit", "-q", "--allow-empty", "-m", "fix(api): export the totals too (DEM-1)")
+
+    (merged,) = run(
+        capsys, monkeypatch, a_read([an_issue("DEM-1", "Export")]), "--config", a_config()
+    )["merged"]
+
+    assert merged["commit"] == head(repo, "main")
+    assert merged["evidence"].endswith(": 'fix(api): export the totals too (DEM-1)'")
+
+
+def test_reads_last_max_commits_when_branch_is_longer(
+    hub: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load()
+    assert module.MAX_COMMITS == 5_000
+    monkeypatch.setattr(module, "MAX_COMMITS", 1)
+    repo = hub.parent / "api"
+    git(repo, "commit", "-q", "--allow-empty", "-m", "feat(api): export (DEM-1)")
+    git(repo, "commit", "-q", "--allow-empty", "-m", "fix(api): pad the totals (DEM-2)")
+    issues = [an_issue("DEM-1", "Export"), an_issue("DEM-2", "Pad")]
+    monkeypatch.setattr(sys, "stdin", StringIO(json.dumps(a_read(issues))))
+
+    assert module.main(["--today", TODAY, "--config", a_config()]) == 0
+
+    merged = json.loads(capsys.readouterr().out)["merged"]
+    assert [entry["id"] for entry in merged] == ["DEM-2"]
+
+
+def test_cuts_subject_in_evidence_when_subject_long(
+    hub: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load()
+    assert module.SUBJECT_CHARS == 200
+    repo = hub.parent / "api"
+    # git's %s joins the first paragraph's lines, so a subject can run long; the id is past the cut.
+    subject = "feat(api): " + "export " * 60 + "(DEM-1)"
+    git(repo, "commit", "-q", "--allow-empty", "-m", subject)
+
+    (merged,) = run(
+        capsys, monkeypatch, a_read([an_issue("DEM-1", "Export")]), "--config", a_config()
+    )["merged"]
+
+    commit = head(repo, "main")
+    assert merged["evidence"] == f"commit {commit[:12]} on api main: {subject[:200]!r}"
+
+
+def test_names_unreadable_repo_when_default_branch_missing(
+    hub: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started = {"name": "In Progress", "type": "started"}
+    issue = an_issue("DEM-1", "Add the export button", state=started)
+
+    found = run(capsys, monkeypatch, a_read([issue]), "--config", a_config("trunk"))
+
+    assert found["merged"] == []
+    assert found["unreadable"] == [
+        {"repo": "api", "reason": "no origin/trunk or trunk to read merged commits from"}
+    ]
+    (orphan,) = found["orphans"]
+    assert "refs not read" not in orphan["evidence"]
+
+
+def test_reads_no_commits_when_config_not_given(
+    hub: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    git(hub.parent / "api", "commit", "-q", "--allow-empty", "-m", "feat: export (DEM-1)")
+
+    found = run(capsys, monkeypatch, a_read([an_issue("DEM-1", "Export")]))
+
+    assert found["merged"] == []
+
+
 def test_finds_cycles_without_recursion_when_chain_is_long() -> None:
     graph = {f"DEM-{n}": [f"DEM-{n + 1}"] for n in range(1, 5001)}
     graph["DEM-5001"] = ["DEM-1"]
@@ -310,8 +474,13 @@ def test_cuts_summary_when_findings_over_limit(
         (json.dumps({"issues": "x", "repos": []}), []),
         (json.dumps(a_read([])), ["--today", "26/10/2026"]),
         (json.dumps(a_read([])), ["--stale-days", "0"]),
+        (json.dumps(a_read([])), ["--config", "[1]"]),
+        (
+            json.dumps(a_read([])),
+            ["--config", json.dumps({"repos": [{"dir": "api", "default_branch": "a..b"}]})],
+        ),
     ],
-    ids=["text", "array", "issues-not-list", "bad-today", "bad-days"],
+    ids=["text", "array", "issues-not-list", "bad-today", "bad-days", "bad-config", "bad-branch"],
 )
 def test_exits_two_when_input_unreadable(
     hub: Path,

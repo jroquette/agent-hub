@@ -24,6 +24,7 @@ from subprocess import CompletedProcess
 
 import pytest
 
+from agent_hub.core.testing.seeded_shadows import seeded_workflows
 from tests.e2e.conftest import DEFAULT_TIMEOUT_SECONDS, REPO_ROOT, InstalledHub
 
 GUIDE = REPO_ROOT / "docs/USING.md"
@@ -927,7 +928,11 @@ def test_passes_doctor_and_sync_check_when_fresh_hub_verified(guide_run: GuideRu
 
     assert doctor.returncode == 0, doctor.stdout + doctor.stderr
     report = json.loads(doctor.stdout)
-    assert report["findings"] == []
+    # A fresh hub only names the workflows hub init seeded, as warnings (AGH-699 D15).
+    assert [(item["rule"], item["severity"], item["path"]) for item in report["findings"]] == [
+        ("workflows.shadow", "warning", f"workflows/{pack}/{name}.yaml")
+        for pack, name in seeded_workflows()
+    ]
     assert set(report["totals"]) == {"errors", "warnings", "infos"}
     assert (check.returncode, check.stdout.strip()) == (0, "up to date"), check.stderr
     assert has_phrase(verify, "Go on only when both exit 0")

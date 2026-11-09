@@ -9,6 +9,7 @@ import {
   AppLink,
   Banner,
   Button,
+  DataTable,
   EmptyState,
   FacetMenu,
   Icon,
@@ -56,6 +57,8 @@ import { openDrafts, type StoredDraft } from "./studioDrafts";
 type Schemas = components["schemas"];
 type SkillCatalog = Schemas["SkillCatalog"];
 type ExternalPlugin = Schemas["ExternalPlugin"];
+type HubToolCalls = Schemas["HubToolCalls"];
+type UsageWindows = Schemas["UsageWindows"];
 type CatalogItem = Schemas["CatalogItem"];
 type WorkflowCatalog = Schemas["WorkflowCatalogView"];
 
@@ -344,6 +347,76 @@ function ExternalPlugins({ plugins }: { plugins: readonly ExternalPlugin[] }) {
             </li>
           ))}
         </ul>
+      </div>
+    </details>
+  );
+}
+
+function runsIn(windows: UsageWindows, days: number): number {
+  if (days === 7) return windows.runs_7d;
+  if (days === 90) return windows.runs_90d;
+  return windows.runs_30d;
+}
+
+interface HubToolRow {
+  tool: string;
+  main: number;
+  subagents: number;
+}
+
+function callCount(value: number) {
+  return <span className={value === 0 ? "ah-num ah-muted" : "ah-num"}>{String(value)}</span>;
+}
+
+/** The hub's knowledge tools (`hub mcp`'s search, read and propose) with their calls in the
+ * usage window by the main sessions and by their subagents (AC-699.1): whether sessions consult
+ * what the hub knows. Folded as the third-party plugins are; left out when no event was read. */
+function HubTools({ tools, days }: { tools: Record<string, HubToolCalls>; days: number }) {
+  const rows: HubToolRow[] = Object.entries(tools).map(([tool, calls]) => ({
+    tool,
+    main: runsIn(calls.main, days),
+    subagents: runsIn(calls.subagents, days),
+  }));
+  if (rows.length === 0) return null;
+  const total = rows.reduce((sum, row) => sum + row.main + row.subagents, 0);
+  return (
+    <details className="ah-card ah-skills-plugins-fold">
+      <summary className="ah-card-head">
+        <Icon name="chevron-right" size="sm" />
+        <Icon name="library" size="sm" />
+        <span className="ah-h3">{`Hub knowledge tools · ${String(days)} d`}</span>
+        <span className="ah-count">{total}</span>
+      </summary>
+      <div className="ah-card-body">
+        <p className="ah-small ah-muted" style={{ margin: "0 0 8px" }}>
+          Calls of the hub&apos;s knowledge tools through <span className="ah-mono">hub mcp</span>{" "}
+          in the last {days} days, by the main sessions and by their subagents.
+        </p>
+        <DataTable
+          caption="Hub knowledge tool calls"
+          density="compact"
+          columns={[
+            {
+              id: "tool",
+              label: "Tool",
+              render: (row: HubToolRow) => <span className="ah-mono">{row.tool}</span>,
+            },
+            {
+              id: "main",
+              label: "Main sessions",
+              align: "right",
+              render: (row: HubToolRow) => callCount(row.main),
+            },
+            {
+              id: "subagents",
+              label: "Subagents",
+              align: "right",
+              render: (row: HubToolRow) => callCount(row.subagents),
+            },
+          ]}
+          rows={rows}
+          rowKey={(row) => row.tool}
+        />
       </div>
     </details>
   );
@@ -733,6 +806,7 @@ export function Catalog({
           )}
         </div>
       </div>
+      <HubTools tools={catalog.hub_tools} days={catalog.usage_days} />
       {catalog.external_plugins.length > 0 && (
         <ExternalPlugins plugins={catalog.external_plugins} />
       )}
