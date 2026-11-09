@@ -144,8 +144,27 @@ def test_deletes_pushed_branch_when_gh_fails(git_world: GitWorld, origin: GitBra
     assert failed.value.step == "pr"
     assert change.branch not in origin.branch_names()
     assert origin.pull_requests() == ()
-    assert git_world.gh_calls()[-1][:2] == ["pr", "create"]
+    assert git_world.gh_calls()[-1][:4] == ["api", "--method", "POST", f"repos/{HUB_REPO}/pulls"]
     assert not list((git_world.root / "temp").iterdir())
+
+
+def test_opens_pull_request_through_rest_api_when_accepted(
+    git_world: GitWorld, origin: GitBrainOrigin
+) -> None:
+    change = _change(git_world)
+
+    result = git_world.adapter().accept(change)
+
+    [create] = [call for call in git_world.gh_calls() if call[:1] == ["api"]]
+    assert create[:10] == [
+        *("api", "--method", "POST", f"repos/{HUB_REPO}/pulls"),
+        *("-f", f"title={change.title}", "-f", f"head={change.branch}", "-f", "base=main"),
+    ]
+    assert create[10] == "-F"
+    assert create[11].startswith("body=@")
+    assert len(create) == 12
+    assert result.pr_url == f"https://github.com/{HUB_REPO}/pull/1"
+    assert [call for call in git_world.gh_calls() if call[:1] == ["pr"]] == []
 
 
 def test_deletes_pushed_branch_when_gh_output_unexpected(
@@ -258,18 +277,10 @@ def test_adopts_open_pull_request_when_branch_exists(
     assert again == first
     assert len(origin.pull_requests()) == 1
     assert git_world.origin_git("rev-parse", f"refs/heads/{change.branch}").stdout == head
-    listed = [call for call in git_world.gh_calls() if call[:2] == ["pr", "list"]]
+    listed = [call for call in git_world.gh_calls() if call[:3] == ["api", "--method", "GET"]]
     assert listed[-1] == [
-        "pr",
-        "list",
-        "--repo",
-        HUB_REPO,
-        "--head",
-        change.branch,
-        "--state",
-        "open",
-        "--json",
-        "url",
+        *("api", "--method", "GET", f"repos/{HUB_REPO}/pulls"),
+        *("-f", f"head=acme:{change.branch}", "-f", "state=open"),
     ]
     assert not list((git_world.root / "temp").iterdir())
 

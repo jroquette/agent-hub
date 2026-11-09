@@ -5,7 +5,8 @@ for it, so a repo without one gets no instructions of its own.
 
 - Only the checkout's listing is read (D2): the exact root path ``AGENTS.md``, a file or a link
   (not followed), empty or not. ``CLAUDE.md``, a nested or a differently cased name does not
-  count. The content, size and references are never checked.
+  count. Its content, size and references are never checked here; ``instructions.read_cap``
+  reads the docs it sends agents to.
 - As the repo rules list it (E5): with a ``.git`` the listing is git's, so a gitignored file, or
   a tracked one deleted from the work tree, is not listed and warns; a listed file that could
   not be read is still listed and passes.

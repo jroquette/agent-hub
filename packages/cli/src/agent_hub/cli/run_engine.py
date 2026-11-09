@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import Annotated, Final
 
 import typer
-from typer._click.core import ParameterSource
 
 from agent_hub.cli.command_exits import fail
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
@@ -51,6 +50,7 @@ from agent_hub.cli.session_settings import (
     check_session_settings,
     write_session_settings,
 )
+from agent_hub.cli.vendored_click import ParameterSource
 from agent_hub.cli.workflow_command import discovered, run_delivery
 from agent_hub.cli.workflow_delivery import (
     ISSUE_TEXT,

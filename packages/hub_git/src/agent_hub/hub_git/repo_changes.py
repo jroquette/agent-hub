@@ -46,6 +46,7 @@ from agent_hub.core.agent_sessions.repo_changes import (
     RepoPullRequest,
 )
 from agent_hub.hub_git.git_runner import GIT_OPTIONS, ProcessResult, child_env, run_process
+from agent_hub.hub_git.github_remote import HTML_URL, github_repo
 
 # One deadline for every git command of one repository.
 READ_SECONDS: Final = 20.0
@@ -323,29 +324,42 @@ class GitRepoChanges:
         )
 
     def pull_request(self, root: str, *, branch: str) -> RepoPullRequest | None:
-        """``gh pr list --head <branch>``: the branch's newest pull request, open or not; None
-        without ``gh``, when it is not signed in or GitHub does not answer in time."""
+        """The branch's newest pull request, open or not, from GitHub's REST API
+        (``gh api repos/<origin>/pulls?head=<owner>:<branch>&state=all&per_page=1``, the repo
+        read from the checkout's ``origin``); None without ``gh``, with an ``origin`` not on
+        GitHub, when ``gh`` is not signed in or GitHub does not answer in time."""
         program = shutil.which(self._gh, path=self._env.get("PATH") or "")
         if program is None or not branch or branch.startswith("-"):
             return None
-        argv = [
-            os.path.abspath(program),
-            *("pr", "list", "--head", branch, "--state", "all", "--limit", "1"),
-            *("--json", "number,url,state,headRefOid"),
-        ]
         # A worktree that is gone: ask from the nearest folder left (its repo, usually).
         folder = Path(root)
         while not folder.is_dir() and folder != folder.parent:
             folder = folder.parent
+        origin = self._output(
+            [self._git, *_READ_OPTIONS, "config", "--get", "remote.origin.url"], cwd=folder
+        )
+        repo = None if origin is None else github_repo(origin.decode("utf-8", errors="replace"))
+        if repo is None:
+            return None
+        owner = repo.split("/", 1)[0]
+        listed = self._output(
+            [
+                *(os.path.abspath(program), "api", "--method", "GET", f"repos/{repo}/pulls"),
+                *("-f", f"head={owner}:{branch}", "-f", "state=all", "-f", "per_page=1"),
+            ],
+            cwd=folder,
+        )
+        return None if listed is None else _pull_request(listed)
+
+    def _output(self, argv: Sequence[str], *, cwd: Path) -> bytes | None:
+        """The stdout of ``argv`` within ``PR_SECONDS``, or None when it fails."""
         try:
             result = self._launch(
-                argv, cwd=folder, env=self._env, timeout=PR_SECONDS, keep_stdout=True
+                argv, cwd=cwd, env=self._env, timeout=PR_SECONDS, keep_stdout=True
             )
         except OSError, subprocess.SubprocessError:
             return None
-        if result.returncode != 0:
-            return None
-        return _pull_request(result.stdout)
+        return result.stdout if result.returncode == 0 else None
 
     def commit_diff(self, root: str, *, sha: str, paths: Sequence[str]) -> RepoCommitDiff:
         """What commit ``sha`` changed in ``paths`` (``git show``, renames found); the first file
@@ -581,7 +595,9 @@ class _Run:
 
 
 def _pull_request(stdout: bytes) -> RepoPullRequest | None:
-    """The first pull request of ``gh pr list --json number,url,state,headRefOid``."""
+    """The first pull request of the REST list ``GET repos/<repo>/pulls`` answered: its
+    ``number``, ``html_url``, state (``MERGED`` when ``merged_at`` is set, else ``state`` in
+    capitals, as the port names them) and ``head.sha``."""
     try:
         found = json.loads(stdout.decode("utf-8"))
     except UnicodeDecodeError, ValueError:
@@ -589,12 +605,16 @@ def _pull_request(stdout: bytes) -> RepoPullRequest | None:
     if not isinstance(found, list) or not found or not isinstance(found[0], dict):
         return None
     item = found[0]
-    number, url, state, head = (item.get(k) for k in ("number", "url", "state", "headRefOid"))
+    number, url, state = item.get("number"), item.get(HTML_URL), item.get("state")
     if not isinstance(number, int) or not isinstance(url, str):
         return None
+    if item.get("merged_at"):
+        state = "MERGED"
+    head = item.get("head")
+    sha = head.get("sha") if isinstance(head, dict) else None
     return RepoPullRequest(
         number=number,
         url=url,
-        state=state if isinstance(state, str) else "OPEN",
-        head_sha=head if isinstance(head, str) else None,
+        state=state.upper() if isinstance(state, str) and state else "OPEN",
+        head_sha=sha if isinstance(sha, str) else None,
     )

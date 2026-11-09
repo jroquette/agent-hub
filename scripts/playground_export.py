@@ -1008,20 +1008,23 @@ class DemoWeb:
 @contextmanager
 def demo_web(tree: Path, work: Path) -> Iterator[DemoWeb]:
     """Builds ``tree``'s web app into ``work``, serves ``tree``'s ``hub web`` on a scratch
-    database, config and projects folder under ``work``, loads the demo data (``seed_demo``) and
-    previews the build in front of it, for the export's capture and the visual tests. Raises
-    ``DemoWebError`` with the reason when the build or the demo data fails; npm must be on PATH."""
+    database, config, state and projects folder under ``work``, loads the demo data
+    (``seed_demo``) and previews the build in front of it, for the export's capture and the visual
+    tests. Raises ``DemoWebError`` with the reason when the build or the demo data fails; npm must
+    be on PATH."""
     npm = shutil.which("npm")
     if npm is None:
         raise DemoWebError("npm is not on PATH")
     web_dir = tree / "apps" / "web"
-    for folder in ("config", "projects"):
+    for folder in ("config", "projects", "state"):
         (work / folder).mkdir(exist_ok=True)
     # The tree's packages ahead of the editable installs, which point at the checkout.
     sources = [str(path) for path in sorted((tree / "packages").glob("*/src"))]
     env = {
         **os.environ,
         "XDG_CONFIG_HOME": str(work / "config"),
+        # hub web imports the hook spool of this folder at start: never the developer's.
+        "XDG_STATE_HOME": str(work / "state"),
         "AGENT_HUB_DB": str(work / "agent-hub.db"),
         "AGENT_HUB_CLAUDE_PROJECTS": str(work / "projects"),
         "PYTHONPATH": os.pathsep.join([*sources, str(tree)]),
@@ -1040,8 +1043,12 @@ def demo_web(tree: Path, work: Path) -> Iterator[DemoWeb]:
     api, web = free_port(), free_port()
     api_url, web_url = f"http://127.0.0.1:{api}", f"http://127.0.0.1:{web}"
     server = [sys.executable, "-m", "agent_hub.cli", "web", "--port", str(api)]
-    preview = [npm, "--prefix", str(web_dir), "exec", "--", "vite", "preview"]
-    preview += ["--outDir", str(work / "web"), "--port", str(web), "--strictPort"]
+    # vite itself, not `npm exec`: npm exits on SIGTERM without passing it on, so ending it left
+    # the preview server running after each visual run (AGH-648). Started directly, it stays
+    # in this process's group too, which a kill of the whole run still reaches.
+    vite = web_dir / "node_modules" / ".bin" / "vite"
+    preview = [str(vite), "preview", "--outDir", str(work / "web"), "--port", str(web)]
+    preview += ["--strictPort"]
     preview_env = {**env, "AH_API_TARGET": api_url, "AH_SESSIONS_TARGET": api_url}
     logs = (work / "api.log", work / "preview.log")
     with (

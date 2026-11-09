@@ -270,6 +270,7 @@ Rules:
 - Every message carries `id:` = the event's UUIDv7 (ordered). Heartbeats carry the last real id so resumption is exact.
 - Resumption: the browser's `EventSource` resends `Last-Event-ID`; the server replays everything after it (up to 10,000 events or 24 h; beyond that it sends `event: reset` and the client refetches with `GET …/events?cursor=`).
 - `retry: 3000` is sent on connect. Client backoff on repeated failure: 3 s, 6 s, 12 s, max 30 s, with ±20 % jitter.
+- As built (AGH-699): on a connection without `Last-Event-ID`, the global stream sends the current `counts` right after `retry` (no `id:`), so a client has the baseline it compares the next `counts` with; a resumed connection gets them in its replay instead. The other streams send nothing on connect: their clients read the data first.
 - Heartbeat every 15 s on every stream, even when idle.
 - Out-of-order events (transcript arrives after hooks) are inserted by `timestamp`, not arrival; the UI marks rows inserted above the viewport without moving the scroll position.
 - Client state derivation (shared by `CollectorPill` and live screens): Connected = stream open and last message ≤ 20 s ago; Delayed = open and 20–60 s since last message, or any source past its stale threshold below; Offline = closed and reconnect failing for 10 s, or > 60 s without any message. 20 s = one missed heartbeat plus 5 s network allowance.

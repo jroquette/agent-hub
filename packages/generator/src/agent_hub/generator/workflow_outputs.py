@@ -23,9 +23,7 @@ from referencing.jsonschema import DRAFT202012
 
 from agent_hub.core.features.output_shape import output_path
 from agent_hub.core.json_form import JsonValue
-from agent_hub.core.workflows.document import WorkflowDocument, WorkflowProblem
 from agent_hub.core.workflows.failures import NodeFailedError
-from agent_hub.core.workflows.ports import OutputValidator
 from agent_hub.core.workflows.substitution import echo
 
 TOO_DEEP: Final = "the schema nests too deeply"
@@ -79,19 +77,6 @@ class JsonSchemaOutputs:
         if errors:
             messages = [f"{output_path(path)}: {message}" for path, message in errors]
             raise NodeFailedError("output_contract", _joined(messages))
-
-
-def output_format_problems(
-    document: WorkflowDocument, validator: OutputValidator
-) -> list[WorkflowProblem]:
-    """Each problem of each ``output_format`` of ``document``, at that key."""
-    problems: list[WorkflowProblem] = []
-    for index, node in enumerate(document.nodes):
-        schema = getattr(node, "output_format", None)
-        if schema is not None:
-            loc = ("nodes", index, "output_format")
-            problems.extend(WorkflowProblem(loc, p) for p in validator.schema_problems(schema))
-    return problems
 
 
 def _schema_problems(schema: Mapping[str, JsonValue]) -> list[_Problem]:

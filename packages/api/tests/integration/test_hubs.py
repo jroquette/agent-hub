@@ -19,6 +19,13 @@ SHELL = "/api/v1/screens/shell"
 OWN = {"Origin": "http://127.0.0.1:7420"}
 
 
+@pytest.fixture
+def composed(open_composed: Callable[..., Any]) -> Any:
+    """The composed app, signed in as the Hub config screen is: its config writes are owner
+    writes, which need the launch cookie (AGH-699); the registry writes do not look at it."""
+    return open_composed(signed_in=True)
+
+
 def test_registers_hub_with_project_pin_lock_and_repos_when_path_is_a_hub(
     composed: Any, make_hub: Callable[..., Path]
 ) -> None:

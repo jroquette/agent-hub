@@ -21,6 +21,7 @@ The built-in `release` workflow runs steps 1-4, 6 and 7's pin; you resolve its i
 - After `go`, the owner merges the release PR with a merge commit, not squash: the tag goes on the `bump` step's `sha`, the PR's head.
 - Then resolve one absolute path from `echo "${TMPDIR:-/tmp}"` plus `/release-notes.md`, write the `compose` step's `output.notes` there with the Write tool (replacing an earlier file), check `test -s <notes file>`, and do step 5 (dispatch and watch) and step 6 below with that `sha`.
 - Then the owner answers `./hub workflow respond <run> --choice tagged` (or `--choice stop`); after the run, step 7's tracker comments.
+- The `pin` step also sets `brain/now.md`'s `pinned to <version>` and `last_verified`; its release lines (what v<version> shipped, what comes next) are yours: edit them on the pin PR's branch (the `hub_branch` step's `path`), commit and push, before the owner merges it.
 - If `./hub workflow run` is not available or `./hub workflow list` has no `release` (an older pin), follow the steps below by hand.
 
 1. `script` **Changes**: fetch the platform repo's default branch and tags; list the PRs merged since the last `v*` tag (number, title, author, tracker issue), their titles shaped `type(scope): subject`.
@@ -44,6 +45,7 @@ The built-in `release` workflow runs steps 1-4, 6 and 7's pin; you resolve its i
    After a tag the user pushed (step 5 without a workflow), wait for the platform repo's release workflow run on the tag (`gh run list`, `gh run watch`); a red run stops here with its URL. After a dispatch, step 5's run already checked the tag.
 7. `agent` **Bump the hub pin**: a tracker issue for the bump (create it if none), then a git worktree of the hub itself from its freshly fetched default branch (never the hub's own checkout), named by that issue, on the project's branch shape (the one `/kickoff` names) with `bump-platform` as the description slug.
    Set `platform.version` in `hub.json` to the new version, run `./hub sync`, then `./hub doctor` (clean, or stop and report) and the hub's own check (what its CI runs), each with output redirected and `$?` checked.
+   Keep `brain/now.md` current in the same commit: every `pinned to <version>`, its release lines (what v<version> shipped, what comes next) and its frontmatter's `last_verified` (today).
    Commit and open the PR on the hub repo (`project.hub_repo`) with the notes' "What `hub sync` rewrites" section in its body.
    Post a comment with the version on every tracker issue the release ships (from the PR list), and the PR link on the bump issue.
 

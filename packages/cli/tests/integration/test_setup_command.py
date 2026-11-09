@@ -26,13 +26,16 @@ from click import unstyle
 from typer.testing import CliRunner, Result
 
 from agent_hub.cli import exclusive_write, setup_identity, setup_repos, setup_tools
+from agent_hub.cli.doctor_report import finding_line, totals_line
 from agent_hub.cli.exclusive_write import TEMP_INFIX
 from agent_hub.cli.main import app
 from agent_hub.cli.setup_identity import ANSWER_LIMIT
+from agent_hub.core.doctor.run_rules import Totals
 from agent_hub.core.hub_config.local_config import LOCAL_FILE_MAX_BYTES
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
 from agent_hub.core.json_form import dump_json
 from agent_hub.core.testing import builders
+from agent_hub.core.testing.seeded_shadows import seeded_shadow_findings
 from agent_hub.core.workspace.setup_checklist import (
     CLAUDE_FIX,
     CLONE_FIX,
@@ -159,8 +162,15 @@ def _edit_hub_json(hub: Path, change: Callable[[dict[str, Any]], None]) -> None:
 
 class TestFixtures:
     def test_logs_env_and_runs_git_when_env_traced_git_used(
-        self, demo_workspace: Workspace, env_traced_git: TracedGit, tmp_path: Path
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        tmp_path: Path,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        # The second call expects no key: one exported in the caller's shell must not reach it.
+        monkeypatch.delenv("LINEAR_API_KEY", raising=False)
         demo_workspace.rewrite_github()
         demo_workspace.init_hub_repo("git@github.com:acme/demo-hub.git")
         git = str(env_traced_git.bin_dir / "git")
@@ -1790,6 +1800,19 @@ NO_GIT_FINDING_END = (
 )
 
 
+# hub init seeds every built-in pack as shipped, so the doctor item of a DEMO workspace names
+# each seeded workflow, identical to its built-in (AGH-699 D15), after the other findings.
+SEEDED_SUB_LINES = [
+    f"{_SUB_LINE}{finding_line(found)}"
+    for found in seeded_shadow_findings(version("agent-hub-cli"))
+]
+
+
+def _doctor_totals(*, errors: int = 0, warnings: int = 0) -> str:
+    """The doctor item's totals: its other findings, plus the seeded shadows."""
+    return totals_line(Totals(errors=errors, warnings=warnings + len(SEEDED_SUB_LINES), infos=0))
+
+
 def _doctor_lines(stdout: str) -> list[str]:
     """The ``hub doctor`` line and its sub-lines, up to the totals line."""
     lines = stdout.splitlines()
@@ -1854,8 +1877,9 @@ class TestDoctor:
         result = run_setup(elsewhere)
 
         assert _doctor_lines(result.stdout) == [
-            "ok      hub doctor: 0 errors, 1 warning, 0 infos",
+            f"ok      hub doctor: {_doctor_totals(warnings=1)}",
             _override_line(line),
+            *SEEDED_SUB_LINES,
         ]
         assert result.stdout.splitlines()[-1] == "setup: 10 ok"
         assert result.exit_code == 0, result.output
@@ -1870,9 +1894,10 @@ class TestDoctor:
         result = run_setup(hub)
 
         lines = _doctor_lines(result.stdout)
-        assert lines[0] == f"missing hub doctor: 1 error, 0 warnings, 0 infos Fix: {DOCTOR_FIX}"
-        assert len(lines) == 2
+        assert lines[0] == f"missing hub doctor: {_doctor_totals(errors=1)} Fix: {DOCTOR_FIX}"
+        assert len(lines) == 2 + len(SEEDED_SUB_LINES)
         assert lines[1].startswith(f"{_SUB_LINE}error lock.drift AGENTS.md")
+        assert lines[2:] == SEEDED_SUB_LINES
         assert result.stdout.splitlines()[-1] == "setup: 1 missing, 9 ok"
         assert result.exit_code == 1
 
@@ -1897,9 +1922,10 @@ class TestDoctor:
         result = run_setup(hub)
 
         lines = _doctor_lines(result.stdout)
-        assert lines[0] == f"missing hub doctor: 1 error, 0 warnings, 0 infos Fix: {DOCTOR_FIX}"
-        assert len(lines) == 2
+        assert lines[0] == f"missing hub doctor: {_doctor_totals(errors=1)} Fix: {DOCTOR_FIX}"
+        assert len(lines) == 2 + len(SEEDED_SUB_LINES)
         assert lines[1].startswith(f"{_SUB_LINE}error lock.drift hub.lock")
+        assert lines[2:] == SEEDED_SUB_LINES
         assert result.stdout.splitlines()[-1] == "setup: 1 missing, 9 ok"
         assert result.exit_code == 1
         assert "Traceback" not in result.stderr
@@ -1917,7 +1943,10 @@ class TestDoctor:
 
         result = run_setup(hub)
 
-        assert _doctor_lines(result.stdout) == ["ok      hub doctor: 0 errors, 0 warnings, 0 infos"]
+        assert _doctor_lines(result.stdout) == [
+            f"ok      hub doctor: {_doctor_totals()}",
+            *SEEDED_SUB_LINES,
+        ]
         assert result.exit_code == 0, result.output
         assert [call.args for call in env_traced_git.calls() if "refs/tags/" in call.args] == []
 
@@ -1987,6 +2016,10 @@ class TestGolden:
         _give_repos_agents(demo_workspace)
         _remove_repo(demo_workspace, "demo-web")
         _plant_check_override(hub)
+        # A hub that follows the built-ins, as doctor's workflows.shadow asks (AGH-699 D15): the
+        # golden keeps one warning, and no release number.
+        for pack in (hub / "workflows").iterdir():
+            shutil.rmtree(pack)
         monkeypatch.delenv(KEY_VARIABLE, raising=False)
         install_probe(results={"gh": ProbeResult(1, b"", is_timed_out=False)})
 

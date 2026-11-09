@@ -3,9 +3,10 @@ from datetime import timedelta
 import pytest
 
 from agent_hub.core.approvals.approval import ApprovalKind
-from agent_hub.core.approvals.fold_approvals import fold_approvals, open_gate_ids
+from agent_hub.core.approvals.fold_approvals import fold_approvals
 from agent_hub.core.events.event import Event
 from agent_hub.core.testing.builders import an_event
+from agent_hub.core.testing.history_folds import open_gate_ids
 from agent_hub.core.testing.session_scenarios import (
     SCENARIO_START,
     as_stored,

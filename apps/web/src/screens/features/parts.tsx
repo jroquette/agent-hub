@@ -29,13 +29,6 @@ export function phaseIndex(phase: FeaturePhase): number {
   return PHASES.findIndex((p) => p.id === phase);
 }
 
-/** "21/21 · 1 owner step": owner steps count in the numerator but are hatched (spec 17). */
-export function acLabel(acs: AcCounts): string {
-  const owner = acs.owner_steps;
-  const head = `${String(acs.passing + owner)}/${String(acs.total)}`;
-  return owner ? `${head} · ${String(owner)} owner step${owner === 1 ? "" : "s"}` : head;
-}
-
 export function AcBar({
   acs,
   width = 120,

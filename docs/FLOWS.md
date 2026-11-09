@@ -68,7 +68,8 @@ file and answer `./hub workflow respond <run> --choice comment|request-changes|a
 then does `/review` post it. The repo's check runs at the PR's head in a throwaway worktree, never for a fork.
 
 The platform's own releases come from `/release`, which runs the built-in `release` workflow: the owner approves
-the release PR, merges it with a merge commit, and approves the hub PR that raises `platform.version`.
+the release PR, merges it with a merge commit, and approves the hub PR that raises `platform.version` and sets
+`brain/now.md`'s pin and `last_verified`.
 
 **The weekly retro.** `/retro` runs the built-in `retro` workflow (`./hub workflow run retro --input since=7 --live`):
 the week's run metrics, at most five changes each backed by those numbers, and, for the ones you keep at its gate,

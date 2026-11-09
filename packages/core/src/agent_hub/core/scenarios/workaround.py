@@ -113,12 +113,6 @@ def needs_acceptance(plan: Sequence[StepPlan]) -> bool:
     return any(step.draft for step in plan)
 
 
-def plan_changed(shown: Sequence[Mapping[str, JsonValue]], now: Sequence[StepPlan]) -> bool:
-    """Whether ``now`` differs from the plan ``shown`` (as recorded with the proposal)."""
-    recorded = [step.model_dump(mode="json") for step in now]
-    return [dict(step) for step in shown] != recorded
-
-
 def changed_step(
     shown: Sequence[Mapping[str, JsonValue]], now: Sequence[StepPlan]
 ) -> StepPlan | None:

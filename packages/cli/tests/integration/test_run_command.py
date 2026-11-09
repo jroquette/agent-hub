@@ -258,14 +258,14 @@ class TestRunWorkspace:
         clone = workspace.ws / "demo-api"
 
         claude = run_tool("claude", "-p", "x", "--allowedTools", "Read", cwd=clone)
-        gh = run_tool("gh", "pr", "create", cwd=clone)
+        gh = run_tool("gh", "api", "--method", "POST", "repos/acme/demo-api/pulls", cwd=clone)
         gate = run_tool("bash", "-c", "make check", cwd=clone)
 
         assert claude.returncode == 0, claude.stderr
         reply = json.loads(claude.stdout)
         assert json.loads(reply["result"].splitlines()[-1])["status"] == "done"
         assert workspace.git(clone, "log", "-1", "--format=%s") == COMMIT_SUBJECT
-        assert gh.stdout == f"{PR_URL}\n"
+        assert json.loads(gh.stdout)["html_url"] == PR_URL
         assert gate.returncode == 0
         assert [call["argv"] for call in run_workspace.calls("make")] == [["check"]]
         logged = run_workspace.calls("claude")
@@ -399,8 +399,9 @@ class TestDryRun:
             f"   (cwd {worktree})"
         )
         assert lines[4].startswith(
-            "would run: gh pr create --repo acme/demo-api --base trunk --head jdoe/dem-1"
-            " --title '(dry run: subject of the last commit)' --body "
+            "would run: gh api --method POST repos/acme/demo-api/pulls"
+            " -f 'title=(dry run: subject of the last commit)' -f head=jdoe/dem-1 -f base=trunk"
+            " -F body=@- <<< "
         )
         assert "Gates green" not in lines[4]
         assert lines[5:7] == [
@@ -597,9 +598,8 @@ class TestDryRun:
         result = run_command(workspace.hub, "run", "DEM-1", "--repo", repo)
 
         (pr,) = [line for line in dry_lines(result) if line.startswith("would run: gh ")]
-        assert pr.startswith(
-            f"would run: gh pr create --repo acme/{repo} --base {branch} --head jdoe/dem-1 "
-        )
+        assert pr.startswith(f"would run: gh api --method POST repos/acme/{repo}/pulls ")
+        assert f" -f head=jdoe/dem-1 -f base={branch} -F body=@- <<< " in pr
 
 
 def seed_issues(run_tracker: Any, *issue_ids: str) -> None:
@@ -832,9 +832,8 @@ class TestIdentity:
             "would run: git -c core.fsmonitor=false -c push.gpgSign=false"
             f" -c core.hooksPath=/dev/null push --no-verify -u origin me/dem-1   (cwd {worktree})"
         )
-        assert lines[4].startswith(
-            "would run: gh pr create --repo acme/demo-api --base trunk --head me/dem-1 "
-        )
+        assert lines[4].startswith("would run: gh api --method POST repos/acme/demo-api/pulls ")
+        assert " -f head=me/dem-1 -f base=trunk " in lines[4]
 
     @pytest.mark.parametrize(
         ("document", "line"),
@@ -913,9 +912,8 @@ class TestIdentity:
             "would run: git -c core.fsmonitor=false -c push.gpgSign=false"
             f" -c core.hooksPath=/dev/null push --no-verify -u origin jane/dem-1   (cwd {worktree})"
         )
-        assert lines[4].startswith(
-            "would run: gh pr create --repo acme/demo-api --base trunk --head jane/dem-1 "
-        )
+        assert lines[4].startswith("would run: gh api --method POST repos/acme/demo-api/pulls ")
+        assert " -f head=jane/dem-1 -f base=trunk " in lines[4]
 
     def test_refuses_when_no_source_sets_prefix(
         self, run_workspace: Workspace, run_command: CommandRunner, spy: Spy
@@ -1045,10 +1043,11 @@ class TestLiveSuccess:
         (gh,) = run_workspace.calls("gh")
         assert gh["cwd"] == worktree
         assert gh["argv"] == [
-            *("pr", "create", "--repo", "acme/demo-api", "--base", "trunk"),
-            *("--head", "jdoe/dem-1", "--title", COMMIT_SUBJECT, "--body"),
-            f"DEM-1\n\n{SUMMARY}",
+            *("api", "--method", "POST", "repos/acme/demo-api/pulls"),
+            *("-f", f"title={COMMIT_SUBJECT}", "-f", "head=jdoe/dem-1", "-f", "base=trunk"),
+            *("-F", "body=@-"),
         ]
+        assert gh["stdin"] == f"DEM-1\n\n{SUMMARY}"
         run_id = run_id_of(run_workspace)
         backend = run_tracker.backend
         assert backend.issues["DEM-1"].state == "In Review"
@@ -1110,8 +1109,8 @@ class TestLiveSuccess:
         assert workspace.git(worktree, "rev-parse", "HEAD~1") == base
         (gh,) = run_workspace.calls("gh")
         assert gh["argv"][:10] == [
-            *("pr", "create", "--repo", "acme/demo-api", "--base", "master"),
-            *("--head", "jdoe/dem-1", "--title", COMMIT_SUBJECT),
+            *("api", "--method", "POST", "repos/acme/demo-api/pulls"),
+            *("-f", f"title={COMMIT_SUBJECT}", "-f", "head=jdoe/dem-1", "-f", "base=master"),
         ]
 
 
@@ -1321,11 +1320,18 @@ class TestRerun:
             comments[1],
         )
         views = [
-            call["argv"] for call in run_workspace.calls("gh") if call["argv"][:2] == ["pr", "view"]
+            call["argv"]
+            for call in run_workspace.calls("gh")
+            if call["argv"][:3] == ["api", "--method", "GET"]
         ]
         assert views == [
-            ["pr", "view", "jdoe/dem-1", "--repo", "acme/demo-api", "--json", "url,state"]
+            [
+                *("api", "--method", "GET", "repos/acme/demo-api/pulls"),
+                *("-f", "head=acme:jdoe/dem-1", "-f", "state=open"),
+                *("--jq", "[.[] | {html_url, state}]"),
+            ]
         ]
+        assert [call["argv"][0] for call in run_workspace.calls("gh")] == ["api"] * 3
 
 
 # The mixed hub (plan E1): the project's three patterns, demo-api's own branch, demo-web none.
@@ -1370,8 +1376,9 @@ class TestConventions:
             f"   (cwd {worktree})"
         )
         assert lines[4].startswith(
-            f"would run: gh pr create --repo acme/{repo} --base trunk --head {branch}"
-            " --title '(dry run: subject of the last commit)' --body "
+            f"would run: gh api --method POST repos/acme/{repo}/pulls"
+            f" -f 'title=(dry run: subject of the last commit)' -f head={branch} -f base=trunk"
+            " -F body=@- <<< "
         )
 
     def test_pushes_configured_branch_when_live_run_on_conventions_hub(
@@ -1399,18 +1406,12 @@ class TestConventions:
             workspace.origin("demo-api"), "log", "-1", "--format=%s", "feature/dem-1"
         ) == (COMMIT_SUBJECT)
         create, view = (call["argv"] for call in logged_git.calls("gh"))
-        assert create[:8] == [
-            *("pr", "create", "--repo", "acme/demo-api", "--base", "trunk"),
-            *("--head", "feature/dem-1"),
-        ]
+        assert create[:4] == ["api", "--method", "POST", "repos/acme/demo-api/pulls"]
+        assert create[6:10] == ["-f", "head=feature/dem-1", "-f", "base=trunk"]
         assert view == [
-            "pr",
-            "view",
-            "feature/dem-1",
-            "--repo",
-            "acme/demo-api",
-            "--json",
-            "url,state",
+            *("api", "--method", "GET", "repos/acme/demo-api/pulls"),
+            *("-f", "head=acme:feature/dem-1", "-f", "state=open"),
+            *("--jq", "[.[] | {html_url, state}]"),
         ]
 
     def test_fails_worktree_stage_when_worktree_on_other_branch_than_convention(
@@ -1454,11 +1455,13 @@ def live_on(run_command: CommandRunner, workspace: Any, repo: str) -> Result:
 
 
 def pr_create_title(run_workspace: Any) -> str:
-    """The ``--title`` of the run's one ``gh pr create``."""
+    """The ``title`` field of the run's one REST create (``gh api --method POST``)."""
     (create,) = [
-        call["argv"] for call in run_workspace.calls("gh") if call["argv"][:2] == ["pr", "create"]
+        call["argv"]
+        for call in run_workspace.calls("gh")
+        if call["argv"][:3] == ["api", "--method", "POST"]
     ]
-    return create[create.index("--title") + 1]
+    return str(create[create.index("-f") + 1].removeprefix("title="))
 
 
 def unmatched_records(workspace: Any) -> list[dict[str, Any]]:
@@ -1939,7 +1942,9 @@ def assert_never_pushed(run_workspace: Any) -> None:
     branches = workspace.git(workspace.origin("demo-api"), "branch", "--list", "jdoe/dem-1")
     assert branches == ""
     assert [
-        call for call in run_workspace.calls("gh") if call["argv"][:2] == ["pr", "create"]
+        call
+        for call in run_workspace.calls("gh")
+        if call["argv"][:3] == ["api", "--method", "POST"]
     ] == []
 
 
@@ -2060,9 +2065,11 @@ class TestVerdict:
 
         assert result.exit_code == 0, result.output
         (create,) = [
-            call for call in run_workspace.calls("gh") if call["argv"][:2] == ["pr", "create"]
+            call
+            for call in run_workspace.calls("gh")
+            if call["argv"][:3] == ["api", "--method", "POST"]
         ]
-        body = create["argv"][-1]
+        body = create["stdin"]
         assert body == f"DEM-1\n\n{COMMIT_SUBJECT}"
         (comment,) = [body for _, body in run_tracker.backend.comments]
         assert comment.endswith(f"opened {PR_URL}. Gates green: `make check`. {COMMIT_SUBJECT}")
@@ -2668,9 +2675,11 @@ class TestSecrecy:
 
         assert result.exit_code == 0, result.output
         (create,) = [
-            call for call in run_workspace.calls("gh") if call["argv"][:2] == ["pr", "create"]
+            call
+            for call in run_workspace.calls("gh")
+            if call["argv"][:3] == ["api", "--method", "POST"]
         ]
-        body = create["argv"][-1]
+        body = create["stdin"]
         assert body == "DEM-1\n\nEdits demo-api/src/x.py and hub/brain/now.md."
         (comment,) = [text for _, text in run_tracker.backend.comments]
         assert comment.endswith(
@@ -3142,7 +3151,11 @@ class TestWorktreeEnvironments:
         result = live(run_command, workspace)
 
         assert result.exit_code == 0, result.output
-        created = [call for call in logged_git.calls("gh") if call["argv"][:2] == ["pr", "create"]]
+        created = [
+            call
+            for call in logged_git.calls("gh")
+            if call["argv"][:3] == ["api", "--method", "POST"]
+        ]
         assert len(created) == 1
         logged = (logged_git.logs / SCRIPT_VARS_LOG).read_text().splitlines()
         assert logged == [

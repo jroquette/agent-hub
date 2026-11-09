@@ -1,5 +1,6 @@
 # The weekly backlog pass: read the open issues, report hygiene findings (orphans,
-# stale issues, likely duplicates, dependency cycles), draft the oldest issues not yet ready
+# stale issues, likely duplicates, dependency cycles, open issues a commit on a repo's fetched
+# default branch already names), draft the oldest issues not yet ready
 # (/triage steps 2 and 3, at most 10 a run), then one approval per issue: never several issues in
 # one gate. The tracker is read by /triage --backlog before the run and handed over as
 # issues_file (a JSON file; read.py bounds it, with the ready label and repos from hub step
@@ -71,11 +72,11 @@ nodes:
 
   - id: hygiene
     type: script
-    description: Orphan, stale, duplicate and cyclic issues among those read, each with its evidence.
+    description: Orphan, stale, duplicate, cyclic and merged issues among those read, each with its evidence.
     depends_on: [read]
     runtime: python
     script: hygiene.py
-    args: [--stale-days, "14"]
+    args: [--stale-days, "14", --config, $config.output]
     stdin: $read.output
     retry: {max_attempts: 0}
     output_format:
@@ -85,9 +86,10 @@ nodes:
         stale: {type: array, items: {type: object, required: [id, updated_at, days, evidence]}}
         duplicates: {type: array, items: {type: object, required: [ids, title, evidence]}}
         cycles: {type: array, items: {type: object, required: [ids, evidence]}}
+        merged: {type: array, items: {type: object, required: [id, state, repo, commit, evidence]}}
         unreadable: {type: array, items: {type: object, required: [repo, reason]}}
         summary: {type: string, maxLength: 16000}
-      required: [orphans, stale, duplicates, cycles, unreadable, summary]
+      required: [orphans, stale, duplicates, cycles, merged, unreadable, summary]
 
   - id: pick
     type: script

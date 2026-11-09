@@ -1050,12 +1050,16 @@ describe("ProjectOverviewScreen", () => {
     // The first load reads no sessions of its own.
     expect(calls()).not.toContain("/api/v1/sessions");
 
-    // The first counts only arm the refresh; the next ones say something changed.
+    // What hub web sends on a fresh connection (AGH-699): the counts as they are, with no id.
+    // They only arm the refresh; the next ones say something changed.
     const global = stream("/api/v1/events/stream");
-    act(() => {
+    await act(async () => {
       global.open();
       global.emit("counts", aStreamCounts());
+      await Promise.resolve();
     });
+    expect(calls()).not.toContain("/api/v1/needs-you");
+    expect(calls()).not.toContain("/api/v1/sessions");
     act(() => {
       global.emit("counts", aStreamCounts({ live_sessions: 4 }));
     });

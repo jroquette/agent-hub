@@ -97,6 +97,8 @@ from agent_hub.storage.event_store import SqliteEventStore, open_event_store
 COMPOSED_PORT = 7420
 COMPOSED_URL = f"http://127.0.0.1:{COMPOSED_PORT}"
 COMPOSED_NOW = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
+# The launch token of a signed-in composed app (``open_composed(signed_in=True)``); synthetic.
+COMPOSED_TOKEN = "synthetic-composed-launch-token-0123456789abcd"  # noqa: S105 -- synthetic
 # The pin a synthetic hub carries and the version the composed app runs: the CLI's, so the
 # doctor rules that compare them agree with ``hub doctor``.
 RUNNING_VERSION = version("agent-hub-cli")
@@ -160,18 +162,26 @@ def open_composed(
     """Opens ``build_app`` on the temp paths; ``build_app`` keywords may be overridden.
 
     The app's background tickers are ``manual_tickers``, which ``Composed.refresh()`` and
-    ``Composed.warm()`` drive.
+    ``Composed.warm()`` drive. ``signed_in`` gives the app a launch token and its client the
+    cookie, as the owner's page holds it: the owner's writes (the Hub config writes, the hub
+    actions, the learning decisions) need it.
     """
     clients: list[TestClient] = []
     stores: list[SqliteEventStore] = []
 
-    def opened(settings: ApiSettings = composed_settings, **options: Any) -> Composed:
+    def opened(
+        settings: ApiSettings = composed_settings, *, signed_in: bool = False, **options: Any
+    ) -> Composed:
+        if signed_in:
+            settings = replace(settings, session_token=COMPOSED_TOKEN)
         app = build_app(
             settings,
             **({"projects_root": projects_root, "web_dist": web_dist} | manual_tickers | options),
         )
         client = TestClient(app, base_url=COMPOSED_URL, raise_server_exceptions=False)
         client.__enter__()
+        if signed_in:
+            client.cookies.set(cookie_name(settings.port), COMPOSED_TOKEN)
         clients.append(client)
         store = open_event_store(settings.db_path)
         stores.append(store)
@@ -435,34 +445,43 @@ with open(os.path.join(state, "calls.json-lines"), "a") as calls:
 if args[:2] == ["auth", "token"]:
     print("gho_not-a-real-token")
     sys.exit(0)
-pulls = os.path.join(state, "pulls.json-lines")
-if args[:2] == ["pr", "list"]:
-    flags = dict(zip(args[2::2], args[3::2]))
-    known = [json.loads(line) for line in open(pulls)] if os.path.exists(pulls) else []
-    print(json.dumps([{{"url": pull["url"]}} for pull in known if pull["head"] == flags["--head"]]))
-    sys.exit(0)
-if args[:2] != ["pr", "create"]:
+# GitHub's REST API only (gh api), as a cloud session's proxy lets through: gh pr exits 2.
+if len(args) < 4 or args[:2] != ["api", "--method"]:
     sys.exit(2)
-opts = dict(arg[2:].split("=", 1) for arg in args[2:] if arg.startswith("--") and "=" in arg)
+method, path, rest, fields = args[2], args[3], args[4:], {{}}
+while rest:
+    flag, field = rest[:2]
+    rest = rest[2:]
+    key, value = field.split("=", 1)
+    if flag == "-F":
+        with open(value.removeprefix("@")) as given:
+            value = given.read()
+    fields[key] = value
+repo = path.removeprefix("repos/").removesuffix("/pulls")
+pulls = os.path.join(state, "pulls.json-lines")
+known = [json.loads(line) for line in open(pulls)] if os.path.exists(pulls) else []
+if method == "GET":
+    branch = fields["head"].partition(":")[2]
+    print(json.dumps([{{"html_url": pull["url"]}} for pull in known if pull["head"] == branch]))
+    sys.exit(0)
+if method != "POST":
+    sys.exit(2)
 if switch("fail"):
     print("{GH_OUTPUT_MARKER} failed")
     sys.exit(1)
 head = subprocess.run(
     ["git", "--git-dir", os.environ["FAKE_GH_ORIGIN"], "rev-parse", "--verify", "--quiet",
-     "refs/heads/" + opts["head"]],
+     "refs/heads/" + fields["head"]],
     stdout=subprocess.DEVNULL,
 )
 if head.returncode != 0:
     sys.exit(1)
-count = sum(1 for _ in open(pulls)) if os.path.exists(pulls) else 0
-url = "https://github.com/" + opts["repo"] + "/pull/" + str(count + 1)
-with open(opts["body-file"]) as body_file:
-    body = body_file.read()
-pull = {{"url": url, "body": body}}
-pull.update({{key: opts[key] for key in ("head", "base", "title")}})
+url = "https://github.com/" + repo + "/pull/" + str(len(known) + 1)
+pull = {{"url": url}}
+pull.update({{key: fields[key] for key in ("body", "head", "base", "title")}})
 with open(pulls, "a") as out:
     out.write(json.dumps(pull) + "\\n")
-print(url)
+print(json.dumps({{"html_url": url, "number": len(known) + 1, "state": "open"}}))
 """
 _REJECT_PUSHES = "#!/bin/sh\necho 'push refused by the test origin' >&2\nexit 1\n"
 
@@ -539,7 +558,8 @@ class HubWorld:
         return [json.loads(line) for line in calls.read_text().splitlines()]
 
     def fail_gh(self, *, on: bool = True) -> None:
-        """Make ``gh pr create`` fail (printing ``GH_OUTPUT_MARKER``), or work again."""
+        """Make the pull request's creation (``gh api --method POST …/pulls``) fail (printing
+        ``GH_OUTPUT_MARKER``), or work again."""
         switch = self.gh_state / "fail"
         if on:
             switch.touch()
@@ -625,8 +645,9 @@ HOOK_SENT_AT = "2026-10-11T11:58:00.000Z"
 
 @pytest.fixture
 def world_app(open_composed: Callable[..., Composed], hub_world: HubWorld) -> Composed:
-    """The composed app acting on ``hub_world`` through ``hub_git``, with the hub registered."""
-    composed = open_composed(brain_changes=hub_world.changes())
+    """The composed app acting on ``hub_world`` through ``hub_git``, with the hub registered;
+    signed in, as the owner's page that decides learnings is."""
+    composed = open_composed(signed_in=True, brain_changes=hub_world.changes())
     registered = composed.client.post(
         "/api/v1/hubs",
         json={"path": str(hub_world.hub)},

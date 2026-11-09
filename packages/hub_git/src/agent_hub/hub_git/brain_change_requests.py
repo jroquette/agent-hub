@@ -6,7 +6,9 @@ worktree list stay as they were. It takes the note from ``origin/<default_branch
 ``/learn`` wrote it in the checkout and it was never pushed, reads it from there (the checkout is
 only read); it checks that the destination and the branch are free; builds one commit with plumbing
 (no checkout, no hook) that moves the note and sets its frontmatter, as the change's author; pushes
-that one new branch through the push guard; and opens the pull request with ``gh pr create``. When
+that one new branch through the push guard; and opens the pull request through GitHub's REST API
+(``gh api --method POST repos/<hub_repo>/pulls``, never ``gh pr``, whose GraphQL a cloud session's
+proxy refuses). When
 ``gh`` fails, or the push fails after GitHub took the ref (a lost answer: ``origin`` has the branch
 at this action's commit), the branch is deleted again so a retry starts clean; a push ``origin``
 rejected deletes nothing (a proposal's branch there may be another session's). A retry that still
@@ -331,17 +333,17 @@ class _Workspace[R: BrainChange | BrainChangeBatch | BrainProposal]:
         return _text(made.stdout)
 
     def _open_pull_request(self) -> str:
+        """``POST repos/<hub_repo>/pulls`` through ``gh api``: plain fields (``-f``, never
+        typed or read from a file), the body read from a file (``-F body=@<file>``)."""
         change = self._change
         body_file = self._work / "body.md"
         body_file.write_text(change.body, encoding="utf-8")
         args = [
-            "pr",
-            "create",
-            f"--repo={change.hub_repo}",
-            f"--base={change.default_branch}",
-            f"--head={change.branch}",
-            f"--title={change.title}",
-            f"--body-file={body_file}",
+            *("api", "--method", "POST", f"repos/{change.hub_repo}/pulls"),
+            *("-f", f"title={change.title}"),
+            *("-f", f"head={change.branch}"),
+            *("-f", f"base={change.default_branch}"),
+            *("-F", f"body=@{body_file}"),
         ]
         created = self._session.gh(args, cwd=self._clone, step="pr")
         pr_url = pull_request_url(created.stdout, hub_repo=change.hub_repo)
@@ -441,19 +443,14 @@ class _Action(_Workspace[BrainChange]):
         return self._publish(self._commit(base, mode, text))
 
     def _open_pull_request_of_branch(self) -> str | None:
-        """The url of the open pull request whose head is the change's branch, or None."""
+        """The url of the open pull request whose head is the change's branch, or None
+        (``GET repos/<hub_repo>/pulls?head=<owner>:<branch>&state=open`` through ``gh api``)."""
         change = self._change
+        owner = change.hub_repo.split("/", 1)[0]
         args = [
-            "pr",
-            "list",
-            "--repo",
-            change.hub_repo,
-            "--head",
-            change.branch,
-            "--state",
-            "open",
-            "--json",
-            "url",
+            *("api", "--method", "GET", f"repos/{change.hub_repo}/pulls"),
+            *("-f", f"head={owner}:{change.branch}"),
+            *("-f", "state=open"),
         ]
         listed = self._session.gh(args, cwd=self._clone, step="pr")
         try:

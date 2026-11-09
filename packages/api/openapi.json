@@ -5422,6 +5422,24 @@
         ],
         "type": "string"
       },
+      "HubToolCalls": {
+        "additionalProperties": false,
+        "description": "The calls of one of the hub's knowledge tools (``hub mcp``'s ``search``, ``read`` and\n``propose``) over 7, 30 and 90 days, by the main sessions and by their subagents: counts and\na time only (ADR 0019).",
+        "properties": {
+          "main": {
+            "$ref": "#/components/schemas/UsageWindows"
+          },
+          "subagents": {
+            "$ref": "#/components/schemas/UsageWindows"
+          }
+        },
+        "required": [
+          "main",
+          "subagents"
+        ],
+        "title": "HubToolCalls",
+        "type": "object"
+      },
       "HubView": {
         "additionalProperties": false,
         "description": "A registered hub as read now.\n\n``valid`` is false when ``hub.json`` is unreadable or does not match the schema\n(``validation_errors``). A pin other than the running version is read anyway and shows as\na warning (\"pinned X, running Y\"). ``checked_at`` is when the hub's last doctor check\nended, None before its first one.",
@@ -14582,7 +14600,7 @@
       },
       "SkillCatalog": {
         "additionalProperties": false,
-        "description": "A project's skills, agents and hooks in stable order (kind, name, source).\n\n``truncated`` says a bound stopped the listing or the reads; ``notice`` is one line for the\nowner (an empty hub, a file not read), or None.",
+        "description": "A project's skills, agents and hooks in stable order (kind, name, source).\n\n``truncated`` says a bound stopped the listing or the reads; ``notice`` is one line for the\nowner (an empty hub, a file not read), or None. ``hub_tools`` is the usage fold's calls of\nthe hub's knowledge tools (``SkillUsage.hub_tools``), empty with no event source (AGH-699).",
         "properties": {
           "external_plugins": {
             "default": [],
@@ -14591,6 +14609,14 @@
             },
             "title": "External Plugins",
             "type": "array"
+          },
+          "hub_tools": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/HubToolCalls"
+            },
+            "default": {},
+            "title": "Hub Tools",
+            "type": "object"
           },
           "items": {
             "items": {
@@ -16739,6 +16765,45 @@
           "last_used_at"
         ],
         "title": "UsageRow",
+        "type": "object"
+      },
+      "UsageWindows": {
+        "additionalProperties": false,
+        "description": "How often a skill or agent was used over 7, 30 and 90 days, and its last use within 90\ndays: counts and a time only (AGH-482, ADR 0019).",
+        "properties": {
+          "last_used_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runs_30d": {
+            "minimum": 0.0,
+            "title": "Runs 30D",
+            "type": "integer"
+          },
+          "runs_7d": {
+            "minimum": 0.0,
+            "title": "Runs 7D",
+            "type": "integer"
+          },
+          "runs_90d": {
+            "minimum": 0.0,
+            "title": "Runs 90D",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "runs_7d",
+          "runs_30d",
+          "runs_90d",
+          "last_used_at"
+        ],
+        "title": "UsageWindows",
         "type": "object"
       },
       "UtcTimestamp": {
@@ -22674,7 +22739,7 @@
     },
     "/api/v1/projects/{project}/knowledge/search": {
       "get": {
-        "description": "The hub's notes and repo docs holding every word of ``q``, best first, after the index\nis brought up to date with the checkout; ``q``'s words only, never search syntax.",
+        "description": "The hub's notes and repo docs holding every word of ``q``, in the index's order (curated\nknowledge first, then by status, then best match), after the index is brought up to date\nwith the checkout; ``q``'s words only, never search syntax.",
         "operationId": "search_project_knowledge_api_v1_projects__project__knowledge_search_get",
         "parameters": [
           {

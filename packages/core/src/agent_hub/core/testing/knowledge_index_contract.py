@@ -73,7 +73,8 @@ def _paths(
 
 
 class KnowledgeIndexContract:
-    """Search by every word, title first, kinds, limit; per-hub rows; apply as P-5 says."""
+    """Search by every word, kind tier, status tier, title first, kinds, limit; per-hub rows;
+    apply as P-5 says."""
 
     def test_ranks_title_match_first_when_lengths_equal(
         self, knowledge_index: KnowledgeIndex
@@ -128,6 +129,122 @@ class KnowledgeIndexContract:
         found = _paths(knowledge_index, "marker")
 
         _check(found == sorted(paths), f"equal scores in path order: {found}")
+
+    def test_ranks_curated_kind_first_when_matches_equal(
+        self, knowledge_index: KnowledgeIndex
+    ) -> None:
+        # In path order an inbox note and a feature record come first; inside the second tier the
+        # equal matches stay in path order.
+        expected: list[tuple[Kind, str]] = [
+            ("decision", "brain/decisions/marker.md"),
+            ("domain", "brain/domain/marker.md"),
+            ("learning", "brain/learnings/marker.md"),
+            ("playbook", "brain/playbooks/marker.md"),
+            ("system", "brain/system/marker.md"),
+            ("adr", "repo/docs/adr/0001-marker.md"),
+            ("inbox", "brain/_inbox/marker.md"),
+            ("feature", "brain/features/marker/spec.md"),
+            ("journal", "brain/journal/2026/marker.md"),
+            ("doc", "brain/now.md"),
+        ]
+        _index(
+            knowledge_index,
+            *(_document(path, body="marker text", kind=kind) for kind, path in expected),
+        )
+
+        found = _paths(knowledge_index, "marker")
+
+        order = [path for _, path in expected]
+        _check(found == order, f"curated knowledge, then the rest: {found}")
+
+    def test_ranks_curated_kind_first_when_feature_matches_better(
+        self, knowledge_index: KnowledgeIndex
+    ) -> None:
+        learning = _document(
+            "brain/learnings/gotchas.md",
+            title="Gotchas",
+            body="a long note " * 200 + "the release tag is made by the workflow",
+            kind="learning",
+        )
+        feature = _document(
+            "brain/features/release/spec.md",
+            title="Release",
+            body="release release release",
+            kind="feature",
+        )
+        _index(knowledge_index, feature, learning)
+
+        found = _paths(knowledge_index, "release")
+
+        _check(found == [learning.path, feature.path], f"the learning first: {found}")
+
+    def test_ranks_title_match_first_when_kind_and_status_tiers_equal(
+        self, knowledge_index: KnowledgeIndex
+    ) -> None:
+        # Both curated and both approved, so the text match decides: the title match first.
+        in_body = _document(
+            "brain/decisions/a.md",
+            title="Cleanup",
+            body="worktrees removed after merge",
+            kind="decision",
+            status="approved",
+        )
+        in_title = _document(
+            "brain/learnings/z.md",
+            title="Worktrees",
+            body="cleanup removed after merge",
+            kind="learning",
+            status="Approved (owner)",
+        )
+        _index(knowledge_index, in_body, in_title)
+
+        found = _paths(knowledge_index, "worktrees")
+
+        _check(found == [in_title.path, in_body.path], f"bm25 inside one tier: {found}")
+
+    def test_ranks_settled_status_first_when_matches_equal(
+        self, knowledge_index: KnowledgeIndex
+    ) -> None:
+        # A status counts by its leading word, in any case; in path order the drafts come first.
+        expected: list[tuple[str | None, str]] = [
+            ("approved (owner, 2026-10-13)", "brain/features/h.md"),
+            ("Active", "brain/features/i.md"),
+            (None, "brain/features/d.md"),
+            ("drafted", "brain/features/e.md"),
+            ("(approved)", "brain/features/f.md"),
+            ("done", "brain/features/g.md"),
+            ("accepted", "brain/features/j.md"),
+            ("draft", "brain/features/a.md"),
+            ("PROPOSED", "brain/features/b.md"),
+            ("draft, proposed extra", "brain/features/c.md"),
+        ]
+        _index(
+            knowledge_index,
+            *(
+                _document(path, body="marker text", kind="feature", status=status)
+                for status, path in expected
+            ),
+        )
+
+        found = _paths(knowledge_index, "marker")
+
+        order = [path for _, path in expected]
+        _check(found == order, f"approved and active first, draft and proposed last: {found}")
+
+    def test_ranks_kind_before_status_when_both_differ(
+        self, knowledge_index: KnowledgeIndex
+    ) -> None:
+        approved_feature = _document(
+            "brain/features/a/spec.md", body="marker text", kind="feature", status="approved"
+        )
+        draft_learning = _document(
+            "brain/learnings/z.md", body="marker text", kind="learning", status="draft"
+        )
+        _index(knowledge_index, approved_feature, draft_learning)
+
+        found = _paths(knowledge_index, "marker")
+
+        _check(found == [draft_learning.path, approved_feature.path], f"kind first: {found}")
 
     def test_returns_nothing_when_no_words_given(self, knowledge_index: KnowledgeIndex) -> None:
         _index(knowledge_index, _document("brain/now.md", body="marker text"))

@@ -1,7 +1,8 @@
 """The Session read model, folded from stored events (D12, D14, D16).
 
-``fold_sessions`` is pure: it takes the events and ``now`` and returns the same sessions for
-any order of the events and any repeats of them. Only Claude Code sources create a session
+``fold_session`` is pure: it takes a session's events and ``now`` and returns the same session
+for any order of the events and any repeats of them (the tests fold a whole history with
+``agent_hub.core.testing.history_folds.fold_sessions``). Only Claude Code sources create a session
 (hooks, transcript, OpenTelemetry); executor, GitHub and Linear events never do (AC-200.24),
 though an executor run lends its issue to the sessions it started. A session started by
 ``hub run`` carries ``run``, ``step`` and ``attempt`` from its own events (AC-200.16). Each
@@ -17,7 +18,7 @@ from typing import NamedTuple
 from agent_hub.core.approvals.fold_approvals import fold_approvals
 from agent_hub.core.events.event import EventSource, EventType
 from agent_hub.core.events.stored_event import StoredEvent
-from agent_hub.core.readmodels.fact_keys import canonical_events, canonical_part, resolve_facts
+from agent_hub.core.readmodels.fact_keys import canonical_events, resolve_facts
 from agent_hub.core.sessions.pricing import PRICES, PerMillion
 from agent_hub.core.sessions.problem import SessionProblems
 from agent_hub.core.sessions.session import Outcome, Session, SessionSegment
@@ -254,31 +255,3 @@ def fold_session_with_problems(
         sources_missing=SESSION_SOURCES_MISSING,
     )
     return FoldedSession(session=session, problems=problems)
-
-
-def group_by_session(events: Iterable[StoredEvent]) -> dict[str, list[StoredEvent]]:
-    """The events of each session that exists: one Claude Code source event creates it."""
-    groups: dict[str, list[StoredEvent]] = {}
-    for stored in canonical_events(events):
-        groups.setdefault(stored.event.session, []).append(stored)
-    # Each group keeps the canonical order it was taken in.
-    return {
-        session: canonical_part(group)
-        for session, group in groups.items()
-        if any(stored.event.source in SESSION_SOURCES for stored in group)
-    }
-
-
-def fold_sessions(
-    events: Iterable[StoredEvent],
-    *,
-    now: datetime,
-    prices: Mapping[str, PerMillion] = PRICES,
-) -> dict[str, Session]:
-    """Every session in ``events``, by id."""
-    materialized = list(events)
-    issues = run_issues(materialized)
-    return {
-        session: fold_session(group, now=now, issues=issues, prices=prices)
-        for session, group in group_by_session(materialized).items()
-    }

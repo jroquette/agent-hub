@@ -46,6 +46,18 @@ def test_prints_next_start_of_each_schedule_when_listed_after_a_time(tmp_path: P
     ]
 
 
+def test_says_starts_skip_container_when_help_shown() -> None:
+    # AGH-699 E-4: hub web starts schedules and events, but never in the container.
+    shown = CliRunner().invoke(
+        app, ["workflow", "schedule", "list", "--help"], env={"COLUMNS": "120"}
+    )
+
+    assert shown.exit_code == 0, shown.output
+    help_text = " ".join(unstyle(shown.stdout).split())
+    assert "Scheduled and event starts never run in the container" in help_text
+    assert "AGENT_HUB_IN_CONTAINER=1" in help_text
+
+
 def test_says_no_schedules_when_hub_json_declares_none(tmp_path: Path) -> None:
     result = listed(a_hub(tmp_path))
 

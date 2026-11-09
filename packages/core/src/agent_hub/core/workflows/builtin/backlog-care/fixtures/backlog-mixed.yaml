@@ -30,8 +30,9 @@ stubs:
       stale: [{id: DEM-2, updated_at: "1999-09-01T10:00:00Z", days: 55, evidence: "updated_at 1999-09-01T10:00:00Z: 55 days without an update (stale after 14)"}]
       duplicates: [{ids: [DEM-3, DEM-4], title: add csv export, evidence: "titles DEM-3 'feat(api): Add CSV export', DEM-4 'Add  csv export!' all read as 'add csv export'"}]
       cycles: [{ids: [DEM-5, DEM-6], evidence: DEM-5 blocked by DEM-6; DEM-6 blocked by DEM-5}]
+      merged: []
       unreadable: []
-      summary: "Hygiene of 7 issues read: 1 orphan, 1 stale, 1 duplicate group, 1 cycle."
+      summary: "Hygiene of 7 issues read: 1 orphan, 1 stale, 1 duplicate group, 1 cycle, 0 merged issues."
   pick:
     output: {count: 2, ids: [DEM-3, DEM-4], read_ids: [DEM-1, DEM-2, DEM-3, DEM-4, DEM-5, DEM-6, DEM-7], waiting: [], text: "### Issue DEM-3\n### Issue DEM-4\n"}
   draft:
@@ -57,7 +58,7 @@ stubs:
   report:
     output:
       outcome: apply
-      summary: "Backlog care.\nHygiene of 7 issues read: 1 orphan, 1 stale, 1 duplicate group, 1 cycle."
+      summary: "Backlog care.\nHygiene of 7 issues read: 1 orphan, 1 stale, 1 duplicate group, 1 cycle, 0 merged issues."
       apply:
         - {id: DEM-3, action: draft, label: ready, superseded_by: "", draft: {size: fix}, note: "", approver: Jo}
         - {id: DEM-4, action: supersede, label: close, superseded_by: DEM-3, draft: {size: fix}, note: "", approver: Jo}

@@ -9,8 +9,9 @@ fetch and starts from ``origin/<default_branch>`` as already fetched, refusing a
 was: the escape hatch inside the Claude Code sandbox, AGH-134; ``--base <branch>`` starts a new
 worktree from ``origin/<branch>`` instead, to stack a task on a blocker still in review), then runs
 the repo's executable ``scripts/worktree-setup.sh <worktree>``; ``--stack-on <PR url>`` starts
-only the pull request's repo (``hub.json``'s ``github``) from its head branch, read with
-``gh pr view`` (open and not from a fork), and every other repo from its default branch
+only the pull request's repo (``hub.json``'s ``github``) from its head branch, read through
+GitHub's REST API with ``gh api`` (open and not from a fork), and every other repo from its
+default branch
 (``stack_on``); ``--remove`` runs
 ``worktree-teardown.sh`` the same way, then ``git worktree remove`` (never forced; branches are
 kept). Usage problems (the name, ``--only``, ``--no-fetch``, ``--base`` or ``--stack-on`` with

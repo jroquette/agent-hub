@@ -33,6 +33,12 @@ Commits and PRs are authored by the owner, José Henrique Roquette (`roquettejh@
 "Generated with" line, no robot emoji and no mention of an agent in commits, PRs, comments or branch names. No push to
 `main`, no force-push, no production deploys: everything lands through a PR the owner merges.
 
+CI's `authorship` job (one of the jobs `check` needs) checks this on every pull request, and again when its title or body
+is edited: it fails when the title, the body or a commit message of the PR carries AI attribution (the hub guard's
+pattern), or when a commit of the PR is authored or committed with an email other than the owner's (GitHub's own
+committer, for a web edit or "Update branch", is let through). Fix the text and the edit reruns it; fix a commit by
+rewriting it on a new branch, since force-push is not allowed.
+
 ## Commits and PR titles
 
 PR titles follow [Conventional Commits](https://www.conventionalcommits.org/): `type(scope): subject`. Squash merge makes

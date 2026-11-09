@@ -155,7 +155,8 @@ text sets it, an empty text removes it, a name left out stays), in the `team` or
 both files (each file, then the rules across them) before anything is written, refuses a file changed since it was
 read or a symlinked one, replaces the file through a temporary one, and is never committed: a `hub.json` change waits
 for the owner's hub PR and `./hub sync` ([ADR 0040](../adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md),
-option 1). The route is a hub registry write: it needs this server's `Origin`. A refused edit answers 422 "This change
+option 1). The route is an owner write (AGH-699): it needs this server's `Origin`, a JSON body and the launch cookie
+([API.md](../API.md#local-security)). A refused edit answers 422 "This change
 was not saved" with the reason; `hub env` gains no command from it.
 
 **Renames.** renaming a `hub.json` environment also moves every endpoint `hub.json` keys by it, and renaming

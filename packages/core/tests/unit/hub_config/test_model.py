@@ -26,7 +26,6 @@ from agent_hub.core.hub_config.model import (
     TrackerStates,
 )
 from agent_hub.core.hub_config.platform_repository import PLATFORM_REPOSITORY_MESSAGE
-from agent_hub.core.hub_config.schema import read_shipped_schema
 from agent_hub.core.testing.builders import (
     a_conventions_document,
     a_guard_infra,
@@ -41,6 +40,7 @@ from agent_hub.core.testing.platform_repository_cases import (
     SECRET_PARTS,
     RepositoryCase,
 )
+from agent_hub.core.testing.shipped_schemas import read_shipped_schema
 
 REQUIRED_KEYS: list[tuple[str | int, ...]] = [
     ("schema_version",),

@@ -1,7 +1,7 @@
 """Parsing ``git diff`` and ``git log --numstat`` output into a repository's file changes."""
 
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
@@ -105,14 +105,30 @@ def test_reads_commits_newest_first_when_a_log_is_parsed() -> None:
     assert [(c.added, c.removed) for c in by_path["logo.png"]] == [(0, 0)]
 
 
-def test_names_the_pull_request_when_gh_lists_one_for_the_branch(tmp_path: Path) -> None:
-    asked: list[list[str]] = []
+_PULL = (
+    b'[{"number":545,"url":"https://api.github.com/repos/acme/ui/pulls/545",'
+    b'"html_url":"https://github.com/acme/ui/pull/545","state":"open","merged_at":null,'
+    b'"head":{"ref":"dem-1","sha":"abc"}}]'
+)
+
+
+def _github(
+    asked: list[list[str]], *, origin: bytes = b"git@github.com:acme/ui.git\n", pulls: bytes
+) -> Callable[..., ProcessResult]:
+    """A launch that answers git's read of ``origin``'s url and gh's REST list of pulls."""
 
     def launch(argv: Sequence[str], **_: object) -> ProcessResult:
         asked.append(list(argv))
-        out = b'[{"number":545,"url":"https://github.com/acme/ui/pull/545","state":"OPEN","headRefOid":"abc"}]'
-        return ProcessResult(returncode=0, stdout=out)
+        if argv[-3:] == ["config", "--get", "remote.origin.url"]:
+            return ProcessResult(returncode=0, stdout=origin)
+        return ProcessResult(returncode=0, stdout=pulls)
 
+    return launch
+
+
+def test_names_the_pull_request_when_gh_lists_one_for_the_branch(tmp_path: Path) -> None:
+    asked: list[list[str]] = []
+    launch = _github(asked, pulls=_PULL)
     reader = GitRepoChanges(gh="git", launch=launch, environ={"PATH": os.environ["PATH"]})
 
     pull = reader.pull_request(str(tmp_path / "gone" / "tree"), branch="dem-1")
@@ -120,18 +136,51 @@ def test_names_the_pull_request_when_gh_lists_one_for_the_branch(tmp_path: Path)
     assert pull == RepoPullRequest(
         number=545, url="https://github.com/acme/ui/pull/545", state="OPEN", head_sha="abc"
     )
-    assert asked[0][1:5] == ["pr", "list", "--head", "dem-1"]
+    assert asked[-1][1:] == [
+        *("api", "--method", "GET", "repos/acme/ui/pulls"),
+        *("-f", "head=acme:dem-1", "-f", "state=all", "-f", "per_page=1"),
+    ]
+    assert not [argv for argv in asked if "pr" in argv]
+
+
+@pytest.mark.parametrize(
+    ("fields", "state"),
+    [
+        pytest.param(b'"state":"closed","merged_at":"2026-10-01T00:00:00Z"', "MERGED", id="merged"),
+        pytest.param(b'"state":"closed","merged_at":null', "CLOSED", id="closed"),
+    ],
+)
+def test_names_the_pull_request_state_when_gh_lists_a_closed_one(
+    tmp_path: Path, fields: bytes, state: str
+) -> None:
+    pulls = b'[{"number":7,"html_url":"https://github.com/acme/ui/pull/7",' + fields + b"}]"
+    reader = GitRepoChanges(
+        gh="git", launch=_github([], pulls=pulls), environ={"PATH": os.environ["PATH"]}
+    )
+
+    pull = reader.pull_request(str(tmp_path), branch="dem-1")
+
+    assert pull == RepoPullRequest(
+        number=7, url="https://github.com/acme/ui/pull/7", state=state, head_sha=None
+    )
 
 
 @pytest.mark.parametrize("stdout", [b"[]", b"not json", b'[{"number":"x"}]'])
 def test_no_pull_request_when_gh_names_none(tmp_path: Path, stdout: bytes) -> None:
     reader = GitRepoChanges(
-        gh="git",
-        launch=lambda argv, **_: ProcessResult(returncode=0, stdout=stdout),
-        environ={"PATH": os.environ["PATH"]},
+        gh="git", launch=_github([], pulls=stdout), environ={"PATH": os.environ["PATH"]}
     )
 
     assert reader.pull_request(str(tmp_path), branch="dem-1") is None
+
+
+def test_names_no_pull_request_when_origin_is_not_on_github(tmp_path: Path) -> None:
+    asked: list[list[str]] = []
+    launch = _github(asked, origin=b"https://gitlab.example/acme/ui.git\n", pulls=_PULL)
+    reader = GitRepoChanges(gh="git", launch=launch, environ={"PATH": os.environ["PATH"]})
+
+    assert reader.pull_request(str(tmp_path), branch="dem-1") is None
+    assert [argv[1] for argv in asked if argv[1:2] == ["api"]] == []
 
 
 def test_names_no_pull_request_when_the_branch_reads_as_an_option(tmp_path: Path) -> None:

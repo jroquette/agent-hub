@@ -106,8 +106,9 @@ def rendering_or_exit(
     """One tree read for both renders (spec Q-20).
 
     The paths come from the render without extension inputs: the inputs only change the bytes of
-    a merged ``X.json`` and add a ``.claude`` link per project entry, whose path the read looks at
-    for each name it lists (so a project's own file there is a conflict, never replaced).
+    a merged ``X.json`` and of ``CLAUDE.md`` (the superpowers key the settings sibling enables)
+    and add a ``.claude`` link per project entry, whose path the read looks at for each name it
+    lists (so a project's own file there is a conflict, never replaced).
     """
     project = config.project.name
     try:

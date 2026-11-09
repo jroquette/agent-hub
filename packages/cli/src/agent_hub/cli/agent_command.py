@@ -17,7 +17,6 @@ from typing import Final
 
 import typer
 import typer.core
-from typer._click.core import Context
 
 from agent_hub.cli.claude_launch import claude_missing_line, launch_claude
 from agent_hub.cli.command_exits import fail
@@ -25,6 +24,7 @@ from agent_hub.cli.effective_config import load_effective_config_or_exit
 from agent_hub.cli.errors import LaunchError
 from agent_hub.cli.hub_root import hub_root_or_exit
 from agent_hub.cli.init_report import shown_path
+from agent_hub.cli.vendored_click import Context
 from agent_hub.core.workspace.agent_launch import CLAUDE, missing_repo_warning
 
 COMMAND: Final = "agent"

@@ -19,11 +19,14 @@ listed file (``none`` when nothing changes).
 
 ``pin.py apply --worktree <hub worktree> --version X.Y.Z --issue <team>-<n>`` sets the pin in
 that worktree, runs its ``./hub sync``, then ``./hub sync --check`` (it must say ``up to date``),
-and commits everything once, ``chore(hub): bump platform to X.Y.Z (<issue>)``, with git hooks
-off. A failure puts the hub worktree back on its base; a re-run that finds that commit on a
-clean ``HEAD`` prints it again (its files from git). Prints ``{"from", "version", "sha",
-"count", "files", "summary"}``; ``summary`` (the PR's body, at most ``MAX_SUMMARY`` bytes)
-names the version, the tag and the files sync rewrote.
+keeps ``brain/now.md`` current when the hub has one (every ``pinned to X.Y.Z``, with an
+optional ``v`` or code span, names the new version, and its frontmatter's ``last_verified`` is
+today; nothing else in it changes), and commits everything once, ``chore(hub): bump platform
+to X.Y.Z (<issue>)``, with git hooks off. A failure puts the hub worktree back on its base; a
+re-run that finds that commit on a clean ``HEAD`` prints it again (its files from git). Prints
+``{"from", "version", "sha", "count", "files", "summary"}``; ``files`` are the files sync
+rewrote, and ``summary`` (the PR's body, at most ``MAX_SUMMARY`` bytes) names the version, the
+tag, those files and, when the commit changed it, ``brain/now.md``.
 
 Both edit only the ``version`` value inside the copy's or the worktree's ``hub.json``
 ``platform`` object, as text, so the file's layout stays: the file they change, never a config
@@ -41,6 +44,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import date
 from pathlib import Path
 
 PROG = "pin.py"
@@ -59,6 +63,10 @@ WOULD = re.compile(r"would (create|restore|update|delete) (.+)")
 DONE = re.compile(r"(created|restored|updated|deleted) (.+)")
 HUB_LOCK = "hub.lock"
 HUB_JSON = "hub.json"
+NOW_MD = "brain/now.md"
+NOW_PIN = re.compile(r"(\bpinned to `?v?)[0-9]+\.[0-9]+\.[0-9]+(?!\.?[0-9])")
+FRONTMATTER = re.compile(r"\A---\n(.*?\n)---\n", re.DOTALL)
+LAST_VERIFIED = re.compile(r"^last_verified:.*$", re.MULTILINE)
 # hub sync --check: up to date, a conflict, changes pending.
 UP_TO_DATE, CONFLICT, PENDING = 0, 3, 4
 
@@ -209,14 +217,47 @@ def list_changes(
     }
 
 
-def summary_of(*, previous: str, version: str, files: list[dict[str, str]]) -> str:
+def summary_of(
+    *, previous: str, version: str, files: list[dict[str, str]], now_changed: bool
+) -> str:
     head = (
         f"Sets `platform.version` in hub.json from {previous} to {version} (tag v{version})"
         f" and runs `./hub sync`: {len(files)} managed files rewritten."
     )
+    if now_changed:
+        head += f" `{NOW_MD}`: `pinned to {version}` and `last_verified` set."
     lines = [f"- {entry['verb']} `{entry['path']}`" for entry in files]
     body = "\n".join([head, "", "What `hub sync` rewrites:", "", *(lines or ["- none"])])
     return body.encode()[:MAX_SUMMARY].decode(errors="ignore")
+
+
+def refreshed_now(text: str, *, version: str, today: str) -> str:
+    """``brain/now.md``'s ``text`` with every ``pinned to X.Y.Z`` naming ``version`` and its
+    frontmatter's ``last_verified`` set to ``today``; nothing else changes."""
+    text = NOW_PIN.sub(rf"\g<1>{version}", text)
+    head = FRONTMATTER.match(text)
+    if head is None:
+        return text
+    inner = LAST_VERIFIED.sub(f"last_verified: {today}", head.group(1), count=1)
+    return text[: head.start(1)] + inner + text[head.end(1) :]
+
+
+def _refresh_now(worktree: Path, *, version: str) -> bool:
+    """Keep the hub's ``brain/now.md`` current, when it has one; whether its bytes changed."""
+    path = worktree / NOW_MD
+    if path.is_symlink() or not path.is_file():
+        return False
+    try:
+        with path.open(encoding="utf-8", newline="") as stream:
+            text = stream.read()
+        found = refreshed_now(text, version=version, today=date.today().isoformat())
+        if found == text:
+            return False
+        with path.open("w", encoding="utf-8", newline="") as stream:
+            stream.write(found)
+    except (OSError, ValueError) as error:
+        raise FailedError(f"{NOW_MD}: {error}") from None
+    return True
 
 
 STATUS_VERBS = {"A": "created", "M": "updated", "D": "deleted"}
@@ -235,25 +276,29 @@ def _committed(worktree: Path, *, version: str) -> dict[str, object]:
     """The pin commit on HEAD, found by a re-run: its files from git, not from the sync."""
     _, _, previous = read_pin(_git(worktree, "show", f"HEAD^:{HUB_JSON}"))
     status = _git(worktree, "diff", "--name-status", "HEAD^", "HEAD").splitlines()
-    pairs = (line.split("\t", 1) for line in status if "\t" in line)
+    pairs = [line.split("\t", 1) for line in status if "\t" in line]
     files = [
         {"verb": STATUS_VERBS.get(letter[:1], "updated"), "path": path}
         for letter, path in pairs
-        if path not in {HUB_JSON, HUB_LOCK}
+        if path not in {HUB_JSON, HUB_LOCK, NOW_MD}
     ]
+    now_changed = any(path == NOW_MD for _, path in pairs)
     return {
         "from": previous,
         "version": version,
         "sha": _git(worktree, "rev-parse", "HEAD").strip(),
         "count": len(files),
         "files": files[:MAX_FILES],
-        "summary": summary_of(previous=previous, version=version, files=files),
+        "summary": summary_of(
+            previous=previous, version=version, files=files, now_changed=now_changed
+        ),
     }
 
 
 def _sync_and_commit(
-    worktree: Path, *, text: str, subject: str, cli: list[str]
-) -> list[dict[str, str]]:
+    worktree: Path, *, text: str, version: str, subject: str, cli: list[str]
+) -> tuple[list[dict[str, str]], bool]:
+    """The files ``./hub sync`` rewrote, and whether ``brain/now.md`` changed too."""
     (worktree / HUB_JSON).write_text(text, encoding="utf-8")
     command = cli or ["./hub"]
     _, synced, _ = _run([*command, "sync"], worktree)
@@ -264,9 +309,10 @@ def _sync_and_commit(
         raise FailedError(
             f"./hub sync --check is not up to date after ./hub sync: {checked.strip()[:400]}"
         )
+    now_changed = _refresh_now(worktree, version=version)
     _git(worktree, "add", "-A")
     _git(worktree, "commit", "-q", "-m", subject)
-    return parsed(synced, DONE)
+    return parsed(synced, DONE), now_changed
 
 
 def apply_pin(worktree: Path, *, version: str, issue: str, cli: list[str]) -> dict[str, object]:
@@ -282,7 +328,9 @@ def apply_pin(worktree: Path, *, version: str, issue: str, cli: list[str]) -> di
     pinned = set_pin(text, version)
     base = _git(worktree, "rev-parse", "HEAD").strip()
     try:
-        files = _sync_and_commit(worktree, text=pinned, subject=subject, cli=cli)
+        files, now_changed = _sync_and_commit(
+            worktree, text=pinned, version=version, subject=subject, cli=cli
+        )
     except ScriptError:
         _restore(worktree, base)
         raise
@@ -292,7 +340,9 @@ def apply_pin(worktree: Path, *, version: str, issue: str, cli: list[str]) -> di
         "sha": _git(worktree, "rev-parse", "HEAD").strip(),
         "count": len(files),
         "files": files[:MAX_FILES],
-        "summary": summary_of(previous=previous, version=version, files=files),
+        "summary": summary_of(
+            previous=previous, version=version, files=files, now_changed=now_changed
+        ),
     }
 
 

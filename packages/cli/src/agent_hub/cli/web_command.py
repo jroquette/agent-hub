@@ -12,7 +12,8 @@ only: no file, no log line. In the container no token is minted and session cont
 the URL in the default browser through a private file, as Jupyter does: the browser is given a
 ``file://`` page only this user can read (mode 0600) that redirects to the token URL, so the
 token never reaches a command line another local user can read; the file is removed when the
-server stops.
+server stops. Before the first request the app imports the hook sensor's spool, in
+``$XDG_STATE_HOME/agent-hub`` (absolute only), else ``~/.local/state/agent-hub`` (AGH-699).
 """
 
 import contextlib
@@ -37,30 +38,19 @@ from agent_hub.api.settings import DEFAULT_PORT, ApiSettings
 from agent_hub.cli.command_exits import fail
 from agent_hub.cli.database_path import account_home_directory, default_database_path
 from agent_hub.cli.effective_config import git_identity_reader
-from agent_hub.cli.errors import CliError, ProjectsRootError
-from agent_hub.cli.registry_path import default_registry_path, home_directory
+from agent_hub.cli.errors import CliError
+from agent_hub.cli.hook_paths import claude_projects_root, default_spool_folder
+from agent_hub.cli.registry_path import default_registry_path
 from agent_hub.core.agent_sessions.limits import SessionLimits
 from agent_hub.core.hub_config.effective_identity import GitReader
 from agent_hub.storage.errors import DatabaseAccessError
 
-PROJECTS_VARIABLE = "AGENT_HUB_CLAUDE_PROJECTS"
 CONTAINER_VARIABLE = "AGENT_HUB_IN_CONTAINER"
 LOCALHOST = "localhost"
 IPV6_LOOPBACK = "::1"
 OUTSIDE_LOOPBACK = f"error: binding outside loopback needs {CONTAINER_VARIABLE}=1"
 NOT_AN_ADDRESS = "error: --host must be an IP address or localhost"
 USAGE = 2
-
-
-def claude_projects_root(environ: Mapping[str, str]) -> Path:
-    """The only folder the live transcript tail reads (D9): ``AGENT_HUB_CLAUDE_PROJECTS`` when
-    set (absolute only), else ``~/.claude/projects``."""
-    configured = environ.get(PROJECTS_VARIABLE, "")
-    if configured:
-        if not Path(configured).is_absolute():
-            raise ProjectsRootError
-        return Path(configured)
-    return home_directory(environ, account_home=account_home_directory) / ".claude" / "projects"
 
 
 def _usage_error(message: str) -> NoReturn:
@@ -270,9 +260,10 @@ def web(
     extra_hosts = _allowed_hosts_or_exit(os.environ, port)
     try:
         db_path = db or default_database_path(os.environ)
-        # This module's account lookup, as for the projects root: one seam for both.
+        # This module's account lookup for every path under the home directory: one seam.
         registry_path = default_registry_path(os.environ, account_home=account_home_directory)
-        projects_root = claude_projects_root(os.environ)
+        projects_root = claude_projects_root(os.environ, account_home=account_home_directory)
+        spool_folder = default_spool_folder(os.environ, account_home=account_home_directory)
     except CliError as error:
         fail(f"error: {error}")
     try:
@@ -293,7 +284,12 @@ def web(
         bound_host=bound,
     )
     try:
-        app = build_app(settings, projects_root=projects_root, read_git=_git_reader)
+        app = build_app(
+            settings,
+            projects_root=projects_root,
+            read_git=_git_reader,
+            spool_folder=spool_folder,
+        )
     except DatabaseAccessError as error:
         sock.close()
         fail(f"error: {error}")

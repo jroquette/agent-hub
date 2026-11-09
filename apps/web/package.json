@@ -17,6 +17,8 @@
     "format:check": "prettier --check --cache --cache-strategy content .",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
+    "lint:changed": "node scripts/check-changed.mjs lint",
+    "test:related": "node scripts/check-changed.mjs related",
     "gen:api": "node scripts/gen-api.mjs",
     "gen:api:check": "node scripts/gen-api.mjs --check",
     "gen:tokens": "node scripts/gen-tokens.mjs",
@@ -47,7 +49,7 @@
     "@types/react": "18.3.31",
     "@types/react-dom": "18.3.7",
     "@vitejs/plugin-react": "6.1.1",
-    "@vitest/coverage-v8": "5.0.2",
+    "@vitest/coverage-v8": "5.0.5",
     "axe-core": "4.13.0",
     "eslint": "9.39.5",
     "eslint-plugin-jsx-a11y": "6.10.2",
@@ -58,7 +60,7 @@
     "prettier": "3.9.9",
     "typescript": "5.9.3",
     "typescript-eslint": "8.70.1",
-    "vite": "8.3.1",
-    "vitest": "5.0.2"
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
   }
 }

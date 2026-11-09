@@ -9,6 +9,7 @@ import json
 import shlex
 import subprocess
 import sys
+from datetime import date
 from importlib.resources import files
 from pathlib import Path
 from types import ModuleType
@@ -392,6 +393,103 @@ def test_restores_hub_worktree_when_sync_not_up_to_date(
     # The next run starts from the same clean worktree.
     good = a_fake_hub(tmp_path, check="up to date", check_exit=0, sync="updated Makefile")
     assert apply(hub, worktree, monkeypatch, cli=good) == 0
+
+
+# AGH-699 X-2: the bump PR keeps brain/now.md current: every `pinned to X.Y.Z` names the new
+# version (a `v` or a code span kept) and the frontmatter's last_verified is today; other version
+# mentions (what an earlier release shipped) stay.
+NOW_MD = """---
+type: now
+status: active
+last_verified: 2026-01-02
+provenance: agent
+---
+# Now
+
+- **Focus:** the release. The hub is pinned to 0.19.0.
+- **Released:** milestone 0 in v0.20.1; the plugin is pinned to a vetted sha.
+- **Watch:** keep the demo pinned to `v0.20.1`. last_verified: in the body stays.
+"""
+
+
+def now_md_after(today: str) -> str:
+    return (
+        NOW_MD.replace("last_verified: 2026-01-02", f"last_verified: {today}")
+        .replace("pinned to 0.19.0", "pinned to 0.21.0")
+        .replace("pinned to `v0.20.1`", "pinned to `v0.21.0`")
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (NOW_MD, now_md_after("2026-11-07")),
+        ("# Now\n\nThe hub is pinned to 0.20.1.\n", "# Now\n\nThe hub is pinned to 0.21.0.\n"),
+        (
+            "---\nlast_verified: 2026-01-02\n---\nNo pin.\n",
+            "---\nlast_verified: 2026-11-07\n---\nNo pin.\n",
+        ),
+        (
+            "Pinned to 0.20.1 and pinned to 1.2 stay.\n",
+            "Pinned to 0.20.1 and pinned to 1.2 stay.\n",
+        ),
+    ],
+    ids=["frontmatter-and-pins", "no-frontmatter", "no-pin", "other-shapes"],
+)
+def test_sets_pin_and_date_when_now_refreshed(text: str, expected: str) -> None:
+    assert load().refreshed_now(text, version="0.21.0", today="2026-11-07") == expected
+
+
+def a_hub_with_now(tmp_path: Path) -> Path:
+    hub = a_hub(tmp_path)
+    (hub / "brain").mkdir()
+    (hub / "brain/now.md").write_text(NOW_MD)
+    git(hub, "add", ".")
+    git(hub, "commit", "-qm", "now")
+    git(hub, "update-ref", "refs/remotes/origin/trunk", "HEAD")
+    return hub
+
+
+def test_commits_now_pin_and_date_when_apply_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hub = a_hub_with_now(tmp_path)
+    worktree = a_hub_worktree(hub)
+    cli = a_fake_hub(tmp_path, check="up to date", check_exit=0, sync="updated Makefile")
+
+    before = date.today().isoformat()
+    assert apply(hub, worktree, monkeypatch, cli=cli) == 0
+    after = date.today().isoformat()
+    first = json.loads(capsys.readouterr().out)
+
+    now = (worktree / "brain/now.md").read_text()
+    assert now in {now_md_after(before), now_md_after(after)}
+    assert git(worktree, "show", "--name-only", "--format=", "HEAD").split() == [
+        "Makefile",
+        "brain/now.md",
+        "hub.json",
+    ]
+    assert git(worktree, "status", "--porcelain") == ""
+    # now.md is not a file sync rewrote, but the PR body says the commit changed it.
+    assert first["files"] == [{"verb": "updated", "path": "Makefile"}]
+    assert "`brain/now.md`" in first["summary"]
+    assert (hub / "brain/now.md").read_text() == NOW_MD
+    # A re-run finds the same commit and prints the same result.
+    assert apply(hub, worktree, monkeypatch, cli=cli) == 0
+    assert json.loads(capsys.readouterr().out) == first
+
+
+def test_leaves_summary_without_now_when_hub_has_no_now(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hub = a_hub(tmp_path)
+    worktree = a_hub_worktree(hub)
+    cli = a_fake_hub(tmp_path, check="up to date", check_exit=0, sync="updated Makefile")
+
+    assert apply(hub, worktree, monkeypatch, cli=cli) == 0
+
+    assert "now.md" not in json.loads(capsys.readouterr().out)["summary"]
+    assert not (worktree / "brain").exists()
 
 
 def test_reuses_pin_commit_when_apply_runs_again(

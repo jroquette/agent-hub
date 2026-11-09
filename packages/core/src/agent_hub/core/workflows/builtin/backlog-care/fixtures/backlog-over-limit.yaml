@@ -17,7 +17,7 @@ stubs:
       skipped: []
       issues: []
   hygiene:
-    output: {orphans: [], stale: [], duplicates: [], cycles: [], unreadable: [], summary: "Hygiene of 50 issues read: 0 orphans, 0 stale, 0 duplicate groups, 0 cycles."}
+    output: {orphans: [], stale: [], duplicates: [], cycles: [], merged: [], unreadable: [], summary: "Hygiene of 50 issues read: 0 orphans, 0 stale, 0 duplicate groups, 0 cycles, 0 merged issues."}
   pick:
     output: {count: 0, ids: [], read_ids: [], waiting: [], text: ""}
   report:

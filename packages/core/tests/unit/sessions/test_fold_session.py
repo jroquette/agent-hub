@@ -2,12 +2,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from agent_hub.core.readmodels.fact_keys import canonical_events
-from agent_hub.core.sessions.fold_session import (
-    fold_session,
-    fold_session_with_problems,
-    fold_sessions,
-    group_by_session,
-)
+from agent_hub.core.sessions.fold_session import fold_session, fold_session_with_problems
 from agent_hub.core.sessions.session import (
     Actor,
     Outcome,
@@ -17,6 +12,7 @@ from agent_hub.core.sessions.session import (
 )
 from agent_hub.core.sessions.session_problems import fold_problems, problem_counts
 from agent_hub.core.testing.builders import an_event
+from agent_hub.core.testing.history_folds import fold_sessions, group_by_session
 from agent_hub.core.testing.session_scenarios import (
     SCENARIO_START,
     a_run_events,

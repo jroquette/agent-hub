@@ -16,6 +16,8 @@ from agent_hub.api.session_token import cookie_name
 from agent_hub.cli import web_command
 from agent_hub.cli.main import app
 from agent_hub.core.agent_sessions.limits import SessionLimits
+from agent_hub.core.testing.hook_inputs import a_hook_input, an_envelope
+from agent_hub.storage.event_store import open_event_store
 
 TOKEN_URL = re.compile(r"agent-hub at http://(?P<host>[^/]+)/\?token=(?P<token>[A-Za-z0-9_-]{43,})")
 
@@ -270,6 +272,31 @@ def test_resolves_database_and_registry_like_collect_when_no_path_given(
     assert settings.registry_path == tmp_path / "config" / "agent-hub" / "hubs.json"
 
 
+def test_imports_hook_spool_of_state_folder_when_hub_web_starts(
+    served: ServedApp, tmp_path: Path
+) -> None:
+    folder = tmp_path / "state" / "agent-hub"
+    folder.mkdir(parents=True, mode=0o700)
+    spool = folder / "hook-spool.jsonl"
+    hook = a_hook_input("PreToolUse", tool_use_id="toolu_spool_web")
+    spool.write_bytes(an_envelope(hook).model_dump_json().encode() + b"\n")
+    spool.chmod(0o600)
+    env = _scratch_env(tmp_path) | {"XDG_STATE_HOME": str(tmp_path / "state")}
+    port = _free_port()
+
+    result = _web(["--port", str(port)], env=env)
+    assert result.exit_code == 0, result.output
+    assert served.app is not None
+    with TestClient(served.app, base_url=f"http://127.0.0.1:{port}"):
+        pass  # the app's start imports the spool
+
+    store = open_event_store(tmp_path / "data" / "agent-hub" / "agent-hub.db")
+    [row] = store.read_all()
+    store.close()
+    assert row.source_id == "session-1:PreToolUse:toolu_spool_web"
+    assert not spool.exists()
+
+
 def test_reads_database_from_environment_when_variable_set(
     served: ServedApp, tmp_path: Path
 ) -> None:
@@ -297,6 +324,20 @@ def test_exits_one_when_no_home_directory_found(
     monkeypatch.setattr(web_command, "account_home_directory", lambda: None)
 
     result = _web(["--port", str(_free_port())], env={"HOME": "", "XDG_DATA_HOME": ""})
+
+    assert result.exit_code == 1
+    assert result.stderr.startswith("error: ")
+    assert served.app is None
+
+
+def test_exits_one_when_no_home_directory_found_and_config_home_set(
+    served: ServedApp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # CI runners set XDG_CONFIG_HOME, so the registry needs no home; the projects root still does.
+    monkeypatch.setattr(web_command, "account_home_directory", lambda: None)
+    env = {"HOME": "", "XDG_DATA_HOME": "", "XDG_CONFIG_HOME": str(tmp_path / "config")}
+
+    result = _web(["--port", str(_free_port())], env=env)
 
     assert result.exit_code == 1
     assert result.stderr.startswith("error: ")

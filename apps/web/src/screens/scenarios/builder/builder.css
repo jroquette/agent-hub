@@ -303,13 +303,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.sb-chip-ref button {
-  background: none;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
-  color: var(--text-muted);
-}
 .sb-errors {
   display: inline-flex;
   align-items: center;
@@ -457,19 +450,6 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 6px;
-}
-.sb-value {
-  display: flex;
-  gap: 4px;
-  min-width: 0;
-}
-.sb-value > input {
-  flex: 1;
-  min-width: 0;
-}
-.sb-pick {
-  width: 88px;
-  flex: none;
 }
 .sb-cond-group {
   display: flex;

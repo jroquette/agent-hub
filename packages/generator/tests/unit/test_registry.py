@@ -32,6 +32,7 @@ BUILTIN_FOLDER = "workflows/builtin"
 SEEDED_PACK_FILES = (
     "backlog-care/backlog-care.yaml",
     "backlog-care/fixtures/backlog-approve-and-skip.yaml",
+    "backlog-care/fixtures/backlog-merged.yaml",
     "backlog-care/fixtures/backlog-mixed.yaml",
     "backlog-care/fixtures/backlog-over-limit.yaml",
     "backlog-care/fixtures/backlog-paused.yaml",
@@ -323,6 +324,8 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "plugin/hub-workflow/agents/spec-reviewer.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/agents/test-writer.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/agents/ux-designer.md": (Kind.GENERIC, Ownership.MANAGED, None),
+    # AGH-699 C-8: the commit-msg hook `.pre-commit-config.yaml` runs (not a Claude Code hook).
+    "plugin/hub-workflow/hooks/commit_msg.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/event_sensor.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/guard.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/hooks.json": (Kind.GENERIC, Ownership.MANAGED, None),

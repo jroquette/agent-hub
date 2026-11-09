@@ -31,6 +31,9 @@ label, actors and problems, AGH-201), WorkflowRun, Learning and Approval as fold
   order, gives the same state.
 - One fact reported by several sources (hooks, transcript, OTel) counts once, by a fold-time fact key (D16): the tool
   use id; the transcript record uuid; `(run, step, attempt)` for steps; the transcript `message.id` for usage (E5).
+  A fact key names one fact of one type. `message` prompts have none (the hook and transcript copies differ in
+  `(source, source_id)`), so a fold that counts prompts dedupes them itself (`skill_usage.DEDUPE_WINDOW`); a new type
+  never reuses another type's key.
 - State that depends on order (current step, last tool, first terminal event) follows one source's own sequence,
   never a sort of timestamps across sources, whose clocks and latencies differ.
 - Costs and token counts are summed exactly (`Decimal`, never float).
@@ -183,6 +186,8 @@ session again. Proof: unit tests in `packages/core/tests/unit` and `packages/api
 - Same stored events, same derived state, whatever the arrival order or the number of rebuilds.
 - A derived entity can always be dropped and rebuilt; it holds nothing the events do not.
 - Every event is redacted before it is appended ([SPEC](../SPEC.md#data-sources-and-event-model)).
+- Every entry point that can emit the same `(source, source_id)` builds identical content (one mapper), and a reader
+  that keeps an offset advances it only after the append commits.
 
 ## Decisions
 

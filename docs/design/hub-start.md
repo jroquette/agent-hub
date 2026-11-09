@@ -108,8 +108,9 @@ seeded files are never rewritten by `hub sync`.
 - [ADR 0002](../adr/0002-lean-hexagonal-architecture.md), [ADR 0008](../adr/0008-cli-as-composition-root.md): the
   use case `start_task` and its ports `TaskWorktrees` and `SessionLauncher` are core; git, the prints and the exec
   are `cli` (`GitTaskWorktrees`, `ClaudeSession`, `PrintedSession`).
+- `hub start` moves an issue only to `tracker.states.started`; `tracker.states.review` is read by `hub run` and
+  `hub ship`, which move an issue there once its PR is open.
 
 ## Open questions
 
-- `tracker.states.review` is read by nothing yet: the review step (AGH-63) decides who moves an issue there.
 - An existing hub gets `brain/auto/agent-context-*.md` in its `.gitignore` only by hand; nothing reports it missing.

@@ -17,7 +17,7 @@ Kind: `generic` (same for every project), `module` (only when selected in `modul
 |---|---|---|
 | `hub.json` (`hub.lock` is tool state: written by init and sync, not listed in itself) | project-owned | seeded |
 | `.mcp.json` (declares the `hub` stdio server, `./hub mcp`; built from code; the same in every hub; a hand-made one is a sync conflict, and a hub has no seeded sibling for its own servers) | generic | managed |
-| `hub.schema.json`, `AGENTS.md` and `CLAUDE.md` (base rules; Brain rules route each learning: [memory-layers.md](memory-layers.md)), `Makefile`, `hub` shim, `agent` launcher, `.pre-commit-config.yaml`, `.github/workflows/ci.yml` | generic | managed |
+| `hub.schema.json`, `AGENTS.md` and `CLAUDE.md` (base rules; Brain rules route each learning: [memory-layers.md](memory-layers.md)), `Makefile`, `hub` shim, `agent` launcher, `.pre-commit-config.yaml` (hygiene hooks and `./hub doctor` at the pre-commit stage; at the commit-msg stage, `python3 plugin/hub-workflow/hooks/commit_msg.py`, which refuses AI attribution in the message (the guard's pattern) and, when `project.author_email` is set, another author or committer email; `default_install_hook_types` makes `pre-commit install` install both), `.github/workflows/ci.yml` | generic | managed |
 | `AGENTS.project.md` (project rules, created empty); `Makefile.project`; `README.md` (with a "Join this hub" section: requirements, access, `./hub setup`, known traps, and cloud steps with module `cloud`); `docs/app-repo-AGENTS.md` (starter for each repo's root `AGENTS.md`); `.gitignore` (base entries, `hub.local.json`, the launch context files `brain/auto/agent-context*.md` and personal memory `brain/auto/workspace/*` among them) | project-owned (`README.md`, `docs/app-repo-AGENTS.md`, `.gitignore` generic) | seeded |
 | `.claude/settings.json` (merged with a seeded `.claude/settings.project.json`, which can add sandbox hosts and override the sandbox's scalars, `enabled` included: only managed or CLI settings can enforce the sandbox; it holds the base denies (push denies per protected branch; no `terraform`/`aws` denies when `guard.infra` is set) and sandbox and runs the base hooks, so a hub never enables `hub-workflow`: Claude Code drops only identical duplicate hook commands. It also enables the `hub` server of `.mcp.json` (`enabledMcpjsonServers`, effective once the folder is trusted, ADR 0057; a developer opts out with `disabledMcpjsonServers` in `.claude/settings.local.json`)), `.claude/agents/` and `.claude/skills/` (one link per entry of both plugins, since cloud sessions do not install repo-declared plugins; not dotfiles such as `.gitkeep`; a new project entry is linked at the next sync) | generic (+ project-owned) | managed (+ seeded) |
 | `plugin/hub-workflow/**` (base agents `architect`, `evaluator`, `planner`, `quality-reviewer`, `requirements-analyst`, `researcher`, `security-reviewer`, `spec-reviewer`, `test-writer`, `ux-designer`; `quality-reviewer`, `researcher`, `security-reviewer` and `spec-reviewer` say `mutates_checkout: false`; skills `adr`, `context-audit`, `create-plan`, `deliver`, `design-fit`, `feature`, `fix`, `handoff`, `incident`, `kickoff`, `learn` (`/learn personal` writes `brain/auto/workspace/`), `onboard`, `overengineering-review` (with `references/patterns.md`), `plain-language` (rules for text that people read; `AGENTS.md` rule 6 points to it), `premortem`, `property-based-testing`, `recall`, `refactor`, `release`, `research`, `retro`, `review`, `summarize`, `test-strength` (with `references/tools.md`), `triage`, `upgrade`, `ux-review` (with `references/checklist.md`); hooks; `schemas/review.v1.json`, `schemas/eval.v1.json` and `schemas/eval.v2.json`, the agent output schemas, core package data copied verbatim; same name in every hub; on adoption, Loki's `loki-workflow` becomes it plus `plugin/loki/`) | generic | managed |
@@ -34,7 +34,8 @@ version and the seeded extension inputs (`*.project.json`, `AGENTS.project.md`, 
 templates use `@@` placeholders, always substituted. A project changes a managed file only via `hub.json` or a seeded
 sibling: `CLAUDE.md` imports `@AGENTS.md` and `@AGENTS.project.md`; the `Makefile` includes `mk/<module>.mk` per
 selected module, then `-include Makefile.project`; a `*.project.json` is deep-merged at the next sync
-([hub-sync.md](hub-sync.md)). Every JSON the generator builds or merges (settings, manifests, merged
+([hub-sync.md](hub-sync.md)), and `CLAUDE.md`'s superpowers line names the `superpowers@<marketplace>` key
+`.claude/settings.project.json` enables (else `superpowers@claude-plugins-official`). Every JSON the generator builds or merges (settings, manifests, merged
 `*.project.json`, `hub.lock`) has one form: sorted keys, 2-space indent, UTF-8, final newline.
 
 ### hub init
@@ -150,7 +151,19 @@ MultiEdit edit's `old_string`/`new_string` to `<key>_lines`, a Write under `brai
 `AGENT_HUB_STEP`, `AGENT_HUB_ATTEMPT`, each null when out of bounds) and POSTs it to `/api/v1/events/hooks` of
 `AGENT_HUB_WEB_URL` (default `http://127.0.0.1:7420`; only plain `http` to `127.0.0.1`, `[::1]` or `localhost`, any other
 URL turns it off without opening a socket) within 0.5 s. An envelope over 1 MiB, an input that is not a JSON object or
-no hub found sends nothing; it never prints and always exits 0. After deciding, and after printing its decision, the
+no hub found sends nothing; it never prints and always exits 0. An envelope the server does not take (refused, no
+answer in time, no time left, or a 5xx answer) goes to the hook spool (AGH-699): one line, the exact POST body,
+appended to `hook-spool.jsonl` in `$XDG_STATE_HOME/agent-hub/` (absolute only), else `$HOME/.local/state/agent-hub/`
+(absolute only; with neither, nothing is kept), never inside a hub or a repo, since its command text is redacted only
+at import. The folder is made with mode 0700; each file is opened by name in that folder with `O_NOFOLLOW` and used
+only when it is a regular file of this user, set to 0600. Each write holds an `flock` on `hook-spool.lock`, taken
+within 0.2 s or the envelope is dropped, uncounted (the count is in the spool, which only the lock's holder writes). A
+spool over 8 MiB (`MAX_SPOOL_BYTES`) loses its oldest lines down to 6 MiB (`SPOOL_KEEP_BYTES`), written to
+`hook-spool.trim` then renamed over it, and its first line `{"dropped": n}` adds those lines to the count an earlier
+trim wrote. Any failure there is silent, the exit code stays 0, and the hook's time is
+the send's deadline plus the lock wait and a few writes. `hub web` imports the spool when it starts and
+`hub collect --spool` imports it on demand, both through the collector's `HookSpool` ([SPEC](../SPEC.md), "Hooks as
+sensors"). After deciding, and after printing its decision, the
 guard sends a deny or an ask (`decision: {by: guard, kind, rule}`, `rule` a stable id read from the reason, e.g.
 `push_protected_branch`, `ask_before_edit`) and the Stop gate a block (`{by: stop_gate, kind: block, command,
 exit_code}`) through the sensor's `send_decision`, bounded the same way; their output and exit codes do not change

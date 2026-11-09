@@ -4,14 +4,17 @@ import subprocess
 import tomllib
 from collections.abc import Callable
 from contextlib import closing
+from importlib.metadata import version
 from pathlib import Path
 from subprocess import CompletedProcess
 
 from alembic.script import ScriptDirectory
 from typer.testing import CliRunner
 
+from agent_hub.cli.doctor_report import finding_line
 from agent_hub.cli.main import app
 from agent_hub.core.testing.builders import an_event, events_to_jsonl
+from agent_hub.core.testing.seeded_shadows import seeded_shadow_findings
 from agent_hub.storage.migration import alembic_config
 from tests.e2e.conftest import REPO_ROOT, InstalledHub
 
@@ -34,6 +37,16 @@ DEMO_FLAGS = (
 )
 # The golden harness's mode variables: the installed hub never inherits them.
 DROPPED_VARIABLES = ("GOLDEN_UPDATE", "GOLDEN_KEEP", "CI")
+# hub init seeds every built-in pack, so doctor on a fresh hub names each seeded workflow,
+# identical to its built-in, with no error (AGH-699 D15); the installed hub is this workspace's.
+SEEDED_FINDINGS = seeded_shadow_findings(version("agent-hub-cli"))
+FRESH_DOCTOR = "".join(
+    f"{line}\n"
+    for line in [
+        *(finding_line(finding) for finding in SEEDED_FINDINGS),
+        f"0 errors, {len(SEEDED_FINDINGS)} warnings, 0 infos",
+    ]
+)
 
 
 def test_prints_version_when_installed_as_uv_tool(
@@ -184,11 +197,7 @@ def test_exits_zero_when_installed_hub_doctors_fresh_init(
 
     result = run([str(installed_hub.executable), "doctor"], env=env, cwd=root)
 
-    assert (result.returncode, result.stdout, result.stderr) == (
-        0,
-        "0 errors, 0 warnings, 0 infos\n",
-        "",
-    ), result.stderr
+    assert (result.returncode, result.stdout, result.stderr) == (0, FRESH_DOCTOR, ""), result.stderr
 
 
 def shim_hub(
@@ -247,11 +256,7 @@ def test_runs_doctor_and_sync_through_shim_when_fresh_init(
     doctor = run([str(root / "hub"), "doctor"], env=env, cwd=root)
     sync = run([str(root / "hub"), "sync", "--check"], env=env, cwd=root)
 
-    assert (doctor.returncode, doctor.stdout, doctor.stderr) == (
-        0,
-        "0 errors, 0 warnings, 0 infos\n",
-        "",
-    ), doctor.stderr
+    assert (doctor.returncode, doctor.stdout, doctor.stderr) == (0, FRESH_DOCTOR, ""), doctor.stderr
     assert sync.returncode == 0, sync.stdout + sync.stderr
 
 

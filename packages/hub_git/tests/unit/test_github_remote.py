@@ -43,8 +43,11 @@ def test_names_no_repo_when_url_not_github(url: str) -> None:
     assert github_repo(url) is None
 
 
-def test_finds_pull_request_when_last_line_names_hub_repo() -> None:
-    stdout = b"Creating pull request\nhttps://github.com/acme/demo-hub/pull/12\n"
+def test_finds_pull_request_when_created_object_names_hub_repo() -> None:
+    stdout = (
+        b'{"url": "https://api.github.com/repos/acme/demo-hub/pulls/12",'
+        b' "html_url": "https://github.com/acme/demo-hub/pull/12", "number": 12}\n'
+    )
 
     assert pull_request_url(stdout, hub_repo="Acme/Demo-Hub") == (
         "https://github.com/acme/demo-hub/pull/12"
@@ -54,11 +57,15 @@ def test_finds_pull_request_when_last_line_names_hub_repo() -> None:
 @pytest.mark.parametrize(
     "stdout",
     [
-        b"",
-        b"https://github.com/other/repo/pull/12\n",
-        b"https://github.com/acme/demo-hub/pull/12/files\n",
-        b"https://github.com/acme/demo-hub/issues/12\n",
-        b"\xff\xfe",
+        pytest.param(b"", id="empty"),
+        pytest.param(b"https://github.com/acme/demo-hub/pull/12\n", id="text_not_json"),
+        pytest.param(b'[{"html_url": "https://github.com/acme/demo-hub/pull/12"}]', id="list"),
+        pytest.param(b'{"url": "https://github.com/acme/demo-hub/pull/12"}', id="no_html_url"),
+        pytest.param(b'{"html_url": "https://github.com/other/repo/pull/12"}', id="other_repo"),
+        pytest.param(b'{"html_url": "https://github.com/acme/demo-hub/pull/12/files"}', id="files"),
+        pytest.param(b'{"html_url": "https://github.com/acme/demo-hub/issues/12"}', id="issue"),
+        pytest.param(b'{"html_url": 12}', id="url_not_text"),
+        pytest.param(b"\xff\xfe", id="not_utf8"),
     ],
 )
 def test_finds_no_pull_request_when_output_unexpected(stdout: bytes) -> None:
@@ -70,7 +77,8 @@ def test_finds_no_pull_request_when_output_unexpected(stdout: bytes) -> None:
     [
         pytest.param(b"[]\n", None, id="none"),
         pytest.param(
-            b'[{"url": "https://github.com/Acme/Demo-Hub/pull/7"}]\n',
+            b'[{"url": "https://api.github.com/repos/Acme/Demo-Hub/pulls/7",'
+            b' "html_url": "https://github.com/Acme/Demo-Hub/pull/7"}]\n',
             "https://github.com/Acme/Demo-Hub/pull/7",
             id="one",
         ),
@@ -85,12 +93,15 @@ def test_reads_open_pull_request_when_list_well_formed(stdout: bytes, found: str
     [
         pytest.param(b"", id="empty"),
         pytest.param(b"not json", id="not_json"),
-        pytest.param(b'{"url": "https://github.com/acme/demo-hub/pull/1"}', id="not_list"),
+        pytest.param(b'{"html_url": "https://github.com/acme/demo-hub/pull/1"}', id="not_list"),
         pytest.param(b'[{"href": "https://github.com/acme/demo-hub/pull/1"}]', id="no_url"),
-        pytest.param(b'[{"url": 1}]', id="url_not_text"),
-        pytest.param(b'[{"url": "https://github.com/other/hub/pull/1"}]', id="other_repo"),
-        pytest.param(b'[{"url": "https://github.com/acme/demo-hub/pull/1 x"}]', id="trailing"),
-        pytest.param(b'[{"url": "https://evil.example/acme/demo-hub/pull/1"}]', id="other_host"),
+        pytest.param(b'[{"url": "https://github.com/acme/demo-hub/pull/1"}]', id="api_url_only"),
+        pytest.param(b'[{"html_url": 1}]', id="url_not_text"),
+        pytest.param(b'[{"html_url": "https://github.com/other/hub/pull/1"}]', id="other_repo"),
+        pytest.param(b'[{"html_url": "https://github.com/acme/demo-hub/pull/1 x"}]', id="trailing"),
+        pytest.param(
+            b'[{"html_url": "https://evil.example/acme/demo-hub/pull/1"}]', id="other_host"
+        ),
         pytest.param(b"[1]", id="item_not_object"),
         pytest.param(b"\xff", id="not_utf8"),
     ],

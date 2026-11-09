@@ -196,7 +196,7 @@ def _print_dry_run(
         summary=DRY_RUN_TEXT,
         workspace=str(children.workspace),
     )
-    typer.echo(would_run_line(children.pr_argv(title=DRY_RUN_TITLE, body=body), cwd=worktree))
+    typer.echo(would_run_line(children.pr_argv(title=DRY_RUN_TITLE), cwd=worktree, stdin=body))
     comment = success_comment(
         run_id=run_id,
         pr_url=DRY_RUN_TEXT,

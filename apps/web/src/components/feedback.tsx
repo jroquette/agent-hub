@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
 import { cx } from "../lib/cx";
@@ -304,7 +304,10 @@ export function ConfirmDialog({
  */
 export function useSkeleton(pending: boolean, shownSince: number | null = null): boolean {
   const [shownAt, setShownAt] = useState<number | null>(null);
-  useEffect(() => {
+  // A layout effect: the commit that ends `pending` clears the delay's timer at once. Cleared by a
+  // passive effect, which a loaded machine runs well after the commit, a timer already due would
+  // still run and put the skeleton over the page just drawn (AGH-659).
+  useLayoutEffect(() => {
     if (pending && shownAt === null) {
       const timer = setTimeout(() => {
         setShownAt(Date.now());

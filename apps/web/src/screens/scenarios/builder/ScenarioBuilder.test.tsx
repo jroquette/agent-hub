@@ -3953,6 +3953,33 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(values).not.toHaveTextContent("target");
   });
 
+  it("scenario builder keeps the proposal's rows, and the focus on one, when the review draws again", async () => {
+    // AGH-659: the proposal runs fetch-order and notify at the same time. Read again on every
+    // draw, that group took a new key each time, so each draw mounted its rows anew: the row
+    // pressed left the page, and the focus with it (a test that pressed it then saw nothing
+    // selected).
+    const user = userEvent.setup();
+    renderBuilder({
+      [`${DETAIL}/proposal`]: {
+        path: ".agent-runs/proposals/scenarios/orders/order-lifecycle.yaml",
+        document: {
+          ...document,
+          nodes: [...document.nodes, { id: "notify", type: "action", action: "get-order-by-ref" }],
+        },
+        check: { loads: true, yaml: "", problems: [], nodes: [] },
+        problem: null,
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: "Review" }));
+    const row = screen.getByRole("treeitem", { name: FETCH });
+
+    await user.click(row);
+
+    expect(screen.getByRole("treeitem", { name: FETCH })).toBe(row);
+    expect(row).toHaveAttribute("aria-selected", "true");
+    expect(row).toHaveFocus();
+  });
+
   it("scenario builder's open step needs a value the environment gives only through a scenario input, as its Script tab", async () => {
     // AC-596.3.23: an environment value for an input the scenario does not declare gives the
     // step nothing: Needs a value here, Missing in the Script tab.

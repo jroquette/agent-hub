@@ -17,8 +17,7 @@ while a shipped file differs from the export.
 
 import json
 from collections.abc import Callable, Iterator, Mapping
-from importlib.resources import files
-from typing import Any, Final, Literal
+from typing import Final, Literal
 
 from pydantic import BaseModel, ValidationError
 
@@ -195,10 +194,3 @@ def export_output_schema_text(kind: OutputSchema) -> str:
     """The JSON Schema of one output as its shipped file holds it: indented, one final newline."""
     schema = _OUTPUT_MODELS[kind].model_json_schema()
     return json.dumps(schema, indent=2, ensure_ascii=False) + "\n"
-
-
-def read_shipped_output_schema(kind: OutputSchema) -> dict[str, Any]:
-    """The JSON Schema of one output shipped with the package, read as package data."""
-    package_file = files(OUTPUT_SCHEMA_PACKAGE).joinpath(OUTPUT_SCHEMA_FILES[kind])
-    schema: dict[str, Any] = json.loads(package_file.read_text(encoding="utf-8"))
-    return schema

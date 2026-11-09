@@ -54,22 +54,6 @@ export interface GraphNode {
   description?: string | null | undefined;
 }
 
-const TYPE_ICON: Readonly<Record<string, IconName>> = {
-  agent: "message-square",
-  shell: "terminal",
-  script: "file-text",
-  loop: "rotate-ccw",
-  loop_group: "refresh-cw",
-  approval: "stamp",
-  wait: "hourglass",
-  halt: "octagon-x",
-  include: "layers",
-};
-
-export function typeIcon(type: string): IconName {
-  return TYPE_ICON[type] ?? "box";
-}
-
 /** One edge per depends_on whose source is drawn, as `source→target`. */
 export function edgesOf(layers: readonly (readonly GraphNode[])[]): [string, string][] {
   const ids = new Set(layers.flat().map((node) => node.id));
