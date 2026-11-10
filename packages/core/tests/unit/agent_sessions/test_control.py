@@ -1114,7 +1114,7 @@ async def test_denies_by_timeout_when_deadline_passes(make_rig: MakeRig) -> None
     assert _decisions(rig) == [("timeout", "deny")]
 
 
-async def test_keeps_waiting_session_past_idle_limit_then_denies_after_a_day_by_default(
+async def test_keeps_waiting_past_idle_limit_and_denies_after_a_day_when_default_limits(
     make_rig: MakeRig,
 ) -> None:
     rig = await _waiting(make_rig)
