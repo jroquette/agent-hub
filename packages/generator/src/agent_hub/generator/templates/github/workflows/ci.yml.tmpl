@@ -141,21 +141,35 @@ jobs:
             printf '%s\n' "GIT_CONFIG_KEY_1=url.$hub.insteadOf"
             printf '%s\n' "GIT_CONFIG_VALUE_1=$hub"
           } >> "$GITHUB_ENV"
+      # A read token for the hub's private repos, minted from a GitHub App (the recommended source
+      # in an organisation): set the Actions variable HUB_REPOS_APP_CLIENT_ID and the secret
+      # HUB_REPOS_APP_KEY, for an App installed on the hub's repos only. The token has read-only
+      # Contents, lasts the job, is revoked when it ends, and reaches the repos step's own
+      # environment only. Without the variable the step is skipped.
+      - name: Repos read token (GitHub App)
+        id: repos-app
+        if: vars.HUB_REPOS_APP_CLIENT_ID != ''
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510  # v3.3.0
+        with:
+          client-id: ${{ vars.HUB_REPOS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.HUB_REPOS_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-contents: read
       # The hub's repos (hub.json → repos, read when the step runs), each cloned read-only at its
       # default branch into ../<dir> beside the hub, where hub doctor's repo rules (such as
       # brain.leak, links.dead) read it: without a checkout doctor skips those rules with an info and
-      # make check passes. Private repos need HUB_REPOS_READ_TOKEN, its own secret with read-only
-      # Contents on the hub's repos (in an organisation, best a GitHub App installation token from
-      # actions/create-github-app-token rather than a personal token); AGENT_HUB_READ_TOKEN is for
-      # the platform only, and the platform mapping in the job's environment is dropped here. With
-      # the token set, each clone's GitHub URL maps to one carrying it, through git config in this
-      # step's own environment only: never an argument, a file or the job's environment, so no
-      # other step sees it; a repo it cannot clone then fails the step. Without it (unset or empty),
-      # such a repo is skipped with a notice: its repo rules run locally only. A token outside
-      # GitHub's [A-Za-z0-9_] or a repos entry without the model's shape (never echoed) fails it.
+      # make check passes. Private repos need a read token: the GitHub App's above, else the secret
+      # HUB_REPOS_READ_TOKEN (a fine-grained token with read-only Contents on the hub's repos).
+      # AGENT_HUB_READ_TOKEN is for the platform only: the platform mapping in the job's
+      # environment is dropped here. With a token, each clone's GitHub URL maps to one carrying it,
+      # through git config in this step's own environment only: never an argument, a file or the
+      # job's environment, so no other step sees it; a repo it cannot clone then fails the step.
+      # Without one, such a repo is skipped with a notice: its repo rules run locally only. A token
+      # outside GitHub's [A-Za-z0-9_] or a repos entry without the model's shape (never echoed)
+      # fails it.
       - name: Repos beside the hub
         env:
-          TOKEN: ${{ secrets.HUB_REPOS_READ_TOKEN }}
+          TOKEN: ${{ steps.repos-app.outputs.token || secrets.HUB_REPOS_READ_TOKEN }}
         run: |
           case $TOKEN in
             *[!A-Za-z0-9_]*) echo "HUB_REPOS_READ_TOKEN: unexpected characters" >&2; exit 1 ;;
@@ -191,10 +205,10 @@ jobs:
             fi
             git clone --quiet --depth 1 --branch "$branch" "https://github.com/$github.git" "../$dir" || {
               if [ -z "$TOKEN" ]; then
-                echo "::notice::Repos beside the hub: skipped $github ($branch): cannot clone it without HUB_REPOS_READ_TOKEN, so its repo rules run locally only"
+                echo "::notice::Repos beside the hub: skipped $github ($branch): cannot clone it without a read token (a private repo, or a wrong branch), so its repo rules run locally only"
                 continue
               fi
-              echo "Repos beside the hub: cannot clone $github ($branch) into ../$dir; HUB_REPOS_READ_TOKEN needs read access to it" >&2
+              echo "Repos beside the hub: cannot clone $github ($branch) into ../$dir; the repos read token (HUB_REPOS_READ_TOKEN or the GitHub App) needs read access to it" >&2
               exit 1
             }
             echo "Repos beside the hub: cloned $github ($branch) into ../$dir"
