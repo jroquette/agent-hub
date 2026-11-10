@@ -2,10 +2,11 @@
 
 The step clones each repo of ``hub.json`` at its default branch into ``../<dir>``, beside the hub,
 where ``hub doctor``'s repo rules (``brain.leak``, ``links.dead``) look for it. With
-``HUB_REPOS_READ_TOKEN`` set it maps that repo's GitHub URL to one carrying the token through git
-config in the step's own environment (never in an argument, a file or ``GITHUB_ENV``), and a repo
-it cannot clone fails it. Without that token (unset or empty) a repo it cannot clone is skipped with
-one notice line: doctor then reports it as not checked out, an info. It never clones with the
+a read token (``TOKEN``: the GitHub App step's token, else ``HUB_REPOS_READ_TOKEN``) it maps that
+repo's GitHub URL to one carrying the token through git config in the step's own environment (never
+in an argument, a file or ``GITHUB_ENV``), and a repo it cannot clone fails it. Without one (unset
+or empty) a repo it cannot clone is skipped with one notice line: doctor then reports it as not
+checked out, an info. It never clones with the
 platform credential the job's environment may carry. A token outside GitHub's character set or an
 unusable ``repos`` value fails it.
 
@@ -38,8 +39,8 @@ SYSTEM_PATH = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
 TOKEN = "gh" + "p_" + "x" * 36
 REFUSAL = "HUB_REPOS_READ_TOKEN: unexpected characters\n"
 SKIP_NOTICE = (
-    "::notice::Repos beside the hub: skipped acme/demo-web (trunk): cannot clone it without"
-    " HUB_REPOS_READ_TOKEN, so its repo rules run locally only"
+    "::notice::Repos beside the hub: skipped acme/demo-web (trunk): cannot clone it without a read"
+    " token (a private repo, or a wrong branch), so its repo rules run locally only"
 )
 BAD_REPO_LINE = (
     "Repos beside the hub: repos[1] in hub.json needs a dir, an owner/name github and a branch\n"
@@ -228,7 +229,7 @@ def test_fails_naming_repo_when_token_given_and_clone_fails(tmp_path: Path) -> N
     assert completed.returncode == 1
     assert completed.stderr.endswith(
         "Repos beside the hub: cannot clone acme/demo-web (trunk) into ../demo-web;"
-        " HUB_REPOS_READ_TOKEN needs read access to it\n"
+        " the repos read token (HUB_REPOS_READ_TOKEN or the GitHub App) needs read access to it\n"
     )
     assert found.branch_of("demo-api") == "main"
     assert TOKEN not in completed.stdout + completed.stderr
@@ -266,20 +267,27 @@ def test_writes_nothing_to_job_environment_when_token_given(workspace: Workspace
 def test_ignores_platform_mapping_in_job_environment_when_cloning(
     token: str | None, workspace: Workspace
 ) -> None:
-    # The platform credential step's GIT_CONFIG_* in the job's environment, here mapping a
-    # repo's URL: the clones never use it, so AGENT_HUB_READ_TOKEN stays platform-only.
+    # What the platform credential step writes to the job's environment (two pairs), here mapping
+    # a repo's URL, and a git -c channel: no clone uses them, so AGENT_HUB_READ_TOKEN stays
+    # platform-only.
     platform = "https://x-access-token:platform@github.com/acme/demo-api"
     job_env = {
-        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_COUNT": "2",
         "GIT_CONFIG_KEY_0": f"url.{platform}.insteadOf",
         "GIT_CONFIG_VALUE_0": "https://github.com/acme/demo-api",
+        "GIT_CONFIG_KEY_1": "url.https://github.com/acme/demo-hub.insteadOf",
+        "GIT_CONFIG_VALUE_1": "https://github.com/acme/demo-hub",
+        "GIT_CONFIG_PARAMETERS": f"'url.{platform}.insteadOf'='https://github.com/acme/demo-web'",
     }
     workspace.log_git_calls()
 
     completed = workspace.run_step(token, job_env)
 
     assert completed.returncode == 0, completed.stderr
-    assert "platform@" not in workspace.git_log.read_text(encoding="utf-8")
+    calls = workspace.git_log.read_text(encoding="utf-8")
+    assert "platform@" not in calls
+    assert "GIT_CONFIG_KEY_1" not in calls
+    assert "GIT_CONFIG_PARAMETERS" not in calls
 
 
 @pytest.mark.parametrize(
