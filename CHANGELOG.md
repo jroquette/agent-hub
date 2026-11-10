@@ -11,6 +11,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-11-10
+
 ### Changed
 
 - A permission request in a session driven by `hub web` (a tool, a question, a plan approval) now waits a day for an
@@ -1743,7 +1745,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.34.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.35.0...HEAD
+[0.35.0]: https://github.com/jroquette/agent-hub/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/jroquette/agent-hub/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/jroquette/agent-hub/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/jroquette/agent-hub/compare/v0.31.0...v0.32.0
