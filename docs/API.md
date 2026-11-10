@@ -664,10 +664,10 @@ routes still never call Linear.
 | `GET /cloud` · `POST /cloud` | cloud sessions recorded here, newest first (at most 50) · `{project, workdir_id, task}`: always 501 `cloud-unavailable` with the terminal command as `guidance` (`claude --cloud` needs a terminal; no process is run) |
 | `POST /cloud/{cloud_id}/messages` | `{text}`: 501 `cloud-unavailable` with `guidance` (no start is ever recorded, so a follow-up has nothing to reach; the `claude -p --cloud` path stays behind `cloud_followup`) |
 
-- **Modes and models.** `mode` is `default`, `acceptEdits` or `plan` (never a bypass mode). `model` is `default`,
-  `opus`, `fable`, `sonnet`, `haiku` or an id matching `^[A-Za-z0-9._\-\[\]]{1,64}$`; anything else is 422 and the driver is
-  not called. Status is `idle`, `running`, `waiting_permission`, `ended` or `failed`; without a first prompt a new
-  session is `idle` with no `init` yet.
+- **Modes and models.** `mode` is `default`, `acceptEdits`, `plan` or `auto` (never `bypassPermissions` or `dontAsk`).
+  `model` is `default`, `opus`, `fable`, `sonnet`, `haiku` or an id matching `^[A-Za-z0-9._\-\[\]]{1,64}$`; anything
+  else is 422 and the driver is not called. Status is `idle`, `running`, `waiting_permission`, `ended` or `failed`;
+  without a first prompt a new session is `idle` with no `init` yet.
 - **Workdir ids.** A `workdir_id` is the first 16 hex digits of SHA-256 over `<kind>\0<real path>` (`kind` is `hub`,
   `repo` or `worktree`). The server resolves an id only by looking it up in `GET /workdirs`; the dev client computes it
   to preselect the checkout Vite serves.

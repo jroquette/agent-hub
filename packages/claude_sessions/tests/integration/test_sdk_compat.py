@@ -45,8 +45,10 @@ from agent_hub.claude_sessions.testing.scenarios import (
     write_scenario,
     write_shim,
 )
+from agent_hub.core.agent_sessions.limits import SessionLimits
 
-PARK_LIMIT_SECONDS = 600  # L3: a permission request waits up to 10 minutes for the browser
+# L3: a permission request waits up to `hub web`'s default (a day) for the browser.
+PARK_LIMIT_SECONDS = SessionLimits().permission_timeout_seconds
 GRACE_SECONDS = 5
 
 
@@ -253,7 +255,7 @@ class _SkewedLoop(asyncio.SelectorEventLoop):
         return super().time() + self.skew
 
 
-def test_waits_ten_minutes_when_permission_pending(tmp_path: Path) -> None:
+def test_waits_a_day_when_permission_pending(tmp_path: Path) -> None:
     stub = _stub(tmp_path, Scenario(turns=[permission_turn()]))
     asked = asyncio.Event()
     release = asyncio.Event()

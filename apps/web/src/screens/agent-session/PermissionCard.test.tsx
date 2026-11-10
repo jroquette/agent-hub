@@ -6,12 +6,14 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiProblem } from "../../lib/api";
+import { fmtDateTime } from "../../lib/format";
 import { AppShell } from "../../shell/AppShell";
 import {
   aPage,
   aPermissionRequest,
   aProjectSummary,
   anAgentSession,
+  at,
   renderWithApi,
 } from "../../testing/builders";
 import { seriousViolations } from "../../testing/axe";
@@ -386,10 +388,12 @@ describe("PermissionCard (permission)", () => {
     expect(onAnswer).toHaveBeenCalledWith({ decision: "deny" });
   });
 
-  it("names the automatic deny and has no serious violation (a11y)", async () => {
-    const { container } = open(aView());
+  it("names the automatic deny with its day and has no serious violation (a11y)", async () => {
+    const { container } = open(aView({ deadline_at: at(30 + 86_400) }));
+    const line = screen.getByText(/Denied automatically at/);
 
-    expect(screen.getByText(/Denied automatically at/)).toBeInTheDocument();
+    expect(line).toHaveTextContent(fmtDateTime(at(30 + 86_400), "local"));
+    expect(line).toHaveTextContent(/Oct 2026/);
     expect(await seriousViolations(container)).toEqual([]);
   });
 });

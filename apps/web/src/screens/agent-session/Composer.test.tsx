@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiProblem } from "../../lib/api";
-import { servedCheckout } from "../../lib/devCheckout";
 import { seriousViolations } from "../../testing/axe";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES, type ComposerProps } from "./Composer";
 
@@ -14,11 +13,6 @@ vi.mock("../../lib/pastedImage", async (importOriginal) => {
     ...actual,
     imageToPng: vi.fn((file: File) => Promise.resolve(`data:image/png;base64,${file.name}`)),
   };
-});
-
-vi.mock("../../lib/devCheckout", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../lib/devCheckout")>();
-  return { ...actual, servedCheckout: vi.fn(() => null) };
 });
 
 function open(overrides: Partial<ComposerProps> = {}) {
@@ -102,19 +96,7 @@ describe("Composer (composer)", () => {
     },
   );
 
-  it("offers Auto too in the dev app of make playground", () => {
-    vi.mocked(servedCheckout).mockReturnValue("/srv/demo/agent-hub");
-    open();
-
-    expect(
-      within(screen.getByRole("combobox", { name: "Mode" }))
-        .getAllByRole("option")
-        .map((option) => option.getAttribute("value")),
-    ).toEqual(["default", "acceptEdits", "plan", "auto"]);
-  });
-
-  it("offers Auto in the built app too, never a bypass mode, and posts a mode change", async () => {
-    vi.mocked(servedCheckout).mockReturnValue(null);
+  it("offers Auto in every app, never a bypass mode, and posts a mode change", async () => {
     const { props } = open();
     const mode = screen.getByRole("combobox", { name: "Mode" });
     const values = within(mode)
@@ -129,8 +111,7 @@ describe("Composer (composer)", () => {
     expect(props.onSettings).toHaveBeenCalledWith({ mode: "auto" });
   });
 
-  it("shows a session in Auto as Auto in the built app, and offers it", () => {
-    vi.mocked(servedCheckout).mockReturnValue(null);
+  it("shows a session in Auto as Auto, and offers it", () => {
     open({ mode: "auto" });
     const mode = screen.getByRole("combobox", { name: "Mode" });
 

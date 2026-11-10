@@ -3,10 +3,10 @@
 Setting sources stay at the CLI's defaults (user, project, local), so the workdir's CLAUDE.md,
 hooks, skills and agents load as in a terminal; a session outside the hub also loads the hub's
 plugins (``StartSpec.plugin_dirs``), so its skills and agents answer there too. A permission
-mode is always passed: with none the CLI runs ``auto`` (spike), which the web never offers. The
-CLI accepts ``default`` as it is, so no mode is renamed (E15). The SDK runs the ``claude`` found
-on ``PATH`` (``cli_path``), never the binary bundled in its wheel. The child's stderr is
-discarded: it may hold conversation text, which no server log keeps.
+mode is always passed: with none the CLI runs ``auto`` (spike), so a session runs in ``auto``
+only when the user picked it. The CLI accepts ``default`` as it is, so no mode is renamed (E15).
+The SDK runs the ``claude`` found on ``PATH`` (``cli_path``), never the binary bundled in its
+wheel. The child's stderr is discarded: it may hold conversation text, which no server log keeps.
 
 The child loses the hub's declared credentials (``environment``). An investigation session
 (``StartSpec.tool_policy``, P-17) gets only the built-in tools ``Read``, ``Glob``, ``Grep``,

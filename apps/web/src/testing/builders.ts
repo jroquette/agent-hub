@@ -1258,7 +1258,7 @@ export function anAgentSession(overrides: Partial<AgentSession> = {}): AgentSess
 export function aPermissionRequest(overrides: Partial<OpenPermission> = {}): OpenPermission {
   return {
     asked_at: at(30),
-    deadline_at: at(630),
+    deadline_at: at(30 + 86_400),
     input: null,
     request_id: "req-1",
     request_kind: "tool",
