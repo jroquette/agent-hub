@@ -95,22 +95,18 @@ def a_snapshot() -> TicketSnapshot:
     )
 
 
-@pytest.mark.parametrize(
-    ("transport", "read"),
-    [("mcp", NOT_CONNECTED_READ), ("api", NOT_CONNECTED_READ), ("mcp", a_read())],
-    ids=["mcp", "no-key", "mcp-cold"],
-)
-def test_serves_plan_fallback_when_transport_mcp_or_no_key(
-    transport: str, read: SnapshotRead
+@pytest.mark.parametrize("transport", ["mcp", "api"])
+def test_serves_plan_fallback_when_no_key(
+    transport: str,
 ) -> None:
     tickets = feature_tickets(
-        a_folder(), read, project="demo", tracker=a_tracker(transport), now=READ_TIME
+        a_folder(), NOT_CONNECTED_READ, project="demo", tracker=a_tracker(transport), now=READ_TIME
     )
 
     assert (tickets.project, tickets.slug, tickets.source) == ("demo", "demo-feature", "plan")
     assert tickets.notice == (
         "From the plan (features.json); Linear is not connected for hub web, so status may be "
-        "stale. Set LINEAR_API_KEY where hub web runs."
+        "stale. Connect Linear in Settings, or set LINEAR_API_KEY where hub web runs."
     )
     assert tickets.notice == NOT_CONNECTED_NOTICE
     assert [(row.ref, row.state, row.reviewed) for row in tickets.tickets] == [
@@ -121,6 +117,19 @@ def test_serves_plan_fallback_when_transport_mcp_or_no_key(
     assert tickets.tracker_problem is not None
     assert tickets.tracker_problem.type == f"{PROBLEM_TYPE_PREFIX}not_connected"
     assert tickets.tracker_problem.status == 503
+
+
+def test_serves_linear_status_when_transport_mcp_and_read() -> None:
+    tickets = feature_tickets(
+        a_folder(),
+        a_read(snapshot=a_snapshot()),
+        project="demo",
+        tracker=a_tracker("mcp"),
+        now=READ_TIME,
+    )
+
+    assert tickets.source == "linear"
+    assert tickets.tracker_problem is None
 
 
 def test_says_not_loaded_when_cache_cold() -> None:

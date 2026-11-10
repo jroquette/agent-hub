@@ -469,10 +469,11 @@ class CachedAvailability:
 class TicketReaders:
     """The ``reader_of`` of ``CachedTicketSnapshots``: ``reader``, or None when not connected.
 
-    Not connected (Not-connected rule, ADR 0025): the request's or the registered hub's
-    ``tracker.transport`` is ``mcp`` (never read through MCP), or ``LINEAR_API_KEY`` is unset or
-    empty in ``environ``. Both are read on every call, so a key set while ``hub web`` runs takes
-    effect at once; no network here, and the key is only tested for presence.
+    Not connected: ``LINEAR_API_KEY`` is unset or empty in ``environ`` (the environment, then
+    Settings' key file). A hub whose ``tracker.transport`` is ``mcp`` is still read through
+    GraphQL when a key is there: the transport is how the hub's agents reach Linear, and hub web
+    never reads through MCP. The key is read on every call, so a key set while ``hub web`` runs
+    takes effect at once; no network here, and the key is only tested for presence.
     """
 
     def __init__(
@@ -483,8 +484,6 @@ class TicketReaders:
         self._reader = reader
 
     def __call__(self, request: SnapshotRequest) -> TrackerReader | None:
-        if request.transport == "mcp" or self._facts.tracker_transport_of(request.project) == "mcp":
-            return None
         if not self._environ.get(LINEAR_API_KEY_VARIABLE):
             return None
         return self._reader

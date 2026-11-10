@@ -5,8 +5,7 @@ Linear's snapshot (fresh, or ``stale`` after a failed read), else the plan (``fe
 with a notice saying why. ``tracker_problem`` names a failed read as RFC 9457 members (E9):
 ``type`` ``urn:agent-hub:problem:tracker-<kind>``, ``status`` Linear's HTTP error status, else
 502 for an answer of another shape, 504 for a timeout and 503 when Linear gave no answer. The
-failure's detail is redacted (r1) and clipped: the key never shows. The MCP transport is never
-connected for hub web, whatever the read says. Each row carries its ticket flow
+failure's detail is redacted (r1) and clipped: the key never shows. Each row carries its ticket flow
 (``ticket_flow.py``) from the folder's ticket records, plan change requests, review rounds, review
 records and evals.
 """
@@ -45,7 +44,7 @@ from agent_hub.core.redaction.redact import clip, redact_text
 PROBLEM_TYPE_PREFIX: Final = "urn:agent-hub:problem:tracker-"
 NOT_CONNECTED_NOTICE: Final = (
     "From the plan (features.json); Linear is not connected for hub web, so status may be "
-    "stale. Set LINEAR_API_KEY where hub web runs."
+    "stale. Connect Linear in Settings, or set LINEAR_API_KEY where hub web runs."
 )
 NOT_LOADED_NOTICE: Final = LINEAR_NOT_LOADED_REASON
 DETAIL_CHARS: Final = 300
@@ -87,8 +86,6 @@ def feature_tickets(
 ) -> FeatureTickets:
     """The feature's tickets as ``read`` serves them, for the hub whose tracker is ``tracker``;
     ``repos`` maps each hub repo's ``dir`` to its GitHub ``owner/name`` (pull request links)."""
-    if tracker.transport == "mcp":
-        read = NOT_CONNECTED_READ
     parts = feature_parts(folder, read, now=now, repos=repos)
     unread = LINEAR_NOT_LOADED if read.failure is None else LINEAR_NOT_CONNECTED
     evidence = ticket_evidence(
