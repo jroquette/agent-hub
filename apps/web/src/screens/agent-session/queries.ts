@@ -157,8 +157,8 @@ export function useSessionAbout(session: AgentSession | undefined): SessionAbout
     { path: { session_id: observed ?? "" } },
     { enabled: observed !== null, staleTime: 30_000, retry: false },
   );
-  const tickets = useTicketLookup(session?.project ?? null);
   const label = twin.data?.label;
+  const tickets = useTicketLookup(session?.project ?? null, { read: Boolean(label?.issue) });
   const feature = label?.issue ? tickets.get(label.issue.toUpperCase()) : undefined;
   useTicketTitles(feature);
   return {

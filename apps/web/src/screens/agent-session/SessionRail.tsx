@@ -198,7 +198,8 @@ export function SessionRail({ current }: { current: string }) {
       sort: "-last_activity_at",
     },
   });
-  const tickets = useTicketLookup(scope);
+  const onTickets = observed.data?.items.some((session) => issueOf(session) !== null) ?? false;
+  const tickets = useTicketLookup(scope, { read: onTickets });
   const [open, setOpen] = useState(() => readStored(RAIL_KEY) !== "closed");
   const [filter, setFilter] = useState("");
   const [layout, setLayout] = useState<HTMLElement | null>(null);
