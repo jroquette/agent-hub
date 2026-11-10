@@ -821,3 +821,12 @@
   white-space: nowrap;
   cursor: help;
 }
+
+/* "Blocks 12": how many open tickets wait on this one, so the cards that hold the work stand out. */
+.ah-flow-blocks {
+  color: var(--text-muted);
+}
+.ah-flow-blocks b {
+  font-weight: 600;
+  color: var(--text);
+}

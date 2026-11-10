@@ -304,42 +304,48 @@ describe("PlanningView", () => {
     );
   });
 
-  it("draws a large flow's lines only for the ticket pointed at, and caps a card's blockers", async () => {
+  it("draws a large flow's lines to the next group at rest, a skipping line on hover, and caps a card's blockers", async () => {
     const user = userEvent.setup();
     const roots = Array.from({ length: 30 }, (_, i) => `R${String(i + 1)}`);
+    const waiting = (ref: string, title: string, on: readonly string[]) =>
+      aTicketRow({
+        ref,
+        key: ref,
+        id: null,
+        title,
+        url: null,
+        readiness: "waiting",
+        blocked_by: on.map((b) => ({ ref: b, source: "plan" as const })),
+        waiting_on: [...on],
+      });
     const tickets = [
       ...roots.map((ref) =>
         aTicketRow({ ref, key: ref, id: null, title: `Root ${ref}`, url: null }),
       ),
-      aTicketRow({
-        ref: "W1",
-        key: "W1",
-        id: null,
-        title: "Waits on many",
-        url: null,
-        readiness: "waiting",
-        blocked_by: roots.slice(0, 5).map((ref) => ({ ref, source: "plan" as const })),
-        waiting_on: roots.slice(0, 5),
-      }),
+      waiting("W1", "Waits on many", roots.slice(0, 5)),
+      waiting("W2", "Waits on W1 and R9", ["W1", "R9"]),
     ];
     const big = aTicketPlan({
-      layers: [roots, ["W1"]],
+      layers: [roots, ["W1"], ["W2"]],
       can_start: roots,
-      order: [...roots, "W1"],
-      waiting: ["W1"],
+      order: [...roots, "W1", "W2"],
+      waiting: ["W1", "W2"],
       critical_path: [],
     });
     const { container } = render(<PlanningView tickets={tickets} planning={big} />);
 
     expect(isLargeFlow(31, 5)).toBe(true);
     expect(isLargeFlow(10, 12)).toBe(false);
-    expect(container.querySelector("[data-edge]")).toBeNull();
+    const edge = (key: string) => container.querySelector(`[data-edge="${key}"]`);
+    expect(edge("R1→W1")).not.toBeNull();
+    expect(edge("R9→W2")).toBeNull();
     const card = screen.getByRole("listitem", { name: "W1 · Waits on many" });
     expect(card).toHaveTextContent("Waiting on R1, R2 and 3 more");
     expect(within(card).getByText("3 more")).toHaveAttribute("title", "R3, R4, R5");
+    expect(screen.getByRole("listitem", { name: "R1 · Root R1" })).toHaveTextContent("Blocks 1");
 
-    await user.hover(within(card).getByText("Waits on many"));
-    expect(container.querySelector('[data-edge="R1→W1"]')).not.toBeNull();
+    await user.hover(screen.getByText("Waits on W1 and R9"));
+    expect(container.querySelector(".ah-flow-edges-top [d]")).not.toBeNull();
   });
 
   it("says on a card only what its readiness adds to the Linear status (card)", () => {
