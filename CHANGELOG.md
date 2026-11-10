@@ -11,6 +11,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-11-10
+
 ### Added
 
 - `hub doctor` warns `workflows.shadow` for each hub workflow that overrides the built-in of its name (AGH-699). A
@@ -81,10 +83,22 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   the first change after that (AGH-699).
 - A live session stream no longer drops a frame published while it replays the stored ones (AGH-699).
 - `make check` no longer leaves `vite preview` servers running (AGH-699).
+- A stream attached to a live session replays the stored records only up to the session's last record at attach, and
+  its catch-up replay stops the same way, so a record emitted after the client connected arrives live and whole, never
+  as its redacted stored copy (AGH-725).
+- The guard's Bash rule for the curated `brain/` asks only when a command writes into the hub's own brain, read as a
+  path from the session's folder or a leading `cd <folder> &&`, not on any `brain/` in the text such as the web app's
+  `apps/web/src/screens/brain/` (AGH-720). It also asks on `brain/` itself, on `>|` and on a word split by quotes.
+  Arrives after you bump `platform.version` and run `hub sync`.
+- `hub web`: a click on a step of a proposal under review selects it and keeps the focus; the step list no longer
+  rebuilds its parallel blocks on every render (AGH-659).
 
 ### Security
 
 - vite 8.3.5, vitest 5.0.5, undici 7.30.2 and certifi 2026.10.23, past their published advisories (AGH-699).
+- `hub web`'s owner sign-off route (`POST /features/{project}/{slug}/owner-signoff`) needs this server's Origin, a
+  JSON body and the launch cookie, like the other item writes (AGH-695). Before, a request with no cookie and no
+  Origin could write a SHIP eval with `provenance: owner`. In the container it answers 409 `hub_read_only`.
 
 ## [0.33.0] - 2026-11-06
 
@@ -1720,7 +1734,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.33.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.34.0...HEAD
+[0.34.0]: https://github.com/jroquette/agent-hub/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/jroquette/agent-hub/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/jroquette/agent-hub/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/jroquette/agent-hub/compare/v0.30.0...v0.31.0
