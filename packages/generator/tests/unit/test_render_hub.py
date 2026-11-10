@@ -3158,9 +3158,8 @@ class TestCiWorkflow:
         # no other step.
         assert ci.count("secrets.") == 3
         assert f"        env:\n          TOKEN: ${{{{ {READ_REFERENCE} }}}}\n" in credential
-        assert (
-            f"        env:\n          TOKEN: ${{{{ {APP_OUTPUT_REFERENCE} || {REPOS_REFERENCE} }}}}\n" in repos
-        )
+        repos_token = f"{APP_OUTPUT_REFERENCE} || {REPOS_REFERENCE}"
+        assert f"        env:\n          TOKEN: ${{{{ {repos_token} }}}}\n" in repos
         assert ci.count("HUB_REPOS_READ_TOKEN }}") == 1
         assert ci.count(APP_OUTPUT_REFERENCE) == 1
         # The token reaches git only through the job's environment, set by the credential block,
