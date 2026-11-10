@@ -235,6 +235,35 @@ describe("NewFeatureScreen", () => {
     window.localStorage.removeItem("ah.session.effort");
   });
 
+  it("offers Auto in a built app, never a bypass mode, and starts in Auto when picked", async () => {
+    const user = userEvent.setup();
+    const view = renderNew();
+    await user.type(await screen.findByLabelText("What do you want to build?"), IDEA);
+    const mode = screen.getByRole("combobox", { name: "Mode" });
+    const values = within(mode)
+      .getAllByRole("option")
+      .map((option) => option.getAttribute("value"));
+
+    expect(values).toEqual(["default", "acceptEdits", "plan", "auto"]);
+    expect(values).not.toContain("bypassPermissions");
+    expect(values).not.toContain("dontAsk");
+    expect(mode).toHaveValue("default");
+    await user.selectOptions(mode, "auto");
+    await waitFor(async () => {
+      expect(await ready()).not.toHaveAttribute("aria-disabled");
+    });
+    await user.click(screen.getByRole("button", { name: "Start with Claude" }));
+
+    const created = await waitFor(() => {
+      const found = view.requests.find(
+        (r) => r.method === "POST" && new URL(r.url).pathname === "/api/v1/agent-sessions",
+      );
+      expect(found).toBeDefined();
+      return found;
+    });
+    expect(JSON.parse((await created?.clone().text()) ?? "{}")).toMatchObject({ mode: "auto" });
+  });
+
   it("starts on Ctrl+Enter from the brief (AC-420.6)", async () => {
     const user = userEvent.setup();
     const view = renderNew();

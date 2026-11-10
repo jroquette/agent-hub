@@ -960,7 +960,7 @@ async def test_keeps_raw_open_request_and_stores_redacted_when_permission_reques
     assert snapshot.status == AgentSessionStatus.WAITING_PERMISSION
     assert snapshot.open_permission is not None
     assert GITHUB_TOKEN in snapshot.open_permission.summary
-    assert snapshot.open_permission.deadline_at == START + timedelta(minutes=10)
+    assert snapshot.open_permission.deadline_at == START + timedelta(days=1)
     assert GITHUB_TOKEN not in str(stored.body)
     assert stored.body["request_id"] == "req-1"
     assert _suggestion_indexes(stored.body) == [0]

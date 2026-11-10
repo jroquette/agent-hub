@@ -113,28 +113,29 @@ describe("Composer (composer)", () => {
     ).toEqual(["default", "acceptEdits", "plan", "auto"]);
   });
 
-  it("offers only the three web modes and posts a mode change", async () => {
+  it("offers Auto in the built app too, never a bypass mode, and posts a mode change", async () => {
     vi.mocked(servedCheckout).mockReturnValue(null);
     const { props } = open();
     const mode = screen.getByRole("combobox", { name: "Mode" });
+    const values = within(mode)
+      .getAllByRole("option")
+      .map((option) => option.getAttribute("value"));
 
-    expect(
-      within(mode)
-        .getAllByRole("option")
-        .map((option) => option.getAttribute("value")),
-    ).toEqual(["default", "acceptEdits", "plan"]);
-    await userEvent.selectOptions(mode, "plan");
+    expect(values).toEqual(["default", "acceptEdits", "plan", "auto"]);
+    expect(values).not.toContain("bypassPermissions");
+    expect(values).not.toContain("dontAsk");
+    await userEvent.selectOptions(mode, "auto");
 
-    expect(props.onSettings).toHaveBeenCalledWith({ mode: "plan" });
+    expect(props.onSettings).toHaveBeenCalledWith({ mode: "auto" });
   });
 
-  it("shows a session in Auto as Auto in the built app, without offering it", () => {
+  it("shows a session in Auto as Auto in the built app, and offers it", () => {
     vi.mocked(servedCheckout).mockReturnValue(null);
     open({ mode: "auto" });
     const mode = screen.getByRole("combobox", { name: "Mode" });
 
     expect(mode).toHaveValue("auto");
-    expect(within(mode).getByRole("option", { name: "Auto" })).toBeDisabled();
+    expect(within(mode).getByRole("option", { name: "Auto" })).toBeEnabled();
   });
 
   it("AC-681.4 posts a model change and keeps a custom current model in the list", async () => {
