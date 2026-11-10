@@ -696,9 +696,10 @@ in [design/agent-sessions.md](design/agent-sessions.md)):
   (the guard still applies, before any prompt), skills and agents. The SDK is the optional extra
   `agent-hub[sessions]`; without it, or without `claude`, the screen says why and every write answers 503.
 - **Control.** Send messages (also while a turn runs), interrupt, answer permission prompts (allow once, deny with a
-  message, always allow one suggested rule; `AskUserQuestion` and plan approval too; unanswered in 10 minutes is a
-  deny), change mode (`default`, `acceptEdits`, `plan`, and `auto`, which only the dev app offers,
-  [ADR 0036](adr/0036-live-playground-and-auto-mode.md); never `bypassPermissions` or `dontAsk`), model (an alias,
+  message, always allow one suggested rule; `AskUserQuestion` and plan approval too; unanswered in a day is a deny,
+  [ADR 0059](adr/0059-auto-mode-offered-in-every-app.md)), change mode (`default`, `acceptEdits`, `plan`, and `auto`,
+  which every app offers and only the dev app preselects, [ADR 0059](adr/0059-auto-mode-offered-in-every-app.md);
+  never `bypassPermissions` or `dontAsk`), model (an alias,
   `default`, `opus`, `fable`, `sonnet` or `haiku`, or a model id), effort (`low` to `max`, or the CLI's own pick) and
   Ultracode, each also chosen at start and kept when the session reopens (AGH-681), close,
   resume or fork a past session of that workdir, delete an ended one. A message to an ended local session (not
@@ -758,7 +759,8 @@ work on a hub's artifacts, and on agent-hub's own web app, with Claude from `hub
   [ADR 0042](adr/0042-no-live-session-limit-in-the-playground.md)), and `make live`: the checkout's API on 7421, restarted on each Python change, and
   the web app on 5173, whose proxy sends the agent-session routes to the conductor, so a change never ends a session.
   One address (`/__playground/session?token=`) signs the browser in. The dev app's shake and New session start in
-  the served checkout's project and folder, preselecting Claude Code's `auto` mode; built apps never offer it.
+  the served checkout's project and folder, preselecting Claude Code's `auto` mode; built apps offer it without
+  preselecting it ([ADR 0059](adr/0059-auto-mode-offered-in-every-app.md)).
 - **Export.** `make playground-export` turns the playground's validated commits into a delivery's input, in the
   ignored `.playground/exports/<stamp>/`: the changes grouped by screen or package, the owner's requests, the
   reference patch and each touched screen captured on synthetic data, the delivery's visual baseline (AGH-263,

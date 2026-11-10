@@ -960,7 +960,7 @@ async def test_keeps_raw_open_request_and_stores_redacted_when_permission_reques
     assert snapshot.status == AgentSessionStatus.WAITING_PERMISSION
     assert snapshot.open_permission is not None
     assert GITHUB_TOKEN in snapshot.open_permission.summary
-    assert snapshot.open_permission.deadline_at == START + timedelta(minutes=10)
+    assert snapshot.open_permission.deadline_at == START + timedelta(days=1)
     assert GITHUB_TOKEN not in str(stored.body)
     assert stored.body["request_id"] == "req-1"
     assert _suggestion_indexes(stored.body) == [0]
@@ -1110,6 +1110,24 @@ async def test_denies_by_timeout_when_deadline_passes(make_rig: MakeRig) -> None
     await rig.until_status(session_id, "idle")
 
     assert still.open_permission is not None
+    assert rig.driver.answers == {"req-1": Deny(message=TIMEOUT_MESSAGE)}
+    assert _decisions(rig) == [("timeout", "deny")]
+
+
+async def test_keeps_waiting_past_idle_limit_and_denies_after_a_day_when_default_limits(
+    make_rig: MakeRig,
+) -> None:
+    rig = await _waiting(make_rig)
+    session_id = rig.created[0].id
+
+    await rig.control.sweep(rig.clock.advance(2 * 3600))
+    waiting = await rig.control.snapshot(session_id)
+    await rig.control.sweep(rig.clock.advance(86_400 - 2 * 3600))
+    await rig.until_status(session_id, "idle")
+
+    assert waiting.status == AgentSessionStatus.WAITING_PERMISSION
+    assert waiting.open_permission is not None
+    assert waiting.end_reason is None
     assert rig.driver.answers == {"req-1": Deny(message=TIMEOUT_MESSAGE)}
     assert _decisions(rig) == [("timeout", "deny")]
 

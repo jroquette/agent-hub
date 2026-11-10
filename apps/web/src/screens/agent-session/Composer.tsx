@@ -19,7 +19,6 @@ import {
 import { ApiProblem } from "../../lib/api";
 import { cx } from "../../lib/cx";
 import type { MessageFile } from "../../lib/messageFile";
-import { servedCheckout } from "../../lib/devCheckout";
 import { useAutoGrow } from "../../lib/useAutoGrow";
 import { rememberEffort, type EffortLevel } from "./effort";
 import { ModelMenu } from "./ModelMenu";
@@ -27,13 +26,11 @@ import { useSlashMenu, type SlashOption } from "./SlashMenu";
 import { useDraft } from "./useDraft";
 import { modeLabel, type AgentSessionStatus, type PermissionMode } from "./model";
 
-/** The modes the web offers (D5): never bypassPermissions or dontAsk. */
-export const MODES: readonly PermissionMode[] = ["default", "acceptEdits", "plan"];
+/**
+ * The modes the web offers (D5), `auto` in every app (ADR 0059): never bypassPermissions or dontAsk.
+ */
+export const MODES: readonly PermissionMode[] = ["default", "acceptEdits", "plan", "auto"];
 
-/** The modes to offer: `auto` too in the dev app of `make playground`, where the agent works alone. */
-export function offeredModes(): readonly PermissionMode[] {
-  return servedCheckout() === null ? MODES : [...MODES, "auto"];
-}
 /** The user message limit's default (`--message-max-bytes`: 1 MiB of UTF-8). */
 export const DEFAULT_MESSAGE_MAX_BYTES = 1024 * 1024;
 /** The composer grows with its text up to this share of the viewport, then scrolls (AC-234.26). */
@@ -175,9 +172,6 @@ export function Composer({
   const needsText = attachments.count > 0 && text.trim() === "";
   const canStop = status === "running" || status === "waiting_permission";
   const currentModel = model ?? "default";
-  // A mode set elsewhere (`auto` outside the playground) is shown, but cannot be picked here.
-  const modes = offeredModes();
-  const unofferedMode = modes.includes(mode) ? null : mode;
 
   const attachBox = useCallback(
     (element: HTMLTextAreaElement | null) => {
@@ -375,20 +369,15 @@ export function Composer({
                 value={mode}
                 disabled={ended}
                 onChange={(event) => {
-                  const next = modes.find((m) => m === event.target.value);
+                  const next = MODES.find((m) => m === event.target.value);
                   if (next) run(() => onSettings({ mode: next }), "change the mode");
                 }}
               >
-                {modes.map((m) => (
+                {MODES.map((m) => (
                   <option key={m} value={m}>
                     {modeLabel(m)}
                   </option>
                 ))}
-                {unofferedMode && (
-                  <option value={unofferedMode} disabled>
-                    {modeLabel(unofferedMode)}
-                  </option>
-                )}
               </select>
               <span className="as-pill-value" aria-hidden="true">
                 {modeLabel(mode)}

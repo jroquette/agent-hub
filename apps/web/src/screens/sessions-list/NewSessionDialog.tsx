@@ -20,7 +20,7 @@ import { fileBody } from "../../lib/messageFile";
 import { screenshotBody } from "../../lib/pastedImage";
 import { readStored, writeStored } from "../../lib/storage";
 import { useAutoGrow } from "../../lib/useAutoGrow";
-import { offeredModes, DEFAULT_MESSAGE_MAX_BYTES } from "../agent-session/Composer";
+import { MODES, DEFAULT_MESSAGE_MAX_BYTES } from "../agent-session/Composer";
 import { modeLabel, type PermissionMode } from "../agent-session/model";
 import { rememberEffort, rememberedEffort } from "../agent-session/effort";
 import { ModelMenu } from "../agent-session/ModelMenu";
@@ -134,12 +134,8 @@ export function NewSessionDialog({
   initialPrompt,
 }: NewSessionDialogProps) {
   const [picked, setPicked] = useState<string | null>(null);
-  // Only an offered mode starts checked: a built app never offers auto (ADR 0036), so a fork of an
-  // auto session started in the playground falls back to the default.
-  const [mode, setMode] = useState<PermissionMode>(() => {
-    const wanted = forkOf?.mode ?? initialMode ?? "default";
-    return offeredModes().includes(wanted) ? wanted : "default";
-  });
+  // A fork keeps its session's mode; every app offers each one, auto included (ADR 0059).
+  const [mode, setMode] = useState<PermissionMode>(forkOf?.mode ?? initialMode ?? "default");
   const shot = screenshot && "dataUrl" in screenshot ? screenshot.dataUrl : null;
   const [attach, setAttach] = useState(shot !== null);
   // A fork keeps its session's model, as "Other model id" when the capabilities do not list it.
@@ -283,8 +279,6 @@ export function NewSessionDialog({
     ...(attached ? [{ key: SHOT_KEY, url: marked ?? shot, alt: SHOT_ALT }] : []),
     ...attachments.images,
   ];
-  const modes = offeredModes();
-
   return (
     <Dialog
       title={forkOf ? "Fork session" : (title ?? "New session")}
@@ -514,11 +508,11 @@ export function NewSessionDialog({
                     value={mode}
                     disabled={pending}
                     onChange={(event) => {
-                      const next = modes.find((m) => m === event.target.value);
+                      const next = MODES.find((m) => m === event.target.value);
                       if (next) setMode(next);
                     }}
                   >
-                    {modes.map((m) => (
+                    {MODES.map((m) => (
                       <option key={m} value={m}>
                         {modeLabel(m)}
                       </option>

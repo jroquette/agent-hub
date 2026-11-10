@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiProblem } from "../../lib/api";
-import { servedCheckout } from "../../lib/devCheckout";
 import { seriousViolations } from "../../testing/axe";
 import { aCapabilities, anAgentSession, aWorkdir } from "../../testing/builders";
 import {
@@ -51,28 +50,21 @@ async function pickModel(dialog: HTMLElement, name: string) {
   await userEvent.click(screen.getByRole("menuitemradio", { name }));
 }
 
-vi.mock("../../lib/devCheckout", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../lib/devCheckout")>();
-  return { ...actual, servedCheckout: vi.fn(() => null) };
-});
-
 beforeEach(() => {
   window.localStorage.clear();
 });
 
 describe("NewSessionDialog (new-session)", () => {
-  it("offers Auto too, with its hint, in the dev app of make playground", async () => {
-    vi.mocked(servedCheckout).mockReturnValue("/srv/demo/agent-hub");
+  it("offers Auto with its hint", async () => {
     const { dialog } = open();
     const modes = within(dialog).getByRole("combobox", { name: "Mode" });
 
     expect(values(modes)).toEqual(["default", "acceptEdits", "plan", "auto"]);
     await userEvent.selectOptions(modes, "auto");
     expect(dialog).toHaveTextContent("a safety check blocks risky actions");
-    vi.mocked(servedCheckout).mockReturnValue(null);
   });
 
-  it("offers only the listed workdirs, the three modes and the capabilities' models", async () => {
+  it("offers only the listed workdirs, the four modes and the capabilities' models", async () => {
     const { dialog } = open();
 
     const folder = within(dialog).getByRole("combobox", { name: "Working folder" });
@@ -82,11 +74,11 @@ describe("NewSessionDialog (new-session)", () => {
         .map((o) => o.textContent),
     ).toEqual(["agent-hub-hub (hub)", "agh-7-collector (worktree of agent-hub)"]);
     expect(within(dialog).queryByRole("textbox", { name: /path/i })).toBeNull();
-    expect(values(within(dialog).getByRole("combobox", { name: "Mode" }))).toEqual([
-      "default",
-      "acceptEdits",
-      "plan",
-    ]);
+    // A built app offers Auto too, but starts in Ask before edits; never a bypass mode.
+    const modes = within(dialog).getByRole("combobox", { name: "Mode" });
+    expect(values(modes)).toEqual(["default", "acceptEdits", "plan", "auto"]);
+    expect(modes).toHaveValue("default");
+    expect(values(modes)).not.toContain("dontAsk");
     expect(dialog).not.toHaveTextContent(/bypass/i);
     await userEvent.click(within(dialog).getByRole("button", { name: /^Model and effort/ }));
     expect(screen.getAllByRole("menuitemradio").map((row) => row.textContent)).toEqual([
@@ -765,26 +757,15 @@ describe("NewSessionDialog (resume: fork)", () => {
     });
   });
 
-  it("resume: forking an auto session in a built app starts in Ask before edits, the checked default", async () => {
-    // ADR 0036: a built app never offers auto, so the fork does not inherit it unseen.
-    vi.mocked(servedCheckout).mockReturnValue(null);
+  it("resume: forking an auto session keeps Auto, checked", async () => {
+    // ADR 0059: every app offers auto, so the fork keeps it, in plain sight.
     const { dialog, props } = fork({ forkOf: { ...ENDED, mode: "auto" } });
 
     const modes = within(dialog).getByRole("combobox", { name: "Mode" });
-    expect(values(modes)).not.toContain("auto");
-    expect(modes).toHaveValue("default");
-    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
-    expect(vi.mocked(props.onSubmit).mock.calls[0]?.[0]).toMatchObject({ mode: "default" });
-  });
-
-  it("resume: forking an auto session in the playground keeps Auto, checked", async () => {
-    vi.mocked(servedCheckout).mockReturnValue("/srv/demo/agent-hub");
-    const { dialog, props } = fork({ forkOf: { ...ENDED, mode: "auto" } });
-
-    expect(within(dialog).getByRole("combobox", { name: "Mode" })).toHaveValue("auto");
+    expect(values(modes)).toContain("auto");
+    expect(modes).toHaveValue("auto");
     await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
     expect(vi.mocked(props.onSubmit).mock.calls[0]?.[0]).toMatchObject({ mode: "auto" });
-    vi.mocked(servedCheckout).mockReturnValue(null);
   });
 
   it("resume: the Fork dialog has no serious axe violations", async () => {

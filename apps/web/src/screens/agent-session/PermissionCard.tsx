@@ -21,7 +21,7 @@ import {
 import { ApiProblem } from "../../lib/api";
 import { cx } from "../../lib/cx";
 import { goSequencePending } from "../../shell/goSequence";
-import { fmtClock } from "../../lib/format";
+import { fmtDateTime } from "../../lib/format";
 import { StoredCopyLabel } from "./SessionStatus";
 import {
   modeLabel,
@@ -623,9 +623,10 @@ export function PermissionCard({ request, onAnswer, autoFocus }: PermissionCardP
               </Button>
             </div>
           )}
+          {/* The day too: the default wait is a day, so a clock time alone would read as past. */}
           {request.deadlineAt && (
             <p className="ah-small ah-subtle">
-              Denied automatically at {fmtClock(request.deadlineAt, "local")} if unanswered.
+              Denied automatically at {fmtDateTime(request.deadlineAt, "local")} if unanswered.
             </p>
           )}
           {sent && (

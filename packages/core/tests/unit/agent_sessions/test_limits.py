@@ -11,7 +11,7 @@ def test_defaults_match_lead_answers_when_built() -> None:
 
     assert limits.sessions_max == 4
     assert limits.idle_seconds == 1800
-    assert limits.permission_timeout_seconds == 600
+    assert limits.permission_timeout_seconds == 86_400
     assert limits.log_records == 50_000
     assert limits.log_bytes == 32 * 1024 * 1024
     assert limits.message_max_bytes == 1024 * 1024

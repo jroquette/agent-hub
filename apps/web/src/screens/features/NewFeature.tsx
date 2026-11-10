@@ -29,7 +29,7 @@ import {
   type DiscussTarget,
 } from "../../shell/discuss";
 import { rememberDiscussSession, useStartDiscussion } from "../../shell/discussSession";
-import { offeredModes } from "../agent-session/Composer";
+import { MODES } from "../agent-session/Composer";
 import { rememberEffort, rememberedEffort } from "../agent-session/effort";
 import { modeLabel, type PermissionMode } from "../agent-session/model";
 import { ModelMenu } from "../agent-session/ModelMenu";
@@ -245,7 +245,6 @@ function BriefForm({
   const focusBox = () => box.current?.focus({ preventScroll: true });
   const discussion = useStartDiscussion(project || null);
   const capabilities = useAgentCapabilities();
-  const modes = offeredModes();
   const [mode, setMode] = useState<PermissionMode>("default");
   const [model, setModel] = useState("default");
   const [effort, setEffort] = useState(rememberedEffort);
@@ -461,11 +460,11 @@ function BriefForm({
                   className="as-pill-select"
                   value={mode}
                   onChange={(event) => {
-                    const next = modes.find((m) => m === event.target.value);
+                    const next = MODES.find((m) => m === event.target.value);
                     if (next) setMode(next);
                   }}
                 >
-                  {modes.map((m) => (
+                  {MODES.map((m) => (
                     <option key={m} value={m}>
                       {modeLabel(m)}
                     </option>

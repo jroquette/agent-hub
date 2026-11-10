@@ -32,9 +32,9 @@ from agent_hub.core.scenarios.investigation import ToolPolicy
 from agent_hub.core.sessions.session import TokenUsage
 
 # The modes the web offers (D5); never bypassPermissions or dontAsk. ``auto`` (Claude Code's
-# classifier approves safe actions and blocks risky ones) is offered only by the dev app of
-# ``make playground``, where the developer works with the agent on their own checkout. The adapter
-# maps ``default`` to the installed CLI's own name for it when that differs (E15).
+# classifier approves safe actions and blocks risky ones) is offered by every app (ADR 0059) and
+# preselected only by the dev app of ``make playground``. The adapter maps ``default`` to the
+# installed CLI's own name for it when that differs (E15).
 type PermissionMode = Literal["default", "acceptEdits", "plan", "auto"]
 PERMISSION_MODES: Final = ("default", "acceptEdits", "plan", "auto")
 

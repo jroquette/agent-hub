@@ -664,10 +664,10 @@ routes still never call Linear.
 | `GET /cloud` · `POST /cloud` | cloud sessions recorded here, newest first (at most 50) · `{project, workdir_id, task}`: always 501 `cloud-unavailable` with the terminal command as `guidance` (`claude --cloud` needs a terminal; no process is run) |
 | `POST /cloud/{cloud_id}/messages` | `{text}`: 501 `cloud-unavailable` with `guidance` (no start is ever recorded, so a follow-up has nothing to reach; the `claude -p --cloud` path stays behind `cloud_followup`) |
 
-- **Modes and models.** `mode` is `default`, `acceptEdits` or `plan` (never a bypass mode). `model` is `default`,
-  `opus`, `fable`, `sonnet`, `haiku` or an id matching `^[A-Za-z0-9._\-\[\]]{1,64}$`; anything else is 422 and the driver is
-  not called. Status is `idle`, `running`, `waiting_permission`, `ended` or `failed`; without a first prompt a new
-  session is `idle` with no `init` yet.
+- **Modes and models.** `mode` is `default`, `acceptEdits`, `plan` or `auto` (never `bypassPermissions` or `dontAsk`).
+  `model` is `default`, `opus`, `fable`, `sonnet`, `haiku` or an id matching `^[A-Za-z0-9._\-\[\]]{1,64}$`; anything
+  else is 422 and the driver is not called. Status is `idle`, `running`, `waiting_permission`, `ended` or `failed`;
+  without a first prompt a new session is `idle` with no `init` yet.
 - **Workdir ids.** A `workdir_id` is the first 16 hex digits of SHA-256 over `<kind>\0<real path>` (`kind` is `hub`,
   `repo` or `worktree`). The server resolves an id only by looking it up in `GET /workdirs`; the dev client computes it
   to preselect the checkout Vite serves.
@@ -700,8 +700,8 @@ routes still never call Linear.
   carries only `addRules` suggestions with behaviour `allow` and destination `localSettings` (a `setMode`,
   `addDirectories` or other suggestion is never shown, and naming one is 422); `answers`
   only for `AskUserQuestion`; `mode` (`default` or `acceptEdits`) only for plan approval, applied after the allow.
-  Other combinations are 422. The first answer stands (a second is 409); none within 10 minutes is a deny by
-  `timeout`.
+  Other combinations are 422. The first answer stands (a second is 409); none within the permission timeout (a day by
+  default) is a deny by `timeout`.
 - **Records.** Each record is `{seq, at, kind, by, body}`. Kinds: `init`, `text`, `thinking`, `tool.call` (Edit and
   Write carry a unified `diff`), `tool.result` (at most 64 KiB, then `truncated` and `original_bytes`; a file tool's result carries the
   engine's `diff` with the file's real line numbers when Claude reported one), `todos`,

@@ -305,7 +305,7 @@ and forks it. It needs the `sessions` extra (Claude Agent SDK, about 240 MiB): f
 'agent-hub[sessions] @ git+https://github.com/jroquette/agent-hub@v<version>#subdirectory=packages/agent-hub' hub web`
 instead of `./hub web`; without it the screen says what is missing. Open the printed address once per browser: the
 token becomes a cookie the session routes need. Limits are `hub web` options with `AGENT_HUB_*` variables (`hub web
---help`; 4 live sessions, 30 min idle, 10 min to answer a prompt). Their conversations are kept, redacted, in `hub
+--help`; 4 live sessions, 30 min idle, a day to answer a prompt). Their conversations are kept, redacted, in `hub
 web`'s database for 30 days after they end (Delete removes one at once). Off in Docker. From another device, keep
 `hub web` on loopback and bring the port to it: `ssh -L 7420:127.0.0.1:7420 <host>`, or `tailscale serve` to
 `http://127.0.0.1:7420` on your own tailnet, then open the token address there; never Tailscale Funnel, ngrok or

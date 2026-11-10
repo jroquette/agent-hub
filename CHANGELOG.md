@@ -11,6 +11,15 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Changed
+
+- A permission request in a session driven by `hub web` (a tool, a question, a plan approval) now waits a day for an
+  answer before it is denied, not 10 minutes (AGH-796, ADR 0059). To keep the old wait, start `hub web` with
+  `--permission-timeout-seconds 600`.
+- Every `hub web` app offers Claude Code's `auto` mode in the composer, the New session dialog and the New feature
+  screen, not only the dev app of `make playground` (AGH-796, ADR 0059). A new session still starts in "Ask before
+  edits"; only the playground preselects Auto. `bypassPermissions` and `dontAsk` are still never offered.
+
 ## [0.34.0] - 2026-11-10
 
 ### Added
