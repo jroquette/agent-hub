@@ -1,4 +1,6 @@
 .DS_Store
+# Merge-conflict leftovers (git mergetool backups): never source.
+*.orig
 .env
 .env.*
 !.env.example
