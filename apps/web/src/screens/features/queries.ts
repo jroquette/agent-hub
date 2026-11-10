@@ -65,7 +65,8 @@ export function useTicketLookup(
     });
     (items ?? []).forEach((feature, index) => {
       for (const [id, title] of titlesOf(index)) {
-        if (!lookup.has(id)) lookup.set(id, { project: feature.project, slug: feature.slug, title });
+        if (!lookup.has(id))
+          lookup.set(id, { project: feature.project, slug: feature.slug, title });
       }
     });
     return lookup;
