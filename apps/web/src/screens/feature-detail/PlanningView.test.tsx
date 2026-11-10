@@ -346,6 +346,41 @@ describe("PlanningView", () => {
 
     await user.hover(screen.getByText("Waits on W1 and R9"));
     expect(container.querySelector(".ah-flow-edges-top [d]")).not.toBeNull();
+
+    // The counts filter the flow, and the search finds by id or title.
+    expect(screen.getByText("Showing 32 of 32 tickets")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "30 can start" }));
+    expect(screen.getByRole("button", { name: "30 can start" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.queryByRole("listitem", { name: "R1 · Root R1" })).toBeNull();
+    expect(screen.getByText("Showing 2 of 32 tickets")).toBeInTheDocument();
+    expect(screen.getByText("30 hidden by the filters", { exact: false })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Show all" }));
+    await user.type(screen.getByRole("searchbox", { name: "Find tickets" }), "many");
+    expect(screen.getByText("Showing 1 of 32 tickets")).toBeInTheDocument();
+  });
+
+  it("folds a large flow's done tickets into their group, and shows them on request", async () => {
+    const user = userEvent.setup();
+    const refs = Array.from({ length: 26 }, (_, i) => `D${String(i + 1)}`);
+    const tickets = refs.map((ref, i) =>
+      aTicketRow({
+        ref,
+        key: ref,
+        id: null,
+        title: `Ticket ${ref}`,
+        url: null,
+        readiness: i < 6 ? "done" : "can_start",
+      }),
+    );
+    const big = aTicketPlan({ layers: [refs.slice(6)], can_start: refs.slice(6), order: refs });
+    render(<PlanningView tickets={tickets} planning={big} />);
+
+    expect(screen.queryByRole("listitem", { name: "D1 · Ticket D1" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Show 6 done" }));
+    expect(screen.getByRole("listitem", { name: "D1 · Ticket D1" })).toBeInTheDocument();
   });
 
   it("says on a card only what its readiness adds to the Linear status (card)", () => {
