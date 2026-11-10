@@ -20,7 +20,7 @@ class SessionLimits(ViewModel):
     # 0: no limit on the live sessions (the playground's conductor).
     sessions_max: int = Field(default=4, ge=0, le=16)
     idle_seconds: int = Field(default=1800, ge=1, le=86_400)
-    permission_timeout_seconds: int = Field(default=600, ge=1, le=86_400)
+    permission_timeout_seconds: int = Field(default=86_400, ge=1, le=86_400)
     log_records: int = Field(default=50_000, ge=100, le=1_000_000)
     log_bytes: int = Field(default=32 * MIB, ge=64 * KIB, le=1024 * MIB)
     message_max_bytes: int = Field(default=1 * MIB, ge=KIB, le=4 * MIB)
