@@ -830,3 +830,61 @@
   font-weight: 600;
   color: var(--text);
 }
+
+/* A flow of more than 10 tickets: find, card density and how many the filters show. */
+.ah-flow-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+.ah-flow-search {
+  width: 300px;
+  max-width: 100%;
+}
+.ah-flow-search .ah-input {
+  height: 30px;
+  padding-right: 28px;
+}
+.ah-flow-search-kbd {
+  position: absolute;
+  right: 8px;
+  pointer-events: none;
+}
+/* The readiness counts as filters: a count turned off reads as off, never as gone. */
+button.ah-flow-count {
+  background: var(--surface);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+button.ah-flow-count:hover {
+  border-color: var(--border-control);
+}
+button.ah-flow-count[data-off] {
+  background: transparent;
+  border-style: dashed;
+  color: var(--text-subtle);
+}
+button.ah-flow-count[data-off] b {
+  color: var(--text-subtle);
+}
+button.ah-flow-count[data-off] .ah-flow-dot {
+  opacity: 0.35;
+}
+/* What a group's filters hide, under its cards: "Show 16 done", "4 hidden by the filters". */
+.ah-flow-col-folded {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 8px 2px 0;
+  font-size: 12px;
+  color: var(--text-subtle);
+}
+/* Compact cards: id, status, title, what to do now, what they block and the critical path. */
+.ah-flow[data-density="compact"] .ah-flow-card-steps,
+.ah-flow[data-density="compact"] .ah-flow-card-facts[data-fact="progress"],
+.ah-flow[data-density="compact"] [data-fact="who"] {
+  display: none;
+}

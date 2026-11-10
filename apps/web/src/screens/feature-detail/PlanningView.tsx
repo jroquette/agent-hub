@@ -16,6 +16,8 @@ import {
   GOLDEN_STATE_TEXT,
   Icon,
   IconButton,
+  SearchField,
+  SegmentedControl,
   StatusBadge,
   StepBar,
   Tooltip,
@@ -428,12 +430,48 @@ const COUNTED: readonly { readiness: Readiness; label: string }[] = [
 ];
 
 /** How many tickets are in each readiness: the feature's work at a glance. */
-export function ReadinessSummary({ tickets }: { tickets: readonly TicketRow[] }) {
+export function ReadinessSummary({
+  tickets,
+  hidden,
+  onToggle,
+}: {
+  tickets: readonly TicketRow[];
+  /** Given with `onToggle`, the counts are filters: a pressed count shows its tickets. */
+  hidden?: ReadonlySet<Readiness> | undefined;
+  onToggle?: ((readiness: Readiness) => void) | undefined;
+}) {
   const counts = COUNTED.map((c) => ({
     ...c,
     n: tickets.filter((t) => t.readiness === c.readiness).length,
   })).filter((c) => c.n > 0);
   if (counts.length === 0) return null;
+  if (onToggle) {
+    return (
+      <div className="ah-flow-summary" role="group" aria-label="Show tickets by readiness">
+        {counts.map((c) => {
+          const on = !hidden?.has(c.readiness);
+          return (
+            <button
+              key={c.readiness}
+              type="button"
+              className="ah-flow-count"
+              data-tone={c.readiness}
+              data-off={on ? undefined : ""}
+              aria-pressed={on}
+              aria-label={`${String(c.n)} ${c.label}`}
+              title={`${on ? "Hide" : "Show"} the ${c.label} tickets. ${READINESS_HELP[c.readiness]}`}
+              onClick={() => {
+                onToggle(c.readiness);
+              }}
+            >
+              <span className="ah-flow-dot" data-tone={c.readiness} aria-hidden="true" />
+              <b>{c.n}</b> {c.label}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
   return (
     <div className="ah-flow-summary" role="list" aria-label="Tickets by readiness">
       {counts.map((c) => (
@@ -864,7 +902,7 @@ function FlowCard({
           {signal === "local" && row.flow && <TicketSignal flow={row.flow} />}
         </div>
       )}
-      <div className="ah-flow-card-facts">
+      <div className="ah-flow-card-facts" data-fact="progress">
         <AcCount row={row} acPasses={acPasses} />
         <TicketPrLink row={row} />
         {showReviewed && (
@@ -885,7 +923,7 @@ function FlowCard({
           </span>
         )}
         {row.assignee && (
-          <span className="ah-flow-card-fact">
+          <span className="ah-flow-card-fact" data-fact="who">
             <Icon name="user" size="sm" />
             {row.assignee}
           </span>
@@ -995,6 +1033,8 @@ interface FlowColumn {
   hint: string;
   kind: "step" | "held" | "done";
   refs: readonly string[];
+  /** The group's tickets the filters hide: the done ones apart, as the group says each. */
+  folded?: { done: number; other: number } | undefined;
 }
 
 /**
@@ -1263,7 +1303,13 @@ function FlowGraph({
   legend,
   expanded,
   onExpand,
+  density = "full",
+  onShowDone,
 }: {
+  /** Compact cards keep the id, status, title, what to do now and what they block. */
+  density?: "compact" | "full" | undefined;
+  /** Given, a group with done tickets folded offers to show them. */
+  onShowDone?: (() => void) | undefined;
   columns: readonly FlowColumn[];
   byRef: ReadonlyMap<string, TicketRow>;
   tickets: readonly TicketRow[];
@@ -1315,7 +1361,7 @@ function FlowGraph({
     .map((e) => `${e.from}>${e.to}`)
     .join(
       ",",
-    )}|${far ? "far" : "near"}|${spacing.gutters.join(",")}|${String(spacing.top)},${String(spacing.bottom)}`;
+    )}|${far ? "far" : "near"}|${density}|${spacing.gutters.join(",")}|${String(spacing.top)},${String(spacing.bottom)}`;
   const viewport = useViewportSize(viewportRef);
   const { boxes, size, measured } = useNodeBoxes(worldRef, shape);
   const drawnColumns = columns.filter(({ key }) => key !== "held" && key !== "done");
@@ -1590,6 +1636,7 @@ function FlowGraph({
           aria-label="Ticket flow"
           aria-describedby={hintId}
           data-zoom={far ? "far" : undefined}
+          data-density={density === "compact" ? "compact" : undefined}
           data-animate={pz.animated ? "" : undefined}
           data-chosen={chain ? "" : undefined}
           style={worldStyle}
@@ -1716,6 +1763,24 @@ function FlowGraph({
                     );
                   })}
                 </ol>
+                {column.folded && column.folded.done + column.folded.other > 0 && (
+                  <div className="ah-flow-col-folded">
+                    {column.folded.done > 0 &&
+                      (onShowDone ? (
+                        <Button size="sm" variant="ghost" icon="circle-check" onClick={onShowDone}>
+                          Show {column.folded.done} done
+                        </Button>
+                      ) : (
+                        <span>{column.folded.done} done</span>
+                      ))}
+                    {column.folded.other > 0 && (
+                      <span>
+                        {column.refs.length === 0 && column.folded.done === 0 ? "No match: " : ""}
+                        {column.folded.other} hidden by the filters
+                      </span>
+                    )}
+                  </div>
+                )}
               </section>
             ))}
           </div>
@@ -1948,6 +2013,47 @@ export function PlanningView({
   const columns = flowColumns(tickets, planning);
   const epics = planning.epics.flatMap((ref) => byRef.get(ref) ?? []);
   const work = tickets.filter((t) => !planning.epics.includes(t.ref));
+  const workRefs = new Set(work.map((t) => t.ref));
+  const lines = work.reduce(
+    (n, t) => n + t.blocked_by.filter((e) => workRefs.has(e.ref)).length,
+    0,
+  );
+  const large = isLargeFlow(work.length, lines);
+  // A large flow opens on the work left: done and canceled tickets fold into their group's line.
+  const [hidden, setHidden] = useState<ReadonlySet<Readiness>>(
+    () => new Set<Readiness>(large ? ["done", "canceled"] : []),
+  );
+  const [query, setQuery] = useState("");
+  const [density, setDensity] = useState<"compact" | "full">(large ? "compact" : "full");
+  const toolbar = work.length > 10;
+  const q = query.trim().toLowerCase();
+  const matches = (t: TicketRow) =>
+    !q || [t.ref, t.key, t.id, t.title, t.assignee].some((v) => v?.toLowerCase().includes(q));
+  const shows = (ref: string) => {
+    const t = byRef.get(ref);
+    return !t || ref === chosen || (!hidden.has(t.readiness) && matches(t));
+  };
+  const shownColumns = columns.map((column) => {
+    const off = column.refs.filter((r) => !shows(r));
+    const done = off.filter((r) => {
+      const t = byRef.get(r);
+      return t?.readiness === "done" && hidden.has("done") && matches(t);
+    }).length;
+    return {
+      ...column,
+      refs: column.refs.filter(shows),
+      folded: { done, other: off.length - done },
+    };
+  });
+  const shownCount = work.filter((t) => shows(t.ref)).length;
+  const toggle = (readiness: Readiness) => {
+    setHidden((was) => {
+      const next = new Set(was);
+      if (next.has(readiness)) next.delete(readiness);
+      else next.add(readiness);
+      return next;
+    });
+  };
   // A done blocker outside holds nothing back: its card says "After X" and the banner stays quiet.
   const holding = external.filter((b) => !b.done);
   return (
@@ -1957,7 +2063,11 @@ export function PlanningView({
           Ticket flow
         </h2>
         <div className="ah-row" style={{ gap: 8 }}>
-          <ReadinessSummary tickets={work} />
+          <ReadinessSummary
+            tickets={work}
+            hidden={toolbar ? hidden : undefined}
+            onToggle={toolbar ? toggle : undefined}
+          />
           {expanded && onExpand && (
             <Button
               size="sm"
@@ -2013,11 +2123,57 @@ export function PlanningView({
         epics.map((epic) => (
           <EpicCard key={epic.ref} epic={epic} rows={tickets} acPasses={acPasses} />
         ))}
+      {toolbar && columns.length > 0 && (
+        <div className="ah-flow-toolbar">
+          <SearchField
+            value={query}
+            onChange={setQuery}
+            label="Find tickets"
+            placeholder="Find by id, title or assignee"
+            className="ah-flow-search"
+            kbdClassName="ah-flow-search-kbd"
+          />
+          <SegmentedControl
+            label="Cards"
+            options={[
+              { id: "compact", label: "Compact", title: "Id, status, title and what to do now" },
+              { id: "full", label: "Full", title: "Every fact of each ticket" },
+            ]}
+            value={density}
+            onChange={(id) => {
+              setDensity(id === "full" ? "full" : "compact");
+            }}
+          />
+          <span className="ah-small ah-muted" aria-live="polite">
+            Showing {shownCount} of {work.length} tickets
+          </span>
+          {shownCount < work.length && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setHidden(new Set());
+                setQuery("");
+              }}
+            >
+              Show all
+            </Button>
+          )}
+        </div>
+      )}
       {columns.length === 0 ? (
         <span className="ah-small ah-muted">No ticket to show.</span>
       ) : (
         <FlowGraph
-          columns={columns}
+          density={density}
+          onShowDone={() => {
+            setHidden((was) => {
+              const next = new Set(was);
+              next.delete("done");
+              return next;
+            });
+          }}
+          columns={shownColumns}
           byRef={byRef}
           tickets={tickets}
           external={external}
