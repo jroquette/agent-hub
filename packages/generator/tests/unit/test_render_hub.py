@@ -3119,7 +3119,11 @@ class TestCiWorkflow:
         assert "@main" not in ci
         # AGH-801: the platform secret in the credential step, the App key in the App step, the
         # repos secret in the repos step.
-        assert re.findall(r"secrets\.\w*", ci) == [READ_REFERENCE, APP_KEY_REFERENCE, REPOS_REFERENCE]
+        assert re.findall(r"secrets\.\w*", ci) == [
+            READ_REFERENCE,
+            APP_KEY_REFERENCE,
+            REPOS_REFERENCE,
+        ]
         jobs = ci[ci.index("\njobs:\n") :]
         assert re.findall(r"^  ([a-z][a-z0-9-]*):$", jobs, re.MULTILINE) == ["check"]
 
