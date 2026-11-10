@@ -812,3 +812,12 @@
     display: none;
   }
 }
+
+/* "and 12 more" after a card's capped blocker list: the full list is in its tooltip and panel. */
+.ah-flow-more {
+  color: var(--text-muted);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+  cursor: help;
+}
