@@ -92,7 +92,7 @@ is refused (`terminal`, or `log-full` naming Resume); a command while an interru
 | --- | --- | --- |
 | live sessions (`--sessions-max`) | 4 | 0-16 (0: no limit) |
 | idle seconds (`--session-idle-seconds`) | 1800 | 1-86400 |
-| permission answer seconds (`--permission-timeout-seconds`) | 600 | 1-86400 |
+| permission answer seconds (`--permission-timeout-seconds`) | 86400 (one day, ADR 0059) | 1-86400 |
 | log records (`--session-log-records`) / bytes (`--session-log-bytes`) | 50000 / 32 MiB | 100-1000000 / 64 KiB-1 GiB |
 | message bytes (`--message-max-bytes`) | 1048576 | 1024-4194304 |
 | cloud command seconds (`--cloud-timeout-seconds`) | 60 | 5-600 |
@@ -854,8 +854,9 @@ Skills  [/fix] [/review]
   dialog stays open) and Enter never starts the session. The skill buttons under the card still put a `/skill` in
   front of the prompt.
 - **AC-421.5 Mode and model in the card's bar.** Given the card, then its bar holds Attach and the mode (never
-  bypass; Auto only in the playground) and model pickers as the chat's pills, each as wide as the value it shows
-  (the native select invisible over it, AC-422.11), as is the project pill under Where; a line under the card reads
+  bypass; Auto in every app, preselected only in the playground, ADR 0059) and model pickers as the chat's pills,
+  each as wide as the value it shows (the native select invisible over it, AC-422.11), as is the project pill under
+  Where; a line under the card reads
   the mode and what it does ("Plan. Claude plans first and asks you to approve the plan."). "Other model id…" opens
   the Model id field below, and an invalid id says "The model id is not valid." on Start.
 - **AC-421.6 The shake's screenshot in the row.** Given a shake opened New session with a capture, then the capture
@@ -977,8 +978,9 @@ the menus are the web app's. AC-681.9 and AC-681.10 are for the owner to confirm
   login. No platform code reads a token or opens `~/.claude/.credentials.json`.
 - A child's environment is `hub web`'s own plus `AGENT_HUB_WEB_URL` (the bound address); never the token or the
   cookie name. Its stderr is discarded; no shell is used anywhere.
-- Never a bypass mode (`bypassPermissions`, `dontAsk`); `auto` is accepted, but offered only by the dev app of
-  `make playground` ([ADR 0036](../adr/0036-live-playground-and-auto-mode.md)); never a path from the browser.
+- Never a bypass mode (`bypassPermissions`, `dontAsk`); `auto` is accepted and offered by every app
+  ([ADR 0059](../adr/0059-auto-mode-offered-in-every-app.md)), preselected only by the dev app of `make playground`
+  ([ADR 0036](../adr/0036-live-playground-and-auto-mode.md)); never a path from the browser.
 - Stored text is redacted; the live view is not; no log line, problem detail or metric holds conversation text.
 - Every request and decision is a record; an unanswered request is a deny, never an allow.
 - No `claude` survives `hub web`; session control is off in the container (`AGENT_HUB_IN_CONTAINER=1`).

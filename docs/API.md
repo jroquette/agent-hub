@@ -700,8 +700,8 @@ routes still never call Linear.
   carries only `addRules` suggestions with behaviour `allow` and destination `localSettings` (a `setMode`,
   `addDirectories` or other suggestion is never shown, and naming one is 422); `answers`
   only for `AskUserQuestion`; `mode` (`default` or `acceptEdits`) only for plan approval, applied after the allow.
-  Other combinations are 422. The first answer stands (a second is 409); none within 10 minutes is a deny by
-  `timeout`.
+  Other combinations are 422. The first answer stands (a second is 409); none within the permission timeout (a day by
+  default) is a deny by `timeout`.
 - **Records.** Each record is `{seq, at, kind, by, body}`. Kinds: `init`, `text`, `thinking`, `tool.call` (Edit and
   Write carry a unified `diff`), `tool.result` (at most 64 KiB, then `truncated` and `original_bytes`; a file tool's result carries the
   engine's `diff` with the file's real line numbers when Claude reported one), `todos`,
