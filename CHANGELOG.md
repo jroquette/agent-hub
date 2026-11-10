@@ -11,8 +11,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+## [0.35.1] - 2026-11-10
+
 ### Fixed
 
+- `hub web` names a session started on a ticket by that ticket's title, not by Claude Code's chat title (AGH-800). It
+  now finds the ticket in each feature's ticket plan too, not only in the feature's `issues`.
 - Hub CI no longer fails every pull request of a hub whose repos are private when it has no token for them
   (AGH-801). The `Repos beside the hub` step skips a repo it cannot clone with one notice, and `hub doctor` reports it
   as not checked out. Do nothing to keep those repos' rules local-only. To run them in CI, give it a read token: in an
@@ -1763,7 +1767,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.35.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.35.1...HEAD
+[0.35.1]: https://github.com/jroquette/agent-hub/compare/v0.35.0...v0.35.1
 [0.35.0]: https://github.com/jroquette/agent-hub/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/jroquette/agent-hub/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/jroquette/agent-hub/compare/v0.32.0...v0.33.0
