@@ -947,6 +947,69 @@ describe("FeatureDetailScreen", () => {
       expect(screen.getByText("No evidence recorded yet.")).toBeInTheDocument();
     });
 
+    const failing = {
+      id: "AC-48.1",
+      description: "Given the cart, when it is saved, then nothing else changes",
+      repo: "agent-hub",
+      passes: false,
+      manual: false,
+      signed_off: false,
+      evidence: "exit 1: cart tests 10 passed, but git diff --quiet origin/main exits 1",
+      command: "uv run pytest -k cart && git diff --quiet origin/main",
+    };
+    const openFailing = () =>
+      open(
+        {
+          [API]: aFeatureDetail({
+            slug: "layered-memory",
+            acs: { owner_steps: 0, passing: 1, total: 2 },
+            ac_rows: [failing, { ...failing, id: "AC-48.2", passes: true, evidence: "test run" }],
+          }),
+        },
+        "/features/agent-hub/layered-memory?doc=acs",
+      );
+
+    it("AC-804.1.1 says the command failed when its tests passed but it exited non-zero", async () => {
+      openFailing();
+
+      const table = await screen.findByRole("table", { name: "Acceptance criteria" });
+      await userEvent.click(within(table).getByRole("button", { name: "Expand AC-48.1" }));
+
+      const proven = within(table).getByRole("region", { name: "How it was proven" });
+      expect(proven).toHaveTextContent("Command failed (exit code 1)");
+      expect(proven).not.toHaveTextContent("10 tests passed");
+    });
+
+    it("AC-804.1.2 shows the evaluator's note openly, with next steps, on a criterion that does not pass", async () => {
+      openFailing();
+
+      const table = await screen.findByRole("table", { name: "Acceptance criteria" });
+      await userEvent.click(within(table).getByRole("button", { name: "Expand AC-48.1" }));
+
+      const failed = within(table).getByRole("region", { name: "How it was proven" });
+      const why = within(failed).getByRole("note", { name: "Why it is not passing" });
+      expect(why).toBeVisible();
+      expect(why).toHaveTextContent("Why it is not passing, in the evaluator's words");
+      expect(why).toHaveTextContent(failing.evidence);
+      expect(why).toHaveTextContent(/What you can do: .*run \/evaluate again/);
+      expect(why).toHaveTextContent("I checked it, mark as passing");
+      expect(within(failed).queryByText(/Full evidence as recorded/)).not.toBeInTheDocument();
+
+      await userEvent.click(within(table).getByRole("button", { name: "Expand AC-48.2" }));
+      const passed = within(table).getByRole("region", { name: "How it was proven" });
+      expect(within(passed).queryByRole("note", { name: "Why it is not passing" })).toBeNull();
+      expect(within(passed).getByText(/Full evidence as recorded/)).toBeInTheDocument();
+    });
+
+    it("has no serious a11y violations with a criterion that does not pass open (a11y)", async () => {
+      const { container } = openFailing();
+      const table = await screen.findByRole("table", { name: "Acceptance criteria" });
+      await userEvent.click(within(table).getByRole("button", { name: "Expand AC-48.1" }));
+      await within(table).findByRole("note", { name: "Why it is not passing" });
+
+      expect(await seriousViolations(container)).toEqual([]);
+    });
+
     it("has no serious a11y violations on a record tab (a11y)", async () => {
       const { container } = open({}, "/features/agent-hub/layered-memory?doc=plan");
       await screen.findByRole("heading", { level: 2, name: "Open questions" });

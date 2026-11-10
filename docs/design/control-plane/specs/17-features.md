@@ -695,6 +695,29 @@ Tests: `DesignsTab.test.tsx`; `test_features.py` (unit and integration), `test_h
   context brief in Brain" (`features/<slug>/tickets/<id>/brief.md`) instead of saying "Not reached".
   Test: `TicketPanel.test.tsx` "links a done Context step to the ticket's context brief in Brain".
 
+## Departures (AGH-804, the playground's v0.35 work)
+
+Built after the owner validated these in the playground (snapshot `20261110T222238Z`); where the sections above say
+otherwise, this list wins.
+
+**Why a criterion is not passing** (the Criteria tab's "How it was proven")
+
+- **AC-804.1.1 A command that failed after its tests.** Given evidence whose tests passed but whose command exited
+  non-zero (`exit 1: … 10 passed, but git diff --quiet … exits 1`), then the headline reads "Command failed (exit
+  code 1)", not "10 tests passed", and the explanation adds that no test failed, so another step of the command (a
+  diff or a grep after the tests) did, and that the evaluator's note says which.
+- **AC-804.1.2 The evaluator's note, open.** Given a criterion that does not pass and has evidence, then the evidence
+  shows openly in a `failed`-edged note "Why it is not passing, in the evaluator's words" (`role="note"`), with "What
+  you can do: read the eval record above for the full story; fix the code or the verification command and run
+  /evaluate again; or, if you checked it yourself, use **I checked it, mark as passing** below."; a passing criterion
+  keeps the folded "Full evidence as recorded in features.json".
+
+Tests: `acEvidence.test.ts` "says the command failed when its tests passed but it exited non-zero"; `index.test.tsx`
+"AC-804.1.1 …", "AC-804.1.2 …" and "has no serious a11y violations with a criterion that does not pass open (a11y)".
+
+**New feature** (Screen 3): a start opens the session's chat, as New session and a ticket's Start do; AC-420.6 below
+says so and AC-420.7 (the sent card) is superseded.
+
 ## Screen 1: Features list
 
 **Route:** `/features` · **Answers:** "Which features are moving through the golden path, and how close is each to done?"
