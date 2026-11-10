@@ -3057,6 +3057,7 @@ REPOS_STEP = "Repos beside the hub"
 GOLDEN_STEP = "Golden (hub sync --check)"
 MAKE_CHECK_STEP = "make check"
 READ_REFERENCE = "secrets.AGENT_HUB_READ_TOKEN"
+REPOS_REFERENCE = "secrets.HUB_REPOS_READ_TOKEN"
 
 
 def ci_steps(ci: str) -> list[str]:
@@ -3112,8 +3113,8 @@ class TestCiWorkflow:
         assert "run: make check" in ci
         assert not re.search(r"(?:version: \"?|@)latest", ci)
         assert "@main" not in ci
-        # AGH-699 A-13: the one read secret, in the credential step and the repos step.
-        assert re.findall(r"secrets\.\w*", ci) == [READ_REFERENCE, READ_REFERENCE]
+        # AGH-801: the platform secret in the credential step, the repos secret in the repos step.
+        assert re.findall(r"secrets\.\w*", ci) == [READ_REFERENCE, REPOS_REFERENCE]
         jobs = ci[ci.index("\njobs:\n") :]
         assert re.findall(r"^  ([a-z][a-z0-9-]*):$", jobs, re.MULTILINE) == ["check"]
 
@@ -3144,10 +3145,12 @@ class TestCiWorkflow:
         repos = ci_step(ci, REPOS_STEP)
         repos_block = run_block(repos)
 
-        # AGH-699 A-13: the repos step reads the same secret, in its own env only.
+        # AGH-801: each step reads its own secret, in its own env only; the repos secret reaches
+        # no other step.
         assert ci.count("secrets.") == 2
-        for step in (credential, repos):
-            assert f"        env:\n          TOKEN: ${{{{ {READ_REFERENCE} }}}}\n" in step
+        assert f"        env:\n          TOKEN: ${{{{ {READ_REFERENCE} }}}}\n" in credential
+        assert f"        env:\n          TOKEN: ${{{{ {REPOS_REFERENCE} }}}}\n" in repos
+        assert ci.count("HUB_REPOS_READ_TOKEN }}") == 1
         # The token reaches git only through the job's environment, set by the credential block,
         # and, for the repos' clones, through the repos step's own environment.
         assert "x-access-token" in block

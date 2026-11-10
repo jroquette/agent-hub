@@ -1,5 +1,8 @@
 """The hub CI's ``Repos beside the hub`` step lets ``hub doctor``'s repo rules run (AGH-699 A-13).
 
+Without ``HUB_REPOS_READ_TOKEN``, a repo the step cannot clone (a private one) is skipped and the
+step passes, so doctor reports that repo as not checked out, an info, and still exits 0 (AGH-801).
+
 Without the repos beside the hub, ``hub doctor`` reports each one as not checked out (info) and
 exits 0, so a repo that copies a brain line passes CI. The case runs the step's ``run: |`` block of
 the ``ci.yml`` that ``hub init`` wrote into the two-repo demo hub, on ``bash`` with Actions'
@@ -126,3 +129,26 @@ def test_fails_on_brain_leak_when_ci_repos_step_ran(
     assert after.exit_code == 1, after.output
     assert LEAK in after.output.splitlines()
     assert NOT_CHECKED_OUT not in after.output
+
+
+def test_reports_info_for_skipped_repo_when_no_token_and_clone_fails(
+    demo_two_repo_hub: Path, run_doctor: DoctorRunner, tmp_path: Path
+) -> None:
+    hub = demo_two_repo_hub
+    home = tmp_path / "ci-home"
+    home.mkdir()
+    # Only demo-api is reachable: demo-web stands for a private repo and no token is set.
+    path = origin(tmp_path / "origins" / "acme/demo-api", {"AGENTS.md": "# demo-api\n"})
+    (home / ".gitconfig").write_text(
+        f'[url "{path}"]\n\tinsteadOf = https://github.com/acme/demo-api.git\n', encoding="utf-8"
+    )
+
+    completed = run_repos_step(hub, home)
+    after = run_doctor(hub, "--only", "brain.leak")
+
+    assert completed.returncode == 0, completed.stderr
+    assert "skipped acme/demo-web" in completed.stdout
+    assert (tmp_path / "demo-api").is_dir()
+    assert not (tmp_path / "demo-web").exists()
+    assert after.exit_code == 0, after.output
+    assert after.output.count(NOT_CHECKED_OUT) == 1
