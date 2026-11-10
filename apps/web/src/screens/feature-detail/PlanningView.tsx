@@ -769,6 +769,16 @@ function FlowCard({
   const after = row.blocked_by
     .map((edge) => edge.ref)
     .filter((ref) => !inFlow.has(ref) && !named.includes(ref));
+  // The open tickets this one holds back: a line shows each, the count says it on every card.
+  const blocking =
+    row.readiness === "done" || row.readiness === "canceled"
+      ? []
+      : rows.filter(
+          (r) =>
+            r.readiness !== "done" &&
+            r.readiness !== "canceled" &&
+            r.blocked_by.some((e) => e.ref === row.ref),
+        );
   return (
     <li
       id={ticketAnchor(row.ref)}
@@ -865,6 +875,15 @@ function FlowCard({
         )}
       </div>
       <div className="ah-flow-card-facts">
+        {blocking.length > 0 && (
+          <span
+            className="ah-flow-card-fact ah-flow-blocks"
+            title={`Holds back ${blocking.map((r) => r.ref).join(", ")}`}
+          >
+            <Icon name="lock" size="sm" />
+            Blocks <b>{blocking.length}</b>
+          </span>
+        )}
         {row.assignee && (
           <span className="ah-flow-card-fact">
             <Icon name="user" size="sm" />
@@ -1148,8 +1167,6 @@ const TONE_RANK: Record<"settled" | "plain" | "early" | "critical", number> = {
 /** A flow with more tickets or edges than these is large: it draws a line only when asked. */
 const LARGE_TICKETS = 24;
 const LARGE_EDGES = 40;
-/** A large flow's gutter: room for the lit lines of one ticket, never widened by them. */
-const QUIET_GUTTER = 120;
 
 /** Whether a flow is too big to draw every blocker line at rest. */
 export function isLargeFlow(tickets: number, edges: number): boolean {
@@ -1284,7 +1301,17 @@ function FlowGraph({
     bottom: 0,
   });
   const large = isLargeFlow(inFlow.size, edges.length);
-  const shape = `${columns.map((column) => column.refs.join(",")).join("|")}#${(large ? [] : edges)
+  // A large flow draws at rest only the lines from one group to the next whose blocker is not done:
+  // the lines that skip groups (the channels under them) and the settled ones wait for a pointer.
+  const groupOf = new Map(
+    columns
+      .filter(({ key }) => key !== "held" && key !== "done")
+      .flatMap((c, i) => c.refs.map((r) => [r, i] as const)),
+  );
+  const atRest = (e: FlowEdge) =>
+    !large || (!e.settled && (groupOf.get(e.to) ?? 0) === (groupOf.get(e.from) ?? 0) + 1);
+  const rest = edges.filter(atRest);
+  const shape = `${columns.map((column) => column.refs.join(",")).join("|")}#${rest
     .map((e) => `${e.from}>${e.to}`)
     .join(
       ",",
@@ -1312,23 +1339,29 @@ function FlowGraph({
       : null;
   const lighted = link ? near : (chain ?? near);
   const hotEdges = lighted?.edges ?? new Set<string>();
-  // A large flow draws only the lit lines, routed on their own in fixed gutters, so the cards never
-  // move when a ticket is pointed at; every other blocker is in the card's words.
-  const routed = large ? edges.filter((e) => hotEdges.has(`${e.from}→${e.to}`)) : edges;
   // No line is drawn until the cards of this shape are measured (never from the canvas corner).
   const routes =
     measured === shape
       ? routeFlow(
           drawnColumns.map((column) => column.refs),
           boxes,
-          routed,
+          rest,
         )
       : null;
-  const nextSpacing = large
-    ? { gutters: drawnColumns.map((_, i) => (i === 0 ? 0 : QUIET_GUTTER)), top: 0, bottom: 0 }
-    : routes
-      ? { gutters: routes.gutters, top: routes.room.top, bottom: routes.room.bottom }
-      : null;
+  // The lit lines a large flow does not draw at rest are routed with the rest, for the top layer
+  // only: the gutters keep the rest's widths, so pointing at a ticket never moves a card.
+  const hidden = rest.length < edges.length;
+  const litRoutes =
+    routes && hidden && edges.some((e) => !atRest(e) && hotEdges.has(`${e.from}→${e.to}`))
+      ? routeFlow(
+          drawnColumns.map((column) => column.refs),
+          boxes,
+          edges.filter((e) => atRest(e) || hotEdges.has(`${e.from}→${e.to}`)),
+        )
+      : routes;
+  const nextSpacing = routes
+    ? { gutters: routes.gutters, top: routes.room.top, bottom: routes.room.bottom }
+    : null;
   const spacingKey = nextSpacing
     ? `${nextSpacing.gutters.join(",")}|${String(nextSpacing.top)},${String(nextSpacing.bottom)}`
     : null;
@@ -1492,13 +1525,13 @@ function FlowGraph({
     e.early ? "early" : e.critical ? "critical" : e.settled ? "settled" : "plain";
   // Each blocker's lines drawn together, weakest first so the stronger tone is on top of a shared
   // trunk; the blockers left to right.
-  const bySource = [...new Set(routed.map((e) => e.from))]
+  const bySource = [...new Set(rest.map((e) => e.from))]
     .sort((a, b) => order.indexOf(a) - order.indexOf(b))
     .map(
       (from) =>
         [
           from,
-          routed
+          rest
             .filter((e) => e.from === from)
             .sort((x, y) => TONE_RANK[tone(x)] - TONE_RANK[tone(y)]),
         ] as const,
@@ -1691,9 +1724,9 @@ function FlowGraph({
             className="ah-flow-edges ah-flow-edges-top"
             aria-hidden="true"
             width={Math.max(1, size.width)}
-            height={Math.max(1, size.height + (routes?.room.bottom ?? 0))}
+            height={Math.max(1, size.height + (litRoutes?.room.bottom ?? 0))}
           >
-            {routes &&
+            {litRoutes &&
               edges
                 .filter((e) => hotEdges.has(`${e.from}→${e.to}`))
                 .flatMap((e) => {
@@ -1702,7 +1735,7 @@ function FlowGraph({
                     <path
                       key={`halo-${key}`}
                       className="ah-flow-halo"
-                      d={routes.paths.get(key)}
+                      d={litRoutes.paths.get(key)}
                       fill="none"
                     />,
                     <path
@@ -1710,15 +1743,15 @@ function FlowGraph({
                       data-source={e.source}
                       data-early={e.early || undefined}
                       data-hot=""
-                      d={routes.paths.get(key)}
+                      d={litRoutes.paths.get(key)}
                       fill="none"
                       markerEnd={far ? undefined : `url(#${arrowId}-${e.early ? "early" : "hot"})`}
                     />,
                   ];
                 })}
-            {routes &&
+            {litRoutes &&
               !far &&
-              routes.junctions
+              litRoutes.junctions
                 .filter((j) => j.edges.some((k) => hotEdges.has(k)))
                 .map((j) => (
                   <circle
