@@ -8,7 +8,8 @@ from agent_hub.core.hub_config.environments import MAX_NAME_CHARS, MAX_VALUE_CHA
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.platform_repository import PLATFORM_REPOSITORY_PATTERN
 from agent_hub.core.hub_config.schedules import MAX_START_INPUTS
-from agent_hub.core.hub_config.schema import export_schema_text, read_shipped_schema
+from agent_hub.core.hub_config.schema import export_schema_text
+from agent_hub.core.testing.shipped_schemas import read_shipped_schema
 
 COMMENT_KEYS = {"^_": {}}
 
@@ -47,6 +48,18 @@ def test_lists_items_leftovers_as_rule_settings_when_schema_shipped() -> None:
     properties = read_shipped_schema()["$defs"]["DoctorRules"]["properties"]
 
     assert properties["items.leftovers"] == {"$ref": "#/$defs/RuleSettings"}
+
+
+def test_lists_instructions_read_cap_as_rule_settings_when_schema_shipped() -> None:
+    properties = read_shipped_schema()["$defs"]["DoctorRules"]["properties"]
+
+    assert properties["instructions.read_cap"] == {"$ref": "#/$defs/RuleSettings"}
+
+
+def test_lists_workflows_shadow_as_rule_settings_when_schema_shipped() -> None:
+    properties = read_shipped_schema()["$defs"]["DoctorRules"]["properties"]
+
+    assert properties["workflows.shadow"] == {"$ref": "#/$defs/RuleSettings"}
 
 
 def test_lists_workflows_valid_as_rule_settings_when_schema_shipped() -> None:

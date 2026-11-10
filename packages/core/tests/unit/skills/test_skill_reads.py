@@ -11,9 +11,11 @@ from agent_hub.core.skills.skill_reads import SkillReads
 from agent_hub.core.skills.skill_sources import CATALOG_BUDGET_BYTES, MAX_SKILL_FILE_BYTES
 from agent_hub.core.skills.skill_view import (
     DiagnosticCode,
+    HubToolCalls,
     ItemKind,
     SkillFileTooLargeError,
     SkillUsage,
+    UsageWindows,
 )
 from agent_hub.core.testing.hub_fakes import FakeHub, FakeHubFileReader
 from agent_hub.core.testing.item_version_fakes import InMemoryItemVersionStore
@@ -319,6 +321,20 @@ def test_counts_zero_when_no_usage_source() -> None:
     alpha = next(item for item in catalog.items if item.name == "alpha")
     assert alpha.usage is not None
     assert alpha.usage.count == 0
+    assert catalog.hub_tools == {}
+
+
+def test_joins_hub_tool_calls_when_catalog_read() -> None:
+    # The Toolkit shows them (AGH-699): how often sessions and subagents consult the hub.
+    calls = HubToolCalls(
+        main=UsageWindows(runs_7d=1, runs_30d=2, runs_90d=2, last_used_at=None),
+        subagents=UsageWindows(runs_7d=0, runs_30d=3, runs_90d=4, last_used_at=None),
+    )
+    reads, _, _ = _reads(usage=FakeUsage(a_skill_usage(hub_tools={"mcp__hub__search": calls})))
+
+    catalog = reads.catalog(project=FIXTURE_PROJECT, hub_path=HUB)
+
+    assert catalog.hub_tools == {"mcp__hub__search": calls}
 
 
 # Every unit of the AC-164.1 tree: the ``.claude/skills/alpha`` link is versioned at its

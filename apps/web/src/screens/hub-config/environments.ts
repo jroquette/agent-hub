@@ -120,7 +120,6 @@ export const ACCESS_LOOK: Record<
 };
 
 export const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/;
-export const VARIABLE_PATTERN = /^[A-Z_][A-Z0-9_]{0,63}$/;
 
 /** Whether the environment comes from the developer's own file (its own, or a tightening). */
 export function isMine(environment: SourcedEnvironment): boolean {

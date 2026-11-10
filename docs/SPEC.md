@@ -58,7 +58,7 @@ A CLI creates and maintains hubs from a project configuration file. Everything t
 
 The hub's logic lives in the `hub` CLI, versioned and tested in this repo; the generated hub holds files, `hub.json` and thin shims. A shim runs the CLI release pinned in `hub.json` (a semver git tag of this repo, no PyPI; the annotated tag is created by this repo's `release.yml` when the `/release` skill dispatches it after the owner's gate, [ADR 0013](adr/0013-release-by-git-tags.md), [ADR 0047](adr/0047-release-tag-by-workflow-dispatch.md)) through `uvx`, so no global install is needed and each hub on a machine can pin its own version. When `hub.lock` records the release commit (`platform_commit`) for the pinned version and repository, the shim runs that commit in one `uvx` call it `exec`s; any other lock, or none, keeps the tag and its two calls (a resolve step, then the real call); SessionStart's background refresh and cloud setup's cache warm-up choose the source the same way ([ADR 0054](adr/0054-pin-the-platform-release-by-commit.md)). Hooks are the exception: they stay Python 3.9 stdlib scripts that read `hub.json` through the stdlib reader rendered with them, never need the CLI, and fail open. SessionStart never waits for the CLI ([ADR 0055](adr/0055-session-start-brief-from-a-cache.md)): it injects the brief cache `.hub-cache/brief.json` when it is under 12 h old, headed with its age (`brief from 3 min ago`), else a mini brief naming why (`no brief cache`, `brief cache stale`, `brief cache unreadable`, or the last failed refresh's cause). When the cache is missing, unreadable or at least 5 min old, it starts one refresh in the background: the pinned `hub brief --write-cache`, in its own session with none of the hook's stdio, one at a time per hub (a non-blocking `flock` on `.hub-cache/refresh.lock`), within 60 s; a failed refresh writes `.hub-cache/refresh.json`. The folder ignores itself (its own `.gitignore`, `*`), so the hub stays clean in `git status`.
 
-The generator renders a hub in memory as a `RenderedHub`: its files (`RenderedFile`) and its symlinks (`RenderedLink`, one per base or project plugin agent and skill under `.claude/agents/` and `.claude/skills/`), contract types in `agent_hub.core.hub_files`. Besides the base rules (with a short rule for text that people read) and the brain skeleton, it ships the managed base plugin `plugin/hub-workflow/` (agents, skills such as `plain-language`, hooks and their reader), the managed `.claude/settings.json` that runs those hooks, the seeded project plugin `plugin/<project>/` with its guard extension stub, and the transcript mining, recall and retro metrics scripts.
+The generator renders a hub in memory as a `RenderedHub`: its files (`RenderedFile`) and its symlinks (`RenderedLink`, one per base or project plugin agent and skill under `.claude/agents/` and `.claude/skills/`), contract types in `agent_hub.core.hub_files`. Besides the base rules (with a short rule for text that people read) and the brain skeleton, it ships the managed base plugin `plugin/hub-workflow/` (agents, skills such as `plain-language`, hooks and their reader), the managed `.claude/settings.json` that runs those hooks, the seeded project plugin `plugin/<project>/` with its guard extension stub, the transcript mining, recall and retro metrics scripts, and the managed `.pre-commit-config.yaml`: hygiene hooks and `hub doctor`, then, at git's commit-msg stage (`pre-commit install` installs both hook types), the base plugin's `hooks/commit_msg.py`, which refuses a message with AI attribution and, when `hub.json` names `project.author_email`, another author or committer (rule 1 outside a guarded session). The managed `.github/workflows/ci.yml` checks the same rule on each pull request (title, body and commits, again when edited), as the platform's own CI does, then clones each repo of `hub.json` at its default branch into `../<dir>` (read-only, with `AGENT_HUB_READ_TOKEN` when set), so the doctor that `make check` runs after the golden step checks the repo rules such as `brain.leak` ([design/hub-adopt.md](design/hub-adopt.md#in-the-hubs-ci)).
 
 `hub init` writes the rendered hub, a seeded `hub.json` and, last, `hub.lock` (v1), which records each managed file's SHA-256 and executable bit, each managed link's target and each seeded path. The init planner and the lock model are pure core code; the file adapter in `agent_hub.generator` reads the target tree and writes through temporary files in the same folder, never through a symlinked folder. `hub sync` reads the lock back, plans every path in core and applies the plan through the same adapter, `hub.lock` last ([design/hub-sync.md](design/hub-sync.md)). The lock can also record the commit the pinned release tag names (`platform_commit`) and the repository it was read from (`platform_repository`): `hub sync` looks it up once per pin change, and `hub doctor` checks it against the tag ([ADR 0054](adr/0054-pin-the-platform-release-by-commit.md)).
 
@@ -91,6 +91,7 @@ hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …   # configura
 hub collect [FILE|-] [--db PATH]   # ingests canonical events from JSON Lines (stdin when FILE is omitted or -)
 hub collect --transcript FILE [--project NAME]   # a Claude Code transcript, as metadata-only events
 hub collect --runs PATH [--project NAME]   # hub run records (.agent-runs/ file or folder) as executor events
+hub collect --spool   # the hook sensor's spool (envelopes hub web did not take), then empties it
 hub web [--host ADDR] [--port N] [--db PATH]   # the control plane: /api/v1 and the web app on 127.0.0.1 (port 7420)
 hub search QUERY [--kind KIND]… [--hub NAME] [--json] [--db PATH]   # full-text search of the brain and the repos' docs, each result with its path and snippet (ADR 0044)
 hub skill-usage [--days 7|30|90] [--db PATH]   # the hub's skills and agents with their runs over 7, 30 and 90 days, never-used first (AGH-482)
@@ -111,7 +112,18 @@ errors exit 2. On success it prints `appended N, duplicates M`.
 `hub collect --transcript FILE` (a regular file, at most 256 MiB, lines at most 1 MiB) and `hub collect --runs PATH` (a
 `.agent-runs/*.jsonl` file or a folder of them, depth 1, at most 1,000 files of 64 MiB) map their input to canonical
 events with the same all-or-nothing rule; their events name no project of their own, so `--project` names it, else the
-`hub.json` of the hub folder they run in. FILE, `--transcript` and `--runs` exclude each other (exit 2). `hub run`
+`hub.json` of the hub folder they run in. FILE, `--transcript` and `--runs` exclude each other (exit 2).
+`hub collect --spool` imports the hook spool ("Hooks as sensors", [Proposed architecture](#proposed-architecture)) without
+`hub web`, with the same all-or-nothing rule and exit 2 beside another input: under the spool's lock it moves
+`hook-spool.jsonl` aside to `hook-spool.taken.jsonl` (appended to it when an earlier import left one, unless the two
+would pass 64 MiB: the spool then waits for the import after that file is removed), maps every envelope as the hook
+route does and reads each transcript their Stop, SubagentStop and SessionEnd hooks name once, to its last complete
+line within the first 256 MiB read, the `--transcript` cap (only under `AGENT_HUB_CLAUDE_PROJECTS`, else
+`~/.claude/projects/`), stores it all as one batch, then removes the taken file. A bad line (`"<taken file>": line N: <reason>`, then a line saying to fix or delete it), a conflict or a
+spool that is a link, not this user's or over 64 MiB writes nothing and exits 1, and the lines stay in the taken file
+for the next import; a first line `{"dropped": n}` adds a stderr warning naming n. A replayed spool only finds
+duplicates: each event's key comes from the envelope (the tool use id, else the hook's `sent_at` and a hash of its
+input). `hub run`
 also appends its executor events to the same store as it writes each record; an unwritable store prints one
 `hub run: event store unavailable: <reason>` line and the run carries on.
 
@@ -161,7 +173,8 @@ a live run's `failed` record at stage `PICKED`; otherwise (dry run by default: i
 write) it makes the worktree, runs the implementing `claude -p` session (no tracker tool: the issue's text is in its prompt)
 under the hub's hooks (a hooks-only `--settings` file built from the hub's `.claude/settings.json`; when that file or
 a hook script it names is missing or unusable, the run exits 1 before the issue is read, dry or live, AGH-278), its own gate, the push and
-`gh pr create`, and reports through the port (on success, like `hub ship`, it moves the issue to
+the PR, opened through GitHub's REST API (`gh api --method POST repos/<owner>/<repo>/pulls`, the body on stdin; never
+`gh pr`, whose GraphQL a cloud session's proxy refuses, AGH-699), and reports through the port (on success, like `hub ship`, it moves the issue to
 `tracker.states.review`, default `In Review`); records go to the hub's `.agent-runs/` and `brain/_inbox/runs/`. A live
 run is the `issue-to-pr` workflow run through the engine ([ADR 0032](adr/0032-workflow-engine.md), AGH-224): the hub's
 own `workflows/<pack>/issue-to-pr.yaml` when present (it must load, else exit 1, and declare the inputs the run fills,
@@ -189,7 +202,8 @@ commits ahead of origin/<base>)` per repo left out, then runs four phases, each 
 uncommitted tracked change in any worktree, every repo's `check` runs, before any push; each writes its output tails
 to the owner-only `<hub>/.agent-runs/ship/<ISSUE>-<repo>.log` and prints `check passed: <repo>` when it passes; a
 worktree left dirty, or a HEAD or task branch that moved, during the checks stops the ship before any push. (2) Per
-repo, the push (behind `hub run`'s guard), then `gh pr create` (`--draft` when given; the title is the newest commit's
+repo, the push (behind `hub run`'s guard), then the PR opened through GitHub's REST API (`gh api`, as every PR call of
+`hub ship` and `hub run`; a draft when `--draft` is given; the title is the newest commit's
 subject following the repo's conventions), or the PR already open for the branch: `opened: <repo>  <url>` or
 `found: <repo>  <url>`. (3) With two PRs or more, each PR's Related PRs section is made to list the others, its body
 edited through a file and only when that changes it. (4) The tracker writes: the move to the review state, the failed
@@ -197,7 +211,8 @@ label removed when the issue carries it, then one comment listing the PRs. Once 
 line starts with `hub ship: `; a failure in a repo names the repo and what failed, and lists the PRs already open; the
 first tracker write that fails is shown as not confirmed (it may have landed) and the later ones as not done, none
 retried. Run again after a success, `hub ship` finds the open PRs, edits no PR body and posts one more comment.
-`--dry-run` reads the issue and prints the set, then per repo the check, push and `gh pr create` it would run, then
+`--dry-run` reads the issue and prints the set, then per repo the check, push and PR creation it would run (the body
+it would send on stdin shown after the command as `<<< <body>`), then
 each tracker write it would make, with placeholder PR urls (no link edit: the live one depends on the bodies); it runs
 only git reads, writes no file and does not write to the tracker. Usage errors exit 2 before any tracker call, with no
 child run but `git` reads (the hub's main checkout, the git identity a branch prefix may come from); every other
@@ -215,12 +230,14 @@ the fetch, the push and `gh` get a GitHub token.
 
 The PR bodies `hub run` and `hub step pr` write stay short: the issue, the feature record's link
 (`https://github.com/<project.hub_repo>/blob/<project.default_branch>/brain/features/<slug>/`, only with
-`--feature`, which the `implement` workflow passes), the summary and the gate that passed. `hub run` and
+`--feature`, which the `implement` workflow passes) and the summary; `hub run` names the gate that passed in its
+tracker comment, not in the body. `hub run` and
 `issue-to-pr` know the issue, not a feature, so they link no record and ask the session for a summary that says what
 changed for the user and cites no AC, decision or plan step id. The skills that write a PR body (`/implement`,
-`/feature`, `/fix`) follow the `plain-language` skill's PR bodies rules: the ticket link, what changed for the user,
-the checks with their results, what is left before merge; no placeholders or process notes; every cited AC, decision
-or plan step linked to its record in the hub. So the records land first: once its spec, plan and tickets are
+`/feature`, `/fix`) follow the `plain-language` skill's PR bodies rules: the ticket link and what the PR depends on,
+what changed for the user, and links to the records that explain it; no placeholders, process notes, or "Checks" and
+"Before merge" sections (CI shows the checks; the commands run, owner steps and follow-ups go in a comment on the
+tracker issue); every cited AC, decision or plan step linked to its record in the hub. So the records land first: once its spec, plan and tickets are
 approved, `/feature` opens a hub PR with `brain/features/<slug>/` (its Records PR), and Build starts after the owner
 merges it; a later amendment or plan change goes the same way. Before a code PR, `/implement` checks each cited record
 on the hub's default branch and, when one is missing, asks the owner, who may let the PR open as a draft.
@@ -313,9 +330,9 @@ today), and the CLI's model and the hooks' stdlib reader accept it in the same c
 | `guard.blocked_words` | Words the guard denies in a Bash command, a file-tool path, a WebFetch URL, a listed file's contents, a scanned session variable or the input of MCP tools (`mcp__*`), WebSearch, Task, Agent and SendMessage (Blocked words, below): at most 200, `^[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*$`, 2 to 64 characters, matched literally; `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` only add to them | No blocked-word rule | AGH-277 |
 | `guard.blocked_words_files` | Globs of files whose contents the guard checks for a blocked word, besides every `.env*` file: at most 100, each at most 200 printable ASCII characters, no leading `/`, `..` segment or space; a glob without `/` matches the last path component, one with `/` a trailing run of segments; `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` only add to them | `.env*` files only | AGH-277 |
 | `guard.blocked_words_env` | Variable names whose values in the session the guard also checks, besides its fixed list and every `credentials.env` name: at most 50, `^[A-Z_][A-Z0-9_]{0,63}$`, a trailing `*` matching a prefix; `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` only add to them | The fixed list and the `credentials.env` names | AGH-277 |
-| `tracker.states.started`, `tracker.states.review` | The workflow state names: `hub start` moves an issue to `started` on a fresh start, or on a resume while it is unstarted; `review` is reserved for the review step and read by nothing yet; not settable in `hub.local.json` | `In Progress`, `In Review` | AGH-62 |
-| `schedules` | Workflows `hub web` starts by itself at a time: `workflow`, a 5-field `cron` read in UTC, `inputs` and an optional declared `environment`; each slot starts at most once, and a slot missed while `hub web` was down runs once when it comes back ([project-config.md](design/project-config.md), [ADR 0048](adr/0048-scheduled-and-event-starts-in-hub-web.md)) | No scheduled starts | AGH-481 |
-| `events` | Workflows `hub web` starts when something happens in a repo: `workflow`, `on` (`merge`, `ci_red`, `pr_opened`), `repo` (a `repos[].dir`) and `inputs`; GitHub is polled through `gh` every 5 minutes, the first poll is a baseline, and each event starts at most once ([project-config.md](design/project-config.md), [ADR 0048](adr/0048-scheduled-and-event-starts-in-hub-web.md)) | No event starts | AGH-481 |
+| `tracker.states.started`, `tracker.states.review` | The workflow state names: `hub start` moves an issue to `started` on a fresh start, or on a resume while it is unstarted; `hub run` and `hub ship` move an issue to `review` once its PR is open; not settable in `hub.local.json` | `In Progress`, `In Review` | AGH-62 |
+| `schedules` | Workflows `hub web` starts by itself at a time: `workflow`, a 5-field `cron` read in UTC, `inputs` and an optional declared `environment`; each slot starts at most once, and a slot missed while `hub web` was down runs once when it comes back; never in the container, where `AGENT_HUB_IN_CONTAINER=1` turns the agent sessions off ([project-config.md](design/project-config.md), [ADR 0048](adr/0048-scheduled-and-event-starts-in-hub-web.md)) | No scheduled starts | AGH-481 |
+| `events` | Workflows `hub web` starts when something happens in a repo: `workflow`, `on` (`merge`, `ci_red`, `pr_opened`), `repo` (a `repos[].dir`) and `inputs`; GitHub is polled through `gh` every 5 minutes, the first poll is a baseline, and each event starts at most once; never in the container ([project-config.md](design/project-config.md), [ADR 0048](adr/0048-scheduled-and-event-starts-in-hub-web.md)) | No event starts | AGH-481 |
 | Developer identity: `project.author_name`, `author_email`, `branch_prefix` | Become optional. Effective value: the gitignored `hub.local.json`, else `hub.json`, else the hub repo's `git config user.name`/`user.email`; the prefix, when no file sets it, is the effective email's local part plus `/` (ADR 0016) | Set per developer, by `hub setup` in `hub.local.json`; `hub worktree`, `hub run` and `hub start` refuse without a prefix | AGH-65 |
 
 `hub.local.json` may hold only those identity keys, `tracker.transport`, the developer's own `environments` and their
@@ -528,7 +545,11 @@ A web app reads the hubs and the agents' events and answers five questions, one 
 Git stays the source of truth. Each developer's database holds a derived full-text index (SQLite FTS5) of the hub's
 `brain/` (except `brain/auto/`) and each repo's `docs/`, synced with the checkout on every search and rebuilt by
 `hub brain reindex`. `hub search` and the MCP server `hub mcp` (tools `search`, `read`, `propose`) query it; every
-result names its path and a snippet. A text a rule of the redaction set `r1` matches is indexed, and served by `read`,
+result names its path and a snippet. Results come curated knowledge first (ADRs, decisions, learnings, playbooks,
+domain and system notes), then the docs, the journal, feature records and inbox notes, whatever their text match;
+inside each of these two tiers a note whose `status` starts with approved or active comes first and one whose `status`
+starts with draft or proposed last; then the best text match (`bm25`, the title above the body), then the path
+(AGH-699). A text a rule of the redaction set `r1` matches is indexed, and served by `read`,
 with each match replaced by its `[redacted: <kind>]` marker, as ingestion does (AGH-696,
 [ADR 0058](adr/0058-knowledge-index-keeps-redacted-text.md)): no secret enters the index,
 and a placeholder such as `?token=<token>` costs one marker instead of the whole file. A file over 256 KiB or not
@@ -562,7 +583,13 @@ The server is local only: loopback bind, `Host` and `Origin` checks, a path hold
 before any other check, 1 MiB request bodies (160 MiB for
 `POST /agent-sessions` and `POST /agent-sessions/{id}/messages`, which may carry up to ten images and ten PDF or
 text files attached in the chat), no CORS, and a CSP that keeps the app on its own origin (a UX mockup's own page
-keeps a narrower one: inline styles and `data:` only, no script, no request; AGH-687).
+keeps a narrower one: inline styles and `data:` only, no script, no request; AGH-687). The writes only the owner's
+page makes, the owner writes (`OWNER_WRITES`, AGH-699: the Hub config writes, a hub's platform sync and doctor fix,
+the learning decisions, the Linear key, a feature's nickname), need the launch cookie on top of
+this server's exact `Origin`, a same-origin fetch and a JSON body, as the run and item writes do: an `Origin` alone is
+something any local process can send. In the container, which mints no token, they answer 404 `owner-writes-off`
+([API.md](API.md#local-security)). A checked-in table names every write route's class, and a test fails for a write
+route the table lacks and probes each one for its class's answers.
 It reaches the network in two documented cases only: the learning decisions' explicit
 pull request ([ADR 0024](adr/0024-learning-actions-from-the-app.md)), and a read-only, server-side read of Linear's
 GraphQL API for a feature's tickets, only when `LINEAR_API_KEY` is set where `hub web` runs
@@ -760,9 +787,11 @@ only the version history below is stored, and only its restore and the Studio's 
   `project-owned`, `local`), an invocation mode (`user-only`, `model-only`, `both`, or `neither`, shown as "Hidden"),
   its invocation line and its use in the last 30 days (a fold over the stored events: a typed `/name` and a `Skill`
   call, an `Agent` call by type; signals of one invocation within 5 s count once; the same fold gives runs over 7,
-  30 and 90 days and the last use, for the Portfolio and `hub skill-usage`, AGH-482). Third-party plugins named by the
-  marketplace or `enabledPlugins` are listed with their pin and "not in this hub": nothing is fetched. Search and
-  facets (kind, origin, mode, has diagnostics) live in the URL query.
+  30 and 90 days and the last use, for the Portfolio and `hub skill-usage`, AGH-482; it also counts the calls of the
+  hub's knowledge tools `mcp__hub__search`, `mcp__hub__read` and `mcp__hub__propose` by the main sessions and by their
+  subagents, which `hub skill-usage` prints after its table and the Toolkit shows in a fold, AGH-699). Third-party
+  plugins named by the marketplace or `enabledPlugins` are listed with their pin and "not in this hub": nothing is
+  fetched. Search and facets (kind, origin, mode, has diagnostics) live in the URL query.
 - **Detail.** An item is addressed by `kind/source/name`, `source` being the folder it comes from (`claude` for
   `.claude/`, `settings` / `settings-project` for those files' hooks); every source of a duplicate name is listed.
   The detail shows the frontmatter (unknown keys flagged "not understood by Claude Code"), the body rendered (raw HTML
@@ -1058,7 +1087,7 @@ flowchart LR
 The sessions and GitHub/Linear feed the collector, and the web app reads everything through the API. The app's actions go back to the workflow executor. The API also reads the hub repos to show brain, rules and workflows.
 
 - **Stack (decided, ADRs 0001–0004, 0008, 0011, 0014, 0015, 0017, 0020, 0024 and 0044):** Python 3.14 in a uv workspace with one package per component (`core`, `storage`, `collector`, `generator`, `tracker_linear`, `hub_git`, `cli`, `api` and `mcp_server`, ADR 0044's third composition root behind `hub mcp`) under a lean hexagonal architecture: entities, use cases and ports in `core`, adapters in the other packages. Persistence is SQLAlchemy Core + Alembic on SQLite, moving to Postgres via config when there are multiple users. The API is FastAPI + Pydantic in `packages/api`, a second composition root that `hub web` serves; the front end is React 18 + TypeScript in `apps/web`, whose production build is committed to `packages/api` so a `uvx` install needs no Node.
-- **Hooks as sensors** ([ADR 0021](adr/0021-hook-event-sensor.md)): the generated hub registers a stdlib Python 3.9 sensor, `plugin/hub-workflow/hooks/event_sensor.py`, for eleven Claude Code hooks (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PostToolUseFailure, Notification, Stop, SubagentStart, SubagentStop, PreCompact, SessionEnd). Ten run it as a hook of its own; PreToolUse runs it inside `plugin/hub-workflow/hooks/pre_tool_use.py`, the one PreToolUse hook, once the guard's verdict is printed (AGH-621). It wraps the hook input in a versioned envelope (`v: 1`, project, repo, the `hub run` run, step and attempt) and posts it to `POST /api/v1/events/hooks` with a 0.5 s timeout; it prints nothing and exits 0 on any failure, so without `hub web` the session carries on normally. `AGENT_HUB_WEB_URL` may only name a loopback URL. The guard and the Stop gate send their own decisions (a denial, an ask, a blocked Stop) the same way, after deciding, without changing their output or exit codes; on PreToolUse the guard's decision and the event's envelope share one 0.5 s deadline. On Stop, SubagentStop and SessionEnd the server reads the session's transcript from its last offset, only under `~/.claude/projects/` and never through a link.
+- **Hooks as sensors** ([ADR 0021](adr/0021-hook-event-sensor.md)): the generated hub registers a stdlib Python 3.9 sensor, `plugin/hub-workflow/hooks/event_sensor.py`, for eleven Claude Code hooks (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PostToolUseFailure, Notification, Stop, SubagentStart, SubagentStop, PreCompact, SessionEnd). Ten run it as a hook of its own; PreToolUse runs it inside `plugin/hub-workflow/hooks/pre_tool_use.py`, the one PreToolUse hook, once the guard's verdict is printed (AGH-621). It wraps the hook input in a versioned envelope (`v: 1`, project, repo, the `hub run` run, step and attempt) and posts it to `POST /api/v1/events/hooks` with a 0.5 s timeout; it prints nothing and exits 0 on any failure, so without `hub web` the session carries on normally. `AGENT_HUB_WEB_URL` may only name a loopback URL. The guard and the Stop gate send their own decisions (a denial, an ask, a blocked Stop) the same way, after deciding, without changing their output or exit codes; on PreToolUse the guard's decision and the event's envelope share one 0.5 s deadline. On Stop, SubagentStop and SessionEnd the server reads the session's transcript from its last offset, only under `~/.claude/projects/` and never through a link. An envelope the server does not take (nothing listens, no answer within the deadline, no time left, or a 5xx answer) is kept in the **hook spool** (AGH-699): the sensor appends the exact POST body as one line to `$XDG_STATE_HOME/agent-hub/hook-spool.jsonl` (only when `XDG_STATE_HOME` is absolute), else `$HOME/.local/state/agent-hub/hook-spool.jsonl` (with no absolute `HOME`, nothing is kept). It lives outside every hub and repo, because its command text is redacted only when it is imported. The folder is made with mode 0700 and the files are 0600 and this user's; no file or the folder is opened through a link. Every writer holds an `flock` on `hook-spool.lock` (the sensor waits at most 0.2 s, else drops the envelope, uncounted). Past 8 MiB the oldest lines are dropped down to 6 MiB, and a first line `{"dropped": n}` counts every line a trim dropped so far. A send of a disabled sensor (a URL that is not loopback) or of an envelope over 1 MiB keeps nothing. `hub web` imports the spool when it starts, before the first request: it takes it as `hub collect --spool` does, logs how many envelopes and bad lines it holds, and sends the envelopes through the hook route's own path (the same redaction and transcript tail) in batches of at most 500, one transaction each, each transcript a batch names read once from the tail's offset to its last complete line within 256 MiB read (the next read of it goes on from there). A batch that fails other than in the store (an envelope whose events conflict with stored ones, or one the hook path fails on) is sent again one envelope at a time, each transcript still read to its end; the import skips and counts a bad line and each such envelope, then removes the taken file. A spool it cannot read, or a store that fails, is logged and left for the next start, and the server starts either way. `hub collect --spool` imports it without `hub web`, all or nothing. The Docker control plane (`make up`, its own `HOME`) does not see the host's spool, so it imports nothing: a local `hub web` or `hub collect --spool` imports it into the local database.
 - **Read-only agents** (AGH-141): an agent whose definition's frontmatter says `mutates_checkout: false` is held if it
   changes a checkout. The base plugin's researcher, spec-reviewer and quality-reviewer declare it; any hub or project
   agent may opt in, and an agent without the key is untouched. A second stdlib Python 3.9 hook,
@@ -1166,7 +1195,7 @@ The recommendations are a starting point.
 - Deterministic work (tests, lint, contract sync, opening a PR) becomes a `script` step, with no LLM.
 - The UI edits the same document. It is stored on the platform with a version and history, and each execution records the workflow version it used.
 - The format and the engine: [ADR 0032](adr/0032-workflow-engine.md) (proposed; it supersedes [ADR 0027](adr/0027-workflow-format-and-minimum-engine.md) and keeps its invariants) and [docs/design/workflow-schema.md](design/workflow-schema.md).
-- A run starts by hand, from hub web, or by itself: `hub web` starts the `schedules` and `events` declared in `hub.json` (cron in UTC, GitHub polled through `gh` every 5 minutes), recording `trigger` in the run's start record ([ADR 0048](adr/0048-scheduled-and-event-starts-in-hub-web.md), proposed).
+- A run starts by hand, from hub web, or by itself: `hub web` starts the `schedules` and `events` declared in `hub.json` (cron in UTC, GitHub polled through `gh` every 5 minutes), recording `trigger` in the run's start record ([ADR 0048](adr/0048-scheduled-and-event-starts-in-hub-web.md), proposed). Scheduled and event starts never run in the container: `AGENT_HUB_IN_CONTAINER=1` turns the agent sessions off, so `hub web` builds no scheduler there.
 
 **2. Brain: stays in the hub repo, which is private and ours only.**
 

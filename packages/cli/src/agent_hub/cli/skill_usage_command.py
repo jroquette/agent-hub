@@ -1,5 +1,7 @@
 """``hub skill-usage``: the hub's skills and agents with their runs over 7, 30 and 90 days,
-never used in the chosen window first, as a Markdown table (AGH-482).
+never used in the chosen window first, as a Markdown table (AGH-482), then how often the main
+sessions and their subagents called the hub's knowledge tools (``mcp__hub__search``, ``read``
+and ``propose``) in that window, one line each (AGH-699).
 
 Read-only and local: the hub is the one the other hub commands use (``AGENT_HUB_ROOT`` or the
 cwd, exit 2 when not a hub), its items are the skills and agents of its ``.claude/skills`` and
@@ -23,7 +25,7 @@ from agent_hub.cli.knowledge_hub import Database, knowledge_hub_or_exit
 from agent_hub.core.readmodels.event_read_models import FoldedEventReadModels
 from agent_hub.core.skills.skill_reads import SkillReads
 from agent_hub.core.skills.skill_view import UsageDays
-from agent_hub.core.skills.usage_report import ordered_usage, usage_markdown
+from agent_hub.core.skills.usage_report import hub_tools_text, ordered_usage, usage_markdown
 from agent_hub.generator.registered_hub_files import HubFileSystem
 from agent_hub.storage.errors import StorageError
 from agent_hub.storage.event_store import open_event_store
@@ -58,8 +60,8 @@ def skill_usage(*, days: Days = Window.MONTH, db: Database = None) -> None:
         events = FoldedEventReadModels(store, now=lambda: datetime.now(UTC))
         reads = SkillReads(HubFileSystem(), events)
         rows, truncated = reads.usage_rows(project=hub.project, hub_path=str(hub.checkout))
+        hub_tools = reads.hub_tool_calls(hub.project)
     except StorageError as error:
         fail(f"hub {COMMAND}: {error}")
-    typer.echo(
-        usage_markdown(ordered_usage(rows, window), days=window, truncated=truncated), nl=False
-    )
+    table = usage_markdown(ordered_usage(rows, window), days=window, truncated=truncated)
+    typer.echo(f"{table}\n{hub_tools_text(hub_tools, days=window)}", nl=False)

@@ -34,8 +34,9 @@ def search_project_knowledge(
     kind: KindsParam = None,
     limit: ResultLimitParam = MAX_RESULTS,
 ) -> KnowledgeSearch:
-    """The hub's notes and repo docs holding every word of ``q``, best first, after the index
-    is brought up to date with the checkout; ``q``'s words only, never search syntax."""
+    """The hub's notes and repo docs holding every word of ``q``, in the index's order (curated
+    knowledge first, then by status, then best match), after the index is brought up to date
+    with the checkout; ``q``'s words only, never search syntax."""
     if not query_words(q):
         raise InvalidParameterError(parameter="q", reason=NO_WORDS)
     return reads.search(project, query=q, kinds=tuple(kind or ()), limit=limit)

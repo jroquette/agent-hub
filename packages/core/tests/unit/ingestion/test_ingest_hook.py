@@ -46,10 +46,16 @@ class _Tailer:
     def __init__(self, result: TailResult) -> None:
         self.result = result
         self.refs: list[TranscriptRef] = []
+        self.to_end_refs: list[TranscriptRef] = []
         self.committed: list[TailPosition] = []
 
     def read_new(self, ref: TranscriptRef) -> TailResult:
         self.refs.append(ref)
+        return self.result
+
+    def read_to_end(self, ref: TranscriptRef) -> TailResult:
+        self.refs.append(ref)
+        self.to_end_refs.append(ref)
         return self.result
 
     def commit(self, position: TailPosition) -> None:
@@ -149,6 +155,24 @@ def test_tails_transcript_and_adds_its_events_when_mapping_names_one() -> None:
     assert _snapshot(counters) == (1, 3, 0, 0, 2)
 
 
+def test_reads_transcript_to_its_end_when_executed_to_end() -> None:
+    position = TailPosition(path="/home/demo/t.jsonl", version=2)
+    hook_event = an_event(type="session.end", payload={"outcome": None})
+    transcript_event = an_event(source="transcript", type="message", payload={"role": "user"})
+    ref = TranscriptRef(project="demo", session="session-1", path="/home/demo/t.jsonl", kind="main")
+    use_case, store, tailer, _ = _use_case(
+        HookMapping(events=(hook_event,), transcript=ref),
+        TailResult(events=(transcript_event,), position=position),
+    )
+
+    result = use_case.execute(_envelope("Stop"), is_to_end=True)
+
+    assert result == AppendResult(appended=2, duplicates=0)
+    assert tailer.to_end_refs == [ref]
+    assert store.read_all() == [hook_event, transcript_event]
+    assert tailer.committed == [position]
+
+
 def test_counts_refusal_when_transcript_path_refused() -> None:
     ref = TranscriptRef(project="demo", session="session-1", path="/etc/passwd", kind="main")
     use_case, store, _, counters = _use_case(
@@ -201,3 +225,119 @@ def test_leaves_tail_position_uncommitted_when_transcript_append_fails() -> None
         use_case.execute(_envelope("Stop"))
 
     assert tailer.committed == []
+
+
+class _MapperByHook:
+    """Maps each envelope by its hook's name, as the collector's mapper does."""
+
+    def __init__(self, mappings: dict[str, HookMapping]) -> None:
+        self.mappings = mappings
+
+    def map(self, envelope: HookEnvelope) -> HookMapping:
+        return self.mappings[str(envelope.hook["hook_event_name"])]
+
+
+class _BatchStore(InMemoryEventStore):
+    """Records each batch it is asked to append."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.batches: list[list[Event]] = []
+
+    def append(self, events: Sequence[Event]) -> AppendResult:
+        self.batches.append(list(events))
+        return super().append(events)
+
+
+def _batch_use_case(
+    mappings: dict[str, HookMapping], tail: TailResult
+) -> tuple[IngestHook, _BatchStore, _Tailer, IngestionCounters]:
+    store = _BatchStore()
+    tailer = _Tailer(tail)
+    counters = IngestionCounters(clock=lambda: NOW)
+    use_case = IngestHook(store, _MapperByHook(mappings), tailer, status=counters)
+    return use_case, store, tailer, counters
+
+
+def test_appends_every_envelope_and_transcript_in_one_batch_when_executed_all() -> None:
+    tool, stop = an_event(), an_event(type="session.end", payload={"outcome": None})
+    transcript_event = an_event(source="transcript", type="message", payload={"role": "user"})
+    position = TailPosition(path="/home/demo/t.jsonl", version=1)
+    ref = TranscriptRef(project="demo", session="session-1", path="/home/demo/t.jsonl", kind="main")
+    use_case, store, tailer, counters = _batch_use_case(
+        {
+            "PreToolUse": HookMapping(events=(tool,)),
+            "Stop": HookMapping(events=(stop,), transcript=ref),
+        },
+        TailResult(events=(transcript_event,), position=position),
+    )
+
+    result = use_case.execute_all([_envelope("PreToolUse"), _envelope("Stop")])
+
+    assert result == AppendResult(appended=3, duplicates=0)
+    assert store.batches == [[tool, stop, transcript_event]]
+    assert tailer.refs == [ref]
+    assert tailer.committed == [position]
+    assert _snapshot(counters) == (2, 3, 0, 0, 0)
+
+
+def test_reads_transcript_once_to_its_end_when_batch_names_it_twice() -> None:
+    stop = an_event(type="session.end", payload={"outcome": None})
+    transcript_event = an_event(source="transcript", type="message", payload={"role": "user"})
+    position = TailPosition(path="/home/demo/t.jsonl", version=1)
+    ref = TranscriptRef(project="demo", session="session-1", path="/home/demo/t.jsonl", kind="main")
+    use_case, store, tailer, _ = _batch_use_case(
+        {"Stop": HookMapping(events=(stop,), transcript=ref)},
+        TailResult(events=(transcript_event,), position=position),
+    )
+
+    result = use_case.execute_all([_envelope("Stop"), _envelope("Stop")])
+
+    assert tailer.to_end_refs == [ref]
+    assert tailer.refs == [ref]
+    assert store.batches == [[stop, transcript_event, stop]]
+    assert tailer.committed == [position]
+    assert result == AppendResult(appended=2, duplicates=1)
+
+
+def test_counts_duplicates_when_batch_repeats_envelope() -> None:
+    event = an_event()
+    use_case, store, _, _ = _batch_use_case(
+        {"PreToolUse": HookMapping(events=(event,))}, TailResult(events=())
+    )
+
+    result = use_case.execute_all([_envelope(), _envelope()])
+
+    assert result == AppendResult(appended=1, duplicates=1)
+    assert store.read_all() == [event]
+
+
+def test_writes_nothing_and_commits_no_position_when_batch_conflicts() -> None:
+    stored = an_event(source_id="same-key")
+    changed = an_event(source_id="same-key", payload={"tool": "Read"})
+    position = TailPosition(path="/home/demo/t.jsonl", version=1)
+    ref = TranscriptRef(project="demo", session="session-1", path="/home/demo/t.jsonl", kind="main")
+    use_case, store, tailer, _ = _batch_use_case(
+        {
+            "PreToolUse": HookMapping(events=(an_event(),)),
+            "Stop": HookMapping(events=(changed,), transcript=ref),
+        },
+        TailResult(events=(an_event(source="transcript"),), position=position),
+    )
+    store.append([stored])
+
+    with pytest.raises(EventConflictError):
+        use_case.execute_all([_envelope("PreToolUse"), _envelope("Stop")])
+
+    assert store.read_all() == [stored]
+    assert tailer.committed == []
+
+
+def test_appends_nothing_when_batch_empty() -> None:
+    use_case, store, _, counters = _batch_use_case({}, TailResult(events=()))
+
+    result = use_case.execute_all([])
+
+    assert result == AppendResult(appended=0, duplicates=0)
+    assert store.batches == []
+    assert _snapshot(counters) == (0, 0, 0, 0, 0)

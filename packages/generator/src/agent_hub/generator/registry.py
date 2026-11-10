@@ -340,6 +340,11 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
     # The hooks, copied from the hub as they are (spec D4); only the entry points `hooks.json` runs
     # are executable (Q-3): `hubhooks.py` and the reader are their shared modules. The event
     # sensor (AGH-200 D6) also lends its send function to the guard and the Stop gate.
+    # The git commit-msg hook `.pre-commit-config.yaml` runs with `python3` (AGH-699 C-8): not a
+    # Claude Code hook, so not executable; it reads the guard's attribution pattern.
+    _generic_managed(
+        f"{_BASE_PLUGIN}/hooks/commit_msg.py", f"{_BASE_PLUGIN}/hooks/commit_msg.py.tmpl"
+    ),
     _hook_entry_point("event_sensor"),
     _hook_entry_point("guard"),
     _generic_managed(f"{_BASE_PLUGIN}/hooks/hooks.json", f"{_BASE_PLUGIN}/hooks/hooks.json.tmpl"),

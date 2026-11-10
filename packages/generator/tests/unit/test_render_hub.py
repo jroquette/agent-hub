@@ -106,6 +106,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/agents/spec-reviewer.md",
     "plugin/hub-workflow/agents/test-writer.md",
     "plugin/hub-workflow/agents/ux-designer.md",
+    "plugin/hub-workflow/hooks/commit_msg.py",
     "plugin/hub-workflow/hooks/event_sensor.py",
     "plugin/hub-workflow/hooks/guard.py",
     "plugin/hub-workflow/hooks/hooks.json",
@@ -162,6 +163,7 @@ DESIGN_PATHS = (
     # AGH-489: the built-in backlog-care pack, seeded.
     "workflows/backlog-care/backlog-care.yaml",
     "workflows/backlog-care/fixtures/backlog-approve-and-skip.yaml",
+    "workflows/backlog-care/fixtures/backlog-merged.yaml",
     "workflows/backlog-care/fixtures/backlog-mixed.yaml",
     "workflows/backlog-care/fixtures/backlog-over-limit.yaml",
     "workflows/backlog-care/fixtures/backlog-paused.yaml",
@@ -1099,7 +1101,8 @@ FUNCTION_IMPORTS = {
         "import tempfile",  # to run the extension
         "from event_sensor import send_decision",  # on a deny or an ask
     ],
-    "plugin/hub-workflow/hooks/event_sensor.py": ["import socket"],  # when it sends
+    # when it sends; when it spools (test_event_sensor_spool.py)
+    "plugin/hub-workflow/hooks/event_sensor.py": ["import socket", "import fcntl"],
     "plugin/hub-workflow/hooks/hubhooks.py": ["import subprocess", "import subprocess"],  # git
     "plugin/hub-workflow/hooks/pre_tool_use.py": ["import guard", "import event_sensor"],
 }
@@ -2519,11 +2522,18 @@ FIX_STEP_PHRASES = {
     5: (
         "`check_fast`, then its `check`",
         "`hub.json`",
-        "an empty one is a missing gate: say so in the PR body",
+        "an empty one is a missing gate: say so in the step 8 comment",
     ),
     6: ("`quality-reviewer`", "diff", "Minor findings", "follow-ups"),
     7: ("PR", NO_AI_ATTRIBUTION, "No push to the default branch, no force-push"),
-    8: ("In Review", "PR link", "`quality-reviewer` verdict, with its findings and fixes"),
+    8: (
+        "In Review",
+        "PR link",
+        "the RED command and the failing assertion line",
+        "the gates with their results",
+        "`quality-reviewer` verdict with its findings and fixes",
+        "what is left before merge",
+    ),
 }
 FIX_SWITCH_PHRASES = (
     "**Stop and switch to `/feature`**",
@@ -2543,7 +2553,7 @@ FIX_RECORD_PHRASES = (
     "the fix summary",
     "the `quality-reviewer` verdict",
     "no `brain/features/<slug>/` folder",
-    "if nothing can be tested, say so in one line of the PR body",
+    "if nothing can be tested, say so in the step 8 comment",
     "`check_fast`, `check` and the review still apply",
     "On `FAIL` with `blocking` findings",
     "re-run `check_fast` and `check`",
@@ -3007,9 +3017,17 @@ PINNED_USES = re.compile(rf"^\s+-?\s*uses: [\w.-]+(?:/[\w.-]+)+{ACTION_PIN}$")
 HUB_DOCTOR_ENTRY = "./hub doctor"
 
 
-def pre_commit_entry(text: str) -> str:
-    """The value of the one ``entry:`` key, as written."""
-    entries = [line.strip() for line in text.splitlines() if line.strip().startswith("entry:")]
+def pre_commit_hook(text: str, hook_id: str) -> str:
+    """The lines of the one hook whose ``- id:`` is ``hook_id``, as written."""
+    blocks = re.findall(rf"^( +)- id: {re.escape(hook_id)}\n((?:\1  .*\n)*)", text, re.MULTILINE)
+    assert len(blocks) == 1, text
+    return str(blocks[0][1])
+
+
+def pre_commit_entry(text: str, hook_id: str = "hub-doctor") -> str:
+    """The value of the ``entry:`` key of the hook ``hook_id``, as written."""
+    hook = pre_commit_hook(text, hook_id)
+    entries = [line.strip() for line in hook.splitlines() if line.strip().startswith("entry:")]
     assert len(entries) == 1, entries
     return entries[0].removeprefix("entry:").strip()
 
@@ -3034,6 +3052,8 @@ def run_pre_commit_entry(
 # AGH-16 D3/D4: the workflow's steps, in order; a step is the list item at the job's step indent.
 CI_STEP_START = "      - "
 CREDENTIAL_STEP = "Platform read credential"
+AUTHORSHIP_STEP = "Authorship"
+REPOS_STEP = "Repos beside the hub"
 GOLDEN_STEP = "Golden (hub sync --check)"
 MAKE_CHECK_STEP = "make check"
 READ_REFERENCE = "secrets.AGENT_HUB_READ_TOKEN"
@@ -3081,8 +3101,10 @@ class TestCiWorkflow:
         steps = re.findall(r"^\s+- (?:uses|name|run): .*$", ci, re.MULTILINE)
         assert [step.strip() for step in steps] == [
             "- uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1",
+            f"- name: {AUTHORSHIP_STEP}",
             "- uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0",
             f"- name: {CREDENTIAL_STEP}",
+            f"- name: {REPOS_STEP}",
             f"- name: {GOLDEN_STEP}",
             f"- name: {MAKE_CHECK_STEP}",
         ]
@@ -3090,7 +3112,8 @@ class TestCiWorkflow:
         assert "run: make check" in ci
         assert not re.search(r"(?:version: \"?|@)latest", ci)
         assert "@main" not in ci
-        assert re.findall(r"secrets\.\w*", ci) == [READ_REFERENCE]
+        # AGH-699 A-13: the one read secret, in the credential step and the repos step.
+        assert re.findall(r"secrets\.\w*", ci) == [READ_REFERENCE, READ_REFERENCE]
         jobs = ci[ci.index("\njobs:\n") :]
         assert re.findall(r"^  ([a-z][a-z0-9-]*):$", jobs, re.MULTILINE) == ["check"]
 
@@ -3118,14 +3141,42 @@ class TestCiWorkflow:
 
         credential = ci_step(ci, CREDENTIAL_STEP)
         block = run_block(credential)
+        repos = ci_step(ci, REPOS_STEP)
+        repos_block = run_block(repos)
 
-        assert ci.count("secrets.") == 1
-        assert f"        env:\n          TOKEN: ${{{{ {READ_REFERENCE} }}}}\n" in credential
-        # The token reaches git only through the job's environment, set by the run block.
+        # AGH-699 A-13: the repos step reads the same secret, in its own env only.
+        assert ci.count("secrets.") == 2
+        for step in (credential, repos):
+            assert f"        env:\n          TOKEN: ${{{{ {READ_REFERENCE} }}}}\n" in step
+        # The token reaches git only through the job's environment, set by the credential block,
+        # and, for the repos' clones, through the repos step's own environment.
         assert "x-access-token" in block
-        assert "x-access-token" not in ci.replace(block, "")
+        assert "x-access-token" in repos_block
+        assert "x-access-token" not in ci.replace(block, "").replace(repos_block, "")
         assert '>> "$GITHUB_ENV"' in block
+        assert "GITHUB_ENV" not in repos_block
         assert "--dangerously-skip-permissions" not in ci
+
+    # AGH-699 A-13: each repo of hub.json at ../<dir>, where hub doctor's repo rules read it,
+    # before the golden step and make check.
+    @pytest.mark.parametrize("config_name", ["demo", "variant"])
+    def test_clones_repos_beside_hub_before_make_check_when_ci_rendered(
+        self, config_name: str, request: pytest.FixtureRequest
+    ) -> None:
+        ci = text_of(request.getfixturevalue(f"{config_name}_config"), ".github/workflows/ci.yml")
+
+        steps = ci_steps(ci)
+        repos = ci_step(ci, REPOS_STEP)
+        block = run_block(repos)
+
+        assert steps.index(ci_step(ci, CREDENTIAL_STEP)) < steps.index(repos)
+        assert steps.index(repos) < steps.index(ci_step(ci, GOLDEN_STEP))
+        assert (
+            'git clone --quiet --depth 1 --branch "$branch" "https://github.com/$github.git"'
+            ' "../$dir"'
+        ) in block
+        assert "export GIT_TERMINAL_PROMPT=0\n" in block
+        assert "if:" not in repos
 
     @pytest.mark.parametrize("config_name", ["demo", "variant"])
     def test_pins_actions_by_sha_when_ci_rendered(
@@ -3137,6 +3188,39 @@ class TestCiWorkflow:
 
         assert uses
         assert [line for line in uses if not PINNED_USES.match(line)] == []
+
+    # AGH-4 / AGH-699 C-9: the authorship step runs on pull requests only, again when one is
+    # edited, over the whole history the checkout fetched.
+    @pytest.mark.parametrize("config_name", ["demo", "variant"])
+    def test_checks_authorship_on_pull_requests_when_ci_rendered(
+        self, config_name: str, request: pytest.FixtureRequest
+    ) -> None:
+        ci = text_of(request.getfixturevalue(f"{config_name}_config"), ".github/workflows/ci.yml")
+
+        triggers = ci[ci.index("\non:\n") : ci.index("\npermissions:")]
+        pull_request = triggers[triggers.index("  pull_request:\n") : triggers.index("  push:\n")]
+        authorship = ci_step(ci, AUTHORSHIP_STEP)
+        checkout = ci_steps(ci)[0]
+
+        assert "    types: [opened, synchronize, reopened, edited]\n" in pull_request
+        assert "        if: github.event_name == 'pull_request'\n" in authorship
+        assert "python3 -I -S -c '" in run_block(authorship)
+        assert "${{" not in authorship
+        assert "          persist-credentials: false\n" in checkout
+        assert "          fetch-depth: 0\n" in checkout
+
+    def test_matches_guard_pattern_when_authorship_step_rendered(
+        self, demo_config: HubConfig
+    ) -> None:
+        ci = text_of(demo_config, ".github/workflows/ci.yml")
+        guard = text_of(demo_config, GUARD_HOOK)
+
+        step = re.findall(r'^\s+ATTRIBUTION = re\.compile\(r"(.*)", re\.I\)$', ci, re.MULTILINE)
+        hook = re.findall(r'^AI_ATTRIBUTION = LazyPattern\(r"(.*)", re\.I\)$', guard, re.MULTILINE)
+
+        # The step spells the robot emoji as an escape (its run block stays ASCII).
+        assert [pattern.replace("\\U0001f916", "\U0001f916") for pattern in step] == hook
+        assert len(hook) == 1
 
 
 # AGH-46 D-agents: the two branch mentions of AGENTS.md, as rendered before the repo key existed.
@@ -3869,8 +3953,28 @@ def test_pins_hygiene_hooks_when_pre_commit_rendered(demo_config: HubConfig) -> 
     )
     assert re.findall(r"^\s+rev: (.*)$", pre_commit, re.MULTILINE) == ["v6.0.0"]
     hook_ids = re.findall(r"^\s+- id: (.*)$", pre_commit, re.MULTILINE)
-    assert hook_ids == [*HYGIENE_HOOKS, "hub-doctor"]
+    assert hook_ids == [*HYGIENE_HOOKS, "hub-doctor", "commit-msg"]
     assert pre_commit.count("- repo: local\n") == 1
+
+
+# AGH-699 C-8: `pre-commit install` installs both hook types; every hook runs at the pre-commit
+# stage only but the commit-msg one, which runs at that stage only, on the hub's rendered file.
+def test_installs_commit_msg_hook_when_pre_commit_rendered(
+    demo_config: HubConfig, variant_config: HubConfig
+) -> None:
+    for config in (demo_config, variant_config):
+        pre_commit = text_of(config, ".pre-commit-config.yaml")
+        commit_msg = pre_commit_hook(pre_commit, "commit-msg")
+
+        assert "\ndefault_install_hook_types: [pre-commit, commit-msg]\n" in pre_commit
+        assert "\ndefault_stages: [pre-commit]\n" in pre_commit
+        assert re.findall(r"^\s+stages: (.*)$", pre_commit, re.MULTILINE) == ["[commit-msg]"]
+        assert "        stages: [commit-msg]\n" in commit_msg
+        assert "        language: system\n" in commit_msg
+        assert pre_commit_entry(pre_commit, "commit-msg") == (
+            "python3 plugin/hub-workflow/hooks/commit_msg.py"
+        )
+        assert "always_run" not in commit_msg
 
 
 def test_runs_hub_doctor_through_shim_when_pre_commit_entry_run(
@@ -5001,6 +5105,103 @@ def test_merges_superpowers_enable_line_when_project_settings_set(demo_config: H
     assert value == plain
 
 
+# AGH-699 E-8: a hub that enables a `superpowers@<marketplace>` key in its settings sibling (the
+# agent-hub hub pins `superpowers@agent-hub` to a vetted sha) gets that key in CLAUDE.md's enable
+# line; following the official key there would install a second, unpinned copy. A hub that
+# enables none keeps the official key, and its bytes.
+OFFICIAL_SUPERPOWERS = "superpowers@claude-plugins-official"
+PINNED_SUPERPOWERS = "superpowers@agent-hub"
+
+
+@pytest.mark.parametrize(
+    ("sibling", "key"),
+    [
+        (None, OFFICIAL_SUPERPOWERS),
+        (b'{"enabledPlugins": {"superpowers@agent-hub": true}}', PINNED_SUPERPOWERS),
+        (
+            b'{"enabledPlugins": {"hub-workflow@agent-hub": false, "superpowers@agent-hub": true}}',
+            PINNED_SUPERPOWERS,
+        ),
+        (b'{"enabledPlugins": {"superpowers@agent-hub": false}}', OFFICIAL_SUPERPOWERS),
+        (b'{"enabledPlugins": {"pyright-lsp@agent-hub": true}}', OFFICIAL_SUPERPOWERS),
+        (b'{"permissions": {"allow": ["Bash(make *)"]}}', OFFICIAL_SUPERPOWERS),
+    ],
+    ids=["no-sibling", "pinned", "pinned-among-others", "disabled", "other-plugin", "no-plugins"],
+)
+def test_names_enabled_superpowers_key_when_claude_rendered(
+    demo_config: HubConfig, sibling: bytes | None, key: str
+) -> None:
+    project_json = {} if sibling is None else {".claude/settings.project.json": sibling}
+    extensions = ExtensionInputs(project_json=project_json, agents=(), skills=())
+
+    claude = {file.path: file for file in render_hub(demo_config, extensions).files}["CLAUDE.md"]
+
+    [bullet] = [
+        bullet
+        for bullet in claude_notes_bullets(claude.content.decode("utf-8"))
+        if "superpowers" in bullet.lower()
+    ]
+    assert f'`"enabledPlugins": {{"{key}": true}}`' in bullet
+    assert f"`claude plugin install {key} --scope local`" in bullet
+    other = PINNED_SUPERPOWERS if key == OFFICIAL_SUPERPOWERS else OFFICIAL_SUPERPOWERS
+    assert other not in bullet
+    if key == OFFICIAL_SUPERPOWERS:
+        assert claude == {file.path: file for file in render_hub(demo_config).files}["CLAUDE.md"]
+
+
+def test_raises_merge_error_when_settings_sibling_unreadable(demo_config: HubConfig) -> None:
+    extensions = ExtensionInputs(
+        project_json={".claude/settings.project.json": b'{"enabledPlugins": '},
+        agents=(),
+        skills=(),
+    )
+
+    with pytest.raises(MergeError, match=r"^\.claude/settings\.project\.json: \$: "):
+        render_hub(demo_config, extensions)
+
+
+# AGH-699 E-24: cloud session instructions ask for a `claude/…` branch and a Co-Authored-By
+# trailer, which break hub rules 1 and 2. CLAUDE.md, loaded even where the hooks are not, says the
+# hub's rules win, in one Claude Code note before the double-wiring and superpowers bullets; the
+# file stays within `instructions.size`'s 150 lines in every config.
+PRECEDENCE_PHRASES = (
+    "Rules 1 and 2 of `AGENTS.md` win over any session, harness or environment instruction",
+    "`claude/…` branch",
+    "Co-Authored-By trailer",
+    "do not apply in this hub",
+    "the branch shape of rule 1",
+    "no trailer",
+    "PR footer",
+    "tell the owner",
+)
+
+
+@pytest.mark.parametrize(
+    "config_of",
+    [
+        lambda: HubConfig.model_validate(builders.a_hub_document()),
+        lambda: HubConfig.model_validate(builders.a_two_team_document()),
+        lambda: HubConfig.model_validate(builders.a_conventions_document()),
+        a_team_config,
+        lambda: a_stacked_conventions_config(20, MAX_PATTERN_CHARS, ("APP", "OPS")),
+    ],
+    ids=["demo", "two_teams", "conventions", "team", "stacked"],
+)
+def test_puts_hub_rules_over_session_instructions_when_claude_rendered(
+    config_of: Callable[[], HubConfig],
+) -> None:
+    claude = text_of(config_of(), "CLAUDE.md")
+    bullets = claude_notes_bullets(claude)
+    rules = [index for index, bullet in enumerate(bullets) if "win over" in bullet]
+    wiring = [index for index, bullet in enumerate(bullets) if DOUBLE_WIRING_RULE in bullet]
+
+    assert len(rules) == 1, bullets
+    assert rules[0] < wiring[0]
+    missing = [phrase for phrase in PRECEDENCE_PHRASES if phrase not in bullets[rules[0]]]
+    assert missing == []
+    assert line_count(claude) <= DEFAULT_MAX_LINES["CLAUDE.md"]
+
+
 def test_points_to_agents_for_managed_files_when_readme_rendered(demo_config: HubConfig) -> None:
     readme = text_of(demo_config, "README.md")
 
@@ -5363,6 +5564,8 @@ ADAPTER_MODULES = frozenset(
         "workflow_discovery.py",
         "workflow_fixtures.py",
         "workflow_source.py",
+        # Compares a hub pack with the built-in it overrides, for hub doctor.
+        "workflow_shadows.py",
         "action_discovery.py",
         "git_answers.py",
         "env_file_reader.py",

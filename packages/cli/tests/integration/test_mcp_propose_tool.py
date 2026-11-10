@@ -95,7 +95,7 @@ def found_by(result: CallToolResult) -> dict[str, Any]:
 
 
 def pull_request_creates(world: Any) -> list[list[str]]:
-    return [argv for argv in world.gh_calls() if argv[:2] == ["pr", "create"]]
+    return [argv for argv in world.gh_calls() if argv[:3] == ["api", "--method", "POST"]]
 
 
 def test_opens_pull_request_with_note_when_proposed(proposal_hub: ProposalHubFactory) -> None:

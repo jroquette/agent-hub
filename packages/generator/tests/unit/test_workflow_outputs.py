@@ -5,11 +5,11 @@ from typing import Any, NoReturn
 
 import pytest
 
-from agent_hub.core.workflows.document import WorkflowProblem, parse_workflow
+from agent_hub.core.workflows.document import WorkflowDocument, WorkflowProblem, parse_workflow
 from agent_hub.core.workflows.failures import NodeFailedError
 from agent_hub.core.workflows.ports import OutputValidator
 from agent_hub.generator import workflow_outputs
-from agent_hub.generator.workflow_outputs import JsonSchemaOutputs, output_format_problems
+from agent_hub.generator.workflow_outputs import JsonSchemaOutputs
 
 REPORT = {
     "type": "object",
@@ -24,6 +24,19 @@ REPORT = {
 
 def a_validator() -> OutputValidator:
     return JsonSchemaOutputs()
+
+
+def output_format_problems(
+    document: WorkflowDocument, validator: OutputValidator
+) -> list[WorkflowProblem]:
+    """Each problem of each ``output_format`` of ``document``, at that key."""
+    problems: list[WorkflowProblem] = []
+    for index, node in enumerate(document.nodes):
+        schema = getattr(node, "output_format", None)
+        if schema is not None:
+            loc = ("nodes", index, "output_format")
+            problems.extend(WorkflowProblem(loc, p) for p in validator.schema_problems(schema))
+    return problems
 
 
 def failure_of(schema: dict[str, Any], value: Any) -> NodeFailedError:

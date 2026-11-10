@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "MCP server of agent-hub: serves a hub's knowledge to agents over stdio (hub mcp)."
 license = "Apache-2.0"
 requires-python = ">=3.14"
-dependencies = ["agent-hub-core", "agent-hub-hub-git", "mcp==2.3.0"]
+dependencies = ["agent-hub-core", "agent-hub-hub-git", "mcp==2.3.0", "anyio>=4.10", "pydantic>=2"]
 
 [tool.uv.sources]
 agent-hub-core = { workspace = true }

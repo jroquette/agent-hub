@@ -6,9 +6,10 @@ import pytest
 from agent_hub.core.events.event import Event
 from agent_hub.core.events.stored_event import StoredEvent
 from agent_hub.core.skills import skill_usage
-from agent_hub.core.skills.skill_usage import MAX_USAGE_NAMES, fold_skill_usage
-from agent_hub.core.skills.skill_view import USAGE_DAYS, Usage, UsageWindows
+from agent_hub.core.skills.skill_usage import HUB_TOOLS, MAX_USAGE_NAMES
+from agent_hub.core.skills.skill_view import USAGE_DAYS, HubToolCalls, Usage, UsageWindows
 from agent_hub.core.testing.builders import an_event
+from agent_hub.core.testing.history_folds import fold_skill_usage
 from agent_hub.core.testing.session_scenarios import as_stored
 
 NOW = datetime(2026, 10, 13, 12, 0, tzinfo=UTC)
@@ -204,6 +205,14 @@ def test_holds_only_names_counts_and_times_when_folded() -> None:
         "windows_by_skill",
         "windows_by_agent",
         "windows_truncated",
+        "hub_tools",
+    }
+    assert {
+        kind: set(windows)
+        for kind, windows in usage.hub_tools["mcp__hub__search"].model_dump().items()
+    } == {
+        "main": {"runs_7d", "runs_30d", "runs_90d", "last_used_at"},
+        "subagents": {"runs_7d", "runs_30d", "runs_90d", "last_used_at"},
     }
     assert set(usage.windows_by_skill["feature"].model_dump()) == {
         "runs_7d",
@@ -431,3 +440,93 @@ def test_counts_as_full_fold_when_uses_folded_from_earlier_start(events: list[Ev
     assert skill_usage.usage_at(uses, now=NOW) == fold_skill_usage(
         sessions, project="demo", now=NOW
     )
+
+
+def _hub_call(
+    tool: str,
+    seconds: float,
+    *,
+    tool_use_id: str,
+    agent: str | None = None,
+    agent_id: str | None = None,
+    source: str = "claude_code",
+) -> Event:
+    """A call of a hub knowledge tool (``hub mcp``), by the main agent or by a subagent."""
+    payload: dict[str, object] = {"tool": tool, "tool_use_id": tool_use_id, "arg_keys": ["query"]}
+    if agent_id is not None:
+        payload["agent_id"] = agent_id
+    return an_event(
+        session="s-1",
+        type="tool.call",
+        timestamp=_at(seconds),
+        source=source,
+        source_id=f"s-1:{source}:{tool_use_id}",
+        payload=payload,
+        agent=agent,
+    )
+
+
+def _windows(runs_7d: int, runs_30d: int, runs_90d: int, *, at: datetime | None) -> UsageWindows:
+    return UsageWindows(runs_7d=runs_7d, runs_30d=runs_30d, runs_90d=runs_90d, last_used_at=at)
+
+
+NONE_YET = _windows(0, 0, 0, at=None)
+
+
+def test_counts_hub_tools_by_main_and_subagent_when_sessions_call_them() -> None:
+    events = [
+        _hub_call("mcp__hub__search", 0, tool_use_id="toolu_1"),
+        # The transcript's copy of the hook's call: one call.
+        _hub_call("mcp__hub__search", 1, tool_use_id="toolu_1", source="transcript"),
+        _hub_call("mcp__hub__search", 2, tool_use_id="toolu_2", agent="main"),
+        _hub_call("mcp__hub__read", 3, tool_use_id="toolu_3"),
+        _hub_call("mcp__hub__search", 4, tool_use_id="toolu_4", agent="evaluator", agent_id="a-1"),
+        _hub_call("mcp__hub__propose", 5, tool_use_id="toolu_5", agent="planner", agent_id="a-2"),
+        _hub_call("mcp__github__search", 6, tool_use_id="toolu_6"),
+        _skill_call("feature", 7, tool_use_id="toolu_7"),
+    ]
+
+    usage = fold_skill_usage(_sessions(events), project="demo", now=NOW)
+
+    assert usage.hub_tools == {
+        "mcp__hub__search": HubToolCalls(
+            main=_windows(2, 2, 2, at=_at(2)), subagents=_windows(1, 1, 1, at=_at(4))
+        ),
+        "mcp__hub__read": HubToolCalls(main=_windows(1, 1, 1, at=_at(3)), subagents=NONE_YET),
+        "mcp__hub__propose": HubToolCalls(main=NONE_YET, subagents=_windows(1, 1, 1, at=_at(5))),
+    }
+    assert "mcp__github__search" not in usage.hub_tools
+
+
+def test_counts_hub_tools_by_window_when_calls_are_older() -> None:
+    old = NOW - timedelta(days=10)
+    events = [
+        _hub_call("mcp__hub__search", 0, tool_use_id="toolu_1"),
+        an_event(
+            session="s-2",
+            type="tool.call",
+            timestamp=old,
+            payload={"tool": "mcp__hub__search", "tool_use_id": "toolu_2"},
+        ),
+        an_event(
+            session="s-3",
+            type="tool.call",
+            timestamp=NOW - timedelta(days=91),
+            payload={"tool": "mcp__hub__search", "tool_use_id": "toolu_3"},
+        ),
+    ]
+
+    usage = fold_skill_usage(_sessions(events), project="demo", now=NOW)
+
+    assert usage.hub_tools["mcp__hub__search"] == HubToolCalls(
+        main=_windows(1, 2, 2, at=_at(0)), subagents=NONE_YET
+    )
+
+
+def test_lists_every_hub_tool_at_zero_when_none_called() -> None:
+    usage = fold_skill_usage(_sessions([_prompt("/feature", 0)]), project="demo", now=NOW)
+
+    assert usage.hub_tools == dict.fromkeys(
+        HUB_TOOLS, HubToolCalls(main=NONE_YET, subagents=NONE_YET)
+    )
+    assert HUB_TOOLS == ("mcp__hub__search", "mcp__hub__read", "mcp__hub__propose")

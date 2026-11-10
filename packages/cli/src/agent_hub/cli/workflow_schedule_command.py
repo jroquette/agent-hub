@@ -3,8 +3,10 @@
 One line per schedule, in the file's order: ``<workflow>  <cron>  next <YYYY-MM-DDTHH:MMZ>``,
 with ``  env <name>`` when it sets an environment; the time is UTC, the first slot strictly
 after ``--after`` (default now). ``no schedules in hub.json`` when there is none. ``hub web``
-starts them; this command only reads ``hub.json`` (a folder that is not a hub exits 2, a
-``hub.json`` that is not valid exits 1). Events are not listed: they have no time.
+starts them, but never in the container: there ``AGENT_HUB_IN_CONTAINER=1`` turns its agent
+sessions off, so no scheduled or event start runs (ADR 0048). This command only reads
+``hub.json`` (a folder that is not a hub exits 2, a ``hub.json`` that is not valid exits 1).
+Events are not listed: they have no time.
 """
 
 import os
@@ -44,7 +46,11 @@ def list_schedules(
         typer.Option("--after", metavar="TIME", help="Show the first start after TIME (ISO 8601)."),
     ] = None,
 ) -> None:
-    """List each schedule of hub.json with its next start (UTC)."""
+    """List each schedule of hub.json with its next start (UTC).
+
+    hub web starts them. Scheduled and event starts never run in the container
+    (AGENT_HUB_IN_CONTAINER=1 turns its agent sessions off).
+    """
     from agent_hub.cli.hub_config_reader import (  # noqa: PLC0415 - only this command reads hub.json
         load_hub_config_or_exit,
     )

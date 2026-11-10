@@ -43,6 +43,7 @@ EXIT_MARGIN = 0.3
 START_WAIT = 10.0
 VERDICT_WAIT = 0.2
 ATTRIBUTION = "git commit -m 'feat: x\n\nCo-Authored-By: Claude Opus <noreply@anthropic.com>'"
+SESSION_TRAILER = "git commit -m 'feat: x\n\nClaude-Session: https://claude.ai/code/session_0123'"
 
 type Completed = subprocess.CompletedProcess[bytes]
 type RunHook = Callable[..., Completed]
@@ -182,6 +183,7 @@ VERDICT_CASES: dict[str, Case] = {
     "env-read": Case(read_file("demo-api/.env"), "deny"),
     "hub-json-edit": Case(edit_file("demo-hub/hub.json"), "ask"),
     "ai-attribution": Case(bash(ATTRIBUTION), "deny"),
+    "session-trailer": Case(bash(SESSION_TRAILER), "deny"),
     "terraform": Case(bash("terraform apply"), "deny"),
     "mcp-tool": Case(
         lambda hub: tool_call(hub, "mcp__db__query", host="db.prod.example.com"), "deny"

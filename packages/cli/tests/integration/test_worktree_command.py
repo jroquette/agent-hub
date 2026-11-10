@@ -1498,8 +1498,10 @@ class TestBase:
 
 
 # AGH-381: the fake gh of ``--stack-on``: it logs its arguments and prints ``FAKE_GH_VIEW``.
+# Only GitHub's REST API (``gh api``), as a cloud session's proxy lets through: ``gh pr`` exits 2.
 _STACK_GH = """#!/bin/sh
 printf '%s\\n' "$*" >> "$FAKE_GH_LOG"
+if [ "$1" != api ]; then echo "gh (fake): unknown call" >&2; exit 2; fi
 if [ -n "$FAKE_GH_FAIL" ]; then echo "$FAKE_GH_FAIL" >&2; exit 1; fi
 printf '%s' "$FAKE_GH_VIEW"
 """
@@ -1516,14 +1518,21 @@ def stack_gh(
     fork: bool = False,
     fail: str = "",
 ) -> Path:
-    """Put a fake ``gh`` first on ``PATH`` that answers ``gh pr view``; its call log's path."""
+    """Put a fake ``gh`` first on ``PATH`` that answers ``gh api`` with the pull request as the
+    REST API gives it (``state`` ``OPEN``, ``CLOSED`` or ``MERGED``); its call log's path."""
     bin_dir = tmp_path / "stack-gh-bin"
     bin_dir.mkdir()
     gh = bin_dir / "gh"
     gh.write_text(_STACK_GH, encoding="utf-8")
     gh.chmod(EXECUTABLE)
     log = tmp_path / "stack-gh.log"
-    view = {"headRefName": head, "state": state, "isCrossRepository": fork}
+    head_repo = "jdoe/demo-api" if fork else "acme/demo-api"
+    view = {
+        "state": "open" if state == "OPEN" else "closed",
+        "merged": state == "MERGED",
+        "head": {"ref": head, "repo": {"full_name": head_repo}},
+        "base": {"ref": "trunk", "repo": {"full_name": "acme/demo-api"}},
+    }
     monkeypatch.setenv("FAKE_GH_LOG", str(log))
     monkeypatch.setenv("FAKE_GH_VIEW", json.dumps(view))
     monkeypatch.setenv("FAKE_GH_FAIL", fail)
@@ -1560,7 +1569,7 @@ class TestStackOn:
         assert stacked != api_trunk
         assert demo_workspace.git(web, "rev-parse", "HEAD") == web_trunk
         assert log.read_text(encoding="utf-8").splitlines() == [
-            f"pr view {BLOCKER_PR} --json headRefName,state,isCrossRepository"
+            "api --method GET repos/acme/demo-api/pulls/6"
         ]
 
     def test_starts_the_task_repo_from_its_default_branch_when_only_names_the_blocker_repo(

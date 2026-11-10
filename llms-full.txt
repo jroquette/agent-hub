@@ -169,7 +169,7 @@ From the hub folder, run the doctor and the sync check. Both write nothing:
 ./hub sync --check
 ```
 
-`./hub doctor --json` exits `0` (no error finding: go on), `1` (at least one error finding: fix each one its `message` names, then run it again) or `2` (a usage error, or the folder is not a hub: run it from the hub folder).
+`./hub doctor --json` exits `0` (no error finding: go on), `1` (at least one error finding: fix each one its `message` names, then run it again) or `2` (a usage error, or the folder is not a hub: run it from the hub folder). On a fresh hub it lists one `workflows.shadow` warning for each workflow `hub init` copied into `workflows/`: the copy runs instead of the built-in, and no later release updates it. They do not stop you. Delete each `workflows/<pack>/` you will not change, so the hub runs the built-in (`./hub sync` does not bring it back), and keep the ones you change.
 
 `./hub sync --check` exits `0` (up to date: go on), `4` (changes pending: run `./hub sync`, then check again), `3` (a conflict: show the user the listed paths and the way out it prints) or `1` (an error: fix the named input, such as `hub.json` or `hub.lock`).
 
@@ -264,11 +264,11 @@ grid. It serves on `127.0.0.1` only, port 7420 by default. Run it one of two way
 
 Register the hub once, with its absolute path: in the app under Settings › Hubs, or, from the agent-hub clone,
 `make connect HUB=<workspace>/<hub>`, which also checks that the hub has the event sensor and says what to do when it
-does not. The hub's hooks then send each session's events as they happen; without the control plane running they do
-nothing and the session is unaffected. Older work can be added once: `./hub collect --transcript <file>` for a
-transcript under `~/.claude/projects/`, and `./hub collect --runs .agent-runs` for `hub run` records. Only metadata
-is stored (sizes, tools, repo-relative paths, short commands with secrets redacted, and for a failed tool its error
-text, redacted and cut at 300 characters), never prompt, output or file text.
+does not. The hub's hooks then send each session's events as they happen; while the control plane is down they wait in a
+spool that `./hub web` or `./hub collect --spool` imports. Older work can be added once: `./hub collect --transcript
+<file>` for a transcript under `~/.claude/projects/`, and `./hub collect --runs .agent-runs` for `hub run` records. Only
+metadata is stored (sizes, tools, repo-relative paths, short commands with secrets redacted, and for a failed tool its
+error text, redacted and cut at 300 characters), never prompt, output or file text.
 
 Each session is shown by its issue and workflow (`ACME-1511 · /feature`), read from its branch or task worktree name and
 the hub's tracker team; each failure says what failed, where, which agent, and whether the agent handled it or it needs
@@ -392,7 +392,8 @@ file and answer `./hub workflow respond <run> --choice comment|request-changes|a
 then does `/review` post it. The repo's check runs at the PR's head in a throwaway worktree, never for a fork.
 
 The platform's own releases come from `/release`, which runs the built-in `release` workflow: the owner approves
-the release PR, merges it with a merge commit, and approves the hub PR that raises `platform.version`.
+the release PR, merges it with a merge commit, and approves the hub PR that raises `platform.version` and sets
+`brain/now.md`'s pin and `last_verified`.
 
 **The weekly retro.** `/retro` runs the built-in `retro` workflow (`./hub workflow run retro --input since=7 --live`):
 the week's run metrics, at most five changes each backed by those numbers, and, for the ones you keep at its gate,
@@ -2363,10 +2364,11 @@ seeded files are never rewritten by `hub sync`.
 - [ADR 0002](../adr/0002-lean-hexagonal-architecture.md), [ADR 0008](../adr/0008-cli-as-composition-root.md): the
   use case `start_task` and its ports `TaskWorktrees` and `SessionLauncher` are core; git, the prints and the exec
   are `cli` (`GitTaskWorktrees`, `ClaudeSession`, `PrintedSession`).
+- `hub start` moves an issue only to `tracker.states.started`; `tracker.states.review` is read by `hub run` and
+  `hub ship`, which move an issue there once its PR is open.
 
 ## Open questions
 
-- `tracker.states.review` is read by nothing yet: the review step (AGH-63) decides who moves an issue there.
 - An existing hub gets `brain/auto/agent-context-*.md` in its `.gitignore` only by hand; nothing reports it missing.
 
 ---
@@ -2647,13 +2649,24 @@ keeps the old `hub.lock` (absent or its prior bytes); a plain `--adopt` then end
 ### In the hub's CI
 
 Every hub's rendered `.github/workflows/ci.yml` (`init` and sync render the same file) has one job, `check`, run on
-pull requests to and pushes on the default branch with read-only `contents`; each action is pinned by commit SHA, its
-release in a comment (`# vX.Y.Z`). Steps: checkout (credentials not kept), setup-uv, credential, golden, `make check`.
+pull requests to (opened, synchronize, reopened, and edited, so a changed title or body is checked again) and pushes on
+the default branch with read-only `contents`; each action is pinned by commit SHA, its release in a comment
+(`# vX.Y.Z`). Steps: checkout (the whole history, credentials not kept), authorship (pull requests only), setup-uv,
+credential, repos, golden, `make check`.
+
+- **Authorship step** (`Authorship`, AGENTS.md rule 1, AGH-4): fails when the pull request's title, body or one of its
+  commit messages (`base..head` of the event) carries AI attribution (the guard's `AI_ATTRIBUTION`), or, when an author
+  email is known (`AUTHOR_EMAIL` in the step's env, else `hub.json`'s `project.author_email`), when one of its commits
+  is authored or committed with another email; GitHub's own committer (`noreply@github.com`, a web edit or "Update
+  branch") is let through. The title and body are read from the event file (`$GITHUB_EVENT_PATH`), never through an
+  expression in the run block, and only commit SHAs and emails are printed. The platform's own `ci.yml` runs the same
+  step, byte for byte, in its `authorship` job.
 
 - **Credential step** (`Platform read credential`): reads `AGENT_HUB_READ_TOKEN`, a secret of the hub repository
   (Settings → Secrets and variables → Actions): a fine-grained personal access token or a GitHub App token with
-  read-only Contents on the platform repository only. It reaches the step through `env`, the only `secrets.`
-  expression in the file. Empty or unset, the step does nothing: a public platform needs no secret. On a private
+  read-only Contents on the platform repository and, when they are private, on the hub's repos (the repos step). It
+  reaches each of those two steps through `env`, the only `secrets.` expressions in the file. Empty or unset, the step
+  does nothing: a public platform needs no secret. On a private
   platform the shim then cannot fetch the pin, the golden step exits 1 and the job fails; so do fork pull requests and
   Dependabot pull requests, which get no Actions secrets (Dependabot needs the same name under Dependabot secrets).
   A token holding anything outside `[A-Za-z0-9_]` exits 1 with `AGENT_HUB_READ_TOKEN: unexpected characters`, before
@@ -2662,6 +2675,17 @@ release in a comment (`# vX.Y.Z`). Steps: checkout (credentials not kept), setup
   to one carrying the token, and the hub's own GitHub URL mapped to itself (`insteadOf` takes the longest matching
   prefix, so the hub's own fetches never carry the token). The token is never written to a file in the repo: not in a
   URL, `hub.json` or `hub.lock`.
+- **Repos step** (`Repos beside the hub`, AGH-699 A-13): clones each repo of `hub.json` (`repos[]`, read when the step
+  runs) at its default branch (`repos[].default_branch`, else `project.default_branch`), depth 1, into `../<dir>` beside
+  the hub, where `hub doctor`'s repo rules (`brain.leak`, `instructions.read_cap`, `links.dead`, `repos.agents`,
+  `repos.ui_paths`) read it; without it those rules see no checkout, report an `info` and `make check` passes. With
+  `AGENT_HUB_READ_TOKEN` set, each clone's `https://github.com/<owner>/<name>` maps to a URL carrying the token through
+  `GIT_CONFIG_*` in the step's own environment (one repo at a time; never an argument, a file or `$GITHUB_ENV`); unset,
+  the clones are anonymous, which reads public repos only. It fails, nothing echoed but the repo's `owner/name`, branch
+  and folder, on a token outside `[A-Za-z0-9_]` (the credential step's line), on a `repos` entry whose `dir`, `github`
+  or branch does not have the model's shape (`repos[<i>] in hub.json needs a dir, an owner/name github and a branch`,
+  before any clone), and on a repo it cannot clone (`cannot clone <owner/name> (<branch>) into ../<dir>;
+  AGENT_HUB_READ_TOKEN needs read access to it`).
 - **Golden step** (`Golden (hub sync --check)`): `./hub sync --check` through the pinned shim, before `make check`;
   it writes nothing, and any non-zero exit fails the job before `make check`. Exits (`--check`'s) and their fixes:
   - 0 up to date: the job goes on.
@@ -2727,10 +2751,12 @@ The snapshot is read from the cwd's real path (no walk-up) and holds the validat
 the files of the hub and the fixed set of paths the rules read by name. Two inputs are read only when a selected rule
 needs them: the parsed `hub.lock` and its managed paths, looked at by path (`lock.drift`), and the release's base hooks
 block, built by the templates package installed with the running CLI, so doctor still renders no file
-(`settings.weakening`). A third, read only when a repo rule (`brain.leak`, `links.dead`, `repos.agents`, `repos.ui_paths`) is selected, is
+(`settings.weakening`). A third, read only when a repo rule (`brain.leak`, `instructions.read_cap`, `links.dead`, `repos.agents`, `repos.ui_paths`) is selected, is
 the files of each `repos[].dir` checkout at `../<dir>`: a missing or non-folder `../<dir>` gives one `info`, a checkout
 that cannot be listed one `error` (its cause), both at `../<dir>` on the first selected repo rule by id, never retuned;
-the repo rules skip both. A linked `../<dir>` is resolved once to its real path. A root with no `.git` entry, a hub
+the repo rules skip both. The hub's CI clones each repo there before `make check` (the repos step,
+[hub-adopt.md](hub-adopt.md#in-the-hubs-ci)), so the repo rules run in CI too. A linked `../<dir>` is resolved once to
+its real path. A root with no `.git` entry, a hub
 inside a larger repository included, is walked, skipping `.git` and nested repositories. A root with a `.git` entry is
 listed with `git ls-files -z --cached --others --exclude-standard`, and git must name the root as the work-tree top;
 `HubFiles.listed_by_git` says whether git made the listing. Git missing, failing, timing out or naming another top is a
@@ -2757,6 +2783,7 @@ functions registered when the module ships.
 | `instructions.size` | error | line limits of the listed regular instruction files (root `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md`; `.github/copilot-instructions.md` and every `.md` under `.claude/{rules,agents,skills,commands}` or `.github/instructions`): root `AGENTS.md` 100, `CLAUDE.md` 150, `CLAUDE.local.md` 50, every nested one 80, `GEMINI.md` none; `max_lines` merges over them (exact key before glob, then the longest glob). A link is not an instruction file, so a plugin agent linked into `.claude/agents/` gets no `instructions.*` check (it keeps `rules.frontmatter`, `secrets.config` and `attribution.ai` as a plugin file) | config lint |
 | `instructions.refs` | error | paths, `make` targets and `pnpm` scripts an instruction file names below its frontmatter exist: a path resolves against the listed paths and the fixed paths present, and their folders, from the file's folder or the root, then by name or ending (a reference of at most 32 segments); nothing out of the hub or under a link resolves; targets are `Makefile`'s, `Makefile.project`'s and those of `mk/<id>.mk` of selected modules, scripts `package.json`'s (not read when linked or not text); `hub.lock` is ignored by design (its absence is `lock.drift`'s), and so is exactly `hub.local.json` (each developer's, gitignored); links are not instruction files | config lint |
 | `instructions.duplicates` | error | the same normalized instruction line (60 or more characters; not a table, fence or heading line) in two instruction files, flagged on the later path naming the first; repeats within a file are not; links are not instruction files | config lint |
+| `instructions.read_cap` | warning | no listed regular instruction file of the hub (as `instructions.size` lists them), plugin agent or skill (as `rules.frontmatter` lists them), or instruction file of a checked-out repo, sends agents to a doc over the Read tool's cap: Claude Code refuses a file over 25,000 tokens read whole, and the snapshot has bytes, not tokens, so the cap is pinned at 65,536 bytes (agent-hub's `docs/SPEC.md` was 139,404 bytes for about 53,000 tokens). Each path a line names (a link target or a code span shaped like a path, as `instructions.refs` reads them) that resolves, from the file's folder or the tree's root, to a listed regular `.md`, `.mdx`, `.markdown`, `.rst` or `.txt` file of the same tree over the cap is one warning at the file's first line naming it (a repo's at `../<dir>/<path>`), message `sends agents to <doc> (<size> bytes), over the Read tool's cap of about 25000 tokens (65536 bytes): one Read cannot hold it`, fix "split <doc> into docs under the cap, or name the section to read (Read with offset and limit, or grep)"; a missing or unlisted doc, a doc of another tree and any other file give nothing; never an error, so no hub gate turns red | AGH-699 |
 | `rules.frontmatter` | error | at line 1 of each listed regular instruction or plugin (`plugin/…/{agents,skills}/…/*.md`) file: a `---` frontmatter is terminated; a `.claude/rules` file with frontmatter has a non-empty `paths:` list whose globs (braces expanded) each match a file or folder in the hub (listed or a fixed path present); an agent or skill file has a `name` and a `description`. A glob over 256 characters or expanding to more than 64 globs is its own finding and not matched; the globs past a run budget of 64,000,000 path characters get `was not checked` | config lint |
 | `settings.valid` | error | `.claude/settings.json` (strict, as `settings.weakening` reads it) and `.mcp.json` (lenient, as the old lint) parse to a JSON object; settings hold no deprecated key (`allowedTools`, `ignorePatterns`); a linked file gives no finding | config lint |
 | `settings.weakening` | error | neither `.claude/settings.project.json` nor `.claude/settings.json` sets `disableAllHooks` or `permissions.defaultMode`; both parse as strict JSON; `settings.json` holds every group of the release's base hooks block, compared by JSON form | [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md) |
@@ -2780,6 +2807,7 @@ functions registered when the module ships.
 | `brain.memory` | warning | personal memory in `brain/auto/workspace/` stays out of git: (a) on a git listing only (`listed_by_git`), each tracked or not-ignored path under the folder but its `.gitkeep` (at most 10, then one `N more` at the folder); (b) the root `.gitignore` has no line ignoring the folder (a line match, not git's matcher: a nested `.gitignore` and a later `!` line are not evaluated). Paths and counts only. Details, messages, fix and limits: [memory-layers.md](memory-layers.md#doctor-rule-brainmemory) | AGH-48 |
 | `sandbox.workflow` | error | the hub's own commands work inside the Claude Code sandbox the managed settings turn on: with `.claude/settings.json` → `sandbox.enabled` not `true`, one info (nothing to check); with it on, one error naming each command of `WORKFLOW_EXCLUDED_COMMANDS` (`gh *`, `git push/fetch/pull/clone/ls-remote *`, `./hub worktree *`, `hub worktree *`, `make worktree *`, `make worktree-remove *`) missing from `sandbox.excludedCommands`; run from a Claude Code session (`CLAUDECODE=1`, so `hub doctor` itself runs sandboxed), each git checkout of `repos` gets `git ls-remote -q origin HEAD` (20 s, no prompt) and a failure is a warning at `../<dir>` whose fix names the bare `./hub worktree` call and the `git fetch` + `--no-fetch` path. A missing or invalid `settings.json` is `settings.weakening`'s. `uv`'s folders are the `hub` shim's (it moves them to `.hub-uv/` when they cannot be written), not a settings key | AGH-134 |
 | `workflows.valid` | error | every workflow of the hub's `workflows/` and the built-ins loads and plans, as `hub workflow validate` reads them (core's `WorkflowSource`, filled by the generator): one finding per problem at its file and line (a built-in's file shown as `<builtin>/…`), message `<key>: <problem>`, fix "fix the workflow file; hub workflow validate lists each problem"; fixtures are not run (the hub's `make check` runs `hub workflow test`) | AGH-227 |
+| `workflows.shadow` | warning | no hub workflow that loads overrides a built-in of its name (discovery runs the hub's, [ADR 0032](../adr/0032-workflow-engine.md)): `hub sync` never refreshes a seeded pack, so a copy hides each later release's changes to the built-in. The generator compares every file of the built-in's pack (hidden names and `__pycache__` aside) with the same path in the hub's pack, bytes and all, with no link followed (a link differs; the hub's extra files do not count; a file of another size differs unread; each pair of packs once). One warning per such workflow at its file. Identical: message `overrides the built-in workflow <name>, and workflows/<pack>/ is identical to the built-in <pack> pack of this release (<version>), so it only hides the changes of later releases`, fix "delete workflows/<pack>/ to run the built-in (move any file of your own out of it first)". Differs: message `overrides the built-in workflow <name>, and workflows/<pack>/ differs from the built-in <pack> pack of this release (<version>)`, fix "compare workflows/<pack>/ with packages/core/src/agent_hub/core/workflows/builtin/<pack>/ at the platform's tag v<version> and merge what you need, or delete workflows/<pack>/ to run the built-in (move any file of your own out of it first)". An override in a hub pack of another name reads `overrides the built-in workflow <name> of the built-in <builtin> pack of this release (<version>) from another pack, workflows/<pack>/`, followed by `, which holds that pack identical, so it only hides the changes of later releases` when identical, and its fix names the workflow's file in place of the pack, which holds the hub's other workflows ("delete <file> to run the built-in", or the compare fix). `hub init` seeds every built-in pack, so a fresh hub gets one warning per seeded workflow until its packs are deleted (sync neither seeds them again nor reports them); a hub file that does not load is `workflows.valid`'s | AGH-699 |
 | `items.leftovers` | warning | no `.<name>.hub-tmp-<8 hex>` entry (a folder, file or link) an interrupted `hub web` Publish or Restore left directly in `.claude`, `.claude/skills`, `.claude/agents`, `plugin/<p>/skills`, `plugin/<p>/agents`, `plugin/<p>/hooks`, `plugin/<p>/scripts` or `workflows/<pack>`, or a Studio draft a Publish's draft removal renamed aside in `.hub-drafts` (scanned by name, links not followed, nothing inside an entry read): a skill's stage or old folder, which may hold the only copy of its hidden files; one warning per entry in path order, at most 10, then one `N more` at `.`; fix "check it holds nothing you need (a skill's hidden files may be only there), then remove it". `hub init` and `hub sync` remove only temp-shaped files and links in the folders they plan | AGH-297 |
 
 "config lint" and "feature check" are the hub scripts these rules replace ([hub-generator.md](hub-generator.md),
@@ -2850,6 +2878,11 @@ cross-field check of the model, not of the JSON Schema: [project-config.md](proj
 - [ADR 0012](../adr/0012-cli-subsumes-hub-scripts.md): the config lint and the feature-tracker check become rules.
 - [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md): `lock.drift` reads the same lock that `hub sync` writes.
 - [ADR 0002](../adr/0002-lean-hexagonal-architecture.md): rules are pure core functions over a snapshot, so no port.
+- `instructions.read_cap` (AGH-699) reads every instruction file `instructions.size` lists, the plugins' agents and
+  skills, and each repo's instruction files, not only the hub's `AGENTS.md`/`CLAUDE.md` and a repo's `AGENTS.md`
+  that the audit (E-6) named: a skill, an agent or a `.claude/rules` file that sends a session to a doc over the
+  Read cap costs it the same failed read, and these files are already in the snapshot, so the wider scope reads
+  nothing more.
 
 ## Open questions
 

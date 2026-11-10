@@ -4,12 +4,15 @@ user's hub checkout cloned from it, and a fake ``gh`` on ``PATH``.
 The hub's ``origin`` is ``https://github.com/acme/demo-hub.git``, as a real hub's is; a global
 git config in the test's own ``HOME`` rewrites that url to the bare repository
 (``url.<bare>.insteadOf``), so git never reaches the network. The fake ``gh`` is a stdlib
-script: ``gh auth token`` succeeds unless the ``logged-out`` switch is on, and ``gh pr create``
-records the pull request (failing unless the head branch is on ``origin``) and prints its url,
-or fails (``fail`` switch) or prints something else (``garbage`` switch); ``gh pr list --head
-<branch> --state open --json url`` prints the recorded pull requests of that head as JSON (every
-recorded one is open), or fails (``list-fail`` switch). Everything here is
-synthetic: no real repository, account or token.
+script that answers GitHub's REST API only, as a cloud session's proxy lets through (it refuses
+GraphQL): ``gh auth token`` succeeds unless the ``logged-out`` switch is on; ``gh api --method
+POST repos/<repo>/pulls -f title=… -f head=… -f base=… -F body=@<file>`` records the pull request
+(failing unless the head branch is on ``origin``) and prints it as JSON with its ``html_url``, or
+fails (``fail`` switch) or prints something else (``garbage`` switch); ``gh api --method GET
+repos/<repo>/pulls -f head=<owner>:<branch> -f state=open`` prints the recorded pull requests of
+that head as a JSON list (every recorded one is open), or fails (``list-fail`` switch). Any other
+call, ``gh pr`` included, exits 2. Everything here is synthetic: no real repository, account or
+token.
 """
 
 import json
@@ -51,43 +54,62 @@ if args[:2] == ["auth", "token"]:
         sys.exit(1)
     print("gho_not-a-real-token")
     sys.exit(0)
+if len(args) < 4 or args[:2] != ["api", "--method"]:
+    sys.exit(2)
+method, path, rest, fields = args[2], args[3], args[4:], {}
+while rest:
+    flag, field = rest[:2]
+    rest = rest[2:]
+    if flag not in ("-f", "-F") or "=" not in field:
+        sys.exit(2)
+    key, value = field.split("=", 1)
+    if flag == "-F":
+        if not value.startswith("@"):
+            sys.exit(2)
+        with open(value[1:]) as given:
+            value = given.read()
+    fields[key] = value
+parts = path.split("/")
+if len(parts) != 4 or parts[0] != "repos" or parts[3] != "pulls":
+    sys.exit(2)
+repo = parts[1] + "/" + parts[2]
 pulls = os.path.join(state, "pulls.jsonl")
-if args[:2] == ["pr", "list"]:
-    if switch("list-fail"):
+known = [json.loads(line) for line in open(pulls)] if os.path.exists(pulls) else []
+if method == "GET":
+    if switch("list-fail") or sorted(fields) != ["head", "state"]:
         sys.exit(1)
-    flags = dict(zip(args[2::2], args[3::2]))
-    known = [json.loads(line) for line in open(pulls)] if os.path.exists(pulls) else []
+    owner, _, branch = fields["head"].partition(":")
     open_pulls = [
-        {"url": pull["url"]}
+        {"html_url": pull["url"], "url": "https://api.github.com/" + path, "state": "open"}
         for pull in known
-        if pull["head"] == flags.get("--head") and flags.get("--state") == "open"
+        if owner == parts[1] and pull["head"] == branch and fields["state"] == "open"
     ]
     print(json.dumps(open_pulls))
     sys.exit(0)
-if args[:2] != ["pr", "create"]:
+if method != "POST" or sorted(fields) != ["base", "body", "head", "title"]:
     sys.exit(2)
-opts = dict(arg[2:].split("=", 1) for arg in args[2:] if arg.startswith("--") and "=" in arg)
 if switch("fail"):
     sys.exit(1)
 if switch("garbage"):
     print("Warning: something went sideways")
     sys.exit(0)
 origin = os.environ["FAKE_GH_ORIGIN"]
+ref = "refs/heads/" + fields["head"]
 head = subprocess.run(
-    ["git", "--git-dir", origin, "rev-parse", "--verify", "--quiet", "refs/heads/" + opts["head"]],
+    ["git", "--git-dir", origin, "rev-parse", "--verify", "--quiet", ref],
     stdout=subprocess.DEVNULL,
 )
 if head.returncode != 0:
+    print(json.dumps({"message": "Validation Failed"}))
     sys.exit(1)
-count = sum(1 for _ in open(pulls)) if os.path.exists(pulls) else 0
-url = "https://github.com/" + opts["repo"] + "/pull/" + str(count + 1)
-with open(opts["body-file"]) as body_file:
-    body = body_file.read()
-pull = {"url": url, "body": body}
-pull.update({key: opts[key] for key in ("head", "base", "title")})
+number = len(known) + 1
+url = "https://github.com/" + repo + "/pull/" + str(number)
+pull = {"url": url}
+pull.update({key: fields[key] for key in ("body", "head", "base", "title")})
 with open(pulls, "a") as out:
     out.write(json.dumps(pull) + "\\n")
-print(url)
+api_url = "https://api.github.com/repos/" + repo + "/pulls/" + str(number)
+print(json.dumps({"url": api_url, "html_url": url, "number": number, "state": "open"}))
 """
 
 

@@ -3953,11 +3953,11 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(values).not.toHaveTextContent("target");
   });
 
-  it("scenario builder keeps a step's row, and the focus on it, while Claude's proposal is under review", async () => {
-    // Regression: AGH-659. Under review a graph's At the same time block took a new key on each
-    // render, so each render remounted it with its rows: the focus fell to the page, and a click
-    // whose press and release a render came between (the draft's check, on a busy runner)
-    // selected nothing.
+  it("scenario builder keeps the proposal's rows, and the focus on one, when the review draws again", async () => {
+    // AGH-659: the proposal runs fetch-order and notify at the same time. Read again on every
+    // draw, that group took a new key each time, so each draw mounted its rows anew: the row
+    // pressed left the page, and the focus with it (a test that pressed it then saw nothing
+    // selected).
     const user = userEvent.setup();
     renderBuilder({
       [`${DETAIL}/proposal`]: {
@@ -3975,7 +3975,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
 
     await user.click(row);
 
-    expect(row).toBeInTheDocument();
+    expect(screen.getByRole("treeitem", { name: FETCH })).toBe(row);
     expect(row).toHaveAttribute("aria-selected", "true");
     expect(row).toHaveFocus();
   });

@@ -43,8 +43,22 @@ class ScriptedGh:
         return self.answer
 
 
-def viewed(*, head: object = "jdoe/dem-6-y", state: object = "OPEN", fork: object = False) -> bytes:
-    return json.dumps({"headRefName": head, "state": state, "isCrossRepository": fork}).encode()
+def viewed(
+    *,
+    head: object = "jdoe/dem-6-y",
+    state: object = "open",
+    merged: object = False,
+    head_repo: object = "acme/demo-web",
+    base_repo: object = "acme/demo-web",
+) -> bytes:
+    """A pull request as GitHub's REST API answers it (the fields the read uses)."""
+    pull = {
+        "state": state,
+        "merged": merged,
+        "head": {"ref": head, "repo": None if head_repo is None else {"full_name": head_repo}},
+        "base": {"ref": "main", "repo": {"full_name": base_repo}},
+    }
+    return json.dumps(pull).encode()
 
 
 def read(answer: ChildResult) -> StackBase:
@@ -59,7 +73,17 @@ def test_names_the_repo_and_head_branch_when_the_pull_request_is_open() -> None:
     found = stack_base(two_repo_config(), URL, gh="gh", cwd=Path("/hub"), env={}, runner=gh)
 
     assert found == StackBase(repo="demo-web", branch="jdoe/dem-6-y")
-    assert gh.calls == [["gh", "pr", "view", URL, "--json", "headRefName,state,isCrossRepository"]]
+    assert gh.calls == [["gh", "api", "--method", "GET", "repos/acme/demo-web/pulls/12"]]
+
+
+def test_reads_the_hub_repo_s_pull_request_when_url_case_differs() -> None:
+    gh = ScriptedGh(ChildResult(0, viewed(head_repo="ACME/Demo-Web"), b""))
+    url = "https://github.com/ACME/Demo-Web/pull/12/"
+
+    found = stack_base(two_repo_config(), url, gh="gh", cwd=Path("/hub"), env={}, runner=gh)
+
+    assert found == StackBase(repo="demo-web", branch="jdoe/dem-6-y")
+    assert gh.calls == [["gh", "api", "--method", "GET", "repos/acme/demo-web/pulls/12"]]
 
 
 @pytest.mark.parametrize(
@@ -102,7 +126,8 @@ def test_refuses_usage_when_the_repo_is_not_in_hub_json() -> None:
         ChildResult(0, viewed(head=""), b""),
         ChildResult(0, viewed(head=None), b""),
         ChildResult(0, viewed(state=None), b""),
-        ChildResult(0, viewed(fork="no"), b""),
+        ChildResult(0, viewed(base_repo=None), b""),
+        ChildResult(0, b'{"state": "open", "head": "jdoe/dem-6-y"}', b""),
     ],
 )
 def test_refuses_when_gh_answer_cannot_be_read(answer: ChildResult) -> None:
@@ -110,11 +135,20 @@ def test_refuses_when_gh_answer_cannot_be_read(answer: ChildResult) -> None:
         read(answer)
 
 
-def test_names_the_state_when_the_pull_request_is_not_open() -> None:
-    with pytest.raises(WorktreeError, match="is merged, not open"):
-        read(ChildResult(0, viewed(state="MERGED"), b""))
+@pytest.mark.parametrize(
+    ("pull", "shown"),
+    [
+        (viewed(state="closed", merged=True), "is merged, not open"),
+        (viewed(state="closed"), "is closed, not open"),
+    ],
+    ids=["merged", "closed"],
+)
+def test_names_the_state_when_the_pull_request_is_not_open(pull: bytes, shown: str) -> None:
+    with pytest.raises(WorktreeError, match=shown):
+        read(ChildResult(0, pull, b""))
 
 
-def test_refuses_when_the_pull_request_comes_from_a_fork() -> None:
+@pytest.mark.parametrize("head_repo", ["someone/demo-web", None], ids=["fork", "fork-deleted"])
+def test_refuses_when_the_pull_request_comes_from_a_fork(head_repo: object) -> None:
     with pytest.raises(WorktreeError, match="comes from a fork"):
-        read(ChildResult(0, viewed(fork=True), b""))
+        read(ChildResult(0, viewed(head_repo=head_repo), b""))

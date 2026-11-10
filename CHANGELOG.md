@@ -11,14 +11,80 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- `hub doctor` warns `workflows.shadow` for each hub workflow that overrides the built-in of its name (AGH-699). A
+  copy identical to the built-in gets "delete it", one that differs gets "compare it". `hub init` copies every
+  built-in pack, so a fresh hub lists one warning per copied workflow: delete each `workflows/<pack>/` you do not
+  change, and the hub runs the built-in, which each release updates (`hub sync` does not bring it back).
+- `hub doctor` warns `instructions.read_cap` when an instruction file sends agents to a doc over the Read tool's cap
+  of about 25,000 tokens (pinned at 65,536 bytes), with the doc and its size (AGH-699).
+- The backlog-care pass lists `merged` issues: open issues whose id is in a commit on a repo's default branch, as
+  last fetched, with that commit as evidence (AGH-699). Your hub's `workflows/backlog-care` copy runs instead of the
+  built-in until you delete it.
+- `hub skill-usage` and the `hub web` Toolkit count the calls of the hub's knowledge tools (`mcp__hub__search`,
+  `read` and `propose`), by main session and by subagent, names and counts only (AGH-699).
+- Hook events outlive a stopped control plane (AGH-699): the event sensor keeps each event `hub web` does not take in
+  `~/.local/state/agent-hub/hook-spool.jsonl` (or under `$XDG_STATE_HOME`; mode 0600, at most 8 MiB, the oldest
+  dropped and counted), outside every hub and repo. `hub web` imports it when it starts, and `hub collect --spool`
+  imports it without `hub web`, all or nothing, with the transcripts its Stop hooks name. Arrives after you bump
+  `platform.version` and run `hub sync`.
+- Hub CI fails a pull request whose title, body or commits carry AI attribution or a commit author other than
+  `project.author_email`; the platform's CI runs the same check (AGH-699). Arrives after you bump `platform.version`
+  and run `hub sync`.
+- A commit-msg hook, `plugin/hub-workflow/hooks/commit_msg.py`, refuses the same attribution and a foreign author
+  (AGH-699). Arrives after you bump `platform.version` and run `hub sync`. Nothing runs it for you yet: run
+  `pre-commit install` in the hub once (the managed `.pre-commit-config.yaml` installs the commit-msg stage too).
+- `/handoff` moves merged issues with green checks to Done, `/deliver` names the issues it leaves open and journals
+  the merged pull request, and the release bump keeps `brain/now.md` current (AGH-699).
+
 ### Changed
 
+- PR bodies no longer hold "Checks" or "Before merge" sections. The `plain-language` skill's PR bodies rules keep
+  the ticket link, what the PR depends on, what changed for the user and links to its records; `/implement` and `/fix`
+  put the checks they ran, the owner steps and the follow-ups in a comment on the tracker issue. `hub run` and
+  `hub step pr` drop the body's `## Verification` section; `hub run` names the gate in its tracker comment instead.
+  Run `hub sync` after bumping `platform.version` to get the new skill texts (AGH-778).
+- Hub CI clones the hub's repos beside it, so `hub doctor`'s rules that read a repo run in CI too (AGH-699). A hub
+  with private repos must give the `AGENT_HUB_READ_TOKEN` secret read access to each repo in `hub.json`, or hub CI
+  fails. Arrives after you bump `platform.version` and run `hub sync`.
 - The knowledge index keeps a file a secret rule matches, redacted, instead of skipping it (AGH-696). `hub search`,
   `hub mcp` and the `hub web` Brain search index its text with each match replaced by its `[redacted: <kind>]`
   marker, as event ingestion does, and `hub mcp`'s `read` returns that redacted text. Docs with placeholders such as
   `?token=<token>` or `scheme://user:pass@`, `docs/SPEC.md` among them, are now found and read; no secret is stored.
   `propose` still refuses a text with a secret. The index version moves to 3, so the first search after you bump
   `platform.version` rebuilds the index.
+- `hub web`: writes to the config, environments, repos, platform sync, doctor fix, learning decisions, the Linear
+  key and a feature's nickname now need the launch cookie and a JSON body (`Content-Type: application/json`), like
+  the other strict writes; a request without the cookie gets 401, and a test pins the protection of every write route
+  (AGH-699). A script that calls these routes must send the cookie.
+- `hub search`, the `hub mcp` `search` tool and the `hub web` Brain search rank curated knowledge (ADRs, decisions,
+  learnings, playbooks, domain and system notes) first, then notes whose `status` is approved or active, with draft
+  or proposed notes last, then the text match; the output does not change (AGH-699).
+- `hub mcp`'s `propose`, `hub ship` and `hub run` open and find pull requests through GitHub's REST API (`gh api`),
+  so they work where `gh`'s GraphQL is refused, as in cloud sessions (AGH-699). Skills say the same for the
+  pull requests they open, edit and read.
+- The managed `CLAUDE.md` says the hub's rules 1 and 2 (authorship, branches) win over a session's own branch and
+  attribution instructions, and names the superpowers key the hub enables (AGH-699).
+- Every package declares the distributions it imports, and `make layout` fails on one that is missing; the
+  agent-hub-core and agent-hub-claude-sessions wheels no longer ship their `testing` modules; typer is bounded to the
+  tested range (AGH-699).
+- `make check-changed` runs only the web checks and tests that a change to the web app's `.tsx` files reaches
+  (AGH-699).
+
+### Fixed
+
+- The brain-care `inbox` workflow's `group` step states every output cap in its prompt, so a long `target` no longer
+  fails its output contract (AGH-504). Your hub's `workflows/brain-care` copy runs instead of the built-in until you
+  delete it.
+- The sidebar badges show their counts as soon as the app connects, and Portfolio and Project overview refresh on
+  the first change after that (AGH-699).
+- A live session stream no longer drops a frame published while it replays the stored ones (AGH-699).
+- `make check` no longer leaves `vite preview` servers running (AGH-699).
+
+### Security
+
+- vite 8.3.5, vitest 5.0.5, undici 7.30.2 and certifi 2026.10.23, past their published advisories (AGH-699).
 
 ## [0.33.0] - 2026-11-06
 

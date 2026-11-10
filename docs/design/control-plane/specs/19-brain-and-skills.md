@@ -395,6 +395,18 @@ The owner validated these in the playground too. They refine the Skills catalog 
 - **AC-271.10** Given the Toolkit, when it lists kinds (tabs, tiles, the Create menu, the index columns), then agents
   come before skills and hooks.
 
+## Toolkit: hub knowledge tool calls (AGH-699)
+
+Whether sessions and their subagents consult what the hub knows, from the same usage fold as "Used · 30 d": the
+catalog carries `hub_tools`, the calls of `hub mcp`'s `mcp__hub__search`, `mcp__hub__read` and `mcp__hub__propose`
+by the main sessions and by their subagents (names and counts only, ADR 0019). Not validated in the playground; it
+reuses the third-party plugins' fold and a `DataTable`.
+
+- **AC-699.1** Given a project's Toolkit whose usage was read, when it renders, then a folded card "Hub knowledge
+  tools · 30 d" sits above the third-party plugins, its summary counts every call in the window, and opened it lists
+  one row per tool (Tool, Main sessions, Subagents), zeros muted; with no event source it is left out, and opened it
+  has no serious or critical axe violation.
+
 ## Item history (AGH-295)
 
 As built in AGH-297. A Toolkit item's detail ends its main column with a **History** panel, and a hub workflow's

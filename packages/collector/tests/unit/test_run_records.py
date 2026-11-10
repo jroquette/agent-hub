@@ -1,15 +1,11 @@
 """``hub run`` records to executor events (D8, D9, E7): stages, loops, ids and the run's end."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 import pytest
 
-from agent_hub.collector.run_records import (
-    RunEventMapper,
-    RunRecordError,
-    map_run_records,
-)
+from agent_hub.collector.run_records import Record, RunEventMapper, RunRecordError
 from agent_hub.core.events.event import Event
 from agent_hub.core.events.payload_keys import kept_payload
 from agent_hub.core.runner.run_record import RunOutcome
@@ -19,6 +15,12 @@ from agent_hub.core.testing.run_lines import (
     run_lines_not_delivered,
     run_lines_picked_to_reported,
 )
+
+
+def map_run_records(records: Iterable[Record], *, project: str) -> tuple[Event, ...]:
+    """The events of ``records`` (one or more runs, in written order), through one mapper."""
+    mapper = RunEventMapper(project=project)
+    return tuple(event for record in records for event in mapper.map(record))
 
 
 def _steps(events: list[Event]) -> list[tuple[str, str | None, Any, Any]]:

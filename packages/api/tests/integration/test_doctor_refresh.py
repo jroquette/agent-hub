@@ -404,8 +404,9 @@ def test_shows_change_on_next_read_when_hub_written_through_app(
     shown: Callable[[Any], None],
 ) -> None:
     """AC-26 (A7, A9): a hub registered or changed through the app shows on the next read, with
-    null health until its first run; the hub it wrote is checked at the next tick, 1 s later."""
-    composed = open_composed(settings)
+    null health until its first run; the hub it wrote is checked at the next tick, 1 s later.
+    Signed in, as the owner's page is: a config write and a hub action are owner writes."""
+    composed = open_composed(settings, signed_in=True)
     _register(composed, make_hub())
     composed.refresh()
     assert _findings(composed, "demo")["checked_at"] == AT_START

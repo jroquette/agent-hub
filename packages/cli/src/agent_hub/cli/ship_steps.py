@@ -16,8 +16,10 @@
    have landed), and each later write as not done.
 
 Each child runs through ``ship_child``: in the caller's process group, with ``pr_steps``'
-environments, timeouts read from ``run_steps``' constants at call time (PD-2). A failure names
-the repo and the step, and what is already open; every stderr line starts with ``hub ship:``.
+environments, timeouts read from ``run_steps``' constants at call time (PD-2). Every PR call
+goes through GitHub's REST API (``gh api``), never ``gh pr``, whose GraphQL a cloud session's
+proxy refuses. A failure names the repo and the step, and what is already open; every stderr
+line starts with ``hub ship:``.
 """
 
 import contextlib
@@ -49,7 +51,12 @@ from agent_hub.cli.pr_steps import (
     titled_pr,
     unmatched_warning,
 )
-from agent_hub.cli.run_children import pr_body_command, pr_edit_command, push_env
+from agent_hub.cli.run_children import (
+    pr_body_command,
+    pr_edit_command,
+    pull_request_path,
+    push_env,
+)
 from agent_hub.cli.run_report import apply_writes
 from agent_hub.cli.ship_set import ShipTarget
 from agent_hub.core.errors import TrackerError
@@ -72,7 +79,7 @@ PUSH_STEP: Final = "push"
 PR_STEP: Final = "pull request"
 LINK_STEP: Final = "link"
 UNCONFIRMED_HINT: Final = "(check the issue in the tracker)"
-# The most of a PR body read back that is parsed (gh prints it as JSON); more is refused.
+# The most of a PR read back that is parsed (gh api prints it as JSON); more is refused.
 PR_BODY_OUTPUT_LIMIT: Final = 1 << 20
 
 
@@ -143,6 +150,7 @@ def ship_child(worktree: Path) -> ChildCall:
         timeout: float,
         output_limit: int = run_steps.CHILD_OUTPUT_LIMIT,
         cwd: Path | None = None,
+        stdin: bytes | None = None,
     ) -> ChildResult:
         name = argv[0]
         program = shutil.which(name, path=env.get("PATH", ""))
@@ -156,6 +164,7 @@ def ship_child(worktree: Path) -> ChildCall:
                 timeout=timeout,
                 own_session=False,
                 output_limit=output_limit,
+                stdin=stdin,
             )
         except ChildTimedOutError:
             raise PrStepError(f"{name} timed out after {timeout:g} s") from None
@@ -361,30 +370,35 @@ def _link_prs(run: ShipRun, urls: Sequence[str]) -> None:
 
 
 def _link(run: ShipRun, target: ShipTarget, *, url: str, others: Sequence[str]) -> None:
+    """The PR at ``url`` read and, when its Related PRs section changes, edited, both through
+    GitHub's REST API (``GET`` and ``PATCH repos/<owner>/<name>/pulls/<n>``)."""
     child = ship_child(target.worktree)
     env = push_env(run.environ)
     timeout = step_timeouts().gh
+    path = pull_request_path(url)
+    if path is None:
+        raise _StepError(LINK_STEP, f"could not read the body of {url}")
     try:
         read = child(
-            pr_body_command(url), env=env, timeout=timeout, output_limit=PR_BODY_OUTPUT_LIMIT
+            pr_body_command(path), env=env, timeout=timeout, output_limit=PR_BODY_OUTPUT_LIMIT
         )
         body = _body_of(read, url=url)
         linked = with_related(body, urls=others, workspace=str(run.hub.parent))
         if linked == body:
             return
-        with _body_file(run, target, linked) as path:
-            edited = child(pr_edit_command(url, path), env=env, timeout=timeout)
+        with _body_file(run, target, linked) as body_path:
+            edited = child(pr_edit_command(path, body_path), env=env, timeout=timeout)
     except PrStepError as error:
         raise _StepError(LINK_STEP, error.reason) from None
     if edited.returncode != 0:
-        raise _StepError(LINK_STEP, f"gh pr edit failed: {error_tail(edited.stderr)}")
+        raise _StepError(LINK_STEP, f"gh api PATCH pulls failed: {error_tail(edited.stderr)}")
 
 
 @contextlib.contextmanager
 def _body_file(run: ShipRun, target: ShipTarget, body: str) -> Iterator[Path]:
-    """``body`` in ``<hub>/.agent-runs/ship/<ISSUE>-<repo>.body``, owner-only, for ``gh pr edit
-    --body-file``: one argv string of 128 KiB or more fails with E2BIG on Linux, and a body
-    can be longer. The file is removed when the block ends, however it ends."""
+    """``body`` in ``<hub>/.agent-runs/ship/<ISSUE>-<repo>.body``, owner-only, for the REST
+    edit's ``-F body=@<file>``: one argv string of 128 KiB or more fails with E2BIG on Linux,
+    and a body can be longer. The file is removed when the block ends, however it ends."""
     path = body_file_path(run, target)
     try:
         folder = _private_folder(run.hub)
@@ -408,7 +422,7 @@ def _body_file(run: ShipRun, target: ShipTarget, body: str) -> Iterator[Path]:
 
 
 def body_file_path(run: ShipRun, target: ShipTarget) -> Path:
-    """Where the link phase writes the body ``gh pr edit --body-file`` reads for ``target``."""
+    """Where the link phase writes the body the REST edit reads for ``target``."""
     return check_log_path(run.hub, issue_id=run.issue.id, repo=target.repo).with_suffix(".body")
 
 
@@ -418,8 +432,9 @@ def _body_file_error(path: Path, error: OSError) -> _StepError:
 
 
 def _body_of(read: ChildResult, *, url: str) -> str:
-    """The body ``gh pr view <url> --json body`` printed: a JSON object whose ``body`` is a
-    string, in less than ``PR_BODY_OUTPUT_LIMIT`` bytes (a longer output was cut)."""
+    """The body of the PR the REST read printed: a JSON object whose ``body`` is a string, or
+    null for a PR opened without one (read as empty), in less than ``PR_BODY_OUTPUT_LIMIT``
+    bytes (a longer output was cut)."""
     unreadable = f"could not read the body of {url}"
     if read.returncode != 0:
         raise _StepError(LINK_STEP, f"{unreadable}: {error_tail(read.stderr)}")
@@ -429,7 +444,9 @@ def _body_of(read: ChildResult, *, url: str) -> str:
         found = json.loads(read.stdout)
     except ValueError:
         raise _StepError(LINK_STEP, unreadable) from None
-    body = found.get("body") if isinstance(found, dict) else None
+    if not isinstance(found, dict) or "body" not in found:
+        raise _StepError(LINK_STEP, unreadable)
+    body = "" if found["body"] is None else found["body"]
     if not isinstance(body, str):
         raise _StepError(LINK_STEP, unreadable)
     return body

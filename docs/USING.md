@@ -150,7 +150,7 @@ From the hub folder, run the doctor and the sync check. Both write nothing:
 ./hub sync --check
 ```
 
-`./hub doctor --json` exits `0` (no error finding: go on), `1` (at least one error finding: fix each one its `message` names, then run it again) or `2` (a usage error, or the folder is not a hub: run it from the hub folder).
+`./hub doctor --json` exits `0` (no error finding: go on), `1` (at least one error finding: fix each one its `message` names, then run it again) or `2` (a usage error, or the folder is not a hub: run it from the hub folder). On a fresh hub it lists one `workflows.shadow` warning for each workflow `hub init` copied into `workflows/`: the copy runs instead of the built-in, and no later release updates it. They do not stop you. Delete each `workflows/<pack>/` you will not change, so the hub runs the built-in (`./hub sync` does not bring it back), and keep the ones you change.
 
 `./hub sync --check` exits `0` (up to date: go on), `4` (changes pending: run `./hub sync`, then check again), `3` (a conflict: show the user the listed paths and the way out it prints) or `1` (an error: fix the named input, such as `hub.json` or `hub.lock`).
 
@@ -245,11 +245,11 @@ grid. It serves on `127.0.0.1` only, port 7420 by default. Run it one of two way
 
 Register the hub once, with its absolute path: in the app under Settings › Hubs, or, from the agent-hub clone,
 `make connect HUB=<workspace>/<hub>`, which also checks that the hub has the event sensor and says what to do when it
-does not. The hub's hooks then send each session's events as they happen; without the control plane running they do
-nothing and the session is unaffected. Older work can be added once: `./hub collect --transcript <file>` for a
-transcript under `~/.claude/projects/`, and `./hub collect --runs .agent-runs` for `hub run` records. Only metadata
-is stored (sizes, tools, repo-relative paths, short commands with secrets redacted, and for a failed tool its error
-text, redacted and cut at 300 characters), never prompt, output or file text.
+does not. The hub's hooks then send each session's events as they happen; while the control plane is down they wait in a
+spool that `./hub web` or `./hub collect --spool` imports. Older work can be added once: `./hub collect --transcript
+<file>` for a transcript under `~/.claude/projects/`, and `./hub collect --runs .agent-runs` for `hub run` records. Only
+metadata is stored (sizes, tools, repo-relative paths, short commands with secrets redacted, and for a failed tool its
+error text, redacted and cut at 300 characters), never prompt, output or file text.
 
 Each session is shown by its issue and workflow (`ACME-1511 · /feature`), read from its branch or task worktree name and
 the hub's tracker team; each failure says what failed, where, which agent, and whether the agent handled it or it needs

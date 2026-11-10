@@ -57,7 +57,6 @@ from pathlib import Path
 from typing import Annotated, Final, NoReturn, TextIO
 
 import typer
-from typer._click.exceptions import ClickException
 
 from agent_hub.cli import step_records, step_stages
 from agent_hub.cli.command_exits import fail
@@ -96,6 +95,7 @@ from agent_hub.cli.run_steps import (
     bounded_child,
 )
 from agent_hub.cli.ship_steps import ship_child, step_timeouts
+from agent_hub.cli.vendored_click import ClickException
 from agent_hub.cli.worktree_steps import check_branches, create_worktree, worktree_task
 from agent_hub.core.features.record_links import feature_url
 from agent_hub.core.features.ticket_writes import PreflightFacts, TicketRecordError
@@ -385,7 +385,6 @@ def pr(
         body = pr_body(
             issue_id=issue,
             summary=summary,
-            gate=facts.gate,
             workspace=workspace,
             record_url=record_url,
         )

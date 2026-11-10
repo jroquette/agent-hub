@@ -2,12 +2,13 @@
 
 The server binds 127.0.0.1 only, but a page on any site can still make the browser send it a
 request. So: the ``Host`` must name the loopback at this port (DNS rebinding), a ``POST`` or
-``DELETE`` carrying an ``Origin`` must come from this origin (cross-site writes), the learning
-actions, the workflow-run writes, a workflow gate's decision and the item writes (a Restore, a
-Publish or an owner sign-off into a hub's tree) also need that ``Origin``, a same-origin fetch
-and a JSON body (S7),
-so do the hub registry writes (``POST /hubs``, ``DELETE /hubs/{id}``; a missing ``Origin`` is
-refused too, A11: a registered hub is a folder sessions may start in), bodies stop at 1 MiB
+``DELETE`` carrying an ``Origin`` must come from this origin (cross-site writes), the
+workflow-run writes, a workflow gate's decision, the item writes (a Restore, a Publish or an
+owner sign-off into a hub's tree) and the owner's writes (the Hub config writes, the hub
+actions, the learning decisions, the Linear key, a feature's nickname) also need that
+``Origin``, a same-origin fetch and a JSON body (S7), so do the hub registry writes (``POST
+/hubs``, ``DELETE /hubs/{id}``; a missing ``Origin`` is refused too, A11: a registered hub is a
+folder sessions may start in), bodies stop at 1 MiB
 (160 MiB for ``POST /agent-sessions`` and its messages, which may carry images and files), API
 answers are never cached, a CSP keeps the app to its own origin, and no CORS header is ever
 sent. No route speaks WebSocket (ADR 0031, D3): any ``websocket`` scope is closed with 1008
@@ -77,25 +78,27 @@ RUN_READS = re.compile(rf"^{re.escape(API_PREFIX)}/scenario-runs/[^/]+/values$")
 READ_METHODS = frozenset({"GET", "HEAD"})
 # A control character (C0, DEL, C1) in a request's path, as the server decoded it.
 CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f-\x9f]")
-STRICT_WRITES = re.compile(
-    rf"^{re.escape(API_PREFIX)}/learnings/([^/]+/(accept|reject)|decisions)$|{RUN_WRITES.pattern}"
-    rf"|{ITEM_WRITES.pattern}"
+# The owner's writes (AGH-699, audit C-2): only the owner's own page makes them, so they are
+# strict too and need the launch's cookie (``session_access``, which turns them off in the
+# container): this server's exact ``Origin`` alone is something any local process can send.
+# The Hub config writes (``hub.local.json``; ``hub.json``'s or ``hub.local.json``'s environments
+# and services; ``hub.json``'s repos), the hub actions (pin the hub and run ``hub sync`` in it;
+# ``hub doctor --fix``), the learning decisions (a hub pull request each, S7), the Linear key
+# saved on this machine (``PUT`` and ``DELETE``) and a feature's nickname. The owner sign-off is an
+# item write (AGH-695): it writes an eval into the hub's tree.
+OWNER_WRITES = re.compile(
+    rf"^{re.escape(API_PREFIX)}/(projects/[^/]+/config/(local|environments|repos)"
+    r"|hubs/[^/]+/(platform-sync|doctor-fix)"
+    r"|learnings/([^/]+/(accept|reject)|decisions)"
+    r"|tracker/linear"
+    r"|feature-names)$"
 )
+STRICT_WRITES = re.compile(rf"{RUN_WRITES.pattern}|{ITEM_WRITES.pattern}|{OWNER_WRITES.pattern}")
 # The hub registry writes (A11): this server's exact ``Origin`` is required, a missing one too.
 # A script (``make connect``, the demo seed) sends its base URL as ``Origin``.
 HUB_REGISTRY_WRITES = (
     ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/hubs$")),
     ("DELETE", re.compile(rf"^{re.escape(API_PREFIX)}/hubs/[^/]+$")),
-    # Rewrites the hub's pin and runs ``hub sync`` in it.
-    ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/hubs/[^/]+/platform-sync$")),
-    # Runs ``hub doctor --fix`` in the hub: rewrites brain notes, never a repo.
-    ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/hubs/[^/]+/doctor-fix$")),
-    # Rewrites the developer's hub.local.json (the Hub config screen).
-    ("PUT", re.compile(rf"^{re.escape(API_PREFIX)}/projects/[^/]+/config/local$")),
-    # Rewrites hub.json or hub.local.json's environments and services (the Hub config screen).
-    ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/projects/[^/]+/config/environments$")),
-    # Rewrites hub.json's repos (the Hub config screen).
-    ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/projects/[^/]+/config/repos$")),
     # Starts a read-only Claude session and records a discovery in the hub (ADR 0046).
     ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/projects/[^/]+/environment-discoveries$")),
     # Marks a discovery discarded and ends its session.
@@ -231,6 +234,12 @@ def is_run_read(method: str, path: str) -> bool:
 def is_item_write(method: str, path: str) -> bool:
     """Whether a request writes a Toolkit item or a hub workflow into its hub (``ITEM_WRITES``)."""
     return method in STATE_CHANGING_METHODS and ITEM_WRITES.fullmatch(path) is not None
+
+
+def is_owner_write(method: str, path: str) -> bool:
+    """Whether a request is one of the writes only the owner's own page makes
+    (``OWNER_WRITES``)."""
+    return method in STATE_CHANGING_METHODS and OWNER_WRITES.fullmatch(path) is not None
 
 
 def is_hub_registry_write(method: str, path: str) -> bool:

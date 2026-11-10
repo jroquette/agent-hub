@@ -99,6 +99,7 @@ STEP_PHRASES = {
         "Fail loudly",
     ),
     # AC-6: the hub PR with the pin, sync, doctor, and the shipped issues' comments.
+    # AGH-699 X-2: the same commit keeps `brain/now.md` current (its pin, release lines and date).
     7: (
         "`bump-platform` as the description slug",
         "`platform.version`",
@@ -106,6 +107,11 @@ STEP_PHRASES = {
         "`./hub doctor`",
         "What `hub sync` rewrites",
         "comment",
+        "`brain/now.md`",
+        "`pinned to <version>`",
+        "release lines",
+        "`last_verified`",
+        "in the same commit",
     ),
 }
 NEVER_DO = (
@@ -263,6 +269,19 @@ def test_passes_notes_through_a_file_when_release_rendered(release_text: str) ->
     assert "with the Write tool" in section
     assert "`test -s <notes file>`" in section
     assert section.index("`test -s <notes file>`") < section.index("do step 5 (dispatch and watch)")
+
+
+def test_leaves_now_release_lines_to_session_when_release_rendered(release_text: str) -> None:
+    # AGH-699 X-2: the run's `pin` step sets now.md's pin and date; what shipped is judgement.
+    section = " ".join(run_section(release_text).split())
+
+    for phrase in (
+        "The `pin` step also sets `brain/now.md`'s `pinned to <version>` and `last_verified`",
+        "its release lines",
+        "on the pin PR's branch",
+        "before the owner merges it",
+    ):
+        assert phrase in section, phrase
 
 
 def test_names_hand_fallback_when_release_rendered(release_text: str) -> None:

@@ -25,10 +25,13 @@ from sqlalchemy.pool import NullPool
 
 from agent_hub.core.agent_sessions.agent_session import AgentSessionStatus, EndReason
 from agent_hub.core.testing.read_model_builders import a_log_record, an_agent_session
+from agent_hub.core.testing.seeded_shadows import seeded_workflows
 from agent_hub.core.testing.session_scenarios import a_session_events
 from agent_hub.storage.agent_session_store import open_agent_session_store
 
 FEW = 20
+# The demo hub's findings: two, plus one workflows.shadow warning per workflow hub init seeded.
+DOCTOR_FINDINGS = 2 + len(seeded_workflows())
 MANY = 200
 ISSUE_MANY = 2_000
 ORIGIN = {"Origin": "http://127.0.0.1:7420"}
@@ -258,7 +261,7 @@ ROUTES = [
         "/api/v1/doctor/findings?project=demo",
         Counts(0, 0),
         lambda body: len(body["items"]),
-        Seen(2, 2),
+        Seen(DOCTOR_FINDINGS, DOCTOR_FINDINGS),
         MANY,
         id="doctor-findings",
     ),

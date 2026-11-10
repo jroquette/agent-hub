@@ -2,6 +2,8 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
+import time
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -21,6 +23,7 @@ from scripts.playground_export import (
     Session,
     Turn,
     area_of,
+    background,
     build_requests,
     capture_routes,
     capture_screens,
@@ -1070,6 +1073,101 @@ def test_builds_login_from_logged_token_when_demo_web_up(
         assert (web.api_url, web.web_url) == ("http://127.0.0.1:5002", "http://127.0.0.1:5001")
 
     assert any("scripts.seed_demo" in command for command in commands)
+
+
+def test_starts_vite_itself_for_preview_when_demo_web_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: AGH-648. ``npm exec`` does not pass SIGTERM on to the vite it starts, so
+    ending it left a ``vite preview`` running after each visual run."""
+    started: list[tuple[list[str], Path]] = []
+
+    @contextmanager
+    def background(command: Any, *, env: Any, cwd: Path, log: Path) -> Iterator[None]:
+        started.append((list(command), cwd))
+        if log.name == "api.log":
+            log.write_text("agent-hub at http://127.0.0.1:5002/?token=synthetic_token-1\n")
+        yield
+
+    monkeypatch.setattr("scripts.playground_export.shutil.which", lambda _name: "/usr/bin/npm")
+    monkeypatch.setattr("scripts.playground_export.free_port", lambda: 5001)
+    monkeypatch.setattr("scripts.playground_export.wait_until_up", lambda _url: None)
+    monkeypatch.setattr("scripts.playground_export.background", background)
+    monkeypatch.setattr(
+        "scripts.playground_export.subprocess.run",
+        lambda command, **_options: subprocess.CompletedProcess(command, 0, "", ""),
+    )
+    tree, work = tmp_path / "tree", tmp_path / "work"
+    work.mkdir()
+    web_dir = tree / "apps" / "web"
+
+    with demo_web(tree, work):
+        pass
+
+    [(preview, cwd)] = [(command, cwd) for command, cwd in started if "preview" in command]
+    assert preview[:2] == [str(web_dir / "node_modules" / ".bin" / "vite"), "preview"]
+    assert "npm" not in " ".join(preview)
+    assert cwd == web_dir
+
+
+# A server that starts no process of its own, beating on a file until it is ended (30 s at most).
+BEATING_SERVER = """
+import sys, time
+deadline = time.monotonic() + 30
+while time.monotonic() < deadline:
+    with open(sys.argv[1], "a") as beat:
+        beat.write(".")
+    time.sleep(0.05)
+"""
+
+
+def test_ends_server_when_block_fails(tmp_path: Path) -> None:
+    beats = tmp_path / "beats"
+    command = [sys.executable, "-c", BEATING_SERVER, str(beats)]
+    deadline = time.monotonic() + 15
+
+    with (
+        pytest.raises(RuntimeError, match="the test failed"),
+        background(command, env=os.environ, cwd=tmp_path, log=tmp_path / "server.log"),
+    ):
+        while not (beats.exists() and beats.stat().st_size > 0):
+            assert time.monotonic() < deadline, "the server never started"
+            time.sleep(0.05)
+        raise RuntimeError("the test failed")
+
+    seen = beats.stat().st_size
+    time.sleep(0.5)
+    assert beats.stat().st_size == seen
+
+
+# AGH-699: hub web imports the hook spool of its XDG_STATE_HOME when it starts, so the scratch
+# hub web must not take the developer's spooled events into the demo database.
+def test_keeps_hook_spool_under_work_when_demo_web_serves_scratch_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    servers: dict[str, Mapping[str, str]] = {}
+
+    def run(command: list[str], **_options: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    @contextmanager
+    def background(command: Any, *, env: Mapping[str, str], cwd: Path, log: Path) -> Iterator[None]:
+        servers[log.name] = env
+        yield
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "developer-state"))
+    monkeypatch.setattr("scripts.playground_export.shutil.which", lambda _name: "/usr/bin/npm")
+    monkeypatch.setattr("scripts.playground_export.free_port", iter((5002, 5001)).__next__)
+    monkeypatch.setattr("scripts.playground_export.wait_until_up", lambda _url: None)
+    monkeypatch.setattr("scripts.playground_export.background", background)
+    monkeypatch.setattr("scripts.playground_export.subprocess.run", run)
+    work = tmp_path / "work"
+    work.mkdir()
+
+    with demo_web(tmp_path / "tree", work):
+        pass
+
+    assert Path(servers["api.log"]["XDG_STATE_HOME"]).parent == work
 
 
 # AC-PG-39.2: run_playwright passes the capture's variables on to Playwright's environment.

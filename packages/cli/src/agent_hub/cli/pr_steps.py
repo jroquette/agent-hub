@@ -30,6 +30,9 @@ from agent_hub.core.runner.run_texts import conventional_pr_title, pr_title
 
 MAX_ERROR_TAIL_CHARS: Final = 500
 MAX_PR_URL_CHARS: Final = 2_048
+# The most of a ``gh api`` answer (a PR as JSON, its body included) that is read; one this long
+# was cut (only its end is kept) and is refused.
+GH_API_OUTPUT_LIMIT: Final = 1 << 20
 # The push guard's texts: what the refused call would do with the keys, and what was not done.
 PUSH_USE: Final = "a push would use"
 PUSH_OUTCOME: Final = "the branch was not pushed"
@@ -37,7 +40,8 @@ _URL_SCHEME: Final = "https://"
 
 
 class ChildCall(Protocol):
-    """Runs ``argv`` (in ``cwd``, else the caller's worktree) and returns what it left."""
+    """Runs ``argv`` (in ``cwd``, else the caller's worktree; ``stdin`` its input, else none)
+    and returns what it left."""
 
     def __call__(
         self,
@@ -47,6 +51,7 @@ class ChildCall(Protocol):
         timeout: float,
         output_limit: int = ...,
         cwd: Path | None = None,
+        stdin: bytes | None = None,
     ) -> ChildResult: ...
 
 
@@ -204,25 +209,32 @@ def open_or_find_pr(
     timeout: float,
     cwd: Path | None = None,
 ) -> OpenedPr:
-    """Create ``target``'s PR with ``gh`` (run in ``cwd``, else the caller's worktree); when
-    that fails, the branch's PR already open (a rerun, which the push updated). Any other
-    outcome is a ``PrStepError``."""
+    """Create ``target``'s PR through GitHub's REST API (``gh api``, run in ``cwd``, else the
+    caller's worktree; ``body`` on its stdin); when that fails, the branch's PR already open (a
+    rerun, which the push updated). Any other outcome is a ``PrStepError``."""
     env = push_env(environ)
     argv = pr_create_command(
         github=target.github,
         base=target.base_branch,
         branch=target.branch,
         title=title,
-        body=body,
         draft=draft,
     )
-    created = child(argv, env=env, timeout=timeout, cwd=cwd)
+    created = child(
+        argv,
+        env=env,
+        timeout=timeout,
+        output_limit=GH_API_OUTPUT_LIMIT,
+        cwd=cwd,
+        stdin=body.encode(errors="surrogatepass"),
+    )
     if created.returncode != 0:
         existing = _open_pr_url(child, target=target, env=env, timeout=timeout, cwd=cwd)
         if existing is None:
-            raise PrStepError(f"gh pr create failed: {error_tail(created.stderr)}")
+            raise PrStepError(f"gh api POST pulls failed: {error_tail(created.stderr)}")
         return OpenedPr(url=existing, found=True)
-    url = pr_url_of(created.stdout)
+    answer = _api_answer(created.stdout)
+    url = _html_url(answer) if isinstance(answer, dict) else None
     if url is None:
         raise PrStepError("gh printed no PR url")
     return OpenedPr(url=url, found=False)
@@ -231,18 +243,34 @@ def open_or_find_pr(
 def _open_pr_url(
     child: ChildCall, *, target: PrTarget, env: dict[str, str], timeout: float, cwd: Path | None
 ) -> str | None:
-    """The url of the branch's open PR, from ``gh pr view``; None when there is none."""
+    """The url of the branch's open PR, the first the REST lookup lists; None when there is
+    none."""
     argv = pr_view_command(github=target.github, branch=target.branch)
-    viewed = child(argv, env=env, timeout=timeout, cwd=cwd)
+    viewed = child(argv, env=env, timeout=timeout, output_limit=GH_API_OUTPUT_LIMIT, cwd=cwd)
     if viewed.returncode != 0:
         return None
+    listed = _api_answer(viewed.stdout)
+    found = listed[0] if isinstance(listed, list) and listed else None
+    if not isinstance(found, dict) or found.get("state") != "open":
+        return None
+    return _html_url(found)
+
+
+def _api_answer(stdout: bytes) -> object:
+    """The JSON ``gh api`` printed; None when it is not JSON or was cut (``GH_API_OUTPUT_LIMIT``
+    bytes or more)."""
+    if len(stdout) >= GH_API_OUTPUT_LIMIT:
+        return None
     try:
-        found = json.loads(viewed.stdout)
+        return json.loads(stdout)
     except ValueError:
         return None
-    if not isinstance(found, dict) or found.get("state") != "OPEN":
-        return None
-    url = found.get("url")
+
+
+def _html_url(pull: dict[str, object]) -> str | None:
+    """The PR page url (``html_url``; ``url`` is the API's) of a REST answer's PR, when
+    ``pr_url_of`` accepts it."""
+    url = pull.get("html_url")
     return pr_url_of(url.encode()) if isinstance(url, str) else None
 
 

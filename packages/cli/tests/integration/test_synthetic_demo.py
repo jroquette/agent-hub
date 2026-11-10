@@ -2,7 +2,8 @@
 
 A sync of a fresh ``demo`` init prints ``up to date`` and writes nothing (AGH-14 AC-14.7), and a
 pending ``demo`` hub synced in process and as a child writes identical trees (AC-14.16). A doctor
-run on a fresh ``demo`` init, plain or committed, finds and writes nothing (AGH-11 AC-11.16).
+run on a fresh ``demo`` init, plain or committed, writes nothing and finds only the seeded
+workflows that override the built-ins (AGH-11 AC-11.16, narrowed by AGH-699 D15).
 ``hub sync --adopt`` on an unadopted ``demo`` hub with hand edits lists the two changed managed
 files, saves the rest, writes nothing on a rerun, and ends at a fresh init's lock once both are
 restored (AGH-16 AC-16.4); the same hub adopted in process and as a child writes identical trees
@@ -22,6 +23,7 @@ import stat
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
@@ -30,13 +32,16 @@ from typer.testing import CliRunner, Result
 
 from agent_hub.cli import adopt_command, sync_steps
 from agent_hub.cli.adopt_report import ADOPT_LISTED_WAY_OUT
+from agent_hub.cli.doctor_report import finding_line, totals_line
 from agent_hub.cli.main import app
 from agent_hub.core.doctor.brain_memory_rule import FIX as MEMORY_FIX
+from agent_hub.core.doctor.run_rules import Totals
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.hub_lock import build_hub_lock, lock_bytes
 from agent_hub.core.hub_files.rendered_file import Ownership
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.json_form import dump_json
+from agent_hub.core.testing.seeded_shadows import seeded_shadow_findings
 from agent_hub.generator.render_hub import render_hub
 from agent_hub.generator.scenario_examples import EXAMPLE_FILES
 
@@ -62,6 +67,18 @@ CHILD_TIMEOUT = 60
 GIT_MODE_EXECUTABLE = "100755"
 GIT_MODE_LINK = "120000"
 GIT_MODE_FILE = "100644"
+# hub init seeds every built-in pack as shipped, so each full doctor run on a DEMO hub names each
+# seeded workflow, identical to its built-in (AGH-699 D15); they sort after the other findings.
+SEEDED_SHADOWS = [finding_line(found) for found in seeded_shadow_findings(version("agent-hub-cli"))]
+
+
+def seeded_totals(*, warnings: int = 0, infos: int = 0) -> str:
+    """The totals line of a run on a seeded DEMO hub: its findings plus the seeded shadows."""
+    return totals_line(Totals(errors=0, warnings=warnings + len(SEEDED_SHADOWS), infos=infos))
+
+
+# A full run on a seeded DEMO hub that nothing else is wrong with.
+SEEDED_CLEAN = "".join(f"{line}\n" for line in [*SEEDED_SHADOWS, seeded_totals()])
 
 
 def run_init(args: Sequence[str]) -> None:
@@ -442,11 +459,7 @@ def test_finds_nothing_when_doctor_runs_on_fresh_init(
         result = run_doctor(root)
 
         read = reads_in(path_reads, tmp_path)
-        assert (result.exit_code, result.stdout, result.stderr) == (
-            0,
-            "0 errors, 0 warnings, 0 infos\n",
-            "",
-        ), root.name
+        assert (result.exit_code, result.stdout, result.stderr) == (0, SEEDED_CLEAN, ""), root.name
         # A walk goes down from a folder it opened by name, one entry name at a time.
         walked = {path for path in read if path.startswith("<fd")}
         assert all(
@@ -508,7 +521,7 @@ def test_warns_brain_memory_once_when_doctor_runs_without_ignore_lines(
 
     assert (result.exit_code, result.stdout.splitlines(), result.stderr) == (
         0,
-        [MEMORY_IGNORE_WARNING, "0 errors, 1 warning, 0 infos"],
+        [MEMORY_IGNORE_WARNING, *SEEDED_SHADOWS, seeded_totals(warnings=1)],
         "",
     )
 
@@ -526,12 +539,12 @@ def test_counts_info_when_demo_checkout_missing(
 
     assert (clean.exit_code, clean.stdout.splitlines()[-1:], clean.stderr) == (
         0,
-        ["0 errors, 0 warnings, 0 infos"],
+        [seeded_totals()],
         "",
     )
     assert (missing.exit_code, missing.stdout.splitlines()[-1:], missing.stderr) == (
         0,
-        ["0 errors, 0 warnings, 1 info"],
+        [seeded_totals(infos=1)],
         "",
     )
 
@@ -549,11 +562,7 @@ def test_finds_nothing_when_app_repo_agents_copied_to_checkouts(
 
     result = run_doctor(demo_two_repo_hub)
 
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        0,
-        "0 errors, 0 warnings, 0 infos\n",
-        "",
-    )
+    assert (result.exit_code, result.stdout, result.stderr) == (0, SEEDED_CLEAN, "")
 
 
 def repo_agents_warning(name: str) -> str:
@@ -579,7 +588,8 @@ def test_warns_once_per_repo_when_app_repo_agents_absent(
         [
             repo_agents_warning("demo-api"),
             repo_agents_warning("demo-web"),
-            "0 errors, 2 warnings, 0 infos",
+            *SEEDED_SHADOWS,
+            seeded_totals(warnings=2),
         ],
         "",
     )

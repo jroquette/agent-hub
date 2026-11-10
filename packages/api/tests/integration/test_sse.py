@@ -191,9 +191,50 @@ def test_sends_counts_when_global_counts_change(wired: Any) -> None:
     messages = _stream(wired, "/api/v1/events/stream")
 
     counts = [message for message in messages if message.get("event") == "counts"]
-    assert [message["data"]["approvals_open"] for message in counts] == [1]
+    # The snapshot sent on connect, then the change.
+    assert [message["data"]["approvals_open"] for message in counts] == [0, 1]
     assert messages[-1]["event"] == "heartbeat"
     assert messages[-1]["data"] == {"at": "2026-10-11T12:00:15.000Z", "sources": {}}
+
+
+def test_sends_counts_snapshot_first_when_global_stream_opens_without_last_id(
+    wired: Any,
+) -> None:
+    """Regression: AGH-699. The web takes the first counts it gets as its baseline, so a stream
+    that sent counts only on a change made it miss the first change after a page load."""
+    wired.events.counts = StreamCounts(
+        approvals_open=2, live_sessions=1, failed_runs_7d=0, learnings_proposed=3
+    )
+    _close_after(wired, 1)
+
+    messages = _stream(wired, "/api/v1/events/stream")
+
+    assert messages == [
+        {"retry": "3000"},
+        {
+            "event": "counts",
+            "data": {
+                "approvals_open": 2,
+                "live_sessions": 1,
+                "failed_runs_7d": 0,
+                "learnings_proposed": 3,
+                "doctor_errors": None,
+                "ready_issues": None,
+            },
+        },
+    ]
+
+
+def test_replays_counts_once_when_global_stream_resumes_after_last_id(wired: Any) -> None:
+    stored = wired.reader.add(an_event(), an_event())
+    _close_after(wired, 1)
+
+    messages = _stream(wired, "/api/v1/events/stream", last_event_id=stored[0].event_id)
+
+    assert [(message.get("event"), message.get("id")) for message in messages] == [
+        (None, None),
+        ("counts", stored[1].event_id),
+    ]
 
 
 def test_sends_run_patch_and_step_when_run_advances(wired: Any) -> None:

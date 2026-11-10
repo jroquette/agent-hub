@@ -29,14 +29,6 @@ class PortInUseError(AgentHubError):
         super().__init__(f"port {port} is in use")
 
 
-def bind_loopback(port: int) -> socket.socket:
-    """A listening socket on ``127.0.0.1:port`` (0 picks a free port).
-
-    ``PortInUseError`` when the port is taken; any other ``OSError`` propagates.
-    """
-    return bind_address(LOOPBACK, port)
-
-
 def bind_address(host: str, port: int) -> socket.socket:
     """A listening socket on ``host:port``, ``host`` an IPv4 or IPv6 address (0 picks a port).
 
@@ -97,7 +89,7 @@ def app_exit_hook(app: FastAPI) -> ExitHook | None:
 
 
 class LoopbackServer:
-    """uvicorn on a socket bound by ``bind_loopback``: no access log (it would print query
+    """uvicorn on a socket bound by ``bind_address``: no access log (it would print query
     strings), no proxy headers trusted, no server header.
 
     ``on_exit`` (default: the app's own hook, ``app.state.on_exit``) is called once when the

@@ -102,10 +102,15 @@ def test_passes_title_and_body_to_gh_when_proposed(
 
     git_world.adapter().propose(proposal)
 
-    [create] = [call for call in git_world.gh_calls() if call[:2] == ["pr", "create"]]
-    assert f"--title={proposal.title}" in create
-    assert "--base=main" in create
-    assert f"--head={proposal.branch}" in create
+    [create] = [call for call in git_world.gh_calls() if call[:1] == ["api"]]
+    assert create[:10] == [
+        *("api", "--method", "POST", "repos/acme/demo-hub/pulls"),
+        *("-f", f"title={proposal.title}", "-f", f"head={proposal.branch}", "-f", "base=main"),
+    ]
+    assert create[10:11] == ["-F"]
+    assert create[11].startswith("body=@")
+    # The body goes through a file, never on the command line.
+    assert not [argument for argument in create if proposal.body in argument]
     [pull] = origin.pull_requests()
     assert (pull.title, pull.body) == (proposal.title, proposal.body)
 
@@ -201,4 +206,4 @@ def test_refuses_proposal_when_hub_unavailable(
     assert conflict.value.reason == reason
     assert origin.branch_names() == {"main"}
     assert list(temp.iterdir()) == []
-    assert [call for call in git_world.gh_calls() if call[:1] == ["pr"]] == []
+    assert [call for call in git_world.gh_calls() if call[:1] in (["pr"], ["api"])] == []

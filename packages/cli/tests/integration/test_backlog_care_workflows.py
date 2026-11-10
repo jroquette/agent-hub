@@ -27,6 +27,7 @@ type Workspace = Any
 PACK = BUILTIN_WORKFLOWS / "backlog-care"
 FIXTURES = (
     "backlog-approve-and-skip",
+    "backlog-merged",
     "backlog-mixed",
     "backlog-over-limit",
     "backlog-paused",
@@ -148,7 +149,7 @@ def test_passes_every_fixture_without_warning_when_backlog_care_tested(
         # The hub's seeded copy shadows the built-in (AGH-227).
         assert f"workflows/backlog-care/fixtures/{name}.yaml: ok" in tested.stdout
     assert "warning" not in tested.stdout
-    assert tested.stdout.endswith("5 fixtures: 5 passed, 0 failed\n")
+    assert tested.stdout.endswith("6 fixtures: 6 passed, 0 failed\n")
 
 
 def test_finds_four_findings_when_mixed_file_read_then_checked(tmp_path: Path) -> None:
@@ -180,6 +181,51 @@ def test_finds_four_findings_when_mixed_file_read_then_checked(tmp_path: Path) -
     assert [item["ids"] for item in found["cycles"]] == [["DEM-5", "DEM-6"]]
     for kind in ("orphans", "stale", "duplicates", "cycles", "unreadable"):
         assert found[kind] == expected[kind], kind
+
+
+def git(folder: Path, *args: str) -> str:
+    identity = ("-c", "user.name=Jane Doe", "-c", "user.email=jane@example.com")
+    done = subprocess.run(  # noqa: S603 - git with fixed arguments in a temp repo
+        ["git", *identity, *args],  # noqa: S607 - git from PATH, as the script runs it
+        cwd=folder,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return done.stdout.strip()
+
+
+def test_finds_merged_issue_when_default_branch_commit_names_it(tmp_path: Path) -> None:
+    stubs = fixture("backlog-merged")["stubs"]
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    repo = tmp_path / "api"
+    repo.mkdir()
+    git(repo, "init", "-q", "-b", "main")
+    git(repo, "commit", "-q", "--allow-empty", "-m", "feat(api): add the export button (DEM-8)")
+    git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    issues_file = tmp_path / "backlog-care.json"
+    issues = stubs["read"]["output"]["issues"]
+    document = {"version": 1, "read_at": "1999-10-26T09:00:00Z"}
+    document |= {"open_total": len(issues), "issues": issues}
+    issues_file.write_text(json.dumps(document), encoding="utf-8")
+    config = json.dumps(stubs["config"]["output"])
+
+    read = script(
+        "read.py", "--file", str(issues_file), "--limit", "50", "--config", config, cwd=hub
+    )
+    found = script(
+        "hygiene.py", "--today", "1999-10-26", "--config", config, cwd=hub, stdin=json.dumps(read)
+    )
+
+    assert read == stubs["read"]["output"]
+    commit = git(repo, "rev-parse", "origin/main")
+    (expected,) = stubs["hygiene"]["output"]["merged"]
+    (merged,) = found["merged"]
+    shown = expected["evidence"].replace("0a1b2c3d4e5f", commit[:12])
+    assert merged == expected | {"commit": commit, "evidence": shown}
+    for kind in ("orphans", "stale", "duplicates", "cycles", "unreadable"):
+        assert found[kind] == [], kind
 
 
 def test_applies_only_approved_issue_when_gates_record_apply_and_skip(tmp_path: Path) -> None:

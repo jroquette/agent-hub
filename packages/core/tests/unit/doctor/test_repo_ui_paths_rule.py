@@ -162,9 +162,9 @@ def test_reports_checkout_on_repo_ui_paths_when_other_repo_readers_disabled(
     snapshot_of: SnapshotFactory,
 ) -> None:
     # Pinned (AGH-474 Q5): repos.ui_paths reads the checkouts whatever the repos set, so with
-    # brain.leak, links.dead and repos.agents off it carries the missing-checkout info, even
-    # when no repo sets ui_paths.
-    others = {"brain.leak", "links.dead", "repos.agents"}
+    # brain.leak, instructions.read_cap, links.dead and repos.agents off it carries the
+    # missing-checkout info, even when no repo sets ui_paths.
+    others = {"brain.leak", "instructions.read_cap", "links.dead", "repos.agents"}
     rules = tuple(rule for rule in REGISTRY if rule.id not in others)
     snapshot = snapshot_of(config=a_config(("web", None)), repos={"web": None})
 

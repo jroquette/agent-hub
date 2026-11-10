@@ -289,6 +289,12 @@
         "scenarios.graph_format": {
           "$ref": "#/$defs/RuleSettings"
         },
+        "workflows.shadow": {
+          "$ref": "#/$defs/RuleSettings"
+        },
+        "instructions.read_cap": {
+          "$ref": "#/$defs/RuleSettings"
+        },
         "repos.agents": {
           "$ref": "#/$defs/RuleSettings"
         },

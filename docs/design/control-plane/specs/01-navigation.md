@@ -114,6 +114,7 @@ Route rules:
 - `:id` for sessions, runs, events, approvals and learnings is the full UUIDv7. The UI also accepts the 8-character short id (`/sessions/5091b986`) and redirects (HTTP-style `replace`) to the full id; if the short id is ambiguous it shows a disambiguation list ("2 sessions start with 5091b986").
 - Query parameters hold view state (tab, filters, selection, follow, axis). Path holds identity. A link pasted into another browser restores the exact view.
 - Default values are omitted from the URL (`?tab=timeline` is not written; `?tab=cost` is).
+- A route whose last segment can hold a dotted name (a note, skill or file path) must match the static-files exemption (`static_files._BRAIN_ROUTE`, extend it) or carry the name in a query string; otherwise a reload answers 404.
 
 ## Shell layout
 

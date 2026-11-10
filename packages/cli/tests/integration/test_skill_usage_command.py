@@ -22,6 +22,12 @@ pytestmark = pytest.mark.disable_socket
 type CommandRunner = Callable[..., Result]
 type KnowledgeHubFactory = Callable[..., Path]
 
+HUB_TOOLS_NONE = (
+    "\nHub knowledge tools (hub mcp): calls in the last 30 days.\n"
+    "- mcp__hub__search: main sessions 0, subagents 0\n"
+    "- mcp__hub__read: main sessions 0, subagents 0\n"
+    "- mcp__hub__propose: main sessions 0, subagents 0\n"
+)
 TABLE_HEAD = (
     "| Project | Kind | Name | 7 d | 30 d | 90 d | Last used (UTC) |\n"
     "| --- | --- | --- | --- | --- | --- | --- |\n"
@@ -73,8 +79,52 @@ def test_prints_unused_refactor_before_feature_when_usage_listed(
         + TABLE_HEAD
         + "| demo | skill | /refactor | 0 | 0 | 0 | never |\n"
         + f"| demo | skill | /feature | 2 | 2 | 2 | {_day(0.1)} |\n"
+        + HUB_TOOLS_NONE
     )
     assert result.stderr == ""
+
+
+def _hub_call(tool: str, *, session: str, days_ago: float, agent: str | None = None) -> Event:
+    tool_use_id = f"toolu_{session}_{agent or 'main'}_{tool}"
+    payload: dict[str, object] = {"tool": tool, "tool_use_id": tool_use_id}
+    if agent is not None:
+        payload["agent_id"] = f"{agent}-1"
+    return an_event(
+        session=session,
+        type="tool.call",
+        timestamp=datetime.now(UTC) - timedelta(days=days_ago),
+        payload=payload,
+        agent=agent,
+    )
+
+
+def test_prints_hub_tool_calls_by_main_and_subagents_when_sessions_call_them(
+    knowledge_hub: KnowledgeHubFactory, run_command: CommandRunner
+) -> None:
+    hub = _hub(knowledge_hub, "feature")
+    _collect(
+        [
+            _hub_call("mcp__hub__search", session="s-1", days_ago=0.1),
+            _hub_call("mcp__hub__search", session="s-2", days_ago=0.1),
+            _hub_call("mcp__hub__search", session="s-2", days_ago=0.1, agent="evaluator"),
+            _hub_call("mcp__hub__read", session="s-1", days_ago=10, agent="planner"),
+            _hub_call("mcp__hub__propose", session="s-3", days_ago=40),
+        ]
+    )
+
+    def tail(*args: str) -> str:
+        result = run_command(hub, "skill-usage", *args)
+        assert result.exit_code == 0, result.output
+        return result.stdout.split("\n\n")[-1]
+
+    assert tail() == (
+        "Hub knowledge tools (hub mcp): calls in the last 30 days.\n"
+        "- mcp__hub__search: main sessions 2, subagents 1\n"
+        "- mcp__hub__read: main sessions 0, subagents 1\n"
+        "- mcp__hub__propose: main sessions 0, subagents 0\n"
+    )
+    assert "- mcp__hub__read: main sessions 0, subagents 0\n" in tail("--days", "7")
+    assert "- mcp__hub__propose: main sessions 1, subagents 0\n" in tail("--days", "90")
 
 
 def test_orders_usage_by_seven_days_when_days_option_given(

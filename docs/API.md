@@ -367,7 +367,8 @@ reads answer from each hub's last check.
   `POST /projects/{project}/config/environments|repos`) and the hub actions
   (`POST /hubs/{hub_id}/platform-sync|doctor-fix`, whatever their outcome). The hub a config write or a hub action
   wrote is checked at the next tick, the 10 s spacing and any backoff skipped; a new hub is checked then too. An
-  answer of 4xx marks nothing.
+  answer of 4xx marks nothing. The config writes and the hub actions are owner writes (AGH-699): they need the
+  launch cookie besides the strict rule ([Local security](#local-security)).
 - A hub registry that cannot be read answers 503 "Hub registry unreadable", at start as later, until a tick reads it
   again; `hub web` still starts. The server logs one warning (the error's type) when the registry stops being
   readable and one info line when a tick reads it again, not one per tick.
@@ -381,7 +382,9 @@ and `POST /api/v1/learnings/{learning_id}/reject` with `{"reason": "…"}` (1 to
 stripped; an empty one is 422) each open one pull request in the hub repo and answer 201 with
 `{"state": "accepted_pr_open" | "rejected_pr_open", "pr_url": "https://github.com/<hub_repo>/pull/<n>", "branch": "…"}`.
 They are actions, not resources, a deliberate exception to "resources are nouns"
-([ADR 0024](adr/0024-learning-actions-from-the-app.md)).
+([ADR 0024](adr/0024-learning-actions-from-the-app.md)). They and the batch below are owner writes (AGH-699,
+[Local security](#local-security)): the launch cookie (401 without it) on top of the strict rule, and 404
+`owner-writes-off` in the container.
 
 - Nothing is written to the default branch or to the user's checkout: the change is one commit on a new branch of a
   temporary clone, pushed without force, and the PR waits for the user to merge it.
@@ -434,7 +437,8 @@ text redacted with `r1` (a match becomes `[redacted: <kind>]`), so titles and sn
   `read`, `indexed`, `dropped`), `skipped` (`path`, `reason`) and `warnings`, one per repo that is not checked out
   (`<dir>: not checked out; its docs are not searched`). `q` is 1 to 500 characters and only its runs of letters and
   digits are searched, all required, never as FTS5 syntax; `kind` repeats, at most 10, each one of the index's kinds;
-  `limit` is 1 to 50, default 50. Results come best first, as `hub search` prints them; none is `results: []`.
+  `limit` is 1 to 50, default 50. Results come in the index's order (by kind, then status, then text match; see the
+  SPEC's "Search and team memory"), as `hub search` prints them; none is `results: []`.
 - `GET /api/v1/projects/{project}/brain/backlinks?path=` → `NoteBacklinks`: `project`, `path`, `items` (each
   indexed document holding a Markdown link to `brain/<path>`: `path`, `kind`, `title`), sorted by path, at most 100,
   and `total`, the full count. `path` is checked exactly as `GET …/brain/note` checks it, before anything is read. The
@@ -530,7 +534,6 @@ acceptance criteria rows, the records and every eval, it carries:
 ACs, with no tickets, and answers 409, writing nothing, for an unknown or withdrawn AC, for `acs` together with
 `delivery`, for `done` over an AC whose latest eval is NO-SHIP, when the note would not rank newer than an eval
 naming one of them (undated, or dated at or after now), and when not every eval was read. An empty list is 422.
-
 The sign-off is a strict write that needs `hub web`'s launch cookie, as a restore (`ITEM_WRITES`, [Local
 security](#local-security), AGH-695): this server's `Origin` and a JSON body, else 403 or 415; no cookie or a wrong
 one, 401; nothing is written then. A sign-off without a body is sent as `{}`. In the container it answers 409
@@ -1217,12 +1220,25 @@ the Publish, the scenario builder's save, proposal dismiss and action writes (AG
 (AGH-507) and its delete (AGH-596), and the owner sign-off (AGH-695) (`ITEM_WRITES`) need that cookie too, as does
 the read of a scenario run's values
 (`RUN_READS`, with the agent-session reads' Origin rules) ([Workflow run commands](#workflow-run-commands), [Skills](#skills),
-[Workflows](#workflows), [Feature detail](#feature-detail)); every other route is unchanged and needs no cookie. In the container (`AGENT_HUB_IN_CONTAINER=1`, where no token is
+[Workflows](#workflows), [Feature detail](#feature-detail)). So do the owner's writes (`OWNER_WRITES`, AGH-699), the writes only the owner's own page
+makes: the three Hub config writes (`PUT /projects/{project}/config/local`, `POST /projects/{project}/config/environments`
+and `…/config/repos`), the hub actions (`POST /hubs/{hub_id}/platform-sync` and `…/doctor-fix`), the learning decisions
+(`POST /learnings/{learning_id}/accept`, `…/reject` and `POST /learnings/decisions`), the Linear key
+(`PUT` and `DELETE /tracker/linear`), and a feature's nickname (`PUT /feature-names`). This server's exact `Origin` alone is not enough for them: any local
+process can send it. Without the cookie each one answers 401 `urn:agent-hub:problem:agent-session-unauthorized`
+before its route runs, so it writes, pushes and starts nothing. Every other route is unchanged and needs no cookie:
+the hub registry writes keep their exact-`Origin` check (scripts such as `make connect` and the demo seed call them),
+and the hook sensor's `POST /events/hooks` and `POST …/scenarios/validate` (which writes nothing) keep the basic
+checks. In the container (`AGENT_HUB_IN_CONTAINER=1`, where no token is
 minted and the hubs are mounted read-only) a restore, a publish, a scenario builder write (a migrate and a delete
-included) or an owner sign-off answers 409 `hub_read_only` before the cookie is checked, and a run write or the
-values read 404 `run-control-off`.
+included) or an owner sign-off answers 409 `hub_read_only` before the cookie is checked, a run write or the values read 404 `run-control-off`,
+and an owner write 404 `urn:agent-hub:problem:owner-writes-off` ("Owner writes are off"), cookie or not: no request
+there could hold the cookie, and the Linear key comes from the container's `LINEAR_API_KEY` instead.
+Every `POST`, `PUT`, `PATCH` and `DELETE` route is listed with its class (cookie and strict, exact `Origin`, or basic
+by design) in `packages/api/tests/integration/test_write_route_inventory.py`, which fails for a write route the table
+lacks and probes each route for its class's answers (AGH-699): a new write route must name its class there.
 
-The learning decisions (accept, reject and, since AGH-687, their batch), which reach the network, the four workflow
+The owner's writes, which write hub files, reach the network or run the CLI in a hub, the four workflow
 run commands and a workflow gate's decision,
 which start or stop processes, and the two restores, the Publish and the owner sign-off (`ITEM_WRITES`), which write
 into a hub's tree, take a strict rule
@@ -1233,7 +1249,8 @@ pushes, stores, writes and starts nothing:
   different);
 - `Sec-Fetch-Site`, when the browser sends it, must be `same-origin` (403 "Forbidden fetch site");
 - `Content-Type` must be `application/json`, parameters aside (415 "Unsupported media type"). A cross-site form cannot
-  send that type without a CORS preflight, which the server never grants.
+  send that type without a CORS preflight, which the server never grants. A `DELETE`, which sends no body, is not
+  asked for it; the owner sign-off without a body sends that type with an empty body.
 
 The other writes keep the checks above only. `make dev`'s Vite proxy rewrites its own `Origin` to the API's and drops
 any other, so the dev server passes the strict rule and stays CSRF-safe.

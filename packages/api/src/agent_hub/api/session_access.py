@@ -20,6 +20,11 @@ refuses before routing, so a refused request never reaches a port.
   the cookie too, with the strict checks; with ``sessions_off`` they answer 409
   ``hub_read_only`` before the cookie is looked at (A6): the container mounts the hubs read-only
   and mints no token.
+- **Owner writes** (the Hub config writes, the hub actions, the learning decisions, the Linear
+  key, a feature's nickname; AGH-699) need the cookie too, with the strict
+  checks: only the owner's own page makes them, and an exact ``Origin`` is something any local
+  process can send. With ``sessions_off`` they answer 404 ``owner-writes-off`` before the cookie
+  is looked at: the container mints no token, so no request could ever hold it.
 - **Cookie.** Every route under the prefix needs the cookie (constant-time match); else 401.
   With no token configured, nothing matches.
 - **Writes** need this server's exact ``Origin``, ``Sec-Fetch-Site: same-origin`` when sent and,
@@ -47,6 +52,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from agent_hub.api.local_security import (
     STATE_CHANGING_METHODS,
     is_item_write,
+    is_owner_write,
     is_run_read,
     is_run_write,
     strict_refusal,
@@ -59,6 +65,7 @@ from agent_hub.core.item_versions.hub_item_writer import ItemWriteRefusedError
 TOKEN_PARAMETER = "token"  # noqa: S105 -- the query parameter's name, not a token
 OFF_PROBLEM_TYPE = "urn:agent-hub:problem:agent-sessions-off"
 RUNS_OFF_PROBLEM_TYPE = "urn:agent-hub:problem:run-control-off"
+OWNER_WRITES_OFF_PROBLEM_TYPE = "urn:agent-hub:problem:owner-writes-off"
 UNAUTHORIZED_PROBLEM_TYPE = "urn:agent-hub:problem:agent-session-unauthorized"
 EXCHANGE_METHODS = frozenset({"GET", "HEAD"})
 # The scope key of the read mark: whether this request may read agent-session data.
@@ -118,6 +125,9 @@ SESSION_COOKIE_DETAIL: Final = (
 VALUES_COOKIE_DETAIL: Final = (
     "Open the address hub web printed (with its token) to read a scenario run's values."
 )
+OWNER_COOKIE_DETAIL: Final = (
+    "Open the address hub web printed (with its token) to make this change."
+)
 
 
 def read_refusal(headers: Headers, *, detail: str = SESSION_READS) -> tuple[int, str, str] | None:
@@ -154,6 +164,8 @@ class SessionAccessMiddleware:
             response = self._run_refusal(path, headers)
         elif is_item_write(str(scope["method"]), path):
             response = self._item_write_refusal(path, headers)
+        elif is_owner_write(str(scope["method"]), path):
+            response = self._owner_write_refusal(path, headers)
         elif is_run_read(str(scope["method"]), path):
             response = self._run_read_refusal(path, headers)
         else:
@@ -255,6 +267,22 @@ class SessionAccessMiddleware:
         if self._has_cookie(headers):
             return None
         return self._unauthorized(instance)
+
+    def _owner_write_refusal(self, instance: str, headers: Headers) -> Response | None:
+        if self._off:
+            return problem(
+                404,
+                title="Owner writes are off",
+                detail=(
+                    "This change needs the launch cookie of a hub web started on this machine; "
+                    "the agent-hub container mints none."
+                ),
+                instance=instance,
+                members={"type": OWNER_WRITES_OFF_PROBLEM_TYPE},
+            )
+        if self._has_cookie(headers):
+            return None
+        return self._unauthorized(instance, detail=OWNER_COOKIE_DETAIL)
 
     def _unauthorized(self, instance: str, *, detail: str = SESSION_COOKIE_DETAIL) -> Response:
         response = problem(

@@ -132,10 +132,11 @@ def _print_set(found: ShipSet) -> None:
 
 
 def _print_dry_run(run: ShipRun) -> None:
-    """Per target in ``hub.json`` order the check, push and ``gh pr create`` a live ship would
-    run, then each tracker write it would make, the PRs' urls as placeholders (no link edit: the
-    live one depends on the bodies). Only git reads run (each title's ``git log``): no check,
-    push or ``gh``, no tracker write, no log or body file."""
+    """Per target in ``hub.json`` order the check, push and PR creation (``gh api``, the body
+    shown as its stdin) a live ship would run, then each tracker write it would make, the PRs'
+    urls as placeholders (no link edit: the live one depends on the bodies). Only git reads run
+    (each title's ``git log``): no check, push or ``gh``, no tracker write, no log or body
+    file."""
     urls = tuple(DRY_RUN_URL.format(repo=target.repo) for target in run.targets)
     body = ship_body(issue_id=run.issue.id, issue_url=run.issue.url)
     for target in run.targets:
@@ -149,11 +150,11 @@ def _print_dry_run(run: ShipRun) -> None:
             base=target.base,
             branch=target.branch,
             title=title,
-            body=body,
             draft=run.draft,
         )
-        for argv in (gate_command(target.check), push_command(target.branch), pr):
+        for argv in (gate_command(target.check), push_command(target.branch)):
             typer.echo(would_run_line(argv, cwd=cwd))
+        typer.echo(would_run_line(pr, cwd=cwd, stdin=body))
     for write in tracker_writes(run, urls):
         typer.echo(f"would call: {shown_text(call_line(write))}")
 

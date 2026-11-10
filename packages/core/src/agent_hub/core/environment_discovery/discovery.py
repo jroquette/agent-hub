@@ -8,7 +8,6 @@ server checked, each item's ``status`` computed against the effective config of 
 written to ``hub.json`` here: the person applies the rows they pick through the batch edit.
 """
 
-from datetime import datetime
 from typing import Annotated, Final, Literal, Protocol
 
 from pydantic import Field, StringConstraints
@@ -174,8 +173,3 @@ class DiscoveryRecords(Protocol):
     def replace(self, hub_path: str, record: DiscoveryRecord) -> None:
         """Write a discovery over its stored self."""
         ...
-
-
-def created_order(record: DiscoveryRecord) -> datetime:
-    """The sort key that lists the newest first (with ``reverse``)."""
-    return record.created_at

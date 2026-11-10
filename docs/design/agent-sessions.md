@@ -489,7 +489,9 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   commits in the repo's own checkout (else `origin/<branch>`), named under the old folder, its source `recorded`;
   unless the session now works on that repo elsewhere, then it is left out. Recorded commits git no longer has, or
   that read as options, cannot be read.
-- **AC-377.40** Given a branch, when its pull request is read, then it comes from `gh pr list --head <branch>`, asked
+- **AC-377.40** Given a branch, when its pull request is read, then it comes from GitHub's REST API (`gh api
+  repos/<origin>/pulls -f head=<owner>:<branch> -f state=all -f per_page=1`, the repo read from the checkout's
+  `origin`; not `gh pr list`, whose GraphQL a cloud session's proxy refuses), asked
   at most once a minute; when GitHub does not answer, the recorded pull request shows (state `UNKNOWN`); a branch that
   reads as an option names no pull request.
 - **AC-377.41** Given migration 0007 (after 0006), when the database is upgraded and downgraded, then `agent_sessions`
