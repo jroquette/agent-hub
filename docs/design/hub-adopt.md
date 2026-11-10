@@ -117,9 +117,9 @@ credential, repos, golden, `make check`.
 
 - **Credential step** (`Platform read credential`): reads `AGENT_HUB_READ_TOKEN`, a secret of the hub repository
   (Settings → Secrets and variables → Actions): a fine-grained personal access token or a GitHub App token with
-  read-only Contents on the platform repository and, when they are private, on the hub's repos (the repos step). It
-  reaches each of those two steps through `env`, the only `secrets.` expressions in the file. Empty or unset, the step
-  does nothing: a public platform needs no secret. On a private
+  read-only Contents on the platform repository only. It reaches this step through `env`; the repos step reads its
+  own secret, `HUB_REPOS_READ_TOKEN` (AGH-801), and those two are the only `secrets.` expressions in the file. Empty
+  or unset, the step does nothing: a public platform needs no secret. On a private
   platform the shim then cannot fetch the pin, the golden step exits 1 and the job fails; so do fork pull requests and
   Dependabot pull requests, which get no Actions secrets (Dependabot needs the same name under Dependabot secrets).
   A token holding anything outside `[A-Za-z0-9_]` exits 1 with `AGENT_HUB_READ_TOKEN: unexpected characters`, before
@@ -128,17 +128,25 @@ credential, repos, golden, `make check`.
   to one carrying the token, and the hub's own GitHub URL mapped to itself (`insteadOf` takes the longest matching
   prefix, so the hub's own fetches never carry the token). The token is never written to a file in the repo: not in a
   URL, `hub.json` or `hub.lock`.
-- **Repos step** (`Repos beside the hub`, AGH-699 A-13): clones each repo of `hub.json` (`repos[]`, read when the step
-  runs) at its default branch (`repos[].default_branch`, else `project.default_branch`), depth 1, into `../<dir>` beside
-  the hub, where `hub doctor`'s repo rules (`brain.leak`, `instructions.read_cap`, `links.dead`, `repos.agents`,
-  `repos.ui_paths`) read it; without it those rules see no checkout, report an `info` and `make check` passes. With
-  `AGENT_HUB_READ_TOKEN` set, each clone's `https://github.com/<owner>/<name>` maps to a URL carrying the token through
-  `GIT_CONFIG_*` in the step's own environment (one repo at a time; never an argument, a file or `$GITHUB_ENV`); unset,
-  the clones are anonymous, which reads public repos only. It fails, nothing echoed but the repo's `owner/name`, branch
-  and folder, on a token outside `[A-Za-z0-9_]` (the credential step's line), on a `repos` entry whose `dir`, `github`
-  or branch does not have the model's shape (`repos[<i>] in hub.json needs a dir, an owner/name github and a branch`,
-  before any clone), and on a repo it cannot clone (`cannot clone <owner/name> (<branch>) into ../<dir>;
-  AGENT_HUB_READ_TOKEN needs read access to it`).
+- **Repos step** (`Repos beside the hub`, AGH-699 A-13, AGH-801): clones each repo of `hub.json` (`repos[]`, read when
+  the step runs) at its default branch (`repos[].default_branch`, else `project.default_branch`), depth 1, into
+  `../<dir>` beside the hub, where `hub doctor`'s repo rules (`brain.leak`, `instructions.read_cap`, `links.dead`,
+  `repos.agents`, `repos.ui_paths`) read it; without a checkout those rules report an `info` and `make check` passes.
+  It reads its own secret, `HUB_REPOS_READ_TOKEN`, with read-only Contents on the hub's repos; in an organisation, the
+  recommended source is a GitHub App installation token (`actions/create-github-app-token`, Contents read-only on the
+  hub's repos) rather than a personal token. It never uses `AGENT_HUB_READ_TOKEN`: it drops the `GIT_CONFIG_*` the
+  credential step put in the job's environment before cloning. With `HUB_REPOS_READ_TOKEN` set, each clone's
+  `https://github.com/<owner>/<name>` maps to a URL carrying the token through `GIT_CONFIG_*` in the step's own
+  environment (one repo at a time; never an argument, a file or `$GITHUB_ENV`, so no other step, the pinned release
+  and `make check`'s hooks included, can read it), and a repo it cannot clone fails the step (`cannot clone
+  <owner/name> (<branch>) into ../<dir>; HUB_REPOS_READ_TOKEN needs read access to it`): a configured credential that
+  cannot read a repo is a misconfiguration. Unset or empty, the clones are anonymous: a repo they cannot read (a
+  private one) is skipped with one notice (`skipped <owner/name> (<branch>): cannot clone it without
+  HUB_REPOS_READ_TOKEN, so its repo rules run locally only`), the step passes and doctor reports that repo as not
+  checked out. It also fails, nothing echoed but the repo's `owner/name`, branch and folder, on a token outside
+  `[A-Za-z0-9_]` (`HUB_REPOS_READ_TOKEN: unexpected characters`) and on a `repos` entry whose `dir`, `github` or
+  branch does not have the model's shape (`repos[<i>] in hub.json needs a dir, an owner/name github and a branch`,
+  before any clone).
 - **Golden step** (`Golden (hub sync --check)`): `./hub sync --check` through the pinned shim, before `make check`;
   it writes nothing, and any non-zero exit fails the job before `make check`. Exits (`--check`'s) and their fixes:
   - 0 up to date: the job goes on.

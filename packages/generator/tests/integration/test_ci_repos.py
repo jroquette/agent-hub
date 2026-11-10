@@ -1,4 +1,4 @@
-"""The rendered CI step ``Repos beside the hub``, run the way Actions runs it (AGH-699 A-13, AGH-801).
+"""The rendered CI step ``Repos beside the hub``, run the way Actions runs it (AGH-699, AGH-801).
 
 The step clones each repo of ``hub.json`` at its default branch into ``../<dir>``, beside the hub,
 where ``hub doctor``'s repo rules (``brain.leak``, ``links.dead``) look for it. With
