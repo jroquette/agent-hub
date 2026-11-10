@@ -1880,6 +1880,26 @@ describe("AgentSessionScreen (session-name)", () => {
       "/features/agent-hub/control-plane",
     );
   });
+  it("AGH-800 names a session on a ticket of the feature's plan (not in its issues) by the ticket's title, not Claude's", async () => {
+    const observed = anId(1, "5091b986");
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({ observed_session_id: observed, title: "Unblock the helper" }),
+        [`/api/v1/sessions/${observed}`]: aSession({
+          id: observed,
+          label: aSessionLabel({ issue: "AGH-202", branch: "main", title: "Unblock the helper" }),
+        }),
+        "/api/v1/features": aPage([aFeature({ issues: ["AGH-200"] })]),
+        "/api/v1/features/agent-hub/control-plane/tickets": aFeatureTickets({
+          tickets: [aTicketRow()],
+        }),
+      }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "AGH-202: Serve the ticket summaries" }),
+    ).toBeInTheDocument();
+  });
   it("hides the mode switch of a session held to a tool policy (scenario investigation)", async () => {
     renderChat(routes({ [SESSION]: anAgentSession({ status: "idle", restricted: true }) }));
 

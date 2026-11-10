@@ -4,8 +4,11 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
+  aFeature,
+  aFeatureTickets,
   aPage,
   aSession,
+  aTicketRow,
   aSessionLabel,
   anAgentSession,
   renderWithApi,
@@ -107,6 +110,28 @@ describe("SessionRail", () => {
     "/api/v1/sessions": aPage([]),
     "/api/v1/features": aPage([]),
   };
+
+  it("AGH-800 names a session on a ticket of the feature's plan (not in its issues) by the ticket's title", async () => {
+    const twin = aSession({
+      id: "obs-1",
+      label: aSessionLabel({ issue: "AGH-202", branch: "main", title: "Unblock the helper" }),
+    });
+    renderWithApi(<SessionRail current="a" />, {
+      routes: {
+        "/api/v1/agent-sessions": aPage([
+          anAgentSession({ id: "a", title: "Unblock the helper", observed_session_id: "obs-1" }),
+        ]),
+        "/api/v1/sessions": aPage([twin]),
+        "/api/v1/features": aPage([aFeature({ issues: ["AGH-200"] })]),
+        "/api/v1/features/agent-hub/control-plane/tickets": aFeatureTickets({
+          tickets: [aTicketRow()],
+        }),
+      },
+    });
+
+    expect(await screen.findByText("AGH-202: Serve the ticket summaries")).toBeInTheDocument();
+    expect(screen.getByText("control-plane")).toBeInTheDocument();
+  });
 
   it("AC-422.18 marks the current session and links the others to their chat", async () => {
     const { container } = renderWithApi(<SessionRail current="a" />, { routes });
