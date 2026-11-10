@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import { aPage, aShellView, stubApi, stubEventSource } from "./testing/builders";
@@ -21,6 +21,14 @@ vi.mock("react-router", async (importOriginal) => {
     },
   };
 });
+
+// The code of the first page and of Welcome, loaded once before the test. On the way to Welcome
+// the router waits for both, and a first import also transforms the module: under coverage on a
+// busy runner that alone took longer than the wait below, which is for the app's own steps (the
+// shell read, the gate's redirect), not for the test runner's.
+beforeAll(async () => {
+  await Promise.all([import("./screens/portfolio"), import("./screens/welcome")]);
+}, 60_000);
 
 describe("App", () => {
   it("asks for the shell read before the router starts loading the first page's code", async () => {
