@@ -11,6 +11,24 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Fixed
+
+- Hub CI no longer fails every pull request of a hub whose repos are private when it has no token for them
+  (AGH-801). The `Repos beside the hub` step skips a repo it cannot clone with one notice, and `hub doctor` reports it
+  as not checked out. Do nothing to keep those repos' rules local-only. To run them in CI, give it a read token: in an
+  organisation, preferably a GitHub App installed on the hub's repos (set the Actions variable
+  `HUB_REPOS_APP_CLIENT_ID` and the secret `HUB_REPOS_APP_KEY`; CI mints a read-only token per job), else the secret
+  `HUB_REPOS_READ_TOKEN` (a fine-grained token with read-only Contents on those repos). With a token, a repo it
+  cannot clone still fails the step. Arrives after you bump `platform.version` and run `hub sync`.
+
+### Security
+
+- Hub CI clones the hub's repos with their own token, not `AGENT_HUB_READ_TOKEN` (AGH-801). That token lives only in
+  the clone step's environment, never in `$GITHUB_ENV`, so the pinned release and the hooks `make check` runs can no
+  longer read a token that reaches the hub's private repos. `AGENT_HUB_READ_TOKEN` is for the platform repository
+  only: if you gave it access to your repos for 0.34.0, move that access to the GitHub App or `HUB_REPOS_READ_TOKEN`
+  and narrow `AGENT_HUB_READ_TOKEN` back to the platform.
+
 ## [0.35.0] - 2026-11-10
 
 ### Changed

@@ -31,7 +31,8 @@ block, built by the templates package installed with the running CLI, so doctor 
 the files of each `repos[].dir` checkout at `../<dir>`: a missing or non-folder `../<dir>` gives one `info`, a checkout
 that cannot be listed one `error` (its cause), both at `../<dir>` on the first selected repo rule by id, never retuned;
 the repo rules skip both. The hub's CI clones each repo there before `make check` (the repos step,
-[hub-adopt.md](hub-adopt.md#in-the-hubs-ci)), so the repo rules run in CI too. A linked `../<dir>` is resolved once to
+[hub-adopt.md](hub-adopt.md#in-the-hubs-ci)), so the repo rules run in CI too, except for a private repo when CI has no
+read token for it: that repo is skipped and its rules run locally only. A linked `../<dir>` is resolved once to
 its real path. A root with no `.git` entry, a hub
 inside a larger repository included, is walked, skipping `.git` and nested repositories. A root with a `.git` entry is
 listed with `git ls-files -z --cached --others --exclude-standard`, and git must name the root as the work-tree top;

@@ -701,7 +701,10 @@ This is the most common path: a project with two repos tracked in Linear.
 6. **Keep the hub healthy.** Run `./hub doctor` in CI or before a release of your hub, and upgrade with the recipe
    below. Your hub's CI needs no secret for this public repository; only when `platform.repository` names a private
    source does `./hub` need the Actions secret `AGENT_HUB_READ_TOKEN`, a token with read-only Contents on that
-   repository only ([the hub's CI](docs/design/hub-adopt.md#in-the-hubs-ci)).
+   repository only ([the hub's CI](docs/design/hub-adopt.md#in-the-hubs-ci)). Private repos in `hub.json` are skipped
+   in CI, so their repo rules run locally only, unless you give CI a read token for them: in an organisation, a
+   GitHub App (the variable `HUB_REPOS_APP_CLIENT_ID` and the secret `HUB_REPOS_APP_KEY`), else the secret
+   `HUB_REPOS_READ_TOKEN` (a fine-grained token with read-only Contents on those repos).
 
 ### Recipes
 

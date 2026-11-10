@@ -1,15 +1,18 @@
-"""The rendered CI step ``Repos beside the hub``, run the way Actions runs it (AGH-699 A-13).
+"""The rendered CI step ``Repos beside the hub``, run the way Actions runs it (AGH-699, AGH-801).
 
 The step clones each repo of ``hub.json`` at its default branch into ``../<dir>``, beside the hub,
 where ``hub doctor``'s repo rules (``brain.leak``, ``links.dead``) look for it. With
-``AGENT_HUB_READ_TOKEN`` set it maps that repo's GitHub URL to one carrying the token through git
-config in the step's own environment (never in an argument, a file or ``GITHUB_ENV``); a repo it
-cannot clone, a token outside GitHub's character set or an unusable ``repos`` value fails it.
+a read token (``TOKEN``: the GitHub App step's token, else ``HUB_REPOS_READ_TOKEN``) it maps that
+repo's GitHub URL to one carrying the token through git config in the step's own environment (never
+in an argument, a file or ``GITHUB_ENV``), and a repo it cannot clone fails it. Without one (unset
+or empty) a repo it cannot clone is skipped with one notice line: doctor then reports it as not
+checked out, an info. It never clones with the
+platform credential the job's environment may carry. A token outside GitHub's character set or an
+unusable ``repos`` value fails it.
 
 Each case runs the step's ``run: |`` block on ``bash`` with Actions' default flags in
 ``tmp_path/ws/hub``; the repos' GitHub URLs reach local repositories through a global git config
-under the test's ``HOME`` (``url.<origin>.insteadOf``), so git never reaches the network.
-"""
+under the test's ``HOME`` (``url.<origin>.insteadOf``), so git never reaches the network."""
 
 import json
 import os
@@ -34,7 +37,11 @@ BASH_FLAGS = ("--noprofile", "--norc", "-eo", "pipefail")
 SYSTEM_PATH = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
 # A synthetic token, built from fragments so no token-shaped literal sits in the source.
 TOKEN = "gh" + "p_" + "x" * 36
-REFUSAL = "AGENT_HUB_READ_TOKEN: unexpected characters\n"
+REFUSAL = "HUB_REPOS_READ_TOKEN: unexpected characters\n"
+SKIP_NOTICE = (
+    "::notice::Repos beside the hub: skipped acme/demo-web (trunk): cannot clone it without a read"
+    " token (a private repo, or a wrong branch), so its repo rules run locally only"
+)
 BAD_REPO_LINE = (
     "Repos beside the hub: repos[1] in hub.json needs a dir, an owner/name github and a branch\n"
 )
@@ -124,8 +131,12 @@ class Workspace:
         wrapper.write_text(LOGGING_GIT.format(log=self.git_log, git=real_git()), encoding="utf-8")
         wrapper.chmod(0o755)
 
-    def run_step(self, token: str | None = None) -> subprocess.CompletedProcess[str]:
+    def run_step(
+        self, token: str | None = None, job_env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        """Run the block; ``job_env`` is what earlier steps put in the job's environment."""
         env = {
+            **(job_env or {}),
             "PATH": os.pathsep.join((str(self.bin), *SYSTEM_PATH)),
             "HOME": str(self.home),
             "GIT_CONFIG_NOSYSTEM": "1",
@@ -208,18 +219,75 @@ def test_maps_each_repo_to_token_in_step_environment_when_token_given(
     assert TOKEN not in completed.stdout + completed.stderr
 
 
-def test_fails_naming_repo_when_clone_fails(tmp_path: Path) -> None:
+def test_fails_naming_repo_when_token_given_and_clone_fails(tmp_path: Path) -> None:
     found = Workspace(tmp_path, two_repo_document())
     found.origin("acme/demo-api", "main")
 
-    completed = found.run_step()
+    completed = found.run_step(TOKEN)
 
+    # A configured credential that cannot read a repo is a misconfiguration.
     assert completed.returncode == 1
     assert completed.stderr.endswith(
         "Repos beside the hub: cannot clone acme/demo-web (trunk) into ../demo-web;"
-        " AGENT_HUB_READ_TOKEN needs read access to it\n"
+        " the repos read token (HUB_REPOS_READ_TOKEN or the GitHub App) needs read access to it\n"
     )
     assert found.branch_of("demo-api") == "main"
+    assert TOKEN not in completed.stdout + completed.stderr
+
+
+@pytest.mark.parametrize("token", [None, ""], ids=["unset", "empty"])
+def test_skips_repo_with_notice_when_no_token_and_clone_fails(
+    token: str | None, tmp_path: Path
+) -> None:
+    found = Workspace(tmp_path, two_repo_document())
+    found.origin("acme/demo-api", "main")
+
+    completed = found.run_step(token)
+
+    # The step passes, so the golden step and make check run; doctor reports the info.
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == [
+        "Repos beside the hub: cloned acme/demo-api (main) into ../demo-api",
+        SKIP_NOTICE,
+    ]
+    assert found.branch_of("demo-api") == "main"
+    assert not (found.workspace / "demo-web").exists()
+
+
+def test_writes_nothing_to_job_environment_when_token_given(workspace: Workspace) -> None:
+    github_env = workspace.tmp_path / "github-env"
+
+    completed = workspace.run_step(TOKEN, {"GITHUB_ENV": str(github_env)})
+
+    assert completed.returncode == 0, completed.stderr
+    assert not github_env.exists()
+
+
+@pytest.mark.parametrize("token", [None, TOKEN], ids=["no-token", "token"])
+def test_ignores_platform_mapping_in_job_environment_when_cloning(
+    token: str | None, workspace: Workspace
+) -> None:
+    # What the platform credential step writes to the job's environment (two pairs), here mapping
+    # a repo's URL, and a git -c channel: no clone uses them, so AGENT_HUB_READ_TOKEN stays
+    # platform-only.
+    platform = "https://x-access-token:platform@github.com/acme/demo-api"
+    job_env = {
+        "GIT_CONFIG_COUNT": "2",
+        "GIT_CONFIG_KEY_0": f"url.{platform}.insteadOf",
+        "GIT_CONFIG_VALUE_0": "https://github.com/acme/demo-api",
+        "GIT_CONFIG_KEY_1": "url.https://github.com/acme/demo-hub.insteadOf",
+        "GIT_CONFIG_VALUE_1": "https://github.com/acme/demo-hub",
+        "GIT_CONFIG_PARAMETERS": f"'url.{platform}.insteadOf'='https://github.com/acme/demo-web'",
+    }
+    workspace.log_git_calls()
+
+    completed = workspace.run_step(token, job_env)
+
+    assert completed.returncode == 0, completed.stderr
+    calls = workspace.git_log.read_text(encoding="utf-8")
+    assert "platform@" not in calls
+    assert "GIT_CONFIG_KEY_1" not in calls
+    assert "GIT_CONFIG_PARAMETERS" not in calls
 
 
 @pytest.mark.parametrize(

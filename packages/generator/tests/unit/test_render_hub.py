@@ -3057,6 +3057,10 @@ REPOS_STEP = "Repos beside the hub"
 GOLDEN_STEP = "Golden (hub sync --check)"
 MAKE_CHECK_STEP = "make check"
 READ_REFERENCE = "secrets.AGENT_HUB_READ_TOKEN"
+REPOS_REFERENCE = "secrets.HUB_REPOS_READ_TOKEN"
+REPOS_APP_STEP = "Repos read token (GitHub App)"
+APP_KEY_REFERENCE = "secrets.HUB_REPOS_APP_KEY"
+APP_OUTPUT_REFERENCE = "steps.repos-app.outputs.token"
 
 
 def ci_steps(ci: str) -> list[str]:
@@ -3104,6 +3108,7 @@ class TestCiWorkflow:
             f"- name: {AUTHORSHIP_STEP}",
             "- uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0",
             f"- name: {CREDENTIAL_STEP}",
+            f"- name: {REPOS_APP_STEP}",
             f"- name: {REPOS_STEP}",
             f"- name: {GOLDEN_STEP}",
             f"- name: {MAKE_CHECK_STEP}",
@@ -3112,8 +3117,13 @@ class TestCiWorkflow:
         assert "run: make check" in ci
         assert not re.search(r"(?:version: \"?|@)latest", ci)
         assert "@main" not in ci
-        # AGH-699 A-13: the one read secret, in the credential step and the repos step.
-        assert re.findall(r"secrets\.\w*", ci) == [READ_REFERENCE, READ_REFERENCE]
+        # AGH-801: the platform secret in the credential step, the App key in the App step, the
+        # repos secret in the repos step.
+        assert re.findall(r"secrets\.\w*", ci) == [
+            READ_REFERENCE,
+            APP_KEY_REFERENCE,
+            REPOS_REFERENCE,
+        ]
         jobs = ci[ci.index("\njobs:\n") :]
         assert re.findall(r"^  ([a-z][a-z0-9-]*):$", jobs, re.MULTILINE) == ["check"]
 
@@ -3144,10 +3154,14 @@ class TestCiWorkflow:
         repos = ci_step(ci, REPOS_STEP)
         repos_block = run_block(repos)
 
-        # AGH-699 A-13: the repos step reads the same secret, in its own env only.
-        assert ci.count("secrets.") == 2
-        for step in (credential, repos):
-            assert f"        env:\n          TOKEN: ${{{{ {READ_REFERENCE} }}}}\n" in step
+        # AGH-801: each step reads its own secret, in its own env only; the repos secret reaches
+        # no other step.
+        assert ci.count("secrets.") == 3
+        assert f"        env:\n          TOKEN: ${{{{ {READ_REFERENCE} }}}}\n" in credential
+        repos_token = f"{APP_OUTPUT_REFERENCE} || {REPOS_REFERENCE}"
+        assert f"        env:\n          TOKEN: ${{{{ {repos_token} }}}}\n" in repos
+        assert ci.count("HUB_REPOS_READ_TOKEN }}") == 1
+        assert ci.count(APP_OUTPUT_REFERENCE) == 1
         # The token reaches git only through the job's environment, set by the credential block,
         # and, for the repos' clones, through the repos step's own environment.
         assert "x-access-token" in block
@@ -3156,6 +3170,30 @@ class TestCiWorkflow:
         assert '>> "$GITHUB_ENV"' in block
         assert "GITHUB_ENV" not in repos_block
         assert "--dangerously-skip-permissions" not in ci
+
+    # AGH-801: with the variable HUB_REPOS_APP_CLIENT_ID set, a GitHub App installation token,
+    # read-only Contents, minted for the repos step only: its key reaches this step alone and its
+    # token only the repos step's env (above). Without the variable the step is skipped.
+    @pytest.mark.parametrize("config_name", ["demo", "variant"])
+    def test_mints_app_token_for_repos_step_only_when_ci_rendered(
+        self, config_name: str, request: pytest.FixtureRequest
+    ) -> None:
+        ci = text_of(request.getfixturevalue(f"{config_name}_config"), ".github/workflows/ci.yml")
+
+        steps = ci_steps(ci)
+        app = ci_step(ci, REPOS_APP_STEP)
+
+        assert steps.index(app) + 1 == steps.index(ci_step(ci, REPOS_STEP))
+        assert "        id: repos-app\n" in app
+        assert "        if: vars.HUB_REPOS_APP_CLIENT_ID != ''\n" in app
+        assert "uses: actions/create-github-app-token@" in app
+        assert "          client-id: ${{ vars.HUB_REPOS_APP_CLIENT_ID }}\n" in app
+        assert f"          private-key: ${{{{ {APP_KEY_REFERENCE} }}}}\n" in app
+        assert "          owner: ${{ github.repository_owner }}\n" in app
+        assert "          permission-contents: read\n" in app
+        assert re.findall(r"permission-[\w-]+", app) == ["permission-contents"]
+        assert ci.count(APP_KEY_REFERENCE) == 1
+        assert "run:" not in app
 
     # AGH-699 A-13: each repo of hub.json at ../<dir>, where hub doctor's repo rules read it,
     # before the golden step and make check.
