@@ -3060,7 +3060,7 @@ READ_REFERENCE = "secrets.AGENT_HUB_READ_TOKEN"
 REPOS_REFERENCE = "secrets.HUB_REPOS_READ_TOKEN"
 REPOS_APP_STEP = "Repos read token (GitHub App)"
 APP_KEY_REFERENCE = "secrets.HUB_REPOS_APP_KEY"
-APP_TOKEN = "steps.repos-app.outputs.token"
+APP_OUTPUT_REFERENCE = "steps.repos-app.outputs.token"
 
 
 def ci_steps(ci: str) -> list[str]:
@@ -3159,10 +3159,10 @@ class TestCiWorkflow:
         assert ci.count("secrets.") == 3
         assert f"        env:\n          TOKEN: ${{{{ {READ_REFERENCE} }}}}\n" in credential
         assert (
-            f"        env:\n          TOKEN: ${{{{ {APP_TOKEN} || {REPOS_REFERENCE} }}}}\n" in repos
+            f"        env:\n          TOKEN: ${{{{ {APP_OUTPUT_REFERENCE} || {REPOS_REFERENCE} }}}}\n" in repos
         )
         assert ci.count("HUB_REPOS_READ_TOKEN }}") == 1
-        assert ci.count(APP_TOKEN) == 1
+        assert ci.count(APP_OUTPUT_REFERENCE) == 1
         # The token reaches git only through the job's environment, set by the credential block,
         # and, for the repos' clones, through the repos step's own environment.
         assert "x-access-token" in block
