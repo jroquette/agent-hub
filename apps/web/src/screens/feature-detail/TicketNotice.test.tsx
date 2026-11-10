@@ -7,7 +7,7 @@ import { aFeatureTickets, renderWithApi, T0 } from "../../testing/builders";
 import { TicketNotice } from "./TicketNotice";
 
 const NOT_CONNECTED =
-  "From the plan (features.json); Linear is not connected for hub web, so status may be stale. Set LINEAR_API_KEY where hub web runs.";
+  "From the plan (features.json); Linear is not connected for hub web, so status may be stale. Connect Linear in Settings, or set LINEAR_API_KEY where hub web runs.";
 const NOT_LOADED = "Ticket status from Linear not loaded yet; open the Tickets tab.";
 
 describe("TicketNotice", () => {

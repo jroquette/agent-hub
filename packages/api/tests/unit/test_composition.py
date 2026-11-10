@@ -340,19 +340,19 @@ def test_wires_tickets_when_app_built() -> None:
     assert reader.calls == [("DEM-1", "DEM-2")]
 
 
-def test_builds_no_reader_when_transport_mcp() -> None:
+def test_builds_reader_when_transport_mcp_and_key_set() -> None:
     reader = InMemoryTrackerReader(a_seeded_issue_board())
     environ = {"LINEAR_API_KEY": KEY}
     asked_mcp = TicketReaders(_registered(), environ=environ, reader=reader)
     hub_says_mcp = TicketReaders(_registered("mcp"), environ=environ, reader=reader)
 
-    assert asked_mcp(_request("mcp")) is None
-    assert hub_says_mcp(_request("api")) is None
+    assert asked_mcp(_request("mcp")) is reader
+    assert hub_says_mcp(_request("api")) is reader
     assert (
         ticket_snapshots(_registered("mcp"), environ=environ, tracker_reader=reader)
         .fetch(_request())
         .failure
-        == "not_connected"
+        is None
     )
 
 
