@@ -8,6 +8,7 @@ import { aFeatureTickets, aTicketFlow, aTicketPlan, aTicketRow } from "../../tes
 import {
   PlanningView,
   READINESS_ICON,
+  isLargeFlow,
   ReadinessText,
   readinessIcon,
   splitTitle,
@@ -301,6 +302,44 @@ describe("PlanningView", () => {
     expect(screen.getByRole("listitem", { name: "T3 · Ticket T3" })).not.toHaveTextContent(
       /after/i,
     );
+  });
+
+  it("draws a large flow's lines only for the ticket pointed at, and caps a card's blockers", async () => {
+    const user = userEvent.setup();
+    const roots = Array.from({ length: 30 }, (_, i) => `R${String(i + 1)}`);
+    const tickets = [
+      ...roots.map((ref) =>
+        aTicketRow({ ref, key: ref, id: null, title: `Root ${ref}`, url: null }),
+      ),
+      aTicketRow({
+        ref: "W1",
+        key: "W1",
+        id: null,
+        title: "Waits on many",
+        url: null,
+        readiness: "waiting",
+        blocked_by: roots.slice(0, 5).map((ref) => ({ ref, source: "plan" as const })),
+        waiting_on: roots.slice(0, 5),
+      }),
+    ];
+    const big = aTicketPlan({
+      layers: [roots, ["W1"]],
+      can_start: roots,
+      order: [...roots, "W1"],
+      waiting: ["W1"],
+      critical_path: [],
+    });
+    const { container } = render(<PlanningView tickets={tickets} planning={big} />);
+
+    expect(isLargeFlow(31, 5)).toBe(true);
+    expect(isLargeFlow(10, 12)).toBe(false);
+    expect(container.querySelector("[data-edge]")).toBeNull();
+    const card = screen.getByRole("listitem", { name: "W1 · Waits on many" });
+    expect(card).toHaveTextContent("Waiting on R1, R2 and 3 more");
+    expect(within(card).getByText("3 more")).toHaveAttribute("title", "R3, R4, R5");
+
+    await user.hover(within(card).getByText("Waits on many"));
+    expect(container.querySelector('[data-edge="R1→W1"]')).not.toBeNull();
   });
 
   it("says on a card only what its readiness adds to the Linear status (card)", () => {
