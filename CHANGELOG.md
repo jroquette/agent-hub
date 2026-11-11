@@ -11,6 +11,22 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Changed
+
+- `hub web` opens the chat when you start a new feature, as every other start does, instead of the Discuss panel and
+  a "Sent to Claude" card (AGH-804).
+- `hub web` reads a proposed learning whose note left `brain/_inbox/` (merged into another note or deleted by hand)
+  as resolved elsewhere (AGH-804). The Learnings queue lists it under "Resolved elsewhere", not in All, Ready or
+  Blocked, and accept, reject and batches refuse it with 409. Nothing is recorded as accepted or rejected. The API
+  adds the `resolved_elsewhere` learning state.
+- Proposals of the same inbox note now count once in the Learnings quick views, the Learnings tab and the sidebar
+  badge (AGH-804).
+
+### Fixed
+
+- A feature's Criteria tab says why a criterion is not passing (AGH-804). A command whose tests passed but which
+  exited non-zero reads "Command failed", and the evaluator's note shows openly with what you can do next.
+
 ## [0.35.1] - 2026-11-10
 
 ### Fixed

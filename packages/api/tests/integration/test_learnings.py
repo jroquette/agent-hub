@@ -101,7 +101,6 @@ def _symlink_outside(world: Any, name: str) -> None:
 @pytest.mark.parametrize(
     ("case", "name", "reason"),
     [
-        ("missing", "gone.md", "Note not in the hub checkout"),
         ("too_large", "huge.md", "Note too large"),
         ("symlink", "linked.md", "Not a regular file"),
         ("not_markdown", "plain.txt", None),
@@ -113,9 +112,7 @@ def test_reports_unavailable_when_note_unreadable(
     world_app: Any, propose: Any, hub_world: Any, *, case: str, name: str, reason: str | None
 ) -> None:
     text = "# Note\n\nSome text.\n"
-    if case == "missing":
-        learning_id = propose(world_app, name, text, on_disk=False)
-    elif case == "too_large":
+    if case == "too_large":
         learning_id = propose(world_app, name, "# Huge\n\n" + "x" * (NOTE_LIMIT + 10) + "\n")
     elif case == "symlink":
         _symlink_outside(hub_world, name)
@@ -138,6 +135,24 @@ def test_reports_unavailable_when_note_unreadable(
     (item,) = [item for item in listed.json()["items"] if item["id"] == learning_id]
     assert (item["summary"], item["note_unavailable"]) == (None, body["note_unavailable"])
     assert OUTSIDE_SENTINEL not in detail.text + listed.text
+
+
+def test_resolves_elsewhere_when_note_gone_from_checkout(world_app: Any, propose: Any) -> None:
+    learning_id = propose(world_app, "gone.md", "# Note\n\nSome text.\n", on_disk=False)
+
+    body = world_app.client.get(f"/api/v1/learnings/{learning_id}").json()
+    (item,) = [
+        item
+        for item in world_app.client.get("/api/v1/learnings").json()["items"]
+        if item["id"] == learning_id
+    ]
+
+    for read in (body, item):
+        assert (read["status"], read["state"]) == ("proposed", "resolved_elsewhere")
+        assert read["note_unavailable"] is None
+        assert read["actions_unavailable"] == (
+            "Resolved outside the app: the note is no longer in the inbox"
+        )
 
 
 # AGH-393: ``GET /learnings?brain_path=`` (AC-393.15, AM-7) and its local-only rule (AC-393.17).

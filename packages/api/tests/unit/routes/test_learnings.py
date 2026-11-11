@@ -7,8 +7,9 @@ from agent_hub.core.learnings.brain_change_requests import (
     ChangeRequestFailedError,
     ChangeRequestTimeoutError,
 )
-from agent_hub.core.learnings.learning import LearningStatus
+from agent_hub.core.learnings.learning import LearningState, LearningStatus
 from agent_hub.core.learnings.learning_ports import HubReadOnlyError, LearningConflictError
+from agent_hub.core.learnings.read_learnings import RESOLVED_ELSEWHERE
 from agent_hub.core.readmodels.filters import LearningFilter
 from agent_hub.core.testing.read_model_builders import a_learning, a_learning_detail
 
@@ -52,6 +53,27 @@ def test_reads_through_learning_reads_when_wired(wired: Any) -> None:
     assert document["note"]["path"] == "_inbox/testing-x.md"
     assert listed["items"][0]["summary"] == "Run `make migrations` before the PR."
     assert wired.events.calls == []
+
+
+def test_serializes_resolved_elsewhere_when_note_left_inbox(wired: Any) -> None:
+    resolved = {
+        "state": LearningState.RESOLVED_ELSEWHERE,
+        "note_unavailable": None,
+        "actions_unavailable": RESOLVED_ELSEWHERE,
+        "summary": None,
+        "note": None,
+    }
+    wired.learning_reads.details.append(a_learning_detail(**resolved))
+    wired.wire(learning_reads=wired.learning_reads)
+
+    listed = wired.client.get("/api/v1/learnings").json()["items"][0]
+    document = wired.client.get("/api/v1/learnings/learning-1").json()
+    schema = wired.client.get("/api/v1/openapi.json").json()["components"]["schemas"]
+
+    for item in (listed, document):
+        assert (item["status"], item["state"]) == ("proposed", "resolved_elsewhere")
+        assert (item["note_unavailable"], item["actions_unavailable"]) == (None, RESOLVED_ELSEWHERE)
+    assert "resolved_elsewhere" in schema["LearningState"]["enum"]
 
 
 def test_answers_not_implemented_when_decisions_not_wired(wired: Any) -> None:

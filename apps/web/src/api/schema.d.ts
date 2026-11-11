@@ -5002,10 +5002,18 @@ export interface components {
      * @description Where the learning's note is (L11): in the inbox, in an open PR, or moved by a merge.
      *
      *     ``in_brain`` and ``archived`` are inferred from the hub checkout (the note sits at its
-     *     destination), since GitHub is not connected.
+     *     destination), since GitHub is not connected. ``resolved_elsewhere`` is a proposal whose inbox
+     *     note is gone from a checkout that reads fine: someone triaged it outside the app. It is
+     *     derived on read only; no decision is recorded for it.
      * @enum {string}
      */
-    LearningState: "proposed" | "accepted_pr_open" | "rejected_pr_open" | "in_brain" | "archived";
+    LearningState:
+      | "proposed"
+      | "accepted_pr_open"
+      | "rejected_pr_open"
+      | "in_brain"
+      | "archived"
+      | "resolved_elsewhere";
     /**
      * LearningStatus
      * @description Where a learning is: proposed until a terminal event in source order decides it.

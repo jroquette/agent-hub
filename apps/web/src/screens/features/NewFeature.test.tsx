@@ -15,40 +15,24 @@ import {
   renderWithApi,
   type ApiRoutes,
 } from "../../testing/builders";
-import { DiscussProvider, useDiscuss } from "../../shell/discuss";
 import { NewFeatureScreen, composeFeatureMessage } from "./NewFeature";
 
 const ID = anId(4, "0192a5e5");
 
-function Probe() {
-  const { target, open } = useDiscuss();
-  return (
-    <output aria-label="discuss">
-      {open ? "open" : "closed"}|{target?.kind ?? ""}
-    </output>
-  );
-}
-
 const IDEA = "Owners export the orders of a period as CSV.";
 
 function renderNew(routes: ApiRoutes = {}) {
-  return renderWithApi(
-    <DiscussProvider>
-      <NewFeatureScreen />
-      <Probe />
-    </DiscussProvider>,
-    {
-      routes: {
-        "/api/v1/projects": aPage([aProjectSummary()]),
-        "/api/v1/features": aPage([aFeature()]),
-        "/api/v1/agent-sessions/capabilities": aCapabilities(),
-        "/api/v1/agent-sessions/workdirs": { items: [aWorkdir()], warnings: [] },
-        "POST /api/v1/agent-sessions": anAgentSession({ id: ID, status: "running" }),
-        ...routes,
-      },
-      path: "/features/new",
+  return renderWithApi(<NewFeatureScreen />, {
+    routes: {
+      "/api/v1/projects": aPage([aProjectSummary()]),
+      "/api/v1/features": aPage([aFeature()]),
+      "/api/v1/agent-sessions/capabilities": aCapabilities(),
+      "/api/v1/agent-sessions/workdirs": { items: [aWorkdir()], warnings: [] },
+      "POST /api/v1/agent-sessions": anAgentSession({ id: ID, status: "running" }),
+      ...routes,
     },
-  );
+    path: "/features/new",
+  });
 }
 
 async function ready() {
@@ -151,7 +135,7 @@ describe("NewFeatureScreen", () => {
     );
   });
 
-  it("starts the conversation with the brief and its attachments, then opens the panel on it (AC-420.3, AC-420.6)", async () => {
+  it("starts the conversation with the brief and its attachments, then opens its chat (AC-420.3, AC-420.6)", async () => {
     const user = userEvent.setup();
     const view = renderNew();
 
@@ -191,14 +175,9 @@ describe("NewFeatureScreen", () => {
       ["orders.csv", "text/plain"],
     ]);
 
-    const sent = await screen.findByRole("region", { name: "Sent to Claude" });
-    expect(within(sent).getByText(IDEA)).toBeInTheDocument();
-    expect(within(sent).getByText("orders.csv")).toBeInTheDocument();
-    expect(screen.getByRole("status", { name: "discuss" })).toHaveTextContent("open|New feature");
-    const kept = Object.keys(window.localStorage).find((key) =>
-      key.startsWith("ah.discuss.session.feature-new:agent-hub:"),
-    );
-    expect(window.localStorage.getItem(kept ?? "")).toBe(ID);
+    await waitFor(() => {
+      expect(view.router.state.location.pathname).toBe(`/agent-sessions/${ID}`);
+    });
   });
 
   it("AC-681.7 starts the conversation with the mode, model, effort and Ultracode picked", async () => {
@@ -283,29 +262,6 @@ describe("NewFeatureScreen", () => {
       ).toBe(true);
     });
   });
-
-  it("links to the new feature once its record appears (AC-420.7)", async () => {
-    const user = userEvent.setup();
-    let written = false;
-    renderNew({
-      "/api/v1/features": () =>
-        aPage(written ? [aFeature(), aFeature({ slug: "orders-csv" })] : [aFeature()]),
-    });
-
-    await user.type(await screen.findByLabelText("What do you want to build?"), IDEA);
-    await waitFor(async () => {
-      expect(await ready()).not.toHaveAttribute("aria-disabled");
-    });
-    await user.click(screen.getByRole("button", { name: "Start with Claude" }));
-    expect(
-      await screen.findByText("Claude is working on the brief with you in the panel."),
-    ).toBeInTheDocument();
-    written = true;
-
-    expect(
-      await screen.findByRole("link", { name: "Open orders-csv" }, { timeout: 5_000 }),
-    ).toHaveAttribute("href", "/features/agent-hub/orders-csv");
-  }, 10_000);
 
   it("shows the project as a pill on the title row and keeps each project's brief (AC-420.2)", async () => {
     const user = userEvent.setup();
@@ -438,33 +394,6 @@ describe("NewFeatureScreen", () => {
     ).toBe(false);
   });
 
-  it("starts another feature on an empty form, the panel closed and the brief focused (AC-420.7)", async () => {
-    const user = userEvent.setup();
-    renderNew();
-
-    await user.type(await screen.findByLabelText("What do you want to build?"), IDEA);
-    await waitFor(async () => {
-      expect(await ready()).not.toHaveAttribute("aria-disabled");
-    });
-    await user.click(screen.getByRole("button", { name: "Start with Claude" }));
-    const sent = await screen.findByRole("region", { name: "Sent to Claude" });
-    expect(
-      within(sent).getByText(/Issue: none · Slug: Claude picks · Size: Let Claude ask/),
-    ).toBeInTheDocument();
-    expect(within(sent).getByRole("link", { name: "Open the full chat" })).toHaveAttribute(
-      "href",
-      `/agent-sessions/${ID}`,
-    );
-
-    await user.click(screen.getByRole("button", { name: "Start another feature" }));
-    const idea = await screen.findByLabelText("What do you want to build?");
-    expect(idea).toHaveValue("");
-    await waitFor(() => {
-      expect(idea).toHaveFocus();
-    });
-    expect(screen.getByRole("status", { name: "discuss" })).toHaveTextContent("closed|");
-  });
-
   it("clears a refusal when its attachment is removed (AC-420.8)", async () => {
     const user = userEvent.setup();
     renderNew();
@@ -505,19 +434,6 @@ describe("NewFeatureScreen", () => {
     });
     expect(await screen.findByRole("alert")).toHaveTextContent("“app.bin” is neither");
     expect(await screen.findByText("notes.md")).toBeInTheDocument();
-    expect(await seriousViolations(container)).toEqual([]);
-  });
-
-  it("has no serious a11y violations on the sent card (a11y)", async () => {
-    const user = userEvent.setup();
-    const { container } = renderNew();
-
-    await user.type(await screen.findByLabelText("What do you want to build?"), IDEA);
-    await waitFor(async () => {
-      expect(await ready()).not.toHaveAttribute("aria-disabled");
-    });
-    await user.click(screen.getByRole("button", { name: "Start with Claude" }));
-    await screen.findByRole("region", { name: "Sent to Claude" });
     expect(await seriousViolations(container)).toEqual([]);
   });
 });

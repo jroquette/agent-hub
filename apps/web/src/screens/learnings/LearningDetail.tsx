@@ -53,7 +53,11 @@ const STATE: Record<LearningState, { status: Status; label: string }> = {
   rejected_pr_open: { status: "waiting", label: "Rejected · PR open" },
   in_brain: { status: "done", label: "In brain" },
   archived: { status: "ended", label: "Archived" },
+  resolved_elsewhere: { status: "ended", label: "Resolved elsewhere" },
 };
+
+/** Why a proposal triaged outside the app (its note left the inbox) is not decided here. */
+export const RESOLVED_ELSEWHERE = "Resolved outside the app: the note is no longer in the inbox";
 
 const PR_OPEN = "A pull request for this learning is already open";
 const BLOCKED_BY_STATE: Record<LearningState, string | null> = {
@@ -62,6 +66,7 @@ const BLOCKED_BY_STATE: Record<LearningState, string | null> = {
   rejected_pr_open: PR_OPEN,
   in_brain: "This learning is already in the brain",
   archived: "This learning is archived",
+  resolved_elsewhere: RESOLVED_ELSEWHERE,
 };
 
 /** The learning's place (L11); a legacy learning without one is placed by its status. */
@@ -526,6 +531,23 @@ function NoteBody({
     );
   }
   const note = detail.note;
+  if (!note && detail.state === "resolved_elsewhere") {
+    return (
+      <section aria-label="Note" style={{ minWidth: 0 }}>
+        <div className="ah-stack" style={{ gap: 4 }}>
+          <span>{RESOLVED_ELSEWHERE}</span>
+          {detail.note_path && (
+            <span className="ah-small ah-muted">
+              <span className="ah-mono">{detail.note_path}</span> is gone from the hub
+              checkout&apos;s inbox: it was triaged there by hand (merged into another note or
+              deleted). Nothing is recorded as accepted or rejected. If the note was only written in
+              another worktree, push it and pull the hub: the proposal comes back.
+            </span>
+          )}
+        </div>
+      </section>
+    );
+  }
   if (!note) {
     return (
       <section aria-label="Note" style={{ minWidth: 0 }}>
@@ -989,7 +1011,13 @@ export function LearningDetail({ id, row, now, onDecide, onMarked, claude }: Lea
             Snooze 7 d
           </Button>
         </div>
-        {blocked && state === "proposed" && !result ? (
+        {state === "resolved_elsewhere" && !result ? (
+          <div style={{ marginTop: 10 }}>
+            <Banner tone="info" boxed>
+              <b style={{ fontWeight: 600 }}>Nothing to decide here.</b> {RESOLVED_ELSEWHERE}
+            </Banner>
+          </div>
+        ) : blocked && state === "proposed" && !result ? (
           <div style={{ marginTop: 10 }}>
             <Banner tone="warning" boxed>
               <b style={{ fontWeight: 600 }}>Cannot be decided here.</b> {blocked}

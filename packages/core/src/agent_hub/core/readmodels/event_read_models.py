@@ -895,10 +895,13 @@ class FoldedEventReadModels:
             failed_runs_7d=sum(
                 1 for run in snapshot.runs.values() if _failed_recently(run, snapshot.now)
             ),
-            learnings_proposed=sum(
-                1
-                for learning in snapshot.learnings.values()
-                if learning.status == LearningStatus.PROPOSED
+            # One per note: proposals of the same inbox note (one per session) are one decision.
+            learnings_proposed=len(
+                {
+                    (learning.project, learning.note_path or learning.id)
+                    for learning in snapshot.learnings.values()
+                    if learning.status == LearningStatus.PROPOSED
+                }
             ),
         )
 
