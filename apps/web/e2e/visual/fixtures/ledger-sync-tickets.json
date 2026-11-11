@@ -25,7 +25,7 @@
       "repo": "demo-api",
       "order": 1,
       "acs": [
-        "AC-817.1"
+        "AC-201.1"
       ],
       "blocked_by": [],
       "blocks": [
@@ -100,7 +100,7 @@
       "repo": "demo-api",
       "order": 2,
       "acs": [
-        "AC-817.2"
+        "AC-201.2"
       ],
       "blocked_by": [],
       "blocks": [
@@ -176,11 +176,12 @@
       "repo": "demo-api",
       "order": 3,
       "acs": [
-        "AC-817.3"
+        "AC-201.3"
       ],
       "blocked_by": [],
       "blocks": [
-        "AGH-208"
+        "AGH-208",
+        "AGH-231"
       ],
       "readiness": "done",
       "waiting_on": [],
@@ -250,7 +251,7 @@
       "repo": "demo-api",
       "order": 4,
       "acs": [
-        "AC-817.4"
+        "AC-201.4"
       ],
       "blocked_by": [],
       "blocks": [
@@ -326,11 +327,12 @@
       "repo": "demo-api",
       "order": 5,
       "acs": [
-        "AC-817.5"
+        "AC-201.5"
       ],
       "blocked_by": [],
       "blocks": [
-        "AGH-211"
+        "AGH-211",
+        "AGH-232"
       ],
       "readiness": "done",
       "waiting_on": [],
@@ -400,13 +402,14 @@
       "repo": "demo-api",
       "order": 6,
       "acs": [
-        "AC-817.6"
+        "AC-201.6"
       ],
       "blocked_by": [],
       "blocks": [
         "AGH-210",
         "AGH-211",
-        "AGH-216"
+        "AGH-216",
+        "AGH-238"
       ],
       "readiness": "done",
       "waiting_on": [],
@@ -476,7 +479,7 @@
       "repo": "demo-api",
       "order": 7,
       "acs": [
-        "AC-817.7"
+        "AC-201.7"
       ],
       "blocked_by": [
         {
@@ -561,7 +564,7 @@
       "repo": "demo-api",
       "order": 8,
       "acs": [
-        "AC-817.8"
+        "AC-201.8"
       ],
       "blocked_by": [
         {
@@ -571,7 +574,8 @@
       ],
       "blocks": [
         "AGH-213",
-        "AGH-215"
+        "AGH-215",
+        "AGH-233"
       ],
       "readiness": "done",
       "waiting_on": [],
@@ -641,7 +645,7 @@
       "repo": "demo-api",
       "order": 9,
       "acs": [
-        "AC-817.9"
+        "AC-201.9"
       ],
       "blocked_by": [
         {
@@ -721,7 +725,7 @@
       "repo": "demo-api",
       "order": 10,
       "acs": [
-        "AC-817.10"
+        "AC-201.10"
       ],
       "blocked_by": [
         {
@@ -735,7 +739,8 @@
       ],
       "blocks": [
         "AGH-216",
-        "AGH-219"
+        "AGH-219",
+        "AGH-240"
       ],
       "readiness": "done",
       "waiting_on": [],
@@ -805,7 +810,7 @@
       "repo": "demo-api",
       "order": 11,
       "acs": [
-        "AC-817.11"
+        "AC-201.11"
       ],
       "blocked_by": [
         {
@@ -818,7 +823,8 @@
         }
       ],
       "blocks": [
-        "AGH-219"
+        "AGH-219",
+        "AGH-237"
       ],
       "readiness": "done",
       "waiting_on": [],
@@ -888,7 +894,7 @@
       "repo": "demo-api",
       "order": 12,
       "acs": [
-        "AC-817.12"
+        "AC-201.12"
       ],
       "blocked_by": [
         {
@@ -972,7 +978,7 @@
       "repo": "demo-api",
       "order": 13,
       "acs": [
-        "AC-817.13"
+        "AC-201.13"
       ],
       "blocked_by": [
         {
@@ -992,7 +998,9 @@
         "AGH-220",
         "AGH-221",
         "AGH-223",
-        "AGH-225"
+        "AGH-225",
+        "AGH-235",
+        "AGH-240"
       ],
       "readiness": "done",
       "waiting_on": [],
@@ -1062,7 +1070,7 @@
       "repo": "demo-api",
       "order": 14,
       "acs": [
-        "AC-817.14"
+        "AC-201.14"
       ],
       "blocked_by": [
         {
@@ -1145,7 +1153,7 @@
       "repo": "demo-api",
       "order": 15,
       "acs": [
-        "AC-817.15"
+        "AC-201.15"
       ],
       "blocked_by": [
         {
@@ -1224,7 +1232,7 @@
       "repo": "demo-api",
       "order": 16,
       "acs": [
-        "AC-817.16"
+        "AC-201.16"
       ],
       "blocked_by": [
         {
@@ -1238,7 +1246,9 @@
       ],
       "blocks": [
         "AGH-222",
-        "AGH-225"
+        "AGH-225",
+        "AGH-236",
+        "AGH-238"
       ],
       "readiness": "done",
       "waiting_on": [],
@@ -1308,7 +1318,7 @@
       "repo": "demo-api",
       "order": 17,
       "acs": [
-        "AC-817.17"
+        "AC-201.17"
       ],
       "blocked_by": [
         {
@@ -1390,7 +1400,7 @@
       "repo": "demo-api",
       "order": 18,
       "acs": [
-        "AC-817.18"
+        "AC-201.18"
       ],
       "blocked_by": [
         {
@@ -1467,7 +1477,7 @@
       "repo": "demo-api",
       "order": 19,
       "acs": [
-        "AC-817.19"
+        "AC-201.19"
       ],
       "blocked_by": [
         {
@@ -1481,7 +1491,8 @@
       ],
       "blocks": [
         "AGH-222",
-        "AGH-224"
+        "AGH-224",
+        "AGH-244"
       ],
       "readiness": "can_start",
       "waiting_on": [],
@@ -1551,7 +1562,7 @@
       "repo": "demo-api",
       "order": 20,
       "acs": [
-        "AC-817.20"
+        "AC-201.20"
       ],
       "blocked_by": [
         {
@@ -1564,7 +1575,8 @@
         }
       ],
       "blocks": [
-        "AGH-226"
+        "AGH-226",
+        "AGH-241"
       ],
       "readiness": "done",
       "waiting_on": [],
@@ -1634,7 +1646,7 @@
       "repo": "demo-api",
       "order": 21,
       "acs": [
-        "AC-817.21"
+        "AC-201.21"
       ],
       "blocked_by": [
         {
@@ -1718,7 +1730,7 @@
       "repo": "demo-api",
       "order": 22,
       "acs": [
-        "AC-817.22"
+        "AC-201.22"
       ],
       "blocked_by": [
         {
@@ -1804,7 +1816,7 @@
       "repo": "demo-api",
       "order": 23,
       "acs": [
-        "AC-817.23"
+        "AC-201.23"
       ],
       "blocked_by": [
         {
@@ -1890,7 +1902,7 @@
       "repo": "demo-api",
       "order": 24,
       "acs": [
-        "AC-817.24"
+        "AC-201.24"
       ],
       "blocked_by": [
         {
@@ -1977,7 +1989,7 @@
       "repo": "demo-api",
       "order": 25,
       "acs": [
-        "AC-817.25"
+        "AC-201.25"
       ],
       "blocked_by": [
         {
@@ -1994,7 +2006,8 @@
         }
       ],
       "blocks": [
-        "AGH-228"
+        "AGH-228",
+        "AGH-233"
       ],
       "readiness": "can_start",
       "waiting_on": [],
@@ -2064,7 +2077,7 @@
       "repo": "demo-api",
       "order": 26,
       "acs": [
-        "AC-817.26"
+        "AC-201.26"
       ],
       "blocked_by": [
         {
@@ -2077,7 +2090,8 @@
         }
       ],
       "blocks": [
-        "AGH-230"
+        "AGH-230",
+        "AGH-242"
       ],
       "readiness": "waiting",
       "waiting_on": [
@@ -2149,7 +2163,7 @@
       "repo": "demo-api",
       "order": 27,
       "acs": [
-        "AC-817.27"
+        "AC-201.27"
       ],
       "blocked_by": [
         {
@@ -2232,7 +2246,7 @@
       "repo": "demo-api",
       "order": 28,
       "acs": [
-        "AC-817.28"
+        "AC-201.28"
       ],
       "blocked_by": [
         {
@@ -2331,7 +2345,7 @@
       "repo": "demo-api",
       "order": 29,
       "acs": [
-        "AC-817.29"
+        "AC-201.29"
       ],
       "blocked_by": [
         {
@@ -2415,7 +2429,7 @@
       "repo": "demo-api",
       "order": 30,
       "acs": [
-        "AC-817.30"
+        "AC-201.30"
       ],
       "blocked_by": [
         {
@@ -2427,11 +2441,1156 @@
           "source": "both"
         }
       ],
-      "blocks": [],
+      "blocks": [
+        "AGH-244"
+      ],
       "readiness": "waiting",
       "waiting_on": [
         "AGH-224",
         "AGH-226"
+      ],
+      "reviewed": false,
+      "parent": null,
+      "children": [],
+      "pr_url": null,
+      "flow": {
+        "steps": [
+          {
+            "name": "context",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "preflight",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "implement",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "review",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "eval",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "pr",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "merged",
+            "state": "pending",
+            "meta": null
+          }
+        ],
+        "current": "context",
+        "signal": null
+      },
+      "repos": [
+        "demo-api"
+      ],
+      "prs": []
+    },
+    {
+      "ref": "AGH-231",
+      "key": "L31",
+      "id": "AGH-231",
+      "title": "Map ledger tags to local categories",
+      "state": {
+        "name": "Todo",
+        "type": "unstarted"
+      },
+      "assignee": "Diego Rocha",
+      "url": "https://linear.app/demo/issue/AGH-231",
+      "priority": 3,
+      "estimate": null,
+      "repo": "demo-api",
+      "order": 31,
+      "acs": [
+        "AC-201.31"
+      ],
+      "blocked_by": [
+        {
+          "ref": "AGH-203",
+          "source": "both"
+        }
+      ],
+      "blocks": [
+        "AGH-232"
+      ],
+      "readiness": "can_start",
+      "waiting_on": [],
+      "reviewed": false,
+      "parent": null,
+      "children": [],
+      "pr_url": null,
+      "flow": {
+        "steps": [
+          {
+            "name": "context",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "preflight",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "implement",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "review",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "eval",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "pr",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "merged",
+            "state": "pending",
+            "meta": null
+          }
+        ],
+        "current": "context",
+        "signal": null
+      },
+      "repos": [
+        "demo-api"
+      ],
+      "prs": []
+    },
+    {
+      "ref": "AGH-232",
+      "key": "L32",
+      "id": "AGH-232",
+      "title": "Show category totals on the settings page",
+      "state": {
+        "name": "Todo",
+        "type": "unstarted"
+      },
+      "assignee": "Ana Souza",
+      "url": "https://linear.app/demo/issue/AGH-232",
+      "priority": 3,
+      "estimate": null,
+      "repo": "demo-api",
+      "order": 32,
+      "acs": [
+        "AC-201.32"
+      ],
+      "blocked_by": [
+        {
+          "ref": "AGH-205",
+          "source": "both"
+        },
+        {
+          "ref": "AGH-231",
+          "source": "both"
+        }
+      ],
+      "blocks": [],
+      "readiness": "waiting",
+      "waiting_on": [
+        "AGH-231"
+      ],
+      "reviewed": false,
+      "parent": null,
+      "children": [],
+      "pr_url": null,
+      "flow": {
+        "steps": [
+          {
+            "name": "context",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "preflight",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "implement",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "review",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "eval",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "pr",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "merged",
+            "state": "pending",
+            "meta": null
+          }
+        ],
+        "current": "context",
+        "signal": null
+      },
+      "repos": [
+        "demo-api"
+      ],
+      "prs": []
+    },
+    {
+      "ref": "AGH-233",
+      "key": "L33",
+      "id": "AGH-233",
+      "title": "Convert historic rates for the back-fill",
+      "state": {
+        "name": "Todo",
+        "type": "unstarted"
+      },
+      "assignee": "Bruno Lima",
+      "url": "https://linear.app/demo/issue/AGH-233",
+      "priority": 3,
+      "estimate": null,
+      "repo": "demo-api",
+      "order": 33,
+      "acs": [
+        "AC-201.33"
+      ],
+      "blocked_by": [
+        {
+          "ref": "AGH-208",
+          "source": "both"
+        },
+        {
+          "ref": "AGH-225",
+          "source": "both"
+        }
+      ],
+      "blocks": [
+        "AGH-234"
+      ],
+      "readiness": "waiting",
+      "waiting_on": [
+        "AGH-225"
+      ],
+      "reviewed": false,
+      "parent": null,
+      "children": [],
+      "pr_url": null,
+      "flow": {
+        "steps": [
+          {
+            "name": "context",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "preflight",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "implement",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "review",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "eval",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "pr",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "merged",
+            "state": "pending",
+            "meta": null
+          }
+        ],
+        "current": "context",
+        "signal": null
+      },
+      "repos": [
+        "demo-api"
+      ],
+      "prs": []
+    },
+    {
+      "ref": "AGH-234",
+      "key": "L34",
+      "id": "AGH-234",
+      "title": "Warn when a rate is missing",
+      "state": {
+        "name": "Todo",
+        "type": "unstarted"
+      },
+      "assignee": "Carla Mendes",
+      "url": "https://linear.app/demo/issue/AGH-234",
+      "priority": 3,
+      "estimate": null,
+      "repo": "demo-api",
+      "order": 34,
+      "acs": [
+        "AC-201.34"
+      ],
+      "blocked_by": [
+        {
+          "ref": "AGH-233",
+          "source": "both"
+        }
+      ],
+      "blocks": [],
+      "readiness": "waiting",
+      "waiting_on": [
+        "AGH-233"
+      ],
+      "reviewed": false,
+      "parent": null,
+      "children": [],
+      "pr_url": null,
+      "flow": {
+        "steps": [
+          {
+            "name": "context",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "preflight",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "implement",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "review",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "eval",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "pr",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "merged",
+            "state": "pending",
+            "meta": null
+          }
+        ],
+        "current": "context",
+        "signal": null
+      },
+      "repos": [
+        "demo-api"
+      ],
+      "prs": []
+    },
+    {
+      "ref": "AGH-235",
+      "key": "L35",
+      "id": "AGH-235",
+      "title": "Batch the writes of a large page",
+      "state": {
+        "name": "Todo",
+        "type": "unstarted"
+      },
+      "assignee": "Diego Rocha",
+      "url": "https://linear.app/demo/issue/AGH-235",
+      "priority": 3,
+      "estimate": null,
+      "repo": "demo-api",
+      "order": 35,
+      "acs": [
+        "AC-201.35"
+      ],
+      "blocked_by": [
+        {
+          "ref": "AGH-213",
+          "source": "both"
+        }
+      ],
+      "blocks": [],
+      "readiness": "can_start",
+      "waiting_on": [],
+      "reviewed": false,
+      "parent": null,
+      "children": [],
+      "pr_url": null,
+      "flow": {
+        "steps": [
+          {
+            "name": "context",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "preflight",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "implement",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "review",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "eval",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "pr",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "merged",
+            "state": "pending",
+            "meta": null
+          }
+        ],
+        "current": "context",
+        "signal": null
+      },
+      "repos": [
+        "demo-api"
+      ],
+      "prs": []
+    },
+    {
+      "ref": "AGH-236",
+      "key": "L36",
+      "id": "AGH-236",
+      "title": "Measure a sync run's duration",
+      "state": {
+        "name": "Todo",
+        "type": "unstarted"
+      },
+      "assignee": "Ana Souza",
+      "url": "https://linear.app/demo/issue/AGH-236",
+      "priority": 3,
+      "estimate": null,
+      "repo": "demo-api",
+      "order": 36,
+      "acs": [
+        "AC-201.36"
+      ],
+      "blocked_by": [
+        {
+          "ref": "AGH-216",
+          "source": "both"
+        }
+      ],
+      "blocks": [
+        "AGH-237",
+        "AGH-239"
+      ],
+      "readiness": "can_start",
+      "waiting_on": [],
+      "reviewed": false,
+      "parent": null,
+      "children": [],
+      "pr_url": null,
+      "flow": {
+        "steps": [
+          {
+            "name": "context",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "preflight",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "implement",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "review",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "eval",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "pr",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "merged",
+            "state": "pending",
+            "meta": null
+          }
+        ],
+        "current": "context",
+        "signal": null
+      },
+      "repos": [
+        "demo-api"
+      ],
+      "prs": []
+    },
+    {
+      "ref": "AGH-237",
+      "key": "L37",
+      "id": "AGH-237",
+      "title": "Chart sync durations",
+      "state": {
+        "name": "Todo",
+        "type": "unstarted"
+      },
+      "assignee": "Bruno Lima",
+      "url": "https://linear.app/demo/issue/AGH-237",
+      "priority": 3,
+      "estimate": null,
+      "repo": "demo-api",
+      "order": 37,
+      "acs": [
+        "AC-201.37"
+      ],
+      "blocked_by": [
+        {
+          "ref": "AGH-211",
+          "source": "both"
+        },
+        {
+          "ref": "AGH-236",
+          "source": "both"
+        }
+      ],
+      "blocks": [],
+      "readiness": "waiting",
+      "waiting_on": [
+        "AGH-236"
+      ],
+      "reviewed": false,
+      "parent": null,
+      "children": [],
+      "pr_url": null,
+      "flow": {
+        "steps": [
+          {
+            "name": "context",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "preflight",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "implement",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "review",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "eval",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "pr",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "merged",
+            "state": "pending",
+            "meta": null
+          }
+        ],
+        "current": "context",
+        "signal": null
+      },
+      "repos": [
+        "demo-api"
+      ],
+      "prs": []
+    },
+    {
+      "ref": "AGH-238",
+      "key": "L38",
+      "id": "AGH-238",
+      "title": "Archive runs older than a year",
+      "state": {
+        "name": "Todo",
+        "type": "unstarted"
+      },
+      "assignee": "Carla Mendes",
+      "url": "https://linear.app/demo/issue/AGH-238",
+      "priority": 3,
+      "estimate": null,
+      "repo": "demo-api",
+      "order": 38,
+      "acs": [
+        "AC-201.38"
+      ],
+      "blocked_by": [
+        {
+          "ref": "AGH-206",
+          "source": "both"
+        },
+        {
+          "ref": "AGH-216",
+          "source": "both"
+        }
+      ],
+      "blocks": [],
+      "readiness": "can_start",
+      "waiting_on": [],
+      "reviewed": false,
+      "parent": null,
+      "children": [],
+      "pr_url": null,
+      "flow": {
+        "steps": [
+          {
+            "name": "context",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "preflight",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "implement",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "review",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "eval",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "pr",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "merged",
+            "state": "pending",
+            "meta": null
+          }
+        ],
+        "current": "context",
+        "signal": null
+      },
+      "repos": [
+        "demo-api"
+      ],
+      "prs": []
+    },
+    {
+      "ref": "AGH-239",
+      "key": "L39",
+      "id": "AGH-239",
+      "title": "Export a run's log",
+      "state": {
+        "name": "Todo",
+        "type": "unstarted"
+      },
+      "assignee": "Diego Rocha",
+      "url": "https://linear.app/demo/issue/AGH-239",
+      "priority": 3,
+      "estimate": null,
+      "repo": "demo-api",
+      "order": 39,
+      "acs": [
+        "AC-201.39"
+      ],
+      "blocked_by": [
+        {
+          "ref": "AGH-236",
+          "source": "both"
+        }
+      ],
+      "blocks": [],
+      "readiness": "waiting",
+      "waiting_on": [
+        "AGH-236"
+      ],
+      "reviewed": false,
+      "parent": null,
+      "children": [],
+      "pr_url": null,
+      "flow": {
+        "steps": [
+          {
+            "name": "context",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "preflight",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "implement",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "review",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "eval",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "pr",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "merged",
+            "state": "pending",
+            "meta": null
+          }
+        ],
+        "current": "context",
+        "signal": null
+      },
+      "repos": [
+        "demo-api"
+      ],
+      "prs": []
+    },
+    {
+      "ref": "AGH-240",
+      "key": "L40",
+      "id": "AGH-240",
+      "title": "Add a dry-run mode",
+      "state": {
+        "name": "Todo",
+        "type": "unstarted"
+      },
+      "assignee": "Ana Souza",
+      "url": "https://linear.app/demo/issue/AGH-240",
+      "priority": 3,
+      "estimate": null,
+      "repo": "demo-api",
+      "order": 40,
+      "acs": [
+        "AC-201.40"
+      ],
+      "blocked_by": [
+        {
+          "ref": "AGH-210",
+          "source": "both"
+        },
+        {
+          "ref": "AGH-213",
+          "source": "both"
+        }
+      ],
+      "blocks": [
+        "AGH-241"
+      ],
+      "readiness": "can_start",
+      "waiting_on": [],
+      "reviewed": false,
+      "parent": null,
+      "children": [],
+      "pr_url": null,
+      "flow": {
+        "steps": [
+          {
+            "name": "context",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "preflight",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "implement",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "review",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "eval",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "pr",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "merged",
+            "state": "pending",
+            "meta": null
+          }
+        ],
+        "current": "context",
+        "signal": null
+      },
+      "repos": [
+        "demo-api"
+      ],
+      "prs": []
+    },
+    {
+      "ref": "AGH-241",
+      "key": "L41",
+      "id": "AGH-241",
+      "title": "Compare a dry run with the journal",
+      "state": {
+        "name": "Todo",
+        "type": "unstarted"
+      },
+      "assignee": "Bruno Lima",
+      "url": "https://linear.app/demo/issue/AGH-241",
+      "priority": 3,
+      "estimate": null,
+      "repo": "demo-api",
+      "order": 41,
+      "acs": [
+        "AC-201.41"
+      ],
+      "blocked_by": [
+        {
+          "ref": "AGH-220",
+          "source": "both"
+        },
+        {
+          "ref": "AGH-240",
+          "source": "both"
+        }
+      ],
+      "blocks": [],
+      "readiness": "waiting",
+      "waiting_on": [
+        "AGH-240"
+      ],
+      "reviewed": false,
+      "parent": null,
+      "children": [],
+      "pr_url": null,
+      "flow": {
+        "steps": [
+          {
+            "name": "context",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "preflight",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "implement",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "review",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "eval",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "pr",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "merged",
+            "state": "pending",
+            "meta": null
+          }
+        ],
+        "current": "context",
+        "signal": null
+      },
+      "repos": [
+        "demo-api"
+      ],
+      "prs": []
+    },
+    {
+      "ref": "AGH-242",
+      "key": "L42",
+      "id": "AGH-242",
+      "title": "Pause the nightly sync",
+      "state": {
+        "name": "Todo",
+        "type": "unstarted"
+      },
+      "assignee": "Carla Mendes",
+      "url": "https://linear.app/demo/issue/AGH-242",
+      "priority": 3,
+      "estimate": null,
+      "repo": "demo-api",
+      "order": 42,
+      "acs": [
+        "AC-201.42"
+      ],
+      "blocked_by": [
+        {
+          "ref": "AGH-226",
+          "source": "both"
+        }
+      ],
+      "blocks": [
+        "AGH-243"
+      ],
+      "readiness": "waiting",
+      "waiting_on": [
+        "AGH-226"
+      ],
+      "reviewed": false,
+      "parent": null,
+      "children": [],
+      "pr_url": null,
+      "flow": {
+        "steps": [
+          {
+            "name": "context",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "preflight",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "implement",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "review",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "eval",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "pr",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "merged",
+            "state": "pending",
+            "meta": null
+          }
+        ],
+        "current": "context",
+        "signal": null
+      },
+      "repos": [
+        "demo-api"
+      ],
+      "prs": []
+    },
+    {
+      "ref": "AGH-243",
+      "key": "L43",
+      "id": "AGH-243",
+      "title": "Resume a paused sync",
+      "state": {
+        "name": "Todo",
+        "type": "unstarted"
+      },
+      "assignee": "Diego Rocha",
+      "url": "https://linear.app/demo/issue/AGH-243",
+      "priority": 3,
+      "estimate": null,
+      "repo": "demo-api",
+      "order": 43,
+      "acs": [
+        "AC-201.43"
+      ],
+      "blocked_by": [
+        {
+          "ref": "AGH-242",
+          "source": "both"
+        }
+      ],
+      "blocks": [
+        "AGH-244"
+      ],
+      "readiness": "waiting",
+      "waiting_on": [
+        "AGH-242"
+      ],
+      "reviewed": false,
+      "parent": null,
+      "children": [],
+      "pr_url": null,
+      "flow": {
+        "steps": [
+          {
+            "name": "context",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "preflight",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "implement",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "review",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "eval",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "pr",
+            "state": "pending",
+            "meta": null
+          },
+          {
+            "name": "merged",
+            "state": "pending",
+            "meta": null
+          }
+        ],
+        "current": "context",
+        "signal": null
+      },
+      "repos": [
+        "demo-api"
+      ],
+      "prs": []
+    },
+    {
+      "ref": "AGH-244",
+      "key": "L44",
+      "id": "AGH-244",
+      "title": "Write the runbook for a failed sync",
+      "state": {
+        "name": "Todo",
+        "type": "unstarted"
+      },
+      "assignee": "Ana Souza",
+      "url": "https://linear.app/demo/issue/AGH-244",
+      "priority": 3,
+      "estimate": null,
+      "repo": "demo-api",
+      "order": 44,
+      "acs": [
+        "AC-201.44"
+      ],
+      "blocked_by": [
+        {
+          "ref": "AGH-219",
+          "source": "both"
+        },
+        {
+          "ref": "AGH-230",
+          "source": "both"
+        },
+        {
+          "ref": "AGH-243",
+          "source": "both"
+        }
+      ],
+      "blocks": [],
+      "readiness": "waiting",
+      "waiting_on": [
+        "AGH-219",
+        "AGH-230",
+        "AGH-243"
       ],
       "reviewed": false,
       "parent": null,
@@ -2490,61 +3649,106 @@
         "AGH-212",
         "AGH-219",
         "AGH-221",
-        "AGH-225"
+        "AGH-225",
+        "AGH-231",
+        "AGH-235",
+        "AGH-236",
+        "AGH-238",
+        "AGH-240"
       ],
       [
         "AGH-217",
         "AGH-222",
-        "AGH-226"
+        "AGH-226",
+        "AGH-232",
+        "AGH-233",
+        "AGH-237",
+        "AGH-239",
+        "AGH-241"
       ],
       [
         "AGH-223",
         "AGH-224",
-        "AGH-227"
+        "AGH-227",
+        "AGH-234",
+        "AGH-242"
       ],
       [
         "AGH-228",
         "AGH-229",
-        "AGH-230"
+        "AGH-230",
+        "AGH-243"
+      ],
+      [
+        "AGH-244"
       ]
     ],
     "can_start": [
       "AGH-219",
       "AGH-221",
-      "AGH-225"
+      "AGH-225",
+      "AGH-231",
+      "AGH-235",
+      "AGH-236",
+      "AGH-238",
+      "AGH-240"
     ],
     "order": [
       "AGH-212",
       "AGH-219",
       "AGH-221",
       "AGH-225",
+      "AGH-231",
+      "AGH-235",
+      "AGH-236",
+      "AGH-238",
+      "AGH-240",
       "AGH-217",
       "AGH-222",
       "AGH-226",
+      "AGH-232",
+      "AGH-233",
+      "AGH-237",
+      "AGH-239",
+      "AGH-241",
       "AGH-223",
       "AGH-224",
       "AGH-227",
+      "AGH-234",
+      "AGH-242",
       "AGH-228",
       "AGH-229",
-      "AGH-230"
+      "AGH-230",
+      "AGH-243",
+      "AGH-244"
     ],
     "waiting": [
       "AGH-222",
       "AGH-226",
+      "AGH-232",
+      "AGH-233",
+      "AGH-237",
+      "AGH-239",
+      "AGH-241",
       "AGH-223",
       "AGH-224",
       "AGH-227",
+      "AGH-234",
+      "AGH-242",
       "AGH-228",
       "AGH-229",
-      "AGH-230"
+      "AGH-230",
+      "AGH-243",
+      "AGH-244"
     ],
     "cycles": [],
     "external_blockers": [],
     "critical_path": [
       "AGH-212",
       "AGH-217",
-      "AGH-223",
-      "AGH-228"
+      "AGH-224",
+      "AGH-230",
+      "AGH-244"
     ],
     "warnings": [],
     "epics": []
@@ -2586,33 +3790,33 @@
       {
         "name": "tickets",
         "state": "done",
-        "meta": "29 of 29 created",
+        "meta": "43 of 43 created",
         "reason": null,
         "progress": {
-          "done": 29,
-          "total": 29
+          "done": 43,
+          "total": 43
         },
         "signal": null
       },
       {
         "name": "build",
         "state": "current",
-        "meta": "16 of 29 merged \u00b7 2 in progress",
-        "reason": "13 of 29 tickets not merged",
+        "meta": "16 of 43 merged \u00b7 2 in progress",
+        "reason": "27 of 43 tickets not merged",
         "progress": {
           "done": 16,
-          "total": 29
+          "total": 43
         },
         "signal": null
       },
       {
         "name": "acceptance",
         "state": "pending",
-        "meta": "Ticket evals cover 0 of 30 ACs",
+        "meta": "Ticket evals cover 0 of 44 ACs",
         "reason": "Build is not done",
         "progress": {
           "done": 0,
-          "total": 30
+          "total": 44
         },
         "signal": null
       },

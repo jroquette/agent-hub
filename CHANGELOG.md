@@ -13,9 +13,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
-- A feature's ticket flow stays readable with many tickets (AGH-817). A flow of more than 24 tickets or 40 lines
-  draws at rest only the open lines to the next group; the others appear on hover, focus or an open ticket, without
-  moving a card. Each card names two blockers and counts the rest, and says "Blocks N". A flow of more than 10
+- A feature's ticket flow stays readable with many tickets (AGH-817). A flow showing more than 24 tickets or 40
+  lines draws at rest only the open lines to the next group; the others appear on hover, focus or an open ticket,
+  without moving a card. Each card names two blockers and counts the rest, and says "Blocks N". A flow of more than 10
   tickets gets a toolbar: find by id, title or assignee (`/`), Compact or Full cards, "Showing N of M" with Show all,
   and readiness counts that turn each readiness on or off. A large flow opens with its done tickets folded and
   compact cards.

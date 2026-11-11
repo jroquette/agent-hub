@@ -668,9 +668,10 @@ EVALUATED_AT = "2026-10-10T16:30:00Z"
 REVIEWED_AT = "2026-10-10"
 
 
-# A large feature (AGH-817): 30 tickets in six groups, blockers that skip groups, a card with
-# five open blockers, and a synthetic Linear read (LARGE_LINEAR) with 16 done and one canceled.
-# The demo has no Linear key, so the visual test serves the tickets route as that read gives it
+# A large feature (AGH-817): 44 tickets in groups, blockers that skip groups, a card with five
+# open blockers, and a synthetic Linear read (``large_linear``) with 16 done and one canceled, so
+# that with those folded the flow still shows more than 24 tickets (a large flow at rest). The
+# demo has no Linear key, so the visual test serves the tickets route as that read gives it
 # (scripts/visual_fixtures.py); every other screen reads the plan.
 LARGE_FEATURE = "ledger-sync"
 LARGE_TITLE = "Ledger sync"
@@ -706,6 +707,20 @@ LARGE_PLAN: tuple[tuple[str, tuple[int, ...]], ...] = (
     ("Sign off a reconciled month", (21, 22, 23, 24, 25)),
     ("Purge entries of a closed account", (23, 12)),
     ("Document the sync for the support team", (24, 26)),
+    ("Map ledger tags to local categories", (3,)),
+    ("Show category totals on the settings page", (31, 5)),
+    ("Convert historic rates for the back-fill", (8, 25)),
+    ("Warn when a rate is missing", (33,)),
+    ("Batch the writes of a large page", (13,)),
+    ("Measure a sync run's duration", (16,)),
+    ("Chart sync durations", (36, 11)),
+    ("Archive runs older than a year", (16, 6)),
+    ("Export a run's log", (36,)),
+    ("Add a dry-run mode", (13, 10)),
+    ("Compare a dry run with the journal", (40, 20)),
+    ("Pause the nightly sync", (26,)),
+    ("Resume a paused sync", (42,)),
+    ("Write the runbook for a failed sync", (19, 43, 30)),
 )
 LARGE_TEAM = ("Ana Souza", "Bruno Lima", "Carla Mendes", "Diego Rocha")
 # Linear's state of each ticket, by its 1-based place in LARGE_PLAN: the rest are Todo.
@@ -772,7 +787,7 @@ def large_feature_files(hub: PurePosixPath) -> dict[PurePosixPath, str]:
     ids = [large_id(place) for place in range(1, len(LARGE_PLAN) + 1)]
     acs = [
         {
-            "id": f"AC-817.{place}",
+            "id": f"AC-201.{place}",
             "description": f"{title} works on the demo ledger",
             "repo": DEMO_REPO,
             "verification": "make check",

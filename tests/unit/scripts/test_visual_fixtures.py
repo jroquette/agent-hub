@@ -21,7 +21,7 @@ def test_serves_large_flow_from_linear_when_fixture_built() -> None:
         "ledger-sync",
         "linear",
     )
-    assert len(readiness) == 30
+    assert len(readiness) == 44
     assert readiness.count("done") == 16
     assert tickets["notice"] is None
 

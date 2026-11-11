@@ -384,8 +384,9 @@ describe("PlanningView", () => {
   });
 
   describe("a large flow (AGH-817)", () => {
-    // 26 tickets: D1–D6 done (group 1), R1–R18 open (group 2, each on D1), N1 on D1 and R1 (group
-    // 3), N2 on R1 and N1 (group 4), so N2's line from R1 skips a group.
+    // 27 tickets: D1–D6 done (group 1), R1–R18 open (group 2, each on D1), N1 on D1 and R1 (group
+    // 3), C1 canceled on R1 (group 3), N2 on R1 and N1 (group 4), so N2's line from R1 skips a
+    // group. With D1–D6 and C1 folded the flow shows 20 tickets: not large until Show all.
     const row = (
       ref: string,
       readiness: ReturnType<typeof aTicketRow>["readiness"],
@@ -408,12 +409,13 @@ describe("PlanningView", () => {
       ...done.map((ref) => row(ref, "done")),
       ...open.map((ref) => row(ref, "can_start", ["D1"])),
       row("N1", "waiting", ["D1", "R1"]),
+      row("C1", "canceled", ["R1"]),
       row("N2", "waiting", ["R1", "N1"]),
     ];
     const plan = aTicketPlan({
-      layers: [done, open, ["N1"], ["N2"]],
+      layers: [done, open, ["N1", "C1"], ["N2"]],
       can_start: open,
-      order: [...done, ...open, "N1", "N2"],
+      order: [...done, ...open, "N1", "C1", "N2"],
       waiting: ["N1", "N2"],
       critical_path: [],
     });
@@ -431,11 +433,39 @@ describe("PlanningView", () => {
       expect(edge("R1→N2")).toBeNull();
     });
 
+    it("judges a flow large by the tickets it shows, so the folded flow draws every line (AC-817.1)", () => {
+      const { container } = render(<PlanningView tickets={tickets} planning={plan} />);
+
+      expect(screen.getByText("Showing 20 of 27 tickets")).toBeInTheDocument();
+      expect(container.querySelector('[data-edge="R1→N2"]')).not.toBeNull();
+    });
+
+    it("draws a skipping line on hover in the top layer, moving no card (AC-817.2)", async () => {
+      const user = userEvent.setup();
+      const { container } = render(<PlanningView tickets={tickets} planning={plan} />);
+      await user.click(screen.getByRole("button", { name: "Show all" }));
+      const top = () => container.querySelectorAll(".ah-flow-edges-top path:not(.ah-flow-halo)[d]");
+      // The gutters and the room above and below the groups: what places every card.
+      const layout = () =>
+        [...container.querySelectorAll(".ah-flow-cols, .ah-flow-col")]
+          .map((el) => el.getAttribute("style") ?? "")
+          .join("|");
+      const before = layout();
+
+      expect(top()).toHaveLength(0);
+      await user.hover(screen.getByText("Ticket N2"));
+      // N1→N2 is drawn at rest; R1→N2 skips a group and is drawn only now.
+      expect(top()).toHaveLength(2);
+      expect(container.querySelector('[data-edge="R1→N2"]')).toBeNull();
+      expect(layout()).toBe(before);
+    });
+
     it("says on each card that holds open tickets back how many it blocks (AC-817.4)", async () => {
       const user = userEvent.setup();
       render(<PlanningView tickets={tickets} planning={plan} />);
       await user.click(screen.getByRole("button", { name: "Show all" }));
 
+      // R1 holds back N1 and N2; C1 is canceled, so it is not counted.
       expect(screen.getByRole("listitem", { name: "R1 · Ticket R1" })).toHaveTextContent(
         "Blocks 2",
       );
@@ -451,7 +481,7 @@ describe("PlanningView", () => {
 
       expect(flow).toHaveAttribute("data-density", "compact");
       expect(screen.getByRole("button", { name: "Show 6 done" })).toBeInTheDocument();
-      expect(screen.getByText("Showing 20 of 26 tickets")).toBeInTheDocument();
+      expect(screen.getByText("Showing 20 of 27 tickets")).toBeInTheDocument();
       await user.click(
         within(screen.getByRole("group", { name: "Cards" })).getByRole("button", { name: "Full" }),
       );
@@ -466,7 +496,7 @@ describe("PlanningView", () => {
       await user.keyboard("/");
       expect(search).toHaveFocus();
       await user.keyboard("bea");
-      expect(screen.getByText("Showing 1 of 26 tickets")).toBeInTheDocument();
+      expect(screen.getByText("Showing 1 of 27 tickets")).toBeInTheDocument();
       expect(screen.getByRole("listitem", { name: "N1 · Ticket N1" })).toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: "Show all" }));
       expect(search).toHaveValue("");

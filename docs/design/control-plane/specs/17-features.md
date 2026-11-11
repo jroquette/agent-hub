@@ -699,26 +699,30 @@ Tests: `DesignsTab.test.tsx`; `test_features.py` (unit and integration), `test_h
 
 Built after the owner validated it in the playground (snapshot `20261111T002716Z`); where the sections above say
 otherwise (AC-268.11 draws every edge), this list wins. A flow is large with more than 24 tickets or 40 lines
-between them (`isLargeFlow`).
+between them (`isLargeFlow`). How it opens (AC-817.7) is judged on all its tickets; how its lines are drawn
+(AC-817.1, AC-817.2) on the tickets it shows once the filters and the folded groups are applied, so a flow just over
+24 tickets that opens with its done tickets folded may show few enough to draw every line.
 
-- **AC-817.1 Lines at rest.** Given a large flow, then at rest it draws only the lines from one group to the next
-  whose blocker is not done.
-- **AC-817.2 Lines in focus.** Given a large flow, when a ticket is hovered, focused or open, then its lines that
+- **AC-817.1 Lines at rest.** Given a flow that shows more than 24 tickets or 40 lines, then at rest it draws only
+  the lines from one group to the next whose blocker is not settled (done or canceled).
+- **AC-817.2 Lines in focus.** Given such a flow, when a ticket is hovered, focused or open, then its lines that
   skip groups and its settled lines appear too, routed in the gutters the rest already keeps, so no card moves.
 - **AC-817.3 A card's blockers.** Given a card waiting on more than three tickets (or listing them after "After"),
   then it names two and counts the rest ("Waiting on AGH-221, AGH-222 and 3 more"); the count's title lists them.
 - **AC-817.4 Blocks N.** Given a card, not done or canceled, that holds open tickets back, then it says "Blocks N".
 - **AC-817.5 Toolbar.** Given a flow of more than 10 tickets, then a toolbar above it finds tickets by id, title or
-  assignee (`/` focuses the search), switches Compact cards (id, status, title, what to do now, what they block) or
-  Full, and says "Showing N of M tickets", with Show all while a filter hides some. A group whose tickets a filter
+  assignee (`/` focuses the search), switches Compact cards (id, status, title, what to do now, what they block, what they
+  come after and the critical path) or Full, and says "Showing N of M tickets", with Show all while a filter hides some. A group whose tickets a filter
   hides says so ("Show 6 done", "2 hidden by the filters").
 - **AC-817.6 Readiness filter.** Given the toolbar, then each readiness count beside the flow's title is a toggle that
   shows or hides that readiness's tickets.
 - **AC-817.7 Opens on the work left.** Given a large flow, when it opens, then done and canceled tickets are hidden
   (each group offers "Show N done") and the cards are compact.
 
-Tests: `PlanningView.test.tsx` ("a large flow (AGH-817)" and the two before it); visual
-`feature-detail/large-flow`, `large-flow-focus`, `large-flow-all`, `large-flow-full` on the demo's `ledger-sync`.
+Tests: `PlanningView.test.tsx` ("a large flow (AGH-817)", the two tests after it and the two before it); visual
+`feature-detail/large-flow` (rest, folded, compact), `large-flow-focus` (a card pointed at), `large-flow-all` (Show
+all) and `large-flow-full` (Full cards) on the demo's `ledger-sync`: 44 tickets, 16 done and 1 canceled, so it still
+shows 27 once they are folded.
 
 ## Screen 1: Features list
 
