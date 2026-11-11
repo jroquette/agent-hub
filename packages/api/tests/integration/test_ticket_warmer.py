@@ -298,8 +298,8 @@ def test_reads_again_only_near_stale_limit_when_ticks_run(
 def test_reads_nothing_when_no_reader_or_no_browser(
     open_world: Callable[..., WarmWorld], *, keyed: bool, transport: str, browser: bool
 ) -> None:
-    """AC-34: with no reader (no key, or transport ``mcp``) or no tab holding the global stream,
-    no tick calls the tracker or lists a feature folder."""
+    """AC-34: with no key, an ``mcp`` hub (the warmer leaves it out, ADR 0060) or no tab holding
+    the global stream, no tick calls the tracker or lists a feature folder."""
     world = open_world(keyed=keyed, transport=transport)
     listed = world.composed.client.get("/api/v1/features", params={"project": "demo"})
     assert listed.status_code == 200, listed.text
@@ -325,8 +325,9 @@ def test_lists_only_linear_hub_folders_when_other_hub_uses_mcp(
     *,
     tickets_kit: Any,
 ) -> None:
-    """Transport ``mcp`` reads nothing through ``hub web``: with a key set and a tab open, a tick
-    lists no feature folder of an ``mcp`` hub, and lists and warms the Linear hub beside it."""
+    """The warmer leaves an ``mcp`` hub out (its feature page reads on demand, ADR 0060): with a
+    key set and a tab open, a tick lists no feature folder of an ``mcp`` hub, and lists and warms
+    the Linear hub beside it."""
     world = open_world(transport="mcp")
     linear_hub = make_hub(
         "other", change=lambda document: document["tracker"].update(transport="api")

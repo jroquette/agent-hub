@@ -703,7 +703,8 @@ otherwise, this list wins. Decision: [ADR 0060](../../../adr/0060-hub-web-reads-
 - **AC-816.1 MCP hub reads Linear.** Given a hub with `tracker.transport: "mcp"` and Linear connected in Settings (a
   key where `hub web` runs), when the feature's Tickets tab opens, then it shows the tickets' Linear status: `hub web`
   reads through GraphQL whenever a key is there, and the transport says only how the hub's agents reach Linear.
-  Tests: `test_serves_linear_status_when_transport_mcp_and_read`, `test_builds_reader_when_transport_mcp_and_key_set`.
+  Tests: `test_serves_linear_status_when_transport_mcp_and_read`, `test_reads_linear_when_hub_uses_mcp_transport`,
+  `test_builds_reader_when_transport_mcp_and_key_set`.
 - **AC-816.2 Not connected without a key.** Given no key, with either transport, then the tab serves the plan with
   the not-connected notice. Test: `test_serves_plan_fallback_when_no_key`.
 - **AC-816.3 The notice points to Settings.** Given the not-connected notice, then it reads "From the plan

@@ -5,10 +5,10 @@ from typing import Literal
 from agent_hub.core.hub_config.problems import one_line
 
 # Why a tracker read failed (ADR 0025), so a caller can say so without parsing the message:
-# no key or the MCP transport (``not_connected``), a 401/403 (``unauthorized``), the deadline
-# (``timeout``), a 429 (``rate_limited``), a 5xx (``unavailable``), an answer of another shape
-# (``unexpected``), no answer at all (``unreachable``), more ids than one read takes
-# (``too_many``); ``other`` for everything else, the default of every older raise site.
+# no key, whatever the transport (``not_connected``, ADR 0060), a 401/403 (``unauthorized``),
+# the deadline (``timeout``), a 429 (``rate_limited``), a 5xx (``unavailable``), an answer of
+# another shape (``unexpected``), no answer at all (``unreachable``), more ids than one read
+# takes (``too_many``); ``other`` for everything else, the default of every older raise site.
 type TrackerFailure = Literal[
     "not_connected",
     "unauthorized",

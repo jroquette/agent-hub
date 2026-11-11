@@ -93,12 +93,20 @@ def test_serves_linear_then_stale_when_snapshots_fetched_and_reader_fails() -> N
 
 
 @pytest.mark.parametrize("transport", ["api", "mcp"])
-def test_says_not_connected_when_no_reader_or_mcp(transport: str) -> None:
-    reader = None if transport == "api" else InMemoryTrackerReader(a_seeded_issue_board())
-    snapshots = InMemoryTicketSnapshots(reader)
+def test_says_not_connected_when_no_reader(transport: str) -> None:
+    snapshots = InMemoryTicketSnapshots(None)
 
     for read in (snapshots.fetch(_request(transport)), snapshots.cached(_request(transport))):
         assert (read.source, read.snapshot, read.failure) == ("plan", None, "not_connected")
+
+
+def test_reads_linear_when_transport_mcp_and_reader_set() -> None:
+    snapshots = InMemoryTicketSnapshots(InMemoryTrackerReader(a_seeded_issue_board()))
+
+    read = snapshots.fetch(_request("mcp"))
+
+    assert (read.source, read.failure) == ("linear", None)
+    assert snapshots.cached(_request("mcp")) == read
 
 
 def test_falls_back_to_plan_when_first_fetch_fails() -> None:

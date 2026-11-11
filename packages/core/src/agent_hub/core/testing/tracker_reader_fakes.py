@@ -209,8 +209,8 @@ class FailingTrackerReader:
 class InMemoryTicketSnapshots:
     """A ``TicketSnapshots`` that keeps each request's last good snapshot forever.
 
-    ``reader`` (settable) is read on every ``fetch``; None, or a request whose transport is
-    ``mcp``, is ``not_connected`` without a read. ``calls`` records ``("fetch" | "cached",
+    ``reader`` (settable) is read on every ``fetch``; None is ``not_connected`` without a read,
+    whatever the request's transport (ADR 0060). ``calls`` records ``("fetch" | "cached",
     request)`` in order.
     """
 
@@ -228,7 +228,7 @@ class InMemoryTicketSnapshots:
     def fetch(self, request: SnapshotRequest) -> SnapshotRead:
         """Read ``reader``; on a failure serve the kept snapshot as stale, else the plan."""
         self.calls.append(("fetch", request))
-        if self.reader is None or request.transport != "api":
+        if self.reader is None:
             return _not_connected()
         try:
             snapshot = self.reader.issue_summaries(request.ids)
@@ -269,7 +269,7 @@ class InMemoryTicketSnapshots:
     def cached(self, request: SnapshotRequest) -> SnapshotRead:
         """The kept snapshot, else a cold read (or ``not_connected``)."""
         self.calls.append(("cached", request))
-        if self.reader is None or request.transport != "api":
+        if self.reader is None:
             return _not_connected()
         kept = self._kept.get(request)
         if kept is not None:

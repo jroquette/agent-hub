@@ -344,7 +344,7 @@ ids Linear did not return (`missing`) and the blockers outside the ids (`externa
 failure a `TrackerError` with a `kind`. It has no write method, so the app holds none. Its fake is
 `InMemoryTrackerReader` and its contract suite `TrackerReaderContract` runs against the fake and
 `LinearGraphqlTrackerReader` over an in-process fake of Linear's API. Only `api` wires it: `build_app` builds a reader
-per read from `LINEAR_API_KEY` and the hub's `tracker.transport` (none without a key or with `"mcp"`: not connected)
+per read from `LINEAR_API_KEY`, whatever the hub's `tracker.transport` (none without a key: not connected; ADR 0060)
 behind `CachedTicketSnapshots`, core's `TicketSnapshots` port. `GET .../tickets` calls `fetch` (may read Linear); the
 feature list and detail call `cached` (never read Linear). Planning and the golden path are pure core folds over the
 plan and the snapshot; nothing from Linear is stored.
