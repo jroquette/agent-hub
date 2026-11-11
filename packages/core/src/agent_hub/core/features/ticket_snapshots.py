@@ -39,7 +39,7 @@ class SnapshotRead:
     ``source`` is ``linear`` exactly when ``snapshot`` is set: fresh, or ``stale`` (the last good
     one kept after a failure), read at ``as_of``. Otherwise ``plan``: never read yet (a cold
     cache: ``failure`` None) or the read failed. ``failure`` is the last read's failure kind
-    (``not_connected`` when there is no key or the transport is MCP), ``detail`` its one-line
+    (``not_connected`` when there is no key, whatever the transport), ``detail`` its one-line
     cause (never the key) and ``http_status`` the tracker's HTTP status, if it answered.
     """
 

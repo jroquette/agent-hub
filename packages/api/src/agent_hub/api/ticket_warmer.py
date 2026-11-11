@@ -7,8 +7,9 @@ without the page asking for them.
 
 A tick does nothing unless a tab holds the global stream open and a Linear key is set
 (``key_digest()`` is not None), so with no key it lists no feature folder; nor during a pause.
-``requests()`` leaves out each hub whose transport is ``mcp`` before listing its folders, since
-the cache never reads its tickets. Otherwise, for each of the first ``WARM_LIMIT`` requests, in
+``requests()`` leaves out each hub whose transport is ``mcp`` before listing its folders, so
+the warmer reads what it read before ADR 0060; that hub's feature page still reads its tickets
+on demand. Otherwise, for each of the first ``WARM_LIMIT`` requests, in
 ``requests()`` order, it reads what the cache holds (never the tracker) and fetches only an entry
 that is not a good Linear snapshot (missing, the plan, or a failure, which the cache holds 60 s)
 or is at least ``REFRESH_AGE`` old: one minute before the cache's 15 min stale limit, so the list

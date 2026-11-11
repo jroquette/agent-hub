@@ -24,8 +24,8 @@ README's "Sources not connected": Linear is read for a feature's tickets; GitHub
   new tab, only for a `https://linear.app/` url. Below the table, the planning view: Can start now, Parallel groups
   (numbered layers), Recommended order, Critical path, and a banner for cycles and blockers outside the feature.
 - **Notice.** With the plan as source, or a stale Linear snapshot, a notice says why (e.g. "From the plan
-  (features.json); Linear is not connected for hub web, so status may be stale. Set LINEAR_API_KEY where hub web
-  runs.") with its `as_of` and a Refresh button, which refetches the route (the 60 s cache still applies). A failed
+  (features.json); Linear is not connected for hub web, so status may be stale. Connect Linear in Settings, or set
+  LINEAR_API_KEY where hub web runs.") with its `as_of` and a Refresh button, which refetches the route (the 60 s cache still applies). A failed
   read shows its `tracker_problem` title.
 - **Golden path stepper.** The steps come from the server (`golden_path`), not from the furthest file: done only when
   the whole feature satisfies the step (Tickets: every ticket created; Implement: every ticket Done and every AC
@@ -717,6 +717,22 @@ Tests: `acEvidence.test.ts` "says the command failed when its tests passed but i
 
 **New feature** (Screen 3): a start opens the session's chat, as New session and a ticket's Start do; AC-420.6 below
 says so and AC-420.7 (the sent card) is superseded.
+
+## Departures (AGH-816, Linear read under the MCP transport)
+
+Built after the owner validated it in the playground (snapshot `20261111T002716Z`); where the sections above say
+otherwise, this list wins. Decision: [ADR 0060](../../../adr/0060-hub-web-reads-linear-whatever-the-transport.md).
+
+- **AC-816.1 MCP hub reads Linear.** Given a hub with `tracker.transport: "mcp"` and Linear connected in Settings (a
+  key where `hub web` runs), when the feature's Tickets tab opens, then it shows the tickets' Linear status: `hub web`
+  reads through GraphQL whenever a key is there, and the transport says only how the hub's agents reach Linear.
+  Tests: `test_serves_linear_status_when_transport_mcp_and_read`, `test_reads_linear_when_hub_uses_mcp_transport`,
+  `test_builds_reader_when_transport_mcp_and_key_set`.
+- **AC-816.2 Not connected without a key.** Given no key, with either transport, then the tab serves the plan with
+  the not-connected notice. Test: `test_serves_plan_fallback_when_no_key`.
+- **AC-816.3 The notice points to Settings.** Given the not-connected notice, then it reads "From the plan
+  (features.json); Linear is not connected for hub web, so status may be stale. Connect Linear in Settings, or set
+  LINEAR_API_KEY where hub web runs." Tests: the same, and `TicketNotice.test.tsx`.
 
 ## Screen 1: Features list
 

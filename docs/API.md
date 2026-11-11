@@ -576,9 +576,9 @@ always answers 200 with a `FeatureTickets`:
   only; `stale` (`true` when Linear's last good snapshot is served after a failed read, at most 15 minutes old) and
   `as_of` (when that snapshot was read; `null` with the plan).
 - `notice`: why the data may be out of date, `null` for a fresh Linear read. Without a connection (no
-  `LINEAR_API_KEY` where `hub web` runs, or `tracker.transport: "mcp"`, which the app never uses): "From the plan
-  (features.json); Linear is not connected for hub web, so status may be stale. Set LINEAR_API_KEY where hub web
-  runs." A failed read names its cause ("Linear could not be read (it timed out) …").
+  `LINEAR_API_KEY` where `hub web` runs, whatever the hub's `tracker.transport`): "From the plan (features.json);
+  Linear is not connected for hub web, so status may be stale. Connect Linear in Settings, or set LINEAR_API_KEY
+  where hub web runs." A failed read names its cause ("Linear could not be read (it timed out) …").
 - `tracker_problem`: `null`, or the failed read as RFC 9457 members `type`, `title`, `status` and `detail` (redacted,
   never the key). `type` is `urn:agent-hub:problem:tracker-<kind>`, `<kind>` one of `not_connected`, `unauthorized`,
   `timeout`, `rate_limited`, `unavailable`, `unexpected`, `unreachable`, `too_many` or `other`. `status` is Linear's
@@ -604,7 +604,7 @@ always answers 200 with a `FeatureTickets`:
 The read goes through an in-memory cache keyed by the project and the feature's ids: a snapshot younger than 60 s is
 served without a call, concurrent reads of one key share one call (a read waits at most 30 s for one in flight), and any Linear failure
 (401/403, 429, 5xx, timeout, unreachable, unexpected answer) holds that key for 60 s, serving the stale snapshot
-(under 15 min old) or the plan. Not connected (no key, or `"mcp"`) makes no Linear call and is never held. A Refresh in
+(under 15 min old) or the plan. Not connected (no key, whatever the transport) makes no Linear call and is never held. A Refresh in
 the app refetches the route; the cache still applies (`as_of` shows its age). `GET /features` and
 `GET /features/{project}/{slug}` never call Linear: they use a warm cache entry, else the plan, and say so in their
 `golden_path` and `tickets_source`.

@@ -26,6 +26,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 - A feature's Criteria tab says why a criterion is not passing (AGH-804). A command whose tests passed but which
   exited non-zero reads "Command failed", and the evaluator's note shows openly with what you can do next.
+- `hub web` shows a feature's tickets from Linear for a hub with `tracker.transport: "mcp"` when Linear is connected
+  in Settings, instead of "Linear is not connected for hub web" (AGH-816, ADR 0060). It reads through GraphQL
+  whenever a key is there; the transport still says only how the hub's agents reach Linear. The not-connected notice
+  now points to Settings.
 
 ## [0.35.1] - 2026-11-10
 

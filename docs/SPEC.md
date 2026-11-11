@@ -648,9 +648,10 @@ Linear status ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md), records
   last snapshot served as stale for up to 15 minutes after a failed read), nothing stored. Only this route and,
   while a browser tab is open, `hub web`'s ticket warmer call Linear (the warmer reads a feature's snapshot again when
   it is 14 minutes old, at most 224 features a tick; AGH-613); the Features list and detail use a warm cache entry,
-  else the plan. Without a key, with `tracker.transport: "mcp"` (the app never spends tokens) or when Linear fails,
-  the route still answers with the plan, a notice and a `tracker_problem` naming the cause. Titles and names are
-  redacted; a link outside `https://linear.app/` is dropped.
+  else the plan. Without a key or when Linear fails, the route still answers with the plan, a notice and a
+  `tracker_problem` naming the cause; a hub with `tracker.transport: "mcp"` is read through GraphQL too when a key is
+  there, so the app never spends tokens ([ADR 0060](adr/0060-hub-web-reads-linear-whatever-the-transport.md)).
+  Titles and names are redacted; a link outside `https://linear.app/` is dropped.
 - **Planning.** A pure core fold over the plan's `blocked_by` and Linear's relations: what can start now, parallel
   groups (dependency layers), a recommended order (topological, then priority, then plan order), waiting tickets with
   their blockers, cycles, blockers outside the feature and the critical path. It is a recommendation; the runner still

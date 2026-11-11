@@ -813,7 +813,8 @@ def test_serves_plan_when_no_ticket_snapshots_wired() -> None:
     assert models.get_feature("demo", "ticketed").tickets_source == "plan"
 
 
-def test_asks_mcp_transport_when_hub_uses_it() -> None:
+def test_reads_linear_when_hub_uses_mcp_transport() -> None:
+    """AC-816.1 (ADR 0060): an MCP hub's tickets are read like any other once a reader is wired."""
     snapshots = InMemoryTicketSnapshots(InMemoryTrackerReader(a_seeded_issue_board()))
     models, _, _ = read_models(
         {DEMO: a_ticket_hub(transport="mcp")}, DEMO, ticket_snapshots=snapshots
@@ -821,7 +822,7 @@ def test_asks_mcp_transport_when_hub_uses_it() -> None:
 
     tickets = models.feature_tickets("demo", "ticketed")
 
-    assert (tickets.source, tickets.notice) == ("plan", NOT_CONNECTED_NOTICE)
+    assert (tickets.source, tickets.notice) == ("linear", None)
     assert [request.transport for _, request in snapshots.calls] == ["mcp"]
 
 
@@ -864,7 +865,8 @@ def test_lists_ticket_requests_when_features_name_tickets() -> None:
     """AGH-613: what the ticket warmer reads, one request per feature that names tickets in each
     valid project, with its hub's transport, as the tickets route asks; from the feature folders
     only, never through the ticket cache. A hub whose transport is ``mcp`` is left out without
-    listing its folders, since its tickets are never read through the cache."""
+    listing its folders: the warmer reads what it read before ADR 0060, and the feature page
+    reads that hub's tickets on demand."""
     snapshots = InMemoryTicketSnapshots(InMemoryTrackerReader(a_seeded_issue_board()))
     demo = a_ticket_hub(transport="mcp")
     other = replace(a_ticket_hub(), hub_json=hub_json_bytes(pin=RUNNING, name="other"))

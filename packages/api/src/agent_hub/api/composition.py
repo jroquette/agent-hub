@@ -10,8 +10,8 @@ branch prefix and author match ``hub doctor``.
 
 The feature tickets read Linear through ``CachedTicketSnapshots`` (ADR 0025): ``TicketReaders``
 gives its reader per request, None (not connected) when ``LINEAR_API_KEY`` is unset in
-``environ`` or the hub's ``tracker.transport`` is ``mcp``; the key is read at call time and never
-logged or shown. ``TicketWarmer`` keeps that cache warm while a tab is open (AGH-613), so the
+``environ``, whatever the hub's ``tracker.transport`` (ADR 0060); the key is read at call time and
+never logged or shown. ``TicketWarmer`` keeps that cache warm while a tab is open (AGH-613), so the
 Features list, which reads only the cache, shows Linear's tickets.
 
 The agent sessions (AGH-165, ADR 0031) run over the Claude driver and cloud launcher of
@@ -280,7 +280,7 @@ class RegisteredHubFacts:
     ``hub_of`` is the hub a learning decision acts on (``hub.json`` with ``hub.local.json``,
     else git config, for the author and branch prefix: ADR 0016), or why it cannot act;
     ``label_rules_of`` the tracker teams and branch prefix a session's issue is read with;
-    ``tracker_transport_of`` the hub's ``tracker.transport`` (ADR 0025). When
+    ``tracker_transport_of`` the hub's ``tracker.transport``. When
     two hubs name a project, the first valid one registered wins, as in the hub read models.
     """
 
@@ -469,10 +469,11 @@ class CachedAvailability:
 class TicketReaders:
     """The ``reader_of`` of ``CachedTicketSnapshots``: ``reader``, or None when not connected.
 
-    Not connected (Not-connected rule, ADR 0025): the request's or the registered hub's
-    ``tracker.transport`` is ``mcp`` (never read through MCP), or ``LINEAR_API_KEY`` is unset or
-    empty in ``environ``. Both are read on every call, so a key set while ``hub web`` runs takes
-    effect at once; no network here, and the key is only tested for presence.
+    Not connected: ``LINEAR_API_KEY`` is unset or empty in ``environ`` (the environment, then
+    Settings' key file). A hub whose ``tracker.transport`` is ``mcp`` is still read through
+    GraphQL when a key is there: the transport is how the hub's agents reach Linear, and hub web
+    never reads through MCP. The key is read on every call, so a key set while ``hub web`` runs
+    takes effect at once; no network here, and the key is only tested for presence.
     """
 
     def __init__(
@@ -483,8 +484,6 @@ class TicketReaders:
         self._reader = reader
 
     def __call__(self, request: SnapshotRequest) -> TrackerReader | None:
-        if request.transport == "mcp" or self._facts.tracker_transport_of(request.project) == "mcp":
-            return None
         if not self._environ.get(LINEAR_API_KEY_VARIABLE):
             return None
         return self._reader

@@ -11,7 +11,7 @@ waiting at most ``wait_limit_seconds``. After a failure the last good snapshot i
 that is not a ``TrackerError`` only ends the read in flight: the next fetch reads again.
 ``cached`` never reads the tracker (Q6).
 
-The reader comes from ``reader_of`` on every call (None: not connected, no key or the MCP
+The reader comes from ``reader_of`` on every call (None: not connected, no key whatever the
 transport, never a tracker request nor held), so a key set while ``hub web`` runs takes effect
 at once. ``REQUEST_TIMEOUT_SECONDS``
 and ``READ_BUDGET_SECONDS`` are the bounds the composition gives the reader (Q5).

@@ -308,8 +308,8 @@ class HubFilesReadModels:
         """The snapshot request of each valid project's feature that names tickets, as
         ``feature_tickets`` builds it (the ticket warmer's list, AGH-613); reads the feature
         folders, never the tracker. A project whose ``tracker.transport`` is ``mcp`` is left out
-        before its folders are listed: its tickets are never read through the snapshots
-        (``feature_tickets`` serves them as not connected)."""
+        before its folders are listed: the warmer reads what it read before ADR 0060, and the
+        feature page still reads that project's tickets on demand."""
         return tuple(
             request
             for found in self._projects()
