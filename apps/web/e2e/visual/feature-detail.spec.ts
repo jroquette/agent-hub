@@ -24,11 +24,12 @@ async function serveLinear(page: Page): Promise<void> {
 
 // At rest: compact cards, done tickets folded ("Show 6 done"), only open next-group lines (AC-817.1, .7).
 screen("feature-detail", "large-flow", LARGE, { before: serveLinear });
-// A card pointed at: its lines that skip groups and its settled lines too, no card moved (AC-817.2).
+// A card in view pointed at: AGH-212's line to AGH-229, which skips two groups, lights up; no card
+// moves (AC-817.2).
 screen("feature-detail", "large-flow-focus", LARGE, {
   before: serveLinear,
   act: async (page) => {
-    await page.locator("#ticket-AGH-229").hover();
+    await page.locator("#ticket-AGH-212").hover();
   },
 });
 // Show all: the done tickets back in their groups, the lines at rest unchanged (AC-817.5).
@@ -38,7 +39,7 @@ screen("feature-detail", "large-flow-all", LARGE, {
     await page.getByRole("button", { name: "Show all" }).click();
   },
 });
-// Full cards: every fact, "Blocks N" and the capped blocker list (AC-817.3, .4).
+// Full cards: every fact of each card, and "Blocks N" (AC-817.4, .5).
 screen("feature-detail", "large-flow-full", LARGE, {
   before: serveLinear,
   act: async (page) => {

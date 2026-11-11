@@ -719,10 +719,10 @@ between them (`isLargeFlow`). How it opens (AC-817.7) is judged on all its ticke
 - **AC-817.7 Opens on the work left.** Given a large flow, when it opens, then done and canceled tickets are hidden
   (each group offers "Show N done") and the cards are compact.
 
-Tests: `PlanningView.test.tsx` ("a large flow (AGH-817)", the two tests after it and the two before it); visual
-`feature-detail/large-flow` (rest, folded, compact), `large-flow-focus` (a card pointed at), `large-flow-all` (Show
-all) and `large-flow-full` (Full cards) on the demo's `ledger-sync`: 44 tickets, 16 done and 1 canceled, so it still
-shows 27 once they are folded.
+Tests: `PlanningView.test.tsx` (the describe block "a large flow (AGH-817)", the five tests after it and the two
+before it, each naming its AC); visual `feature-detail/large-flow` (rest, folded, compact), `large-flow-focus` (a
+card in view pointed at), `large-flow-all` (Show all) and `large-flow-full` (Full cards) on the demo's
+`ledger-sync`: 44 tickets, 16 done and 1 canceled, so it still shows 27 once they are folded.
 
 ## Screen 1: Features list
 

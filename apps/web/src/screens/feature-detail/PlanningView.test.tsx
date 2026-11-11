@@ -535,6 +535,109 @@ describe("PlanningView", () => {
     expect(container.querySelector(".ah-flow")).not.toHaveAttribute("data-density");
   });
 
+  it("draws a flow of 15 tickets and 51 lines as a large one (AC-817.1)", () => {
+    // R1–R7 each block M1–M7 (49 lines); T waits on M1 and on R1, whose line skips a group.
+    const roots = Array.from({ length: 7 }, (_, i) => `R${String(i + 1)}`);
+    const mids = Array.from({ length: 7 }, (_, i) => `M${String(i + 1)}`);
+    const waits = (ref: string, on: readonly string[]) =>
+      aTicketRow({
+        ref,
+        key: ref,
+        id: null,
+        title: `Ticket ${ref}`,
+        url: null,
+        readiness: "waiting",
+        blocked_by: on.map((b) => ({ ref: b, source: "plan" as const })),
+        waiting_on: [...on],
+      });
+    const tickets = [
+      ...roots.map((ref) =>
+        aTicketRow({ ref, key: ref, id: null, title: `Ticket ${ref}`, url: null, blocked_by: [] }),
+      ),
+      ...mids.map((ref) => waits(ref, roots)),
+      waits("T", ["M1", "R1"]),
+    ];
+    const plan = aTicketPlan({
+      layers: [roots, mids, ["T"]],
+      can_start: roots,
+      order: [...roots, ...mids, "T"],
+      waiting: [...mids, "T"],
+      critical_path: [],
+    });
+    const { container } = render(<PlanningView tickets={tickets} planning={plan} />);
+
+    expect(isLargeFlow(15, 51)).toBe(true);
+    expect(container.querySelector('[data-edge="M1→T"]')).not.toBeNull();
+    expect(container.querySelector('[data-edge="R1→T"]')).toBeNull();
+  });
+
+  it("names every blocker of a card waiting on three (AC-817.3)", () => {
+    const refs = ["A1", "A2", "A3"];
+    const tickets = [
+      ...refs.map((ref) =>
+        aTicketRow({ ref, key: ref, id: null, title: `Ticket ${ref}`, url: null, blocked_by: [] }),
+      ),
+      aTicketRow({
+        ref: "W",
+        key: "W",
+        id: null,
+        title: "Waits on three",
+        url: null,
+        readiness: "waiting",
+        blocked_by: refs.map((b) => ({ ref: b, source: "plan" as const })),
+        waiting_on: refs,
+      }),
+    ];
+    render(
+      <PlanningView
+        tickets={tickets}
+        planning={aTicketPlan({
+          layers: [refs, ["W"]],
+          can_start: refs,
+          order: [...refs, "W"],
+          waiting: ["W"],
+          critical_path: [],
+        })}
+      />,
+    );
+
+    const card = screen.getByRole("listitem", { name: "W · Waits on three" });
+    expect(card).toHaveTextContent("Waiting on A1, A2, A3");
+    expect(card).not.toHaveTextContent("more");
+  });
+
+  it("says no Blocks on a canceled card, even with an open ticket after it (AC-817.4)", () => {
+    const tickets = [
+      aTicketRow({
+        ref: "C",
+        key: "C",
+        id: null,
+        title: "Canceled blocker",
+        url: null,
+        readiness: "canceled",
+        blocked_by: [],
+      }),
+      aTicketRow({
+        ref: "X",
+        key: "X",
+        id: null,
+        title: "After the canceled one",
+        url: null,
+        blocked_by: [{ ref: "C", source: "plan" }],
+      }),
+    ];
+    render(
+      <PlanningView
+        tickets={tickets}
+        planning={aTicketPlan({ layers: [["X"]], can_start: ["X"], order: ["C", "X"] })}
+      />,
+    );
+
+    expect(screen.getByRole("listitem", { name: "C · Canceled blocker" })).not.toHaveTextContent(
+      "Blocks",
+    );
+  });
+
   it("gives a flow of 10 tickets no toolbar", () => {
     const refs = Array.from({ length: 10 }, (_, i) => `S${String(i + 1)}`);
     const tickets = refs.map((ref) =>
