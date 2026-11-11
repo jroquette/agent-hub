@@ -10,8 +10,8 @@ branch prefix and author match ``hub doctor``.
 
 The feature tickets read Linear through ``CachedTicketSnapshots`` (ADR 0025): ``TicketReaders``
 gives its reader per request, None (not connected) when ``LINEAR_API_KEY`` is unset in
-``environ`` or the hub's ``tracker.transport`` is ``mcp``; the key is read at call time and never
-logged or shown. ``TicketWarmer`` keeps that cache warm while a tab is open (AGH-613), so the
+``environ``, whatever the hub's ``tracker.transport`` (ADR 0060); the key is read at call time and
+never logged or shown. ``TicketWarmer`` keeps that cache warm while a tab is open (AGH-613), so the
 Features list, which reads only the cache, shows Linear's tickets.
 
 The agent sessions (AGH-165, ADR 0031) run over the Claude driver and cloud launcher of
@@ -280,7 +280,7 @@ class RegisteredHubFacts:
     ``hub_of`` is the hub a learning decision acts on (``hub.json`` with ``hub.local.json``,
     else git config, for the author and branch prefix: ADR 0016), or why it cannot act;
     ``label_rules_of`` the tracker teams and branch prefix a session's issue is read with;
-    ``tracker_transport_of`` the hub's ``tracker.transport`` (ADR 0025). When
+    ``tracker_transport_of`` the hub's ``tracker.transport``. When
     two hubs name a project, the first valid one registered wins, as in the hub read models.
     """
 
