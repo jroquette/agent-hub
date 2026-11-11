@@ -15,6 +15,7 @@ from scripts.seed_demo import (
     CHAT_SESSION,
     DEMO_PROJECT,
     INBOX_NOTE,
+    LARGE_FEATURE,
     LIVE_SESSION,
     ORDER_SCENARIO,
     SCENARIO_RUNS,
@@ -101,7 +102,7 @@ def test_fills_every_screen_when_demo_loaded_twice(
     assert order.status_code == 200, order.text
     assert [env["values"] for env in order.json()["environments"]] == [{"shop_id": "shop-0001"}]
     assert any(approval["session_id"].startswith(ASK_SESSION) for approval in approvals)
-    assert [feature["slug"] for feature in features] == ["export-button"]
+    assert [feature["slug"] for feature in features] == ["export-button", LARGE_FEATURE]
     assert findings.status_code == 200, findings.text
     assert cost["total_usd"] is not None
     assert [change["path"] for change in files] == ["src/export.py"]

@@ -386,7 +386,11 @@ describe("PlanningView", () => {
   describe("a large flow (AGH-817)", () => {
     // 26 tickets: D1–D6 done (group 1), R1–R18 open (group 2, each on D1), N1 on D1 and R1 (group
     // 3), N2 on R1 and N1 (group 4), so N2's line from R1 skips a group.
-    const row = (ref: string, readiness: ReturnType<typeof aTicketRow>["readiness"], on: readonly string[] = []) =>
+    const row = (
+      ref: string,
+      readiness: ReturnType<typeof aTicketRow>["readiness"],
+      on: readonly string[] = [],
+    ) =>
       aTicketRow({
         ref,
         key: ref,
