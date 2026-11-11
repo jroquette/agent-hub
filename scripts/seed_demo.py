@@ -668,6 +668,134 @@ EVALUATED_AT = "2026-10-10T16:30:00Z"
 REVIEWED_AT = "2026-10-10"
 
 
+# A large feature (AGH-817): 30 tickets in six groups, blockers that skip groups, a card with
+# five open blockers, and a synthetic Linear read (LARGE_LINEAR) with 16 done and one canceled.
+# The demo has no Linear key, so the visual test serves the tickets route as that read gives it
+# (scripts/visual_fixtures.py); every other screen reads the plan.
+LARGE_FEATURE = "ledger-sync"
+LARGE_TITLE = "Ledger sync"
+LARGE_FIRST_ID = 201
+LARGE_PLAN: tuple[tuple[str, tuple[int, ...]], ...] = (
+    ("Read the ledger's accounts", ()),
+    ("Read the ledger's journals", ()),
+    ("Map currencies to minor units", ()),
+    ("Store sync cursors per account", ()),
+    ("Add the sync settings page", ()),
+    ("Log each sync run", ()),
+    ("Fetch journal entries page by page", (2, 4)),
+    ("Convert amounts to minor units", (3,)),
+    ("Match accounts by number", (1,)),
+    ("Retry a failed page with backoff", (2, 6)),
+    ("Show the last sync on the settings page", (5, 6)),
+    ("Detect entries edited after a sync", (2, 4)),
+    ("Write entries to the local journal", (7, 8, 9)),
+    ("Skip entries already written", (7, 4)),
+    ("Split multi-currency entries", (8,)),
+    ("Record a run's counts", (10, 6)),
+    ("Re-sync edited entries", (12,)),
+    ("Import attachments", (7,)),
+    ("Alert on a page that keeps failing", (10, 11)),
+    ("Reconcile balances per account", (13, 15)),
+    ("Flag an unmatched account", (13, 9)),
+    ("Show sync errors on the settings page", (16, 19)),
+    ("Export the reconciliation report", (13, 17)),
+    ("Lock a period after reconciling", (17, 19)),
+    ("Back-fill twelve months of entries", (13, 14, 16)),
+    ("Schedule a nightly sync", (20, 21)),
+    ("Notify the owner of a closed period", (22, 1)),
+    ("Sign off a reconciled month", (21, 22, 23, 24, 25)),
+    ("Purge entries of a closed account", (23, 12)),
+    ("Document the sync for the support team", (24, 26)),
+)
+LARGE_TEAM = ("Ana Souza", "Bruno Lima", "Carla Mendes", "Diego Rocha")
+# Linear's state of each ticket, by its 1-based place in LARGE_PLAN: the rest are Todo.
+LARGE_DONE = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 20})
+LARGE_STARTED = frozenset({12, 17})
+LARGE_CANCELED = frozenset({18})
+
+
+def large_id(place: int) -> str:
+    """The Linear id of the large feature's ticket at ``place`` (1-based) in ``LARGE_PLAN``."""
+    return f"AGH-{LARGE_FIRST_ID + place - 1}"
+
+
+def large_tickets() -> list[dict[str, Any]]:
+    """The large feature's ticket plan (``features.json`` ``tickets``)."""
+    return [
+        {
+            "key": f"L{place}",
+            "id": large_id(place),
+            "title": title,
+            "repo": DEMO_REPO,
+            "order": place,
+            **({"blocked_by": [f"L{b}" for b in blockers]} if blockers else {}),
+        }
+        for place, (title, blockers) in enumerate(LARGE_PLAN, start=1)
+    ]
+
+
+def large_linear() -> list[dict[str, Any]]:
+    """The synthetic Linear read of the large feature: each ticket's ``IssueSummary`` fields."""
+
+    def state(place: int) -> dict[str, str]:
+        if place in LARGE_DONE:
+            return {"name": "Done", "type": "completed"}
+        if place in LARGE_STARTED:
+            return {"name": "In Progress", "type": "started"}
+        if place in LARGE_CANCELED:
+            return {"name": "Canceled", "type": "canceled"}
+        return {"name": "Todo", "type": "unstarted"}
+
+    blocks: dict[int, list[int]] = {}
+    for place, (_, blockers) in enumerate(LARGE_PLAN, start=1):
+        for blocker in blockers:
+            blocks.setdefault(blocker, []).append(place)
+    return [
+        {
+            "id": large_id(place),
+            "title": title,
+            "state": state(place),
+            "assignee": LARGE_TEAM[place % len(LARGE_TEAM)],
+            "url": f"https://linear.app/demo/issue/{large_id(place)}",
+            "priority": 3,
+            "estimate": None,
+            "blocks": [large_id(p) for p in blocks.get(place, [])],
+            "blocked_by": [large_id(b) for b in blockers],
+        }
+        for place, (title, blockers) in enumerate(LARGE_PLAN, start=1)
+    ]
+
+
+def large_feature_files(hub: PurePosixPath) -> dict[PurePosixPath, str]:
+    """The large feature's folder: a spec, a plan and ``features.json`` with its ticket plan."""
+    folder = hub / "brain" / "features" / LARGE_FEATURE
+    ids = [large_id(place) for place in range(1, len(LARGE_PLAN) + 1)]
+    acs = [
+        {
+            "id": f"AC-817.{place}",
+            "description": f"{title} works on the demo ledger",
+            "repo": DEMO_REPO,
+            "verification": "make check",
+            "passes": place in LARGE_DONE,
+            "evidence": "test run" if place in LARGE_DONE else None,
+            "ticket": f"L{place}",
+        }
+        for place, (title, _) in enumerate(LARGE_PLAN, start=1)
+    ]
+    record = {"feature": LARGE_FEATURE, "linear": ids, "tickets": large_tickets(), "acs": acs}
+    spec = f"---\ntype: spec\nprocess_size: bounded\nrepos: [{DEMO_REPO}]\n---\n"
+    return {
+        folder / "features.json": json.dumps(record, indent=2) + "\n",
+        folder / "spec.md": (
+            f"{spec}# {LARGE_TITLE}\n\nKeep the local journal in step with the ledger.\n\n"
+            "## Acceptance criteria\n\n"
+            + "".join(f"- {ac['id']} {ac['description']}\n" for ac in acs)
+        ),
+        folder / "plan.md": "# Plan\n\n"
+        + "".join(f"{place}. {title}.\n" for place, (title, _) in enumerate(LARGE_PLAN, 1)),
+    }
+
+
 def hub_files(hub: PurePosixPath) -> dict[PurePosixPath, str]:
     """The feature folder (spec, plan, eval, ``features.json`` with its ticket plan, an eval per
     delivery, a review record) and the proposed inbox note, each by its path under ``hub``."""
@@ -726,7 +854,7 @@ def hub_files(hub: PurePosixPath) -> dict[PurePosixPath, str]:
             f"# Review {ISSUE}\n\nspec-reviewer: matches the plan. quality-reviewer: no finding.\n"
         ),
         hub / INBOX_NOTE: INBOX_TEXT,
-    }
+    } | large_feature_files(hub)
 
 
 def scenario_runs() -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:

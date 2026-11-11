@@ -40,6 +40,8 @@ export interface ScreenOptions {
   fitsViewport?: boolean;
   /** After opening, what to do before the screenshot (open a step, switch a view). */
   act?: (page: Page) => Promise<void>;
+  /** Before opening, what to set up on the page (a route served from a fixture). */
+  before?: (page: Page) => Promise<void>;
 }
 
 const VIEWPORT = { width: 1440, height: 900 };
@@ -63,6 +65,7 @@ export function screen(
     test.use({ viewport: VIEWPORT, colorScheme: "dark" });
 
     test(`${area}/${route} matches its baseline`, async ({ page }) => {
+      if (options.before) await options.before(page);
       await open(page, path, options.follow);
       if (options.act) {
         await options.act(page);

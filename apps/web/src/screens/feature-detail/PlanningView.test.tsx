@@ -383,6 +383,140 @@ describe("PlanningView", () => {
     expect(screen.getByRole("listitem", { name: "D1 · Ticket D1" })).toBeInTheDocument();
   });
 
+  describe("a large flow (AGH-817)", () => {
+    // 26 tickets: D1–D6 done (group 1), R1–R18 open (group 2, each on D1), N1 on D1 and R1 (group
+    // 3), N2 on R1 and N1 (group 4), so N2's line from R1 skips a group.
+    const row = (ref: string, readiness: ReturnType<typeof aTicketRow>["readiness"], on: readonly string[] = []) =>
+      aTicketRow({
+        ref,
+        key: ref,
+        id: null,
+        title: `Ticket ${ref}`,
+        url: null,
+        assignee: ref === "N1" ? "Bea Synthetic" : null,
+        readiness,
+        blocked_by: on.map((b) => ({ ref: b, source: "plan" as const })),
+        waiting_on: on.filter((b) => !b.startsWith("D")),
+      });
+    const done = Array.from({ length: 6 }, (_, i) => `D${String(i + 1)}`);
+    const open = Array.from({ length: 18 }, (_, i) => `R${String(i + 1)}`);
+    const tickets = [
+      ...done.map((ref) => row(ref, "done")),
+      ...open.map((ref) => row(ref, "can_start", ["D1"])),
+      row("N1", "waiting", ["D1", "R1"]),
+      row("N2", "waiting", ["R1", "N1"]),
+    ];
+    const plan = aTicketPlan({
+      layers: [done, open, ["N1"], ["N2"]],
+      can_start: open,
+      order: [...done, ...open, "N1", "N2"],
+      waiting: ["N1", "N2"],
+      critical_path: [],
+    });
+
+    it("draws at rest only the open lines to the next group (AC-817.1)", async () => {
+      const user = userEvent.setup();
+      const { container } = render(<PlanningView tickets={tickets} planning={plan} />);
+      await user.click(screen.getByRole("button", { name: "Show all" }));
+      const edge = (key: string) => container.querySelector(`[data-edge="${key}"]`);
+
+      expect(edge("R1→N1")).not.toBeNull();
+      expect(edge("N1→N2")).not.toBeNull();
+      // Settled (its blocker is done) and skipping a group: neither is drawn at rest.
+      expect(edge("D1→R1")).toBeNull();
+      expect(edge("R1→N2")).toBeNull();
+    });
+
+    it("says on each card that holds open tickets back how many it blocks (AC-817.4)", async () => {
+      const user = userEvent.setup();
+      render(<PlanningView tickets={tickets} planning={plan} />);
+      await user.click(screen.getByRole("button", { name: "Show all" }));
+
+      expect(screen.getByRole("listitem", { name: "R1 · Ticket R1" })).toHaveTextContent(
+        "Blocks 2",
+      );
+      expect(screen.getByRole("listitem", { name: "D1 · Ticket D1" })).not.toHaveTextContent(
+        "Blocks",
+      );
+    });
+
+    it("opens with compact cards and the done tickets folded, and offers Full (AC-817.7)", async () => {
+      const user = userEvent.setup();
+      const { container } = render(<PlanningView tickets={tickets} planning={plan} />);
+      const flow = container.querySelector(".ah-flow");
+
+      expect(flow).toHaveAttribute("data-density", "compact");
+      expect(screen.getByRole("button", { name: "Show 6 done" })).toBeInTheDocument();
+      expect(screen.getByText("Showing 20 of 26 tickets")).toBeInTheDocument();
+      await user.click(
+        within(screen.getByRole("group", { name: "Cards" })).getByRole("button", { name: "Full" }),
+      );
+      expect(flow).not.toHaveAttribute("data-density");
+    });
+
+    it("finds tickets by assignee, and / focuses the search (AC-817.5)", async () => {
+      const user = userEvent.setup();
+      render(<PlanningView tickets={tickets} planning={plan} />);
+      const search = screen.getByRole("searchbox", { name: "Find tickets" });
+
+      await user.keyboard("/");
+      expect(search).toHaveFocus();
+      await user.keyboard("bea");
+      expect(screen.getByText("Showing 1 of 26 tickets")).toBeInTheDocument();
+      expect(screen.getByRole("listitem", { name: "N1 · Ticket N1" })).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Show all" }));
+      expect(search).toHaveValue("");
+    });
+
+    it("turns a readiness back on from its count (AC-817.6)", async () => {
+      const user = userEvent.setup();
+      render(<PlanningView tickets={tickets} planning={plan} />);
+      const doneCount = screen.getByRole("button", { name: "6 done" });
+
+      expect(doneCount).toHaveAttribute("aria-pressed", "false");
+      await user.click(doneCount);
+      expect(doneCount).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByRole("listitem", { name: "D1 · Ticket D1" })).toBeInTheDocument();
+    });
+  });
+
+  it("gives a flow of 11 tickets the toolbar, with full cards and nothing folded (AC-817.5)", () => {
+    const refs = Array.from({ length: 11 }, (_, i) => `M${String(i + 1)}`);
+    const tickets = refs.map((ref, i) =>
+      aTicketRow({
+        ref,
+        key: ref,
+        id: null,
+        title: `Ticket ${ref}`,
+        url: null,
+        blocked_by: [],
+        readiness: i < 2 ? "done" : "can_start",
+      }),
+    );
+    const plan = aTicketPlan({ layers: [refs], can_start: refs.slice(2), order: refs });
+    const { container } = render(<PlanningView tickets={tickets} planning={plan} />);
+
+    expect(screen.getByRole("searchbox", { name: "Find tickets" })).toBeInTheDocument();
+    expect(screen.getByText("Showing 11 of 11 tickets")).toBeInTheDocument();
+    expect(container.querySelector(".ah-flow")).not.toHaveAttribute("data-density");
+  });
+
+  it("gives a flow of 10 tickets no toolbar", () => {
+    const refs = Array.from({ length: 10 }, (_, i) => `S${String(i + 1)}`);
+    const tickets = refs.map((ref) =>
+      aTicketRow({ ref, key: ref, id: null, title: `Ticket ${ref}`, url: null, blocked_by: [] }),
+    );
+    render(
+      <PlanningView
+        tickets={tickets}
+        planning={aTicketPlan({ layers: [refs], can_start: refs, order: refs })}
+      />,
+    );
+
+    expect(screen.queryByRole("searchbox", { name: "Find tickets" })).toBeNull();
+    expect(screen.queryByText(/Showing \d+ of/)).toBeNull();
+  });
+
   it("says on a card only what its readiness adds to the Linear status (card)", () => {
     const cards = [
       aTicketRow({

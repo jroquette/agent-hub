@@ -18,6 +18,7 @@ from agent_hub.core.features.ticket_planning import ticket_board
 from agent_hub.core.hub_config.local_config import LocalConfig, check_local_document
 from agent_hub.core.scenarios.run_record import fold_records, record_lines
 from agent_hub.core.testing.transcript_lines import TRANSCRIPT_MODEL
+from agent_hub.core.tracker.tracker_reader import IssueSummary, TicketSnapshot
 from agent_hub.generator.action_discovery import discover_actions
 from agent_hub.generator.scenario_discovery import discover_scenarios
 from scripts.seed_demo import (
@@ -29,6 +30,7 @@ from scripts.seed_demo import (
     FEATURE,
     INBOX_NOTE,
     ISSUE,
+    LARGE_FEATURE,
     LIVE_SESSION,
     ORDER_SCENARIO,
     SCENARIO_ENV,
@@ -42,6 +44,8 @@ from scripts.seed_demo import (
     demo_envelopes,
     demo_transcript,
     hub_files,
+    large_id,
+    large_linear,
     main,
     scenario_files,
     scenario_runs,
@@ -319,6 +323,30 @@ def test_plans_blocked_tickets_with_evals_and_reviews_when_feature_files_built()
     ]
     assert coverage.covered == ("AC-7.1", "AC-7.2", "AC-7.3")
     assert [(r.ticket, r.outcome, r.problem) for r in reviews] == [(ISSUE, "approved", None)]
+
+
+def test_plans_large_flow_with_skipping_blockers_when_large_feature_built() -> None:
+    files = hub_files(HUB)
+    folder = HUB / "brain" / "features" / LARGE_FEATURE
+    record = FeatureRecordFile.model_validate_json(files[folder / "features.json"])
+    summaries = tuple(IssueSummary.model_validate(issue) for issue in large_linear())
+
+    snapshot = TicketSnapshot(summaries=summaries, missing=(), external=())
+    board = ticket_board(record.tickets, record.acs, snapshot, linear=record.linear)
+    readiness = [row.readiness for row in board.rows]
+    blockers = {row.ref: [edge.ref for edge in row.blocked_by] for row in board.rows}
+
+    assert len(record.tickets) > 24
+    assert readiness.count("done") == 16
+    assert readiness.count("canceled") == 1
+    assert board.plan.cycles == ()
+    # Sign off waits on five open tickets: its card names two and counts three.
+    assert [row.waiting_on for row in board.rows if row.ref == large_id(28)] == [
+        tuple(large_id(place) for place in (21, 22, 23, 24, 25))
+    ]
+    # Purge waits on a ticket two groups up: a line that skips a group.
+    assert large_id(12) in blockers[large_id(29)]
+    assert all(issue["id"] in record.linear for issue in large_linear())
 
 
 def test_keeps_going_when_hub_exists_and_is_registered(capsys: pytest.CaptureFixture[str]) -> None:
