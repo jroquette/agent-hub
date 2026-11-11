@@ -458,6 +458,29 @@ def test_counts_project_activity_and_needs_when_project_has_events(
     assert counts.learnings_proposed == 1
 
 
+def test_counts_one_proposed_learning_per_note_when_proposed_twice() -> None:
+    store = InMemoryEventStore()
+    store.append(
+        [
+            an_event(
+                type="learning.proposed",
+                session=session,
+                source_id=f"proposal-{proposal}",
+                payload={"proposal": proposal, "text": "x", "target": target},
+            )
+            for session, proposal, target in (
+                ("s-1", "toolu_1", "brain/_inbox/x.md"),
+                ("s-2", "toolu_2", "brain/_inbox/x.md"),
+                ("s-2", "toolu_3", "brain/_inbox/y.md"),
+            )
+        ]
+    )
+
+    counts = FoldedEventReadModels(store, now=lambda: NOW).stream_counts()
+
+    assert counts.learnings_proposed == 2
+
+
 def test_links_approvals_to_where_they_are_answered_when_listed(
     store: InMemoryEventStore,
 ) -> None:

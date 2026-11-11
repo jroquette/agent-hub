@@ -52,7 +52,11 @@ from agent_hub.core.learnings.learning_ports import (
     LearningHub,
     LearningReads,
 )
-from agent_hub.core.learnings.read_learnings import NOTE_OUTSIDE_INBOX, HubLookup
+from agent_hub.core.learnings.read_learnings import (
+    NOTE_OUTSIDE_INBOX,
+    RESOLVED_ELSEWHERE,
+    HubLookup,
+)
 from agent_hub.core.redaction.redact import clip, redact_text
 
 CONTROL_PLANE_SESSION: Final = "control-plane"
@@ -101,6 +105,9 @@ def _redacted(text: str, limit: int) -> str:
 
 
 def _refuse_decided(learning: LearningDetail) -> None:
+    if learning.state == LearningState.RESOLVED_ELSEWHERE:
+        # Triaged outside the app: there is no inbox note to move, and no decision is invented.
+        raise LearningConflictError(RESOLVED_ELSEWHERE)
     if learning.status == LearningStatus.PROPOSED:
         return
     reason = _ALREADY.get(learning.state) if learning.state is not None else None

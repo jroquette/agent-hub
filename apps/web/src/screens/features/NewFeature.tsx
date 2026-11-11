@@ -1,6 +1,7 @@
 import "../agent-session/agent-session.css";
 
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useId, useRef, useState, type KeyboardEvent } from "react";
+import { useNavigate } from "react-router";
 
 import {
   AppLink,
@@ -14,34 +15,26 @@ import {
   Skeleton,
   useAttachmentDrop,
   useMessageAttachments,
-  type AttachedFile,
-  type AttachedImage,
 } from "../../components";
 import { ApiProblem, useApi } from "../../lib/api";
 import { cx } from "../../lib/cx";
 import { useScope } from "../../lib/scope";
 import { useAutoGrow } from "../../lib/useAutoGrow";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
-import {
-  discussPrompt,
-  useDiscuss,
-  useDiscussTarget,
-  type DiscussTarget,
-} from "../../shell/discuss";
-import { rememberDiscussSession, useStartDiscussion } from "../../shell/discussSession";
+import { discussPrompt, type DiscussTarget } from "../../shell/discuss";
+import { useStartDiscussion } from "../../shell/discussSession";
 import { MODES } from "../agent-session/Composer";
 import { rememberEffort, rememberedEffort } from "../agent-session/effort";
 import { modeLabel, type PermissionMode } from "../agent-session/model";
 import { ModelMenu } from "../agent-session/ModelMenu";
 import { useDraft } from "../agent-session/useDraft";
+import { agentSessionHref } from "../sessions-list/control";
 import { useAgentCapabilities } from "../sessions-list/queries";
-import { featureHref } from "./FeatureChip";
 import { useFeatures } from "./queries";
 
 /* New feature: the brief (text, images, PDFs, text files) is the screen, the options sit beside
- * it. One press starts the conversation in the project's hub folder and opens the Discuss panel
- * on it: Claude runs the hub's golden path with the owner, from the brief to the spec. The page
- * then watches the feature records for the new one. */
+ * it. One press starts the conversation in the project's hub folder and opens its chat, as every
+ * other start does: Claude runs the hub's golden path with the owner, from the brief to the spec. */
 
 const KEBAB = /^[a-z][a-z0-9-]*$/;
 const ISSUE = /^[A-Za-z][A-Za-z0-9]*-\d+$/;
@@ -59,11 +52,10 @@ const SIZES: readonly { id: string; label: string; hint: string }[] = [
     hint: "A new contract between repos or services, or a decision worth an ADR.",
   },
 ];
-const sizeLabel = (size: string) => SIZES.find((option) => option.id === size)?.label ?? size;
 
 const NEXT_STEPS = [
   "Claude reads your brief and what you attached.",
-  "It asks one question at a time, in the panel.",
+  "It asks one question at a time, in the chat.",
   "It drafts the spec and shows you each file before writing it.",
 ];
 
@@ -93,19 +85,6 @@ function newFeatureKey(project: string): string {
   return `feature-new:${project}:${String(Date.now())}`;
 }
 
-/** What was sent, kept on screen once the conversation started. */
-interface SentRequest {
-  sessionId: string;
-  idea: string;
-  issue: string;
-  slug: string;
-  size: string;
-  images: readonly AttachedImage[];
-  files: readonly AttachedFile[];
-  /** The slugs there were when Claude was asked: the first one after that is the new feature. */
-  known: ReadonlySet<string>;
-}
-
 /** `/features/new`: say the idea, attach what Claude should see, and start with Claude. */
 export function NewFeatureScreen() {
   const [scope] = useScope();
@@ -113,12 +92,6 @@ export function NewFeatureScreen() {
   const projects = (projectsQuery.data?.items ?? []).map((item) => item.name);
   const [project, setProject] = useState<string>(scope ?? "");
   const chosenProject = project || (projects[0] ?? "");
-  const [target, setTarget] = useState<DiscussTarget | null>(null);
-  const [sent, setSent] = useState<SentRequest | null>(null);
-  // A new form after "Start another feature" takes focus in its brief.
-  const [round, setRound] = useState(0);
-  const { open, setOpen } = useDiscuss();
-  useDiscussTarget(target);
 
   const breadcrumbs = (
     <Breadcrumbs items={[{ label: "Features", href: "/features" }, { label: "New" }]} />
@@ -149,42 +122,19 @@ export function NewFeatureScreen() {
         {projectsQuery.isPending ? (
           <Skeleton width={110} height={32} radius={999} />
         ) : (
-          projects.length > 1 &&
-          !sent && <ProjectSelect projects={projects} value={chosenProject} onChange={setProject} />
+          projects.length > 1 && (
+            <ProjectSelect projects={projects} value={chosenProject} onChange={setProject} />
+          )
         )}
       </header>
-      {sent && target ? (
-        <SentCard
-          sent={sent}
-          project={chosenProject}
-          panelOpen={open}
-          onOpenPanel={() => {
-            setOpen(true);
-          }}
-          onAnother={() => {
-            setOpen(false);
-            setSent(null);
-            setTarget(null);
-            setRound((n) => n + 1);
-          }}
-        />
-      ) : chosenProject === "" ? (
+      {chosenProject === "" ? (
         // The brief's draft is kept per project: the form waits for it to be known.
         <div className="ft-new-form" aria-hidden="true">
           <Skeleton height={300} radius={28} />
           <Skeleton height={430} radius={12} />
         </div>
       ) : (
-        <BriefForm
-          key={`${chosenProject}:${String(round)}`}
-          project={chosenProject}
-          focusOnOpen={round > 0}
-          onStarted={(request, startedTarget) => {
-            setSent(request);
-            setTarget(startedTarget);
-            setOpen(true);
-          }}
-        />
+        <BriefForm key={chosenProject} project={chosenProject} />
       )}
     </div>
   );
@@ -225,15 +175,8 @@ function ProjectSelect({
   );
 }
 
-function BriefForm({
-  project,
-  focusOnOpen,
-  onStarted,
-}: {
-  project: string;
-  focusOnOpen: boolean;
-  onStarted: (request: SentRequest, target: DiscussTarget) => void;
-}) {
+function BriefForm({ project }: { project: string }) {
+  const navigate = useNavigate();
   const { text: idea, setText: setIdea, accepted } = useDraft(`feature-new.${project}`);
   const [issueInput, setIssueInput] = useState("");
   const [size, setSize] = useState("");
@@ -257,9 +200,6 @@ function BriefForm({
   });
   const { dragging, dropProps } = useAttachmentDrop(attachments, { onAdded: focusBox });
   useAutoGrow(box, idea, BRIEF_HEIGHT_SHARE);
-  useEffect(() => {
-    if (focusOnOpen) box.current?.focus({ preventScroll: true });
-  }, [focusOnOpen]);
   const features = useFeatures(project || null);
   const items = (features.data?.items ?? []).filter((f) => f.project === project);
   const ids = {
@@ -321,12 +261,10 @@ function BriefForm({
       kind: "New feature",
       title: slug || issue || "a new feature",
       brief: BRIEF,
-      openOnArrive: true,
     };
     const message = composeFeatureMessage({ idea, issue, size, slug });
     const images = attachments.images;
     const files = attachments.files;
-    const known = new Set(items.map((f) => f.slug));
     void discussion
       .start({
         target,
@@ -340,10 +278,8 @@ function BriefForm({
       })
       .then((sessionId) => {
         if (!sessionId) return;
-        // Kept before the target is set, so the panel opens straight on this conversation.
-        rememberDiscussSession(target, sessionId);
         accepted(idea);
-        onStarted({ sessionId, idea, issue, slug, size, images, files, known }, target);
+        void navigate(agentSessionHref(sessionId));
       })
       .catch(() => undefined); // The failure shows under the button (discussion.error).
   };
@@ -523,7 +459,7 @@ function BriefForm({
         <p id={ids.reason} className="ft-new-hint ft-new-reason" aria-live="polite">
           {discussion.pending
             ? "Starting the conversation in the hub folder…"
-            : (why ?? "Opens the Discuss panel. Claude asks before writing any file.")}
+            : (why ?? "Opens the chat. Claude asks before writing any file.")}
         </p>
       </div>
 
@@ -652,77 +588,5 @@ function FieldHint({
     <span id={id} className="ft-new-hint">
       {children}
     </span>
-  );
-}
-
-function SentCard({
-  sent,
-  project,
-  panelOpen,
-  onOpenPanel,
-  onAnother,
-}: {
-  sent: SentRequest;
-  project: string;
-  panelOpen: boolean;
-  onOpenPanel: () => void;
-  onAnother: () => void;
-}) {
-  const features = useFeatures(project || null);
-  // While waiting, reread the records often (the API rereads the hub's files): the same query.
-  useApi("/api/v1/features", { query: { project: project || null } }, { refetchInterval: 3_000 });
-  const items = (features.data?.items ?? []).filter((f) => f.project === project);
-  const created = items.find((f) => (sent.slug ? f.slug === sent.slug : !sent.known.has(f.slug)));
-  // Closing the panel leaves focus on the button that opens it again.
-  const openSpot = useRef<HTMLSpanElement | null>(null);
-  const wasOpen = useRef(panelOpen);
-  useEffect(() => {
-    if (wasOpen.current && !panelOpen) openSpot.current?.querySelector("button")?.focus();
-    wasOpen.current = panelOpen;
-  }, [panelOpen]);
-
-  return (
-    <div className="ft-new-sent-wrap">
-      <section className="ah-card ft-new-sent" aria-label="Sent to Claude">
-        <h2 className="ah-h3">Sent to Claude</h2>
-        {sent.idea.trim() !== "" && <p className="ft-new-sent-idea">{sent.idea.trim()}</p>}
-        <AttachmentList images={sent.images} files={sent.files} label="Sent with the request" />
-        <p className="ah-small ah-muted">
-          Issue: {sent.issue || "none"} · Slug: {sent.slug || "Claude picks"} · Size:{" "}
-          {sizeLabel(sent.size)}
-        </p>
-        <div role="status" className="ft-new-status">
-          {created ? (
-            <>
-              <Icon name="circle-check" className="ft-new-done" />
-              <span>
-                <span className="ah-mono">{created.slug}</span> has its record.
-              </span>
-              <AppLink href={featureHref(created)}>Open {created.slug}</AppLink>
-            </>
-          ) : (
-            <>
-              <Icon name="message-square" />
-              <span>Claude is working on the brief with you in the panel.</span>
-              <span ref={openSpot}>
-                {!panelOpen && (
-                  <Button size="sm" onClick={onOpenPanel}>
-                    Open the panel
-                  </Button>
-                )}
-              </span>
-              <AppLink href={`/agent-sessions/${encodeURIComponent(sent.sessionId)}`}>
-                Open the full chat
-              </AppLink>
-            </>
-          )}
-        </div>
-      </section>
-      <div>
-        <Button variant="ghost" icon="plus" onClick={onAnother}>
-          Start another feature
-        </Button>
-      </div>
-    </div>
   );
 }

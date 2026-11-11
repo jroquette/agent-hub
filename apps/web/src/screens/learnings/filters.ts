@@ -3,7 +3,9 @@ import type { components } from "../../api/schema";
 
 type Learning = components["schemas"]["Learning"];
 export type Provenance = NonNullable<Learning["provenance"]>;
-export type Readiness = "ready" | "blocked";
+/** Decidable here, not decidable here, or already triaged outside the app (its note left the
+ * inbox): those are hidden unless asked for. */
+export type Readiness = "ready" | "blocked" | "resolved";
 /** Claude's recommendation on a learning: a review verdict, where a running review stands
  * (reviewing it now, queued behind others, stopped until you answer), a review that ended without
  * a verdict, or none asked for. */
@@ -26,7 +28,7 @@ export const PROVENANCES: readonly Provenance[] = [
   "agent-from-code",
   "agent-from-external",
 ];
-export const READINESS: readonly Readiness[] = ["ready", "blocked"];
+export const READINESS: readonly Readiness[] = ["ready", "blocked", "resolved"];
 export const CLAUDE_VERDICTS: readonly ClaudeVerdict[] = [
   "ready",
   "needs_changes",
@@ -106,7 +108,17 @@ export function hasFilters(filters: LearningFilters): boolean {
 export const blockedReason = (l: Learning): string | null =>
   l.status === "proposed" ? (l.actions_unavailable ?? null) : null;
 
-const readinessOf = (l: Learning): Readiness => (blockedReason(l) === null ? "ready" : "blocked");
+/** A proposal whose note is gone from the hub checkout's inbox: triaged outside the app. */
+export const isResolvedElsewhere = (l: Pick<Learning, "status" | "state">): boolean =>
+  l.status === "proposed" && l.state === "resolved_elsewhere";
+
+const readinessOf = (l: Learning): Readiness =>
+  isResolvedElsewhere(l) ? "resolved" : blockedReason(l) === null ? "ready" : "blocked";
+
+/** The decision a learning stands for: its inbox note (one per session may propose the same
+ * note), else the learning itself. */
+export const decisionKeyOf = (l: Learning): string =>
+  l.note_path ? `${l.project}\n${l.note_path}` : `${l.project}\n#${l.id}`;
 
 type FacetId = "project" | "provenance" | "readiness" | "claude";
 
@@ -127,11 +139,11 @@ function matches(
     return false;
   if (skip !== "claude" && filters.claude.length > 0 && !filters.claude.includes(verdictOf(l)))
     return false;
-  return (
-    skip === "readiness" ||
-    filters.readiness.length === 0 ||
-    filters.readiness.includes(readinessOf(l))
-  );
+  if (skip === "readiness") return true;
+  // With no readiness picked, what was resolved outside the app stays out of the queue.
+  return filters.readiness.length === 0
+    ? readinessOf(l) !== "resolved"
+    : filters.readiness.includes(readinessOf(l));
 }
 
 /** The learnings search and every facet keep, in their given order. */
@@ -147,6 +159,7 @@ export interface FacetCounts {
   /** Per project, in name order; the other facets and the search applied. */
   project: [string, number][];
   provenance: Record<Provenance, number>;
+  /** Decisions, not rows: proposals of the same note count once. */
   readiness: Record<Readiness, number>;
   claude: Record<ClaudeVerdict, number>;
 }
@@ -167,11 +180,15 @@ export function facetCounts(
     claude: zeros(CLAUDE_VERDICTS),
   };
   const keeps = (l: Learning, skip: FacetId) => matches(l, filters, verdictOf, skip);
+  const decisions = new Set<string>();
   for (const l of rows) {
     if (!project.has(l.project)) project.set(l.project, 0);
     if (keeps(l, "project")) project.set(l.project, (project.get(l.project) ?? 0) + 1);
     if (l.provenance !== null && keeps(l, "provenance")) counts.provenance[l.provenance] += 1;
-    if (keeps(l, "readiness")) counts.readiness[readinessOf(l)] += 1;
+    if (keeps(l, "readiness") && !decisions.has(decisionKeyOf(l))) {
+      decisions.add(decisionKeyOf(l));
+      counts.readiness[readinessOf(l)] += 1;
+    }
     if (keeps(l, "claude")) counts.claude[verdictOf(l)] += 1;
   }
   return {

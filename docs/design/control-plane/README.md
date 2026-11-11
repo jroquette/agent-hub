@@ -74,7 +74,7 @@ AGH-201 (control-plane clarity) changes the design further
 - **Timeline.** Rows name the actor ("Main agent", "Subagent · <type>") and a plain verb ("Ran skill /feature",
   "Started subagent Explore: …"); runs of Reads collapse, with a legend.
 - **Learnings.** `status` has no `snoozed` value: snooze stays a disabled P3 button. A learning adds `note_path`,
-  `state` (`proposed`, `accepted_pr_open`, `rejected_pr_open`, `in_brain`, `archived`), `summary`,
+  `state` (`proposed`, `accepted_pr_open`, `rejected_pr_open`, `in_brain`, `archived`, `resolved_elsewhere`), `summary`,
   `note_unavailable`, `actions_unavailable`, `pr_url` and `branch`; `target` is deprecated. Accept and reject answer
   201 `{state, pr_url, branch}`, not a Learning, and work in a temporary clone of the hub's `origin`, never a worktree
   of the user's checkout (E8). There is no `/learnings/{id}/trace`; the trail from session to note is in the

@@ -695,6 +695,29 @@ Tests: `DesignsTab.test.tsx`; `test_features.py` (unit and integration), `test_h
   context brief in Brain" (`features/<slug>/tickets/<id>/brief.md`) instead of saying "Not reached".
   Test: `TicketPanel.test.tsx` "links a done Context step to the ticket's context brief in Brain".
 
+## Departures (AGH-804, the playground's v0.35 work)
+
+Built after the owner validated these in the playground (snapshot `20261110T222238Z`); where the sections above say
+otherwise, this list wins.
+
+**Why a criterion is not passing** (the Criteria tab's "How it was proven")
+
+- **AC-804.1.1 A command that failed after its tests.** Given evidence whose tests passed but whose command exited
+  non-zero (`exit 1: … 10 passed, but git diff --quiet … exits 1`), then the headline reads "Command failed (exit
+  code 1)", not "10 tests passed", and the explanation adds that no test failed, so another step of the command (a
+  diff or a grep after the tests) did, and that the evaluator's note says which.
+- **AC-804.1.2 The evaluator's note, open.** Given a criterion that does not pass and has evidence, then the evidence
+  shows openly in a `failed`-edged note "Why it is not passing, in the evaluator's words" (`role="note"`), with "What
+  you can do: read the eval record above for the full story; fix the code or the verification command and run
+  /evaluate again; or, if you checked it yourself, use **I checked it, mark as passing** below."; a passing criterion
+  keeps the folded "Full evidence as recorded in features.json".
+
+Tests: `acEvidence.test.ts` "says the command failed when its tests passed but it exited non-zero"; `index.test.tsx`
+"AC-804.1.1 …", "AC-804.1.2 …" and "has no serious a11y violations with a criterion that does not pass open (a11y)".
+
+**New feature** (Screen 3): a start opens the session's chat, as New session and a ticket's Start do; AC-420.6 below
+says so and AC-420.7 (the sent card) is superseded.
+
 ## Departures (AGH-816, Linear read under the MCP transport)
 
 Built after the owner validated it in the playground (snapshot `20261111T002716Z`); where the sections above say
@@ -1081,7 +1104,7 @@ note hides, below 480 px the key hint; below 560 px of `.ft-new` the project pil
 |---|---|
 | `.as-composer` frame, `as-composer-drop`, `AttachmentList`, `useMessageAttachments` | reuse (the chat's, AGH-419) |
 | `useAttachmentDrop`, `AttachButton` (`components/AttachmentList.tsx`), `useAutoGrow` (`lib/useAutoGrow.ts`) | new, shared: the chat composer's paste/drop/picker handlers and its auto-grow, moved out so the chat and this screen use one copy |
-| `useStartDiscussion`, `rememberDiscussSession`, `discussPrompt`, `useDiscussTarget` | reuse (the Discuss panel's) |
+| `useStartDiscussion`, `discussPrompt`, `agentSessionHref` | reuse (the Discuss panel's start, and the chat route every other start navigates to) |
 | Project pill: `.as-pill` + `.as-pill-select` + `.as-pill-value` + `.as-pill-caret` | reuse; `.as-pill-value` makes any pill as wide as its value (the native select lies invisible over it) |
 | Options: `.ah-input` fields; Size a `select.ah-input` with a `chevron-down` caret (`.ft-new-select`) | reuse, one local extension |
 | `Button` primary, `Kbd`, `Icon circle-x`, `Banner warning boxed`, `Skeleton`, `ah-card`, `EmptyState` | reuse |
@@ -1094,9 +1117,8 @@ note hides, below 480 px the key hint; below 560 px of `.ft-new` the project pil
 | Lead | "Describe what to build and attach what Claude should see." |
 | Brief label / placeholder | "What do you want to build?" / "Describe the feature: who it is for, what they should be able to do, and why." · with images "Say what to build, and what Claude should see in the image." · with files "Say what to build, and what Claude should take from the file." |
 | Toolbar | "Attach" (title "Attach images, PDFs or text files up to 5 MB (or paste or drop them in the box)") · "Paste or drop images, PDFs and text files" · `Ctrl` / `⌘` `Enter` · "Start with Claude", pending "Starting…" |
-| Status line | ready "Opens the Discuss panel. Claude asks before writing any file." · pending "Starting the conversation in the hub folder…" · not ready, the first that holds: the unavailable reason's title ("Session control is locked in this browser.") · "Wait for the files to be read." · "Add a sentence on what to build with the attachments." · "Write at least a sentence, or give an issue." · "Fix the issue id in Options." · "Fix the slug in Options." · the hub folder check ("Looking for the hub folder…") |
+| Status line | ready "Opens the chat. Claude asks before writing any file." · pending "Starting the conversation in the hub folder…" · not ready, the first that holds: the unavailable reason's title ("Session control is locked in this browser.") · "Wait for the files to be read." · "Add a sentence on what to build with the attachments." · "Write at least a sentence, or give an issue." · "Fix the issue id in Options." · "Fix the slug in Options." · the hub folder check ("Looking for the hub folder…") |
 | Options | "Options" / "All optional" · "Start from an issue", placeholder "None", hint "Like DEMO-1600. Claude reads its brief first.", error "An issue id, like DEMO-1600." · "Slug", placeholder "Claude picks one", hint "Like orders-csv-export.", errors "Lowercase letters, digits and dashes, starting with a letter." / "A feature with this slug already exists." · "Size": "Let Claude ask", "Spike", "Bounded", "Architectural", with the chosen one's hint |
-| Sent card | "Sent to Claude" · the brief and its attachments · "Issue: … · Slug: … · Size: …" · "Claude is working on the brief with you in the panel." with "Open the panel" and "Open the full chat" · once found "`<slug>` has its record." and "Open `<slug>`" · "Start another feature" |
 
 ### States
 
@@ -1136,13 +1158,9 @@ note hides, below 480 px the key hint; below 560 px of `.ft-new` the project pil
   field does nothing, an IME composition never starts), then one conversation starts in the project's hub folder with
   the message naming only the filled fields ("Tracker issue: … (read its brief first).", "Slug: …", "Size: …", then the
   idea), the brief asking Claude to follow the hub's `feature` skill from step 0, one question at a time, showing each
-  record before writing it, and the images and files attached; the Discuss panel opens on that conversation (kept for
-  its target) and the draft is cleared.
-- **AC-420.7** Given a started request, when the sent card shows, then it lists the brief, its attachments and the
-  options, says Claude works with the owner in the panel ("Open the panel" while it is closed, focus back on it when
-  the panel closes, and "Open the full chat"), rereads the features every 3 s and, once the new feature appears (the
-  given slug, else the first slug not there at the start), links to it; "Start another feature" closes the panel and
-  gives an empty form with the focus in the brief.
+  record before writing it, and the images and files attached; the app navigates to that conversation's chat
+  (`/agent-sessions/<id>`), as New session and a ticket's Start do, and the draft is cleared.
+- **AC-420.7** (Superseded: a started request now opens its chat, AC-420.6, so there is no sent card.)
 - **AC-420.8** Given a file refused earlier, when Start is pressed or that attachment is removed, then the refusal
   clears, and a failed start always shows in the box's error row (the problem's detail or title, else "Could not
   start the conversation. Try again."), both lines when both hold; everything typed and attached stays.

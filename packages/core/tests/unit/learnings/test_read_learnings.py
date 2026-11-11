@@ -11,6 +11,7 @@ from agent_hub.core.learnings.learning import Learning, LearningState
 from agent_hub.core.learnings.learning_ports import LearningHub
 from agent_hub.core.learnings.read_learnings import (
     HUB_NOT_REGISTERED,
+    RESOLVED_ELSEWHERE,
     ReadLearnings,
     UnavailableHub,
 )
@@ -194,6 +195,64 @@ def test_reports_unavailable_when_note_unreadable(case: Unreadable) -> None:
     assert (learning.note_unavailable, learning.summary) == (case.reason, None)
     assert (detail.note_unavailable, detail.note) == (case.reason, None)
     assert learning.actions_unavailable == case.reason
+
+
+OTHER_NOTE = "learnings/gotchas/web.md"
+
+
+def test_resolves_elsewhere_when_note_gone_from_readable_checkout() -> None:
+    reads = _reads({OTHER_NOTE: b"# Web\n"})
+
+    learning = _listed(reads)
+    detail = reads.get_learning("toolu_1")
+
+    assert learning.state == LearningState.RESOLVED_ELSEWHERE
+    assert learning.status == "proposed"
+    assert (learning.note_unavailable, learning.summary) == (None, None)
+    assert learning.actions_unavailable == RESOLVED_ELSEWHERE
+    assert (detail.state, detail.note, detail.note_unavailable) == (
+        LearningState.RESOLVED_ELSEWHERE,
+        None,
+        None,
+    )
+    assert detail.actions_unavailable == RESOLVED_ELSEWHERE
+
+
+def test_stays_proposed_when_note_present_in_readable_checkout() -> None:
+    learning = _listed(_reads({NOTE: NOTE_TEXT.encode(), OTHER_NOTE: b"# Web\n"}))
+
+    assert (learning.state, learning.actions_unavailable) == (LearningState.PROPOSED, None)
+
+
+@pytest.mark.parametrize(
+    ("brain", "links", "reason"),
+    [
+        pytest.param({OTHER_NOTE: b"# Web\n"}, frozenset({NOTE}), "Not a regular file", id="link"),
+        pytest.param(
+            {NOTE: b"x" * 300_000, OTHER_NOTE: b"# Web\n"},
+            frozenset(),
+            "Note too large",
+            id="large",
+        ),
+        pytest.param({}, frozenset(), "Note not in the hub checkout", id="brain_unreadable"),
+    ],
+)
+def test_keeps_note_unavailable_when_note_unreadable_or_checkout_unreadable(
+    brain: dict[str, bytes], links: frozenset[str], reason: str
+) -> None:
+    learning = _listed(_reads({**brain, **dict.fromkeys(links, b"# x\n")}, links=links))
+
+    assert learning.state == LearningState.PROPOSED
+    assert (learning.note_unavailable, learning.actions_unavailable) == (reason, reason)
+
+
+def test_resolves_elsewhere_once_per_checkout_when_many_notes_gone() -> None:
+    proposals = [_proposal(f"brain/_inbox/n{i}.md", proposal=f"toolu_{i}") for i in range(3)]
+    reads = _reads({OTHER_NOTE: b"# Web\n"}, proposals)
+
+    states = {item.state for item in reads.list_learnings(LearningFilter()).items}
+
+    assert states == {LearningState.RESOLVED_ELSEWHERE}
 
 
 def test_reports_unavailable_when_note_path_unknown() -> None:
