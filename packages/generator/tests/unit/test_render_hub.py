@@ -126,6 +126,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/schemas/eval.v2.json",
     "plugin/hub-workflow/schemas/review.v1.json",
     "plugin/hub-workflow/skills/adr/SKILL.md",
+    "plugin/hub-workflow/skills/change/SKILL.md",
     "plugin/hub-workflow/skills/context-audit/SKILL.md",
     "plugin/hub-workflow/skills/create-plan/SKILL.md",
     "plugin/hub-workflow/skills/deliver/SKILL.md",
@@ -400,6 +401,7 @@ BASE_AGENTS = (
 )
 BASE_SKILLS = (
     "adr",
+    "change",
     "context-audit",
     "create-plan",
     "deliver",
@@ -532,16 +534,16 @@ def test_returns_rendered_hub_when_demo_rendered(demo_config: HubConfig) -> None
     assert isinstance(rendered, RenderedHub)
     assert isinstance(rendered.links, tuple)
     assert all(type(link) is RenderedLink for link in rendered.links)
-    # AC-4.6: the 14 links of spec "The rendered set", plus AGH-58's /fix, the ten AGH-99
-    # skills, AGH-274's two review skills and ux-designer agent, /summarize, AGH-319's
-    # `plain-language`, AGH-412's /test-strength, and AGH-411's test-writer agent and
+    # AC-4.6: the 14 links of spec "The rendered set", plus AGH-58's /change and its alias /fix,
+    # the ten AGH-99 skills, AGH-274's two review skills and ux-designer agent, /summarize,
+    # AGH-319's `plain-language`, AGH-412's /test-strength, and AGH-411's test-writer agent and
     # /property-based-testing, AGH-413's security-reviewer agent and /design-fit, and AGH-414's
-    # /premortem and /context-audit, and AGH-406's /implement: 38, sorted by path.
+    # /premortem and /context-audit, and AGH-406's /implement: 39, sorted by path.
     assert [link.path for link in rendered.links] == [
         *(f".claude/agents/{name}.md" for name in BASE_AGENTS),
         *(f".claude/skills/{name}" for name in BASE_SKILLS),
     ]
-    assert len(rendered.links) == 38
+    assert len(rendered.links) == 39
     assert all(
         (link.kind, link.ownership) == (Kind.GENERIC, Ownership.MANAGED) for link in rendered.links
     )
@@ -1820,7 +1822,7 @@ SKILL_COMMANDS = {
         "`./hub worktree <team>-<n>-<slug> [--only <repo>]` (`make worktree NAME=…`)",
         f"`{FEATURE_CHECK_COMMAND}`",
     ),
-    "fix": ("`./hub worktree <team>-<n>-<desc> --only <repo>` (`make worktree NAME=… ONLY=…`)",),
+    "change": ("`./hub worktree <team>-<n>-<desc> --only <repo>` (`make worktree NAME=… ONLY=…`)",),
 }
 MAKE_COMMAND = re.compile(r"`make ([a-z][a-z0-9-]*)")
 
@@ -1848,7 +1850,7 @@ def test_names_hub_commands_when_workflow_skill_rendered(
 # skill they name ships in the rendered base plugin.
 SKILL_ROUTES = {
     "kickoff": (
-        "fix",
+        "change",
         "feature",
         "triage",
         "deliver",
@@ -1860,7 +1862,7 @@ SKILL_ROUTES = {
         "release",
         "retro",
     ),
-    "feature": ("fix", "incident", "refactor", "upgrade", "adr"),
+    "feature": ("change", "incident", "refactor", "upgrade", "adr"),
 }
 SKILL_REFERENCE = re.compile(r"`/([a-z][a-z-]*)`")
 
@@ -1914,7 +1916,6 @@ def test_routes_by_flow_when_kickoff_rendered(
     for skill, flow in FLOW_ROUTES:
         assert f"the `{flow}` flow" in block, flow
         assert f"`/{skill}`" in block, skill
-    assert "(or /change" in step[0], step[0]
     assert flow_names(block) <= FLOWS_IN_FLIGHT | builtins, flow_names(block)
 
 
@@ -1964,7 +1965,7 @@ def test_routes_to_onboard_when_kickoff_or_feature_rendered(
         assert phrase in first, phrase
     assert text.count("/onboard") == first.count("/onboard") == 1
     [sentence] = [part for part in re.split(r"(?<=\.) ", first) if "/onboard" in part]
-    assert "/fix" not in sentence, sentence
+    assert "/change" not in sentence, sentence
 
 
 # AGH-99: `/feature`'s architectural path records each decision its plan needs through `/adr`, in
@@ -2071,7 +2072,7 @@ SUPERPOWERS_CONDITION = "if superpowers is enabled"
 SUPERPOWERS_SKILL_FILES = {
     "plugin/hub-workflow/skills/create-plan/SKILL.md",
     "plugin/hub-workflow/skills/feature/SKILL.md",
-    "plugin/hub-workflow/skills/fix/SKILL.md",
+    "plugin/hub-workflow/skills/change/SKILL.md",
 }
 FEATURE_SUPERPOWERS_SKILLS = (
     "brainstorming",
@@ -2238,9 +2239,9 @@ def test_checks_git_identity_when_kickoff_skill_rendered(
 
 
 # AGH-58 (AC-58.8, AC-58.9): /feature and /kickoff send a bug or a small bounded task within
-# /fix's limits to /fix; the spike definition and the *Spike* line stay as they were (the line
+# /change's limits to /change; the spike definition and the *Spike* line stay as they were (the line
 # gains AGH-138's step 0 clause).
-FIX_LIMIT_PHRASES = (
+CHANGE_LIMIT_PHRASES = (
     "one repo",
     "at most 5 changed non-test files",
     "no new contract",
@@ -2254,7 +2255,7 @@ FEATURE_SPIKE_LINE = (
 )
 
 
-def test_routes_small_work_to_fix_when_feature_rendered(
+def test_routes_small_work_to_change_when_feature_rendered(
     demo_render: dict[str, RenderedFile],
 ) -> None:
     lines = skill_text(demo_render, "feature").splitlines()
@@ -2262,19 +2263,19 @@ def test_routes_small_work_to_fix_when_feature_rendered(
 
     assert len(sizes) == 1
     [size] = sizes
-    named = [sentence for sentence in re.split(r"(?<=\.) ", size) if "/fix" in sentence]
+    named = [sentence for sentence in re.split(r"(?<=\.) ", size) if "/change" in sentence]
     assert len(named) == 1, size
-    for phrase in ("bug", "small bounded task", *FIX_LIMIT_PHRASES):
+    for phrase in ("bug", "small bounded task", *CHANGE_LIMIT_PHRASES):
         assert phrase in named[0], phrase
     assert "spike" not in named[0].lower()
     assert "create" in named[0], named[0]
     assert "tracker issue first if there is none" in named[0], named[0]
     assert FEATURE_SPIKE_DEFINITION in size
     assert FEATURE_SPIKE_LINE in lines
-    assert [line for line in lines if "/fix" in line] == [size]
+    assert [line for line in lines if "/change" in line] == [size]
 
 
-def test_suggests_fix_or_feature_when_kickoff_rendered(
+def test_suggests_change_or_feature_when_kickoff_rendered(
     demo_render: dict[str, RenderedFile],
 ) -> None:
     text = skill_text(demo_render, "kickoff")
@@ -2286,14 +2287,14 @@ def test_suggests_fix_or_feature_when_kickoff_rendered(
     for phrase in (
         "Propose the next unfinished item",
         "ask before starting",
-        "suggest `/fix` for a bug or a small bounded task",
-        *FIX_LIMIT_PHRASES,
+        "suggest `/change` for a bug or a small bounded task",
+        *CHANGE_LIMIT_PHRASES,
         "`/feature` otherwise",
     ):
         assert phrase in step, phrase
     assert "create" in step, step
     assert "tracker issue first if there is none" in step, step
-    assert [line for line in lines if "/fix" in line] == [step]
+    assert [line for line in lines if "/change" in line] == [step]
     assert "Never start editing during /kickoff" in text
 
 
@@ -2414,11 +2415,12 @@ MODEL_INVOCABLE_SKILLS = frozenset(
 # AGH-838 (ADR 0062): the skills only a person starts (`disable-model-invocation: true`), each
 # because it acts outside the session: posts a review (`review`), replies on threads and pushes
 # (`deliver`), moves issues to Done (`handoff`), dispatches the tag (`release`), commits, pushes and
-# opens a PR (`feature`, `implement`, `fix`, `refactor`, `upgrade`, `adr`), or writes the tracker
-# (`triage`, `incident`, `retro`, `onboard`).
+# opens a PR (`feature`, `implement`, `change`, `refactor`, `upgrade`, `adr`), or writes the tracker
+# (`triage`, `incident`, `retro`, `onboard`). `fix` is the alias of `change` and runs it.
 USER_ONLY_SKILLS = frozenset(
     {
         "adr",
+        "change",
         "deliver",
         "feature",
         "fix",
@@ -2511,7 +2513,7 @@ def test_keeps_skills_user_only_when_their_text_acts_outside_session(
     for name in MODEL_INVOCABLE_SKILLS:
         assert acting[name] <= OWNER_GATED_ACTS.get(name, set()), name
     # The patterns still see the flows they guard: a rewording that hides one fails here.
-    for name in ("deliver", "feature", "fix", "handoff", "implement", "release", "review"):
+    for name in ("deliver", "feature", "change", "handoff", "implement", "release", "review"):
         assert acting[name], name
 
 
@@ -2604,9 +2606,9 @@ def test_keeps_proposal_block_when_learn_skill_gains_personal(
     assert text.count("Then stop. The user decides whether and where it lands.") == 1
 
 
-# AGH-58: the /fix skill (spec AC-58.2-58.6).
+# AGH-58: the /change skill (spec AC-58.2-58.6).
 NO_AI_ATTRIBUTION = 'no AI co-author trailer, no "Generated with", no 🤖'
-FIX_STEP_PHRASES = {
+CHANGE_STEP_PHRASES = {
     1: ("ticket", "if it cannot be read, say so and stop"),
     2: ("`./hub worktree <team>-<n>-<desc>", "`make worktree NAME=…"),
     3: ("expected behaviour", "fails for the reported reason", "import", "setup", "RED"),
@@ -2627,7 +2629,7 @@ FIX_STEP_PHRASES = {
         "what is left before merge",
     ),
 }
-FIX_SWITCH_PHRASES = (
+CHANGE_SWITCH_PHRASES = (
     "**Stop and switch to `/feature`**",
     "new contract",
     "`guard.ask_before_edit`",
@@ -2640,7 +2642,7 @@ FIX_SWITCH_PHRASES = (
     "reusing the existing issue",
     "skip its step 5",
 )
-FIX_RECORD_PHRASES = (
+CHANGE_RECORD_PHRASES = (
     "the RED command and the failing assertion line",
     "the fix summary",
     "the `quality-reviewer` verdict",
@@ -2654,7 +2656,27 @@ FIX_RECORD_PHRASES = (
     "`/learn`",
     "`/handoff`",
 )
-FIX_RED_PUSH = "The RED commit stays local: the branch is pushed only after GREEN"
+CHANGE_RED_PUSH = "The RED commit stays local: the branch is pushed only after GREEN"
+# What the short path's description says first: the size rule, then what counts as small.
+CHANGE_DESCRIPTION_START = "Use when the change is small: "
+CHANGE_DESCRIPTION_PHRASES = (
+    "a bug",
+    "a tweak",
+    "docs",
+    "config",
+    "a small refactor",
+    "one repo",
+    "at most 5 changed non-test files",
+    "no new contract",
+)
+# The alias skill: the former name, kept for one release, that sends its caller to `/change`.
+FIX_ALIAS_PATH = "plugin/hub-workflow/skills/fix/SKILL.md"
+FIX_ALIAS_PHRASES = (
+    "`/fix` was renamed to `/change`",
+    "run `/change <issue>`",
+    "goes away in the next release",
+)
+FORMER_NAME = re.compile(rb"/fix\b")
 STEP_START = re.compile(r"^(\d+)\. ")
 
 
@@ -2674,37 +2696,40 @@ def numbered_steps(text: str) -> dict[int, list[str]]:
     return steps
 
 
-def test_lists_fix_steps_and_frontmatter_when_fix_rendered(
+def test_lists_change_steps_and_frontmatter_when_change_rendered(
     demo_render: dict[str, RenderedFile],
 ) -> None:
-    text = skill_text(demo_render, "fix")
+    text = skill_text(demo_render, "change")
 
     steps = numbered_steps(text)
 
     assert list(steps) == list(range(1, 9))
-    for number, phrases in FIX_STEP_PHRASES.items():
+    for number, phrases in CHANGE_STEP_PHRASES.items():
         step = " ".join(steps[number])
         for phrase in phrases:
             assert phrase in step, (number, phrase)
     assert "approves the plan" not in text
     fields = dict(line.split(": ", 1) for line in frontmatter_lines(text))
-    assert fields["name"] == "fix"
+    assert fields["name"] == "change"
     assert fields["disable-model-invocation"] == "true"
     assert fields["argument-hint"] == '"<tracker issue id>"'
+    assert fields["description"].startswith(CHANGE_DESCRIPTION_START), fields["description"]
+    for phrase in CHANGE_DESCRIPTION_PHRASES:
+        assert phrase in fields["description"], phrase
 
 
-def test_names_switch_to_feature_when_fix_rendered(demo_render: dict[str, RenderedFile]) -> None:
-    text = skill_text(demo_render, "fix")
+def test_names_switch_to_feature_when_change_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    text = skill_text(demo_render, "change")
 
     step = " ".join(numbered_steps(text).get(1, []))
 
     assert text.count("switch to `/feature`") == 1
-    for phrase in FIX_SWITCH_PHRASES:
+    for phrase in CHANGE_SWITCH_PHRASES:
         assert phrase in step, phrase
 
 
-def test_names_superpowers_once_when_fix_rendered(demo_render: dict[str, RenderedFile]) -> None:
-    text = skill_text(demo_render, "fix")
+def test_names_superpowers_once_when_change_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    text = skill_text(demo_render, "change")
     steps = numbered_steps(text)
 
     assert len(superpowers_lines(text)) == 1
@@ -2719,10 +2744,10 @@ def test_names_superpowers_once_when_fix_rendered(demo_render: dict[str, Rendere
     assert text.index("fails for the reported reason") < text.index(SUPERPOWERS_CONDITION)
 
 
-def test_keeps_record_in_pr_body_when_fix_rendered(demo_render: dict[str, RenderedFile]) -> None:
-    text = skill_text(demo_render, "fix")
+def test_keeps_record_in_pr_body_when_change_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    text = skill_text(demo_render, "change")
 
-    for phrase in FIX_RECORD_PHRASES:
+    for phrase in CHANGE_RECORD_PHRASES:
         assert phrase in text, phrase
 
 
@@ -2738,37 +2763,73 @@ def test_keeps_record_in_pr_body_when_fix_rendered(demo_render: dict[str, Render
     ],
     ids=["demo", "conventions"],
 )
-def test_names_configured_branch_when_fix_rendered(
+def test_names_configured_branch_when_change_rendered(
     document: Callable[[], dict[str, Any]], expected: str
 ) -> None:
     config = HubConfig.model_validate(document())
     render = {file.path: file for file in render_hub(config).files}
 
-    text = skill_text(render, "fix")
+    text = skill_text(render, "change")
 
     assert expected == f"on branch {substitution_mapping(config)['kickoff_branch']}."
     assert text.count(expected) == 1
-    assert FIX_RED_PUSH in text
+    assert CHANGE_RED_PUSH in text
     assert NO_AI_ATTRIBUTION in text
-    assert text.index(FIX_RED_PUSH) < text.index("**Ship**")
+    assert text.index(CHANGE_RED_PUSH) < text.index("**Ship**")
 
 
-# AGH-58 (AC-58.7): the rendered /fix skill fits the size rule's default for skills; the limit is
+# AGH-58 (AC-58.7): the rendered /change skill fits the size rule's default for skills; the limit is
 # a literal so a change to the constant does not move the test with it.
 @pytest.mark.parametrize(
     "document",
     [builders.a_hub_document, builders.a_two_team_document, builders.a_conventions_document],
     ids=["demo", "two_teams", "conventions"],
 )
-def test_fits_size_limit_when_fix_rendered(document: Callable[[], dict[str, Any]]) -> None:
+def test_fits_size_limit_when_change_rendered(document: Callable[[], dict[str, Any]]) -> None:
     assert DEFAULT_MAX_LINES["*/*"] == 80
     config = HubConfig.model_validate(document())
 
     text = {file.path: file.content for file in render_hub(config).files}[
-        "plugin/hub-workflow/skills/fix/SKILL.md"
+        "plugin/hub-workflow/skills/change/SKILL.md"
     ].decode("utf-8")
 
     assert line_count(text) <= DEFAULT_MAX_LINES["*/*"]
+
+
+def test_points_to_change_when_fix_alias_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    text = skill_text(demo_render, "fix")
+
+    fields = dict(line.split(": ", 1) for line in frontmatter_lines(text))
+
+    assert fields["name"] == "fix"
+    assert fields["disable-model-invocation"] == "true"
+    assert fields["description"].startswith("Deprecated name of /change"), fields["description"]
+    body = text.split("\n---\n", 1)[1]
+    for phrase in FIX_ALIAS_PHRASES:
+        assert phrase in body, phrase
+    # The alias holds no flow of its own: one paragraph, no numbered step.
+    assert numbered_steps(text) == {}
+    assert line_count(text) <= 12
+
+
+@pytest.mark.parametrize(
+    "document",
+    [builders.a_hub_document, builders.a_two_team_document, builders.a_conventions_document],
+    ids=["demo", "two_teams", "conventions"],
+)
+def test_names_fix_only_in_alias_when_hub_rendered(document: Callable[[], dict[str, Any]]) -> None:
+    config = HubConfig.model_validate(document())
+
+    contents = {file.path: file.content for file in render_hub(config).files}
+
+    # The alias names itself, so the pattern still finds the former name where one is written.
+    assert FORMER_NAME.search(contents[FIX_ALIAS_PATH])
+    others = sorted(
+        path
+        for path, content in contents.items()
+        if path != FIX_ALIAS_PATH and FORMER_NAME.search(content)
+    )
+    assert others == []
 
 
 def test_has_no_author_when_base_manifest_rendered(demo_render: dict[str, RenderedFile]) -> None:
