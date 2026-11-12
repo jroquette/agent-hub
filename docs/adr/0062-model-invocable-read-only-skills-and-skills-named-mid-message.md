@@ -39,7 +39,7 @@ For a skill named mid-message:
 
 - **(B1) A `hub web`-only rewrite** in `invocations.py`. Fixes one surface; a terminal session and any session started
   by `hub run` or the autonomous mode keep the bug.
-- **(B2) A rule in `AGENTS.md` alone.** Works in every session that loads the hub's instructions, but leaves the model
+- **(B2) A rule in the hub's instructions alone.** Works in every session that loads the hub's instructions, but leaves the model
   to notice the token, decide it is a skill and find a user-only skill's file by itself.
 - **(B3) A `UserPromptSubmit` hook in the base plugin, plus the short rule.** Chosen. The hook runs wherever the hub's
   hooks run (the hub's `.claude/settings.json`, and the plugin's `hooks.json` that `hub web` loads outside the hub
@@ -112,11 +112,15 @@ B3 was chosen over B1 because the hook covers every session that runs the hub's 
 
 ### The rule
 
-Step 6 of the hub's `AGENTS.md` Workflow, two lines: use the hub's skills and subagents when the work calls for them; one
-that pushes, opens a PR or writes the tracker runs only when the user names it; a `/<skill>` anywhere in a message runs
-(the `Skill` tool, else Read its `SKILL.md`). The skill descriptions carry the "when". The rendered `AGENTS.md` stays
-within the doctor's 100-line cap (`instructions.size`) in its largest test shape: the `cmd | tail` gotcha, which step 5
-already stated, moved into step 5, and the `brain/` line was shortened.
+Two short texts, since every session pays for them; the skill descriptions carry the "when":
+
+- Step 6 of the hub's `AGENTS.md` Workflow, one line: use the hub's skills and subagents as the work needs; a push, PR
+  or tracker flow runs only when the user names it. The rendered `AGENTS.md` stays within the doctor's 100-line cap
+  (`instructions.size`) in its largest test shape because the `brain/` line was shortened to one line.
+- A bullet in the hub's `CLAUDE.md` Claude Code notes, two lines: a `/<skill>` the user writes anywhere in a message runs
+  as if typed first, with the `Skill` tool, or by reading its `SKILL.md` when the tool refuses it (a user-only skill).
+  It is about Claude Code's tools, so it lives in `CLAUDE.md`, which Claude Code loads also where the hub's hooks do
+  not run (multi-repo cloud sessions load the attached hub's `CLAUDE.md`).
 
 ### Consequences
 
@@ -129,7 +133,7 @@ already stated, moved into step 5, and the `brain/` line was shortened.
 - Bad: one more hook process on every prompt (a Python start and a few `stat` calls).
 - Cloud sessions opened multi-repo (`/home/user` with the hub attached) load the hub's `.claude/skills/` from the
   additional directory, so they list the 9 skills once the hub is synced; they load none of the hub's hooks (playbook
-  `cloud-and-local.md`, AGH-699 E-22/E-23), so there the hook does not fire and the `AGENTS.md` rule is what makes a
+  `cloud-and-local.md`, AGH-699 E-22/E-23), so there the hook does not fire and the `CLAUDE.md` bullet is what makes a
   mid-message name run. Loading the hub's hooks in cloud sessions is an environment change left to the owner.
 
 ## More Information

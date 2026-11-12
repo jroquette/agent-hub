@@ -3040,6 +3040,21 @@ def test_imports_both_rule_files_when_claude_rendered(demo_config: HubConfig) ->
     assert sum("`./agent` (`make agent`)" in line for line in lines) == 1
 
 
+# AGH-838 (ADR 0062): AGENTS.md lets the model use the hub's skills and keeps the outward flows
+# behind the user; CLAUDE.md says how a skill named anywhere in a message runs, for the sessions
+# that load the hub's instructions but not its hooks (multi-repo cloud sessions).
+def test_states_skill_rules_when_agents_and_claude_rendered(demo_config: HubConfig) -> None:
+    agents = text_of(demo_config, "AGENTS.md")
+    claude = " ".join(text_of(demo_config, "CLAUDE.md").split())
+
+    assert (
+        "6. Use the hub's skills and subagents as the work needs; a push, PR or tracker flow runs"
+        " only when the user names it." in agents
+    )
+    assert "A `/<skill>` the user writes anywhere in a message runs as if typed first" in claude
+    assert "Read its `SKILL.md` when the tool refuses it (a user-only skill)" in claude
+
+
 # AGH-134: the sandbox the settings turn on is explained where Claude Code reads it, and the
 # bare-call rule is in AGENTS.md's Gotchas (the AGENTS.md line cap leaves room for one line).
 def test_explains_sandbox_when_claude_rendered(demo_config: HubConfig) -> None:
@@ -3391,11 +3406,13 @@ def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubCon
 # AGH-578: re-pinned when line 3 named ./hub repo.
 # AGH-688: re-pinned when steps 2-3 and Brain rules named the hub MCP's search,
 # read and propose, and the double-wiring and superpowers bullets moved to CLAUDE.md.
-# AGH-838: re-pinned when step 6 opened the read-only skills to the model, step 5 took the
-# `cmd | tail` gotcha and the brain line was shortened to keep the file within 100 lines.
-DEMO_AGENTS_SHA256 = "9473f97dc3d467f6f724c4f15e2c50304f1373c82a91bcc6dff9ed17454cd8ec"
+# AGH-815: re-pinned when Workflow item 5 became one line and Brain rules gained the
+# dropped-direction bullet.
+# AGH-838: re-pinned when step 6 opened the hub's skills to the model and the brain line was
+# shortened to keep the file within 100 lines.
+DEMO_AGENTS_SHA256 = "a0bc3d64d8794113308d3e7cee7e746aca7d3d55a03fa2a37ea53379f18c052a"
 ALL_MODULES_SHA256 = {
-    "AGENTS.md": "aef776663371f9e6d3a12c9881ce41526996e7c15742cf1c89b8edbf498486f1",
+    "AGENTS.md": "30cdf163011fc8107dff5339d8d65c0974c0eab81faa44a93c24254d1c7879e6",
     ".claude-plugin/marketplace.json": (
         "f7324911e70a0f3255274721636821a9b65a5716f04c5f6e3e470e74dc7b8ac7"
     ),
