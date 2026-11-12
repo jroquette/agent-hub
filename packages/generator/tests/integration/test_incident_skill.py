@@ -188,7 +188,7 @@ def test_leaves_the_mitigation_to_the_owner_when_rendered(skill: str) -> None:
     assert "`./hub workflow respond <run> --choice none`" in text
     assert "Never decide it yourself" in text
     assert "applies nothing" in text
-    assert "`/fix` (or `/change`)" in text
+    assert "`/change`" in text
 
 
 def test_points_to_the_inbox_and_keeps_tracker_writes_out_of_the_run_when_rendered(
@@ -214,7 +214,7 @@ def test_keeps_a_one_line_fallback_when_hub_web_is_down(skill: str) -> None:
     assert "hub web is down" in line
     assert "`brain/_inbox/`" in line
     assert "`provenance: agent`" in line
-    assert "`/fix` (or `/change`)" in line
+    assert "`/change`" in line
 
 
 def test_keeps_the_log_in_the_session_until_the_handoff_when_rendered(skill: str) -> None:

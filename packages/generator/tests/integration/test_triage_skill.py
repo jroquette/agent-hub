@@ -305,7 +305,6 @@ TRIAGE_ROUTES = (
     "the `upgrade` flow",
     "`/change`",
     "`/feature`",
-    "(or /change)",
 )
 
 
