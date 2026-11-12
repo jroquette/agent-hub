@@ -147,6 +147,19 @@ else
     echo "cloud-setup: WARN no commit author in hub.json or HUB_AUTHOR_NAME/HUB_AUTHOR_EMAIL; commits carry the container's identity"
   fi
 fi
+# The hub's git hooks (ADR 0061), as hub sync sets them: core.hooksPath = .githooks, unless
+# another hook manager already holds it. A WARN when it cannot be set: the run goes on.
+if [ -e "$hub_dir/.git" ]; then
+  case $(git -C "$hub_dir" config --local --get core.hooksPath || true) in
+    "" | .git/hooks | .git/hooks/)
+      if git -C "$hub_dir" config --local core.hooksPath .githooks; then
+        echo "cloud-setup: git hooks = .githooks"
+      else
+        echo "cloud-setup: WARN could not set core.hooksPath in the hub"
+      fi
+      ;;
+  esac
+fi
 
 # Added beside any helper already there (gh auth setup-git writes two values), once. It answers
 # only while GH_TOKEN is set, so a later shell without it falls through to the next helper.

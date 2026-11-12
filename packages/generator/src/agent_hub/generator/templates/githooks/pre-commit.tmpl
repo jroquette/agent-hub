@@ -1,0 +1,14 @@
+#!/bin/sh
+# The hub's pre-commit hook (ADR 0061), on when git's core.hooksPath is .githooks (hub sync and
+# hub setup set it). It runs `hub doctor --staged` through the hub's ./hub: the hygiene of each
+# staged file, the checks of each feature folder with a staged path and, when staged, hub.json,
+# all read from git's index, never the working tree, so an edit the commit does not stage never
+# blocks it. Nothing is cloned or downloaded at commit time and nothing is written outside the
+# hub and $TMPDIR, so it runs inside the Claude Code sandbox. The whole-hub hub doctor runs in
+# CI (make check). Managed by hub sync.
+case $0 in
+  */*) hooks_dir=${0%/*} ;;
+  *) hooks_dir=. ;;
+esac
+hub_dir=$(CDPATH= cd -P -- "$hooks_dir/.." && pwd -P) || exit 1
+exec "$hub_dir/hub" doctor --staged
