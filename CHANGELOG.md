@@ -34,6 +34,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `/learn` and hands off, leaving the ticket with its status and a comment on what was done and dropped (AGH-815).
   The hub's `AGENTS.md` says so in one line, and its Workflow item 5 lost the sentence that repeated the Gotchas line
   on redirecting output.
+- `/fix`, `/refactor` and `/upgrade` show an in-scope and an out-of-scope list with their first plan, post them on
+  the tracker issue, and before the PR remove or ask about each changed file outside the in-scope list (AGH-813).
 
 ### Fixed
 
