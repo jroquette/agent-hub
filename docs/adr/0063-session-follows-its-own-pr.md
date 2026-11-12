@@ -1,4 +1,4 @@
-# 0062. The session that opens a pull request follows it until it merges
+# 0063. The session that opens a pull request follows it until it merges
 
 - Status: proposed
 - Date: 2026-11-11

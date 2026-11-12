@@ -1287,7 +1287,7 @@ Continuity between sessions comes from the brain and the summaries, not from rer
   can be debugged (breakpoints, Step, Continue, inspect) off production only (2026-10-23, AGH-507,
   [ADR 0049](adr/0049-scenario-blocks-and-run-control.md), accepted).
 
-**7. Sessions drive their own PRs and claim their tickets (2026-11-11, AGH-805, [ADR 0062](adr/0062-session-follows-its-own-pr.md), proposed).**
+**7. Sessions drive their own PRs and claim their tickets (2026-11-11, AGH-805, [ADR 0063](adr/0063-session-follows-its-own-pr.md), proposed).**
 
 - The session that opens a pull request follows it until it merges: every skill that opens one then runs
   `/deliver`'s follow-up loop on it in the same session, without being asked. A cloud session is woken by the pull
