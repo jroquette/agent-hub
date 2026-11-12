@@ -1106,6 +1106,11 @@ The sessions and GitHub/Linear feed the collector, and the web app reads everyth
   a block, when it cannot check), keeps to a 5 s budget at the start and 15 s at the stop, and cannot see another Claude
   session or the user editing the same checkout, or a main-session background command started before the agent
   ([design/hub-generator.md](design/hub-generator.md)).
+- **Secrets in a prompt** (AGH-814): a third stdlib Python 3.9 hook, `plugin/hub-workflow/hooks/prompt_secret.py`,
+  runs on UserPromptSubmit before the sensor. When a prompt names a secret file (the guard's rule), holds a
+  secret-shaped value (the stdlib reader's shapes) or holds two or more `NAME=value` lines, it prints one warning that
+  suggests a git-ignored env file, never quotes the secret, and never blocks; it fails open (silent, exit 0). Rule 4 of
+  the managed `AGENTS.md` also keeps secrets out of replies, commits, PRs, tracker comments and brain notes.
 - **Packaging ([ADR 0022](adr/0022-container-packaging.md)):** besides `uvx`/`uv tool install`, the control plane
   ships as a container image built from the repo (`Dockerfile`, `compose.yaml`): multi-stage (the web app built from
   its lockfile, the workspace installed from `uv.lock`), base images pinned by digest, a non-root user (uid 10001), a

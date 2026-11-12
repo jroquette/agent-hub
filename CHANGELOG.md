@@ -11,6 +11,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- A hub warns when a prompt looks like it holds a secret, and suggests a git-ignored env file instead; it never blocks
+  the prompt (AGH-814). After `./hub sync`, `AGENTS.md` also keeps secrets out of replies, commits, PRs, tracker
+  comments and brain notes.
+
 ### Changed
 
 - `hub web` opens the chat when you start a new feature, as every other start does, instead of the Discuss panel and

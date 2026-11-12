@@ -316,7 +316,9 @@ Release notes, for reviewing the sync PR's diff. Control plane: `./hub sync` add
 rewrites `hooks.json`, `.claude/settings.json` (the sensor joins eleven hook events), `guard.py`, `stop_gate.py` and
 `hubhooks.py`, decisions unchanged. Read-only gate (AGH-141): adds the hook `readonly_gate.py` and rewrites
 `hooks.json`, `.claude/settings.json` and the researcher, spec-reviewer and quality-reviewer (`mutates_checkout: false`,
-which any agent may add); one that changes a checkout is held at its stop once, or the change is reported.
+which any agent may add); one that changes a checkout is held at its stop once, or the change is reported. Prompt
+secrets (AGH-814): adds the hook `prompt_secret.py` and rewrites `hooks.json`, `.claude/settings.json` and `AGENTS.md`
+(rule 4); a prompt that looks like it holds a secret gets a warning, never a block.
 
 ---
 
