@@ -43,7 +43,7 @@
     ".claude/settings.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "3e84fc75cdc525028a5d22837d64cc2f54f7ed2132f3b181db3da2239a27514c"
+      "sha256": "84121552dde8064fae3da69c2257f62776073f654ad1d73f2e0eec7c78d242c6"
     },
     ".claude/settings.project.json": {
       "ownership": "seeded"
@@ -194,7 +194,7 @@
     "CLAUDE.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "b67565d061a56c185e410fa954e9c5b80135978d72da043ef4efc567884bea12"
+      "sha256": "a8cdb9ecda4af8aeb9093d04ac400d963c8d559bdd94f251d6538f3051290b76"
     },
     "Makefile": {
       "executable": false,
