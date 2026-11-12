@@ -21,6 +21,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   adds the `resolved_elsewhere` learning state.
 - Proposals of the same inbox note now count once in the Learnings quick views, the Learnings tab and the sidebar
   badge (AGH-804).
+- `/fix`, `/refactor` and `/upgrade` show an in-scope and an out-of-scope list with their first plan, post them on
+  the tracker issue, and before the PR remove or ask about each changed file outside the in-scope list (AGH-813).
 
 ### Fixed
 
