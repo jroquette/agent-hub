@@ -9,7 +9,9 @@ the CLI:
 - each ``/agent-<name>`` at the start or after a space becomes the CLI's mention
   ``@agent-<name>``, with ``<name>`` made exact the same way against the session's agents.
 
-Anything else, an unknown name included, is left as typed.
+Anything else, an unknown name included, is left as typed. A ``/<name>`` later in the message
+stays plain text here: the hub plugin's ``UserPromptSubmit`` hook names it back to the model
+(ADR 0062), as it does in a terminal session in the hub.
 """
 
 import re

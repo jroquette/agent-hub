@@ -43,6 +43,8 @@ PRE_TOOL_USE_PATHS = (
     "pre_tool_use (PreToolUse Bash)",
     "pre_tool_use (PreToolUse Read)",
     "pre_tool_use (PreToolUse Edit)",
+    # AGH-838: the prompt's skills, on every prompt.
+    "prompt_skills (UserPromptSubmit, two skills named)",
 )
 ADR_PATHS = (*LIST_COMMAND_PATHS, SHIM_PATH, *ADR_PAGES, *ADR_ROUTES, *PRE_TOOL_USE_PATHS)
 
@@ -238,7 +240,7 @@ def test_raises_budget_file_error_when_enforced_is_not_a_boolean(
 
 def test_enforces_nothing_with_the_default_margin_when_shipped() -> None:
     budgets = load_budgets(SHIPPED)
-    assert len(budgets) == 38
+    assert len(budgets) == 39
 
     assert [key for key, budget in budgets.items() if budget.enforced] == []
     assert budgets_module.load_margin(SHIPPED) == pytest.approx(0.2)
@@ -334,7 +336,7 @@ OWNER_TABLE: list[tuple[str, str, Budget | None]] = [
 
 @pytest.mark.parametrize(("kind", "path", "expected"), OWNER_TABLE)
 def test_seeds_the_owner_budget_when_shipped(kind: str, path: str, expected: Budget | None) -> None:
-    assert len(OWNER_TABLE) == 38
+    assert len(OWNER_TABLE) == 39
 
     assert load_budgets(SHIPPED).get((kind, path)) == expected
 
@@ -353,7 +355,7 @@ def test_names_only_probed_paths_when_the_shipped_budgets_are_read() -> None:
     }
     keys = [(row["kind"], row["path"]) for row in json.loads(SHIPPED.read_text("utf-8"))["rows"]]
     assert len(keys) > 0
-    assert len(probed) == 38
+    assert len(probed) == 39
 
     assert sorted(set(keys) - probed) == []
 
@@ -452,7 +454,7 @@ def test_keeps_every_budget_under_the_adr_ceiling_when_shipped() -> None:
 def test_names_only_probed_paths_when_the_adr_table_is_read() -> None:
     ceilings = _ceilings(ADR.read_text("utf-8"))
     probed = _probed()
-    assert len(probed) == 38
+    assert len(probed) == 39
 
     assert [c for c in ceilings if c.paths != EVERY and (c.kind, c.paths) not in probed] == []
     assert sorted({c.kind for c in ceilings}) == sorted({kind for kind, _path in probed})

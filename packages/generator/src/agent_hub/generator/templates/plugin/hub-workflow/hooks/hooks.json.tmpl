@@ -1,5 +1,5 @@
 {
-  "description": "Hub guards and session hooks (brief, check_fast stop gate, post-edit lint, snapshots, read-only agent gate) and the event sensor of the local control plane; project values come from hub.json.",
+  "description": "Hub guards and session hooks (brief, check_fast stop gate, post-edit lint, snapshots, read-only agent gate, skills named in a prompt) and the event sensor of the local control plane; project values come from hub.json.",
   "hooks": {
     "SessionStart": [
       {"matcher": "startup|resume|clear|compact", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/session_start.py\"", "timeout": 20}]},
@@ -25,7 +25,8 @@
       {"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/event_sensor.py\"", "timeout": 5}]}
     ],
     "UserPromptSubmit": [
-      {"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/event_sensor.py\"", "timeout": 5}]}
+      {"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/event_sensor.py\"", "timeout": 5}]},
+      {"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/prompt_skills.py\"", "timeout": 5}]}
     ],
     "PostToolUseFailure": [
       {"matcher": "*", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/event_sensor.py\"", "timeout": 5}]}

@@ -161,6 +161,7 @@ HUB_HOOK_SCRIPTS = (
     "session_start.py",
     "stop_gate.py",
     "readonly_gate.py",
+    "prompt_skills.py",
 )
 
 

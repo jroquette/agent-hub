@@ -102,9 +102,8 @@ def test_stays_read_only_and_posts_nothing_when_skill_rendered(
     texts: dict[str, str], path: str
 ) -> None:
     text = texts[path]
-    head = text.split("\n---\n", 1)[0]
 
-    assert "disable-model-invocation: true" in head
+    # AGH-838 (ADR 0062): the model may load them by itself because of what they promise here.
     assert "never edits, commits, pushes or posts" in text
     assert "never by checking it out" in text
     assert "Nothing is applied here" in text
