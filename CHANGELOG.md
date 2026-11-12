@@ -43,12 +43,14 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   in Settings, instead of "Linear is not connected for hub web" (AGH-816, ADR 0060). It reads through GraphQL
   whenever a key is there; the transport still says only how the hub's agents reach Linear. The not-connected notice
   now points to Settings.
-- A pull request opened in a Claude Code cloud session no longer keeps the attribution footer that the session's
-  environment adds to its body (AGH-834). That footer made the hub CI's authorship step fail the PR. The skills that
-  open a PR, `hub step pr`, `hub ship` and `hub run` now set the PR's body again with the same text right after they
-  open it. That second write removes the footer. They then read the body back: if it still carries AI attribution,
-  you get one warning that names the PR. Outside a cloud session nothing changes. The skill texts arrive with
-  `hub sync` after you bump `platform.version`.
+- A Claude Code cloud session adds an attribution footer to the body of each pull request it opens (AGH-834). That
+  footer made the hub CI's authorship step fail the PR. The skills that open a PR now set its body again with the
+  same text through the session's GitHub tools, right after they open it. That edit removes the footer. They then
+  read the PR back; if the footer stays, the skill tells you once and names the PR. `hub step pr`, `hub ship` and
+  `hub run` set the body again through `gh`. In today's cloud sessions an edit through `gh` gets a footer again, so
+  they print one warning that names the PR. After that warning, `/learn promote`, `/release` and `/upgrade` set the
+  body again through the session's GitHub tools. Outside a cloud session nothing changes. The skill texts arrive
+  with `hub sync` after you bump `platform.version`.
 
 ## [0.35.1] - 2026-11-10
 
