@@ -456,7 +456,7 @@
     "plugin/hub-workflow/skills/fix/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "13571ea778ea36ec79246032bdd53a62445dad77920fb8ffcd9c64af01ccc499"
+      "sha256": "2b42ed672178ed81df76d96bcf0b3a117c93c4fadddfc7695e3687a0c8d98a58"
     },
     "plugin/hub-workflow/skills/handoff/SKILL.md": {
       "executable": false,
@@ -526,7 +526,7 @@
     "plugin/hub-workflow/skills/refactor/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "44f00ca95afaeadc239b7324dd5fc90f8235b939cc0f68d6f779f59e359d39cf"
+      "sha256": "9e6da591d43338d739c71a2144990f3a49ee7e70c6cb2e4b0f530c0b27f2d8b3"
     },
     "plugin/hub-workflow/skills/release/SKILL.md": {
       "executable": false,
@@ -571,7 +571,7 @@
     "plugin/hub-workflow/skills/upgrade/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "4ab10edd0d47c433abe572fba64e1389734426d5e0c79538f88bae1354d66b49"
+      "sha256": "c4b016d1cfd984f3061b85862d1f448432872efc42f375c1cf35b7de24de3edd"
     },
     "plugin/hub-workflow/skills/ux-review/SKILL.md": {
       "executable": false,
