@@ -4,8 +4,10 @@
    runs, in ``hub.json`` order, before any push (spec D-order). After the checks, each
    worktree is clean again and its HEAD and task branch are where the check found them, so
    what is pushed is what was checked.
-2. Per target: the push (after the push guard), then the PR opened or found. A failure lists
-   the PRs already open; no PR is linked and the tracker is not written.
+2. Per target: the push (after the push guard), then the PR opened or found. A PR just opened
+   whose body GitHub holds with something added (a cloud session's attribution footer) gets
+   its body again; one warning names a PR whose body may still hold it. A failure lists the
+   PRs already open; no PR is linked and the tracker is not written.
 3. With two PRs or more, per PR in ``hub.json`` order: its body read back, its Related PRs
    section made to list the other PRs (``with_related``), and the body edited only when that
    changed it, so a re-run edits nothing. A failure lists the PRs; the tracker is not written.
@@ -333,6 +335,8 @@ def _push_and_open(run: ShipRun, target: ShipTarget) -> str:
     except PrStepError as error:
         raise _StepError(PR_STEP, error.reason) from None
     typer.echo(f"{'found' if opened.found else 'opened'}: {target.repo}  {opened.url}")
+    if opened.warning is not None:
+        typer.echo(f"{PREFIX}: warning: {opened.warning}", err=True)
     return opened.url
 
 

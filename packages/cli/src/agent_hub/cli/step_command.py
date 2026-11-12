@@ -365,6 +365,7 @@ def pr(
     child, timeouts = ship_child(facts.path), step_timeouts()
     workspace = str(facts.workspace)
     pr_target = PrTarget(github=facts.github, base_branch=facts.default_branch, branch=facts.branch)
+    prefix, stderr = _pr_warnings()
     try:
         summary = summary if summary.strip() else _commit_summary(facts)
         push_branch(child, target=pr_target, environ=os.environ, timeouts=timeouts)
@@ -374,14 +375,10 @@ def pr(
         conventions = facts.conventions
         titled = titled_pr(subject, conventions=conventions, issue_id=issue, workspace=workspace)
         if titled.unmatched is not None:
-            mode = _IN_PROCESS.get()
             line = unmatched_warning(
-                "hub step pr" if mode is None else mode.prefix,
-                line=titled.unmatched,
-                commit_title=conventions.commit_title,
+                prefix, line=titled.unmatched, commit_title=conventions.commit_title
             )
-            # In process, past the stderr the step's exit reads: the user sees it, as in hub run.
-            typer.echo(line, file=sys.stderr if mode is None else mode.stderr)
+            typer.echo(line, file=stderr)
         body = pr_body(
             issue_id=issue,
             summary=summary,
@@ -399,6 +396,8 @@ def pr(
         )
     except PrStepError as error:
         _fail("pr", error.reason)
+    if opened.warning is not None:
+        typer.echo(f"{prefix}: warning: {opened.warning}", file=stderr)
     _print(
         {
             "url": opened.url,
@@ -407,6 +406,14 @@ def pr(
             "title_unmatched": titled.unmatched,
         }
     )
+
+
+def _pr_warnings() -> tuple[str, TextIO]:
+    """Whom a warning of the ``pr`` step names and where it goes: the step and its stderr, or,
+    in process, the parent command and the stderr past the one the step's exit reads (the user
+    sees it, as in hub run)."""
+    mode = _IN_PROCESS.get()
+    return ("hub step pr", sys.stderr) if mode is None else (mode.prefix, mode.stderr)
 
 
 @step_app.command("report")
