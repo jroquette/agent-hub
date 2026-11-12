@@ -32,7 +32,7 @@ def _labelled_session(composed: Any, *, ended: bool) -> None:
         tools=tools,
         ended=ended,
         git_branch="jdoe/dem-42-export-button",
-        slash_commands=("/feature", "/fix"),
+        slash_commands=("/feature", "/change"),
     )
     events += an_agent_call(
         "toolu_agent_1",
@@ -47,7 +47,7 @@ def _labelled_session(composed: Any, *, ended: bool) -> None:
 LABEL = {
     "issue": "DEM-42",
     "workflow": "/feature",
-    "workflows": ["/feature", "/fix", "/create-plan"],
+    "workflows": ["/feature", "/change", "/create-plan"],
     "repo": "demo-api",
     "branch": "jdoe/dem-42-export-button",
 }

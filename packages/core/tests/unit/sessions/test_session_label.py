@@ -48,30 +48,46 @@ def test_finds_no_issue_when_branch_is_main_or_other_team(branch: str) -> None:
 
 def test_picks_first_workflow_when_prompts_and_skill_used() -> None:
     events = a_session_events(
-        slash_commands=("/feature", "/fix"),
+        slash_commands=("/feature", "/change"),
         tools=(("Skill", {"skill": "hub-workflow:create-plan"}), ("Read", {"path": "a.py"})),
     )
 
     label = session_label(label_signals(as_stored(events)))
 
     assert label.workflow == "/feature"
-    assert label.workflows == ("/feature", "/fix", "/create-plan")
+    assert label.workflows == ("/feature", "/change", "/create-plan")
     assert label.repo == "demo-api"
 
 
 def test_skips_routine_command_when_choosing_workflow() -> None:
     assert {"/kickoff", "/clear", "/compact"} <= ROUTINE_COMMANDS
-    events = a_session_events(slash_commands=("/kickoff", "/clear", "/fix", "/fix"))
+    events = a_session_events(slash_commands=("/kickoff", "/clear", "/change", "/change"))
 
     label = session_label(label_signals(as_stored(events)))
 
-    assert label.workflow == "/fix"
-    assert label.workflows == ("/kickoff", "/clear", "/fix")
+    assert label.workflow == "/change"
+    assert label.workflows == ("/kickoff", "/clear", "/change")
     only_routine = session_label(
         label_signals(as_stored(a_session_events(slash_commands=("/kickoff",))))
     )
     assert only_routine.workflow == "/kickoff"
     assert session_label(label_signals(as_stored(a_session_events()))).workflow is None
+
+
+@pytest.mark.parametrize("command", ["/fix", "/change", "hub-workflow:fix"])
+def test_labels_fix_as_change_when_session_started_with_either(command: str) -> None:
+    label = session_label(label_signals(as_stored(a_session_events(slash_commands=(command,)))))
+
+    assert label.workflow == "/change"
+    assert label.workflows == ("/change",)
+
+
+def test_labels_change_once_when_session_used_both_names() -> None:
+    prompts = a_session_events(slash_commands=("/fix", "/change"))
+    skill_call = a_session_events(tools=(("Skill", {"skill": "hub-workflow:fix"}),))
+
+    assert session_label(label_signals(as_stored(prompts))).workflows == ("/change",)
+    assert session_label(label_signals(as_stored(skill_call))).workflow == "/change"
 
 
 def test_takes_latest_branch_when_branch_changes() -> None:
