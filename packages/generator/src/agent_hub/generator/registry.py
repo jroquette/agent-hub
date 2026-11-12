@@ -19,6 +19,7 @@ from typing import Final, NamedTuple
 
 from agent_hub.core.features.agent_outputs import OUTPUT_SCHEMA_FILES, OUTPUT_SCHEMA_PACKAGE
 from agent_hub.core.hub_config.schema import SCHEMA_FILE, SCHEMA_PACKAGE
+from agent_hub.core.hub_files.git_hooks import GIT_HOOKS_FOLDER
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership
 from agent_hub.generator.built_json import (
     managed_settings,
@@ -250,6 +251,17 @@ def _entry_point(path: str) -> TemplateEntry:
     )
 
 
+def _git_hook(name: str) -> TemplateEntry:
+    """A git hook in `.githooks/`: managed, executable, from `githooks/<name>.tmpl`."""
+    return TemplateEntry(
+        path=f"{GIT_HOOKS_FOLDER}/{name}",
+        source=_template(f"githooks/{name}.tmpl"),
+        kind=Kind.GENERIC,
+        ownership=Ownership.MANAGED,
+        executable=True,
+    )
+
+
 def _hook_entry_point(name: str) -> TemplateEntry:
     """A base plugin hook that `hooks.json` runs."""
     return _entry_point(f"{_BASE_PLUGIN}/hooks/{name}.py")
@@ -275,6 +287,10 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
         ownership=Ownership.MANAGED,
     ),
     _project_built(".claude/settings.project.json", project_settings),
+    # The git hooks (ADR 0061), on through `core.hooksPath` (hub sync): the commit's
+    # checks on git's index, and the commit message's authorship; no download at commit time.
+    _git_hook("commit-msg"),
+    _git_hook("pre-commit"),
     _generic_managed(".github/workflows/ci.yml", "github/workflows/ci.yml.tmpl"),
     _generic_seeded(".gitignore", "gitignore.tmpl"),
     # The hub's MCP server for Claude Code, `./hub mcp` (AGH-392 D-mcp-json); no seeded sibling.
@@ -284,7 +300,6 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
         kind=Kind.GENERIC,
         ownership=Ownership.MANAGED,
     ),
-    _generic_managed(".pre-commit-config.yaml", "pre-commit-config.yaml.tmpl"),
     _generic_managed("AGENTS.md", "AGENTS.md.tmpl"),
     _project_seeded("AGENTS.project.md", "AGENTS.project.md.tmpl"),
     _generic_managed("CLAUDE.md", "CLAUDE.md.tmpl"),
@@ -340,8 +355,8 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
     # The hooks, copied from the hub as they are (spec D4); only the entry points `hooks.json` runs
     # are executable (Q-3): `hubhooks.py` and the reader are their shared modules. The event
     # sensor (AGH-200 D6) also lends its send function to the guard and the Stop gate.
-    # The git commit-msg hook `.pre-commit-config.yaml` runs with `python3` (AGH-699 C-8): not a
-    # Claude Code hook, so not executable; it reads the guard's attribution pattern.
+    # The git commit-msg hook `.githooks/commit-msg` runs with `python3` (AGH-699 C-8, ADR 0061):
+    # not a Claude Code hook, so not executable; it reads the guard's attribution pattern.
     _generic_managed(
         f"{_BASE_PLUGIN}/hooks/commit_msg.py", f"{_BASE_PLUGIN}/hooks/commit_msg.py.tmpl"
     ),

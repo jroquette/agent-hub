@@ -4,7 +4,6 @@ import inspect
 import json
 import os
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -60,10 +59,11 @@ from agent_hub.generator.workflow_discovery import discover_workflows
 DESIGN_PATHS = (
     ".claude/settings.json",
     ".claude/settings.project.json",
+    ".githooks/commit-msg",
+    ".githooks/pre-commit",
     ".github/workflows/ci.yml",
     ".gitignore",
     ".mcp.json",
-    ".pre-commit-config.yaml",
     "AGENTS.md",
     "AGENTS.project.md",
     "CLAUDE.md",
@@ -3002,8 +3002,6 @@ def test_tells_sandbox_from_access_when_readme_rendered(demo_config: HubConfig) 
     assert "(rule `sandbox.workflow`)" in readme
 
 
-# AC-3.19 (Q7, O4): the hygiene hooks of the pinned pre-commit-hooks release.
-HYGIENE_HOOKS = ("trailing-whitespace", "end-of-file-fixer", "check-json", "check-yaml")
 PLACEHOLDER = re.compile(r"@@(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)")
 # AGH-16 Q-11: an action is pinned by its 40-hex commit SHA, the release named in a comment.
 ACTION_PIN = r"@[0-9a-f]{40}  # v\d+\.\d+\.\d+"
@@ -3013,33 +3011,18 @@ PINNED_SETUP_UV = re.compile(
 PINNED_USES = re.compile(rf"^\s+-?\s*uses: [\w.-]+(?:/[\w.-]+)+{ACTION_PIN}$")
 
 
-# The hub-doctor hook's entry: the shim, run from the hub root (pre-commit's cwd).
-HUB_DOCTOR_ENTRY = "./hub doctor"
+# AGH-835 (ADR 0061): the hub's git hooks, on through `core.hooksPath = .githooks`.
+PRE_COMMIT_HOOK = ".githooks/pre-commit"
+COMMIT_MSG_HOOK = ".githooks/commit-msg"
+# The last line of each hook: the shim or the commit-msg check, found from the hook's own folder.
+PRE_COMMIT_EXEC = 'exec "$hub_dir/hub" doctor --staged'
+COMMIT_MSG_EXEC = 'exec python3 "$hub_dir/plugin/hub-workflow/hooks/commit_msg.py" "$1"'
 
 
-def pre_commit_hook(text: str, hook_id: str) -> str:
-    """The lines of the one hook whose ``- id:`` is ``hook_id``, as written."""
-    blocks = re.findall(rf"^( +)- id: {re.escape(hook_id)}\n((?:\1  .*\n)*)", text, re.MULTILINE)
-    assert len(blocks) == 1, text
-    return str(blocks[0][1])
-
-
-def pre_commit_entry(text: str, hook_id: str = "hub-doctor") -> str:
-    """The value of the ``entry:`` key of the hook ``hook_id``, as written."""
-    hook = pre_commit_hook(text, hook_id)
-    entries = [line.strip() for line in hook.splitlines() if line.strip().startswith("entry:")]
-    assert len(entries) == 1, entries
-    return entries[0].removeprefix("entry:").strip()
-
-
-def run_pre_commit_entry(
-    config: HubConfig, root: Path, env: Mapping[str, str]
-) -> subprocess.CompletedProcess[str]:
-    """Run the hub-doctor entry as pre-commit runs a ``language: system`` hook: split, no shell."""
-    command = shlex.split(pre_commit_entry(text_of(config, ".pre-commit-config.yaml")))
-    assert command == ["./hub", "doctor"]
-    return subprocess.run(  # noqa: S603 - the rendered shim by absolute path, no shell
-        [str(root / "hub"), *command[1:]],
+def run_pre_commit_hook(root: Path, env: Mapping[str, str]) -> subprocess.CompletedProcess[str]:
+    """Run the rendered pre-commit hook as git runs it: by path, from the hub root, no argument."""
+    return subprocess.run(  # noqa: S603 - the rendered hook by absolute path, no shell
+        [str(root / PRE_COMMIT_HOOK)],
         capture_output=True,
         text=True,
         check=False,
@@ -3142,6 +3125,23 @@ class TestCiWorkflow:
         # Q-10: the same job, the golden step right before make check, after the credential.
         assert steps[-2:] == [golden, make_check]
         assert steps.index(ci_step(ci, CREDENTIAL_STEP)) < steps.index(golden)
+
+    # AGH-835 AC-4 (ADR 0061): the commit checks only what it stages; CI's `make check` runs the
+    # whole-hub doctor (every rule, every feature) and fails on any error anywhere.
+    @pytest.mark.parametrize("config_name", ["demo", "variant"])
+    def test_runs_whole_hub_doctor_when_ci_make_check_runs(
+        self, config_name: str, request: pytest.FixtureRequest
+    ) -> None:
+        config = request.getfixturevalue(f"{config_name}_config")
+        ci = text_of(config, ".github/workflows/ci.yml")
+        makefile = text_of(config, "Makefile")
+
+        assert "run: make check\n" in ci_step(ci, MAKE_CHECK_STEP)
+        target = makefile.index("\ncheck:") + 1
+        recipe = makefile[target:].split("\n\n", 1)[0].splitlines()[1:]
+        assert recipe[0] == "\t@$(HUB) doctor"
+        assert "--staged" not in ci + makefile
+        assert "--only" not in "\n".join(recipe)
 
     @pytest.mark.parametrize("config_name", ["demo", "variant"])
     def test_names_secret_only_by_expression_when_ci_rendered(
@@ -3314,9 +3314,11 @@ def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubCon
 # AGH-578: re-pinned when line 3 named ./hub repo.
 # AGH-688: re-pinned when steps 2-3 and Brain rules named the hub MCP's search,
 # read and propose, and the double-wiring and superpowers bullets moved to CLAUDE.md.
-DEMO_AGENTS_SHA256 = "8f54186a0573bc7632cfeb5e5894070f8094a357a2d974d9d3e2ac1ba283ed78"
+# AGH-815: re-pinned when Workflow item 5 became one line and Brain rules gained the
+# dropped-direction bullet.
+DEMO_AGENTS_SHA256 = "e198a14e352ccab704ccd6ddb3bd7d4023863545f336da1292ede936502b75d0"
 ALL_MODULES_SHA256 = {
-    "AGENTS.md": "2c6796fa940a1e40b2f8e8453ddbb85357ed13c6b0776ce2a8cf634fb37cf241",
+    "AGENTS.md": "6e9a1b3f94a75b9979574e0ee851e11195a4631d3e0c58be356e9053b7eb0d4f",
     ".claude-plugin/marketplace.json": (
         "f7324911e70a0f3255274721636821a9b65a5716f04c5f6e3e470e74dc7b8ac7"
     ),
@@ -3983,53 +3985,39 @@ def test_keeps_worktree_step_within_width_when_hubs_rendered(
         assert step.count(f"`{name}`") == 1, name
 
 
-def test_pins_hygiene_hooks_when_pre_commit_rendered(demo_config: HubConfig) -> None:
-    pre_commit = text_of(demo_config, ".pre-commit-config.yaml")
-
-    assert "  - repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: v6.0.0\n" in (
-        pre_commit
-    )
-    assert re.findall(r"^\s+rev: (.*)$", pre_commit, re.MULTILINE) == ["v6.0.0"]
-    hook_ids = re.findall(r"^\s+- id: (.*)$", pre_commit, re.MULTILINE)
-    assert hook_ids == [*HYGIENE_HOOKS, "hub-doctor", "commit-msg"]
-    assert pre_commit.count("- repo: local\n") == 1
-
-
-# AGH-699 C-8: `pre-commit install` installs both hook types; every hook runs at the pre-commit
-# stage only but the commit-msg one, which runs at that stage only, on the hub's rendered file.
-def test_installs_commit_msg_hook_when_pre_commit_rendered(
+# AGH-835 (ADR 0061): no `.pre-commit-config.yaml`; two executable hooks, each one exec of what
+# already ships in the hub, with no URL (nothing is cloned or downloaded at commit time).
+def test_renders_git_hooks_when_hub_rendered(
     demo_config: HubConfig, variant_config: HubConfig
 ) -> None:
     for config in (demo_config, variant_config):
-        pre_commit = text_of(config, ".pre-commit-config.yaml")
-        commit_msg = pre_commit_hook(pre_commit, "commit-msg")
+        files = {file.path: file for file in render_hub(config).files}
 
-        assert "\ndefault_install_hook_types: [pre-commit, commit-msg]\n" in pre_commit
-        assert "\ndefault_stages: [pre-commit]\n" in pre_commit
-        assert re.findall(r"^\s+stages: (.*)$", pre_commit, re.MULTILINE) == ["[commit-msg]"]
-        assert "        stages: [commit-msg]\n" in commit_msg
-        assert "        language: system\n" in commit_msg
-        assert pre_commit_entry(pre_commit, "commit-msg") == (
-            "python3 plugin/hub-workflow/hooks/commit_msg.py"
-        )
-        assert "always_run" not in commit_msg
+        assert ".pre-commit-config.yaml" not in files
+        for path, last in ((PRE_COMMIT_HOOK, PRE_COMMIT_EXEC), (COMMIT_MSG_HOOK, COMMIT_MSG_EXEC)):
+            text = files[path].content.decode("utf-8")
+            assert files[path].executable, path
+            assert text.startswith("#!/bin/sh\n"), path
+            assert text.splitlines()[-1] == last, path
+            assert "://" not in text, path
+            assert "pre-commit run" not in text, path
+            assert "PLACEHOLDER" not in text and "@@" not in text, path
 
 
-def test_runs_hub_doctor_through_shim_when_pre_commit_entry_run(
+def test_runs_staged_doctor_through_shim_when_pre_commit_hook_run(
     variant_config: HubConfig,
     rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
-    assert pre_commit_entry(text_of(variant_config, ".pre-commit-config.yaml")) == HUB_DOCTOR_ENTRY
 
-    completed = run_pre_commit_entry(variant_config, root, run_env(fake_uv_bin))
+    completed = run_pre_commit_hook(root, run_env(fake_uv_bin))
 
     assert completed.returncode == 0, completed.stderr
     source = pinned_source(RUN_VERSION)
     assert logged_calls(fake_uv_bin) == [
         f"uvx --from {source} hub --version",
-        f"uvx --from {source} hub doctor",
+        f"uvx --from {source} hub doctor --staged",
     ]
 
 
@@ -4037,7 +4025,7 @@ def test_names_no_config_lint_when_ci_files_rendered(
     demo_config: HubConfig, variant_config: HubConfig
 ) -> None:
     for config in (demo_config, variant_config):
-        for path in (".github/workflows/ci.yml", ".pre-commit-config.yaml"):
+        for path in (".github/workflows/ci.yml", PRE_COMMIT_HOOK, COMMIT_MSG_HOOK):
             assert "agent_config_lint" not in text_of(config, path)
 
 
@@ -4047,7 +4035,7 @@ def test_quotes_placeholders_when_yaml_template_read() -> None:
         name: text for name, text in template_texts() if name.endswith((".yml.tmpl", ".yaml.tmpl"))
     }
 
-    assert set(yaml_texts) == {"github/workflows/ci.yml.tmpl", "pre-commit-config.yaml.tmpl"}
+    assert set(yaml_texts) == {"github/workflows/ci.yml.tmpl"}
     found = dict.fromkeys(yaml_texts, 0)
     for name, text in yaml_texts.items():
         for line in text.splitlines():
@@ -4056,9 +4044,7 @@ def test_quotes_placeholders_when_yaml_template_read() -> None:
                 before, after = line[: match.start()], line[match.end() :]
                 assert before.count('"') % 2 == 1, f"{name}: {line!r}"
                 assert '"' in after, f"{name}: {line!r}"
-    # The pre-commit entry is ./hub doctor: the pinned source lives in the shim (AGH-15).
     assert found["github/workflows/ci.yml.tmpl"] > 0
-    assert found["pre-commit-config.yaml.tmpl"] == 0
 
 
 def test_quotes_values_when_variant_yaml_rendered() -> None:
@@ -4109,9 +4095,9 @@ def test_rejects_name_when_target_given_shell_syntax(
 
 
 # Shim failures (docs/design/hub-generator.md § Commands), for the Makefile shim (run through the
-# brain-brief target) and the pre-commit hub-doctor entry.
+# brain-brief target) and the git pre-commit hook (ADR 0061).
 SHIM_RUNNERS = ("make", "pre-commit")
-SHIM_CALL = {"make": "hub brief", "pre-commit": "hub doctor"}
+SHIM_CALL = {"make": "hub brief", "pre-commit": "hub doctor --staged"}
 # The fake uv tools' exit codes (conftest.fake_uv_bin): the resolve call, then any other call.
 FAKE_UVX_RESOLVE_RC = "FAKE_UVX_RESOLVE_RC"
 FAKE_UVX_RC = "FAKE_UVX_RC"
@@ -4137,10 +4123,10 @@ def run_shim(
     fake_uv_bin: Path,
     env_overrides: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run the Makefile shim (``make brain-brief``) or the pre-commit hub-doctor entry."""
+    """Run the Makefile shim (``make brain-brief``) or the git pre-commit hook."""
     if runner == "make":
         return run_make(root, fake_uv_bin, "brain-brief", env_overrides=env_overrides)
-    return run_pre_commit_entry(config, root, run_env(fake_uv_bin, env_overrides))
+    return run_pre_commit_hook(root, run_env(fake_uv_bin, env_overrides))
 
 
 def assert_shim_exit(runner: str, completed: subprocess.CompletedProcess[str], code: int) -> None:
@@ -4311,8 +4297,8 @@ def test_writes_utf8_lf_final_newline_when_text_rendered(
         assert not text.endswith("\n\n"), file.path
 
 
-# The rendered hub's pre-commit runs `trailing-whitespace` and `end-of-file-fixer`: a managed file
-# they would rewrite on the hub's first commit drifts from what `hub sync` renders.
+# The rendered hub's pre-commit hook refuses trailing whitespace and a bad file end (ADR 0061): a
+# managed file it refused would block the hub's first commit.
 @pytest.mark.parametrize("config_name", CONFIG_NAMES)
 def test_passes_whitespace_hooks_when_config_rendered(
     config_name: str, request: pytest.FixtureRequest
@@ -5636,6 +5622,8 @@ RENDERING_MODULES = frozenset(
         "scenario_examples.py",
         # Pure: a scenario document to its canonical YAML text; the api writes it.
         "scenario_yaml.py",
+        # Pure: whether a staged file's text is one YAML document (ADR 0061).
+        "staged_yaml.py",
     }
 )
 

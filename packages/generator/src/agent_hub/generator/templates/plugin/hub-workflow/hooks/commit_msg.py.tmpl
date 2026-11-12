@@ -1,7 +1,7 @@
 """Git commit-msg hook for the hub (AGENTS.md rule 1): Python 3.9+, stdlib only.
 
-.pre-commit-config.yaml runs it at the commit-msg stage (`pre-commit install` sets that stage up),
-from the hub root, with the commit message file as its one argument. It is the git-level barrier
+The hub's .githooks/commit-msg runs it (ADR 0061; git's core.hooksPath is .githooks), with the
+commit message file as its one argument. It is the git-level barrier
 for commits made outside a guarded Claude Code session.
 
 Exit 1, one stderr line per reason, when the message carries AI attribution (the guard's

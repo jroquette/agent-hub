@@ -19,6 +19,7 @@ use still match (ADR 0054). Otherwise, at a pin change and never with ``--check`
 credential), the lock is written without a commit and one warning on stderr names the way back.
 """
 
+import os
 from pathlib import Path
 from typing import Annotated, Final
 
@@ -26,8 +27,10 @@ import typer
 
 from agent_hub.cli.adopt_command import run_adopt
 from agent_hub.cli.command_exits import fail, root_or_exit
+from agent_hub.cli.git_hooks_path import enable_git_hooks
 from agent_hub.cli.hub_config_reader import load_hub_json_or_exit
 from agent_hub.cli.release_lookup import lookup_release
+from agent_hub.cli.run_children import SESSION_HIDDEN, without
 from agent_hub.cli.sync_report import change_lines, conflict_lines
 from agent_hub.cli.sync_steps import (
     CONFLICT,
@@ -130,8 +133,21 @@ def _sync(*, check: bool) -> None:
     if planned.pending and not check:
         apply_or_exit(root, planned)
     _report(planned, config=config, check=check, release=release)
+    _hooks_path(root, check=check)
     if planned.pending and check:
         raise typer.Exit(PENDING)
+
+
+def _hooks_path(root: Path, *, check: bool) -> None:
+    """Git runs the hub's ``.githooks`` once ``core.hooksPath`` names them (ADR 0061); ``--check``
+    writes nothing, so it sets nothing."""
+    if check:
+        return
+    line, note = enable_git_hooks(root, environ=without(os.environ, SESSION_HIDDEN))
+    if line is not None:
+        typer.echo(line)
+    if note is not None:
+        typer.echo(f"warning: {note}", err=True)
 
 
 def _report(

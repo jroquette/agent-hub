@@ -882,7 +882,12 @@ def test_quotes_lock_refusal_when_folder_already_hub(guide_run: GuideRun) -> Non
 
     assert again.returncode == 1, again.stdout
     assert again.stderr.strip() == quoted_line("When init refuses", "hub.lock:")
-    assert (synced.returncode, synced.stdout.strip()) == (0, "up to date"), synced.stderr
+    # The first sync in a git folder also turns on the hub's commit hooks (ADR 0061).
+    assert synced.returncode == 0, synced.stderr
+    assert synced.stdout.splitlines()[0] == "up to date"
+    hooks_line = "git hooks: core.hooksPath set to .githooks"
+    assert synced.stdout.splitlines()[1:] in ([], [hooks_line])
+    assert f"`{hooks_line}`" in sections(read_guide())["When init refuses"]
 
 
 def test_starts_new_folder_when_init_refuses_unknown_file(guide_run: GuideRun) -> None:
