@@ -18,6 +18,7 @@ import pytest
 from scripts.perf.process_probes import (
     CLI_PATHS,
     HOOK_PATHS,
+    SKILLS_PROMPT,
     Probe,
     SuiteError,
     cli_probes,
@@ -50,6 +51,13 @@ HOOK_ROWS = (
     ("pre_tool_use (PreToolUse Bash)", "pre_tool_use", "PreToolUse", "Bash"),
     ("pre_tool_use (PreToolUse Read)", "pre_tool_use", "PreToolUse", "Read"),
     ("pre_tool_use (PreToolUse Edit)", "pre_tool_use", "PreToolUse", "Edit"),
+    # AGH-838: the prompt's skills, on a prompt that names two of them.
+    (
+        "prompt_skills (UserPromptSubmit, two skills named)",
+        "prompt_skills",
+        "UserPromptSubmit",
+        None,
+    ),
 )
 # The builders' default transcript lives under this made-up home; no probe input may name it.
 BUILDER_HOME = "/home/dev"
@@ -183,6 +191,17 @@ def test_feeds_an_edit_of_a_hub_file_when_post_edit_runs(tmp_path: Path) -> None
     assert edited.is_absolute()
     assert edited.is_relative_to(hub)
     assert edited.is_file()
+
+
+def test_names_two_skills_mid_message_when_prompt_skills_runs(tmp_path: Path) -> None:
+    hub, transcript, _hub_bin = _layout(tmp_path)
+
+    payload = _payload(
+        _probe(hook_probes(hub, transcript), "prompt_skills (UserPromptSubmit, two skills named)")
+    )
+
+    assert payload["prompt"] == SKILLS_PROMPT
+    assert not payload["prompt"].startswith("/")
 
 
 def test_runs_each_command_the_requested_times_when_measured(tmp_path: Path) -> None:

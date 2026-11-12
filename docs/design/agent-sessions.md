@@ -981,6 +981,12 @@ the menus are the web app's. AC-681.9 and AC-681.10 are for the owner to confirm
 - Never a bypass mode (`bypassPermissions`, `dontAsk`); `auto` is accepted and offered by every app
   ([ADR 0059](../adr/0059-auto-mode-offered-in-every-app.md)), preselected only by the dev app of `make playground`
   ([ADR 0036](../adr/0036-live-playground-and-auto-mode.md)); never a path from the browser.
+- A session or subagent that another session starts, or that the server starts for itself, never starts in a mode
+  more permissive than `default`: the workflow engine's agent nodes and the Linear MCP client run `claude -p` in
+  `dontAsk` (the CLI refuses what is not allowed and never asks), the server's investigation session starts in
+  `default`, and the rendered agents set no `permissionMode`, so a subagent takes its parent's mode; `acceptEdits`
+  and `auto` reach a `hub web` session only as the user's own choice (the bullet above), and `hub bench` sessions
+  (`acceptEdits`, in a benchmark case's throwaway checkout) are outside this rule.
 - Stored text is redacted; the live view is not; no log line, problem detail or metric holds conversation text.
 - Every request and decision is a record; an unanswered request is a deny, never an allow.
 - No `claude` survives `hub web`; session control is off in the container (`AGENT_HUB_IN_CONTAINER=1`).

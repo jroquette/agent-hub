@@ -19,12 +19,15 @@ from agent_hub.cli.init_report import shown_text
 from agent_hub.cli.push_guard import REMOTE_URL, names_github_repo, parse_scoped_list, risky_keys
 from agent_hub.cli.run_children import (
     gate_command,
+    pr_body_reset_command,
     pr_create_command,
     pr_view_command,
+    pull_request_path,
     push_command,
     push_env,
     untrusted_env,
 )
+from agent_hub.core.ai_attribution import carries_ai_attribution
 from agent_hub.core.hub_config.conventions import EffectiveConventions
 from agent_hub.core.runner.run_texts import conventional_pr_title, pr_title
 
@@ -36,6 +39,19 @@ GH_API_OUTPUT_LIMIT: Final = 1 << 20
 # The push guard's texts: what the refused call would do with the keys, and what was not done.
 PUSH_USE: Final = "a push would use"
 PUSH_OUTCOME: Final = "the branch was not pushed"
+# The warnings about the body of a PR just created, each one line for the user: the edit that
+# sets it again failed (``why``), its answer could not be read, or the body still has the marks.
+BODY_NOT_RESET: Final = (
+    "the body of {url} could not be set again; check it for an attribution footer: {why}"
+)
+BODY_NOT_READ: Final = (
+    "the body of {url} could not be read back; check it for an attribution footer"
+)
+BODY_ATTRIBUTED: Final = (
+    "the body of {url} still carries AI attribution;"
+    " set it again through the session's GitHub tools, or edit it by hand"
+)
+NO_REST_PATH: Final = "its url is not a github.com pull request"
 _URL_SCHEME: Final = "https://"
 
 
@@ -76,10 +92,20 @@ class PrTarget:
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class OpenedPr:
-    """The branch's PR: its url, and whether it was already open (``found``) or just created."""
+    """The branch's PR: its url, and whether it was already open (``found``) or just created.
+    ``warning`` is one line for the user, without a command's name, when the body of a PR just
+    created holds an attribution footer, or may hold one; else None."""
 
     url: str
     found: bool
+    warning: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _BodyUnknown:
+    """The body GitHub holds for a PR is not known: ``warning`` tells the user, in one line."""
+
+    warning: str
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -211,7 +237,9 @@ def open_or_find_pr(
 ) -> OpenedPr:
     """Create ``target``'s PR through GitHub's REST API (``gh api``, run in ``cwd``, else the
     caller's worktree; ``body`` on its stdin); when that fails, the branch's PR already open (a
-    rerun, which the push updated). Any other outcome is a ``PrStepError``."""
+    rerun, which the push updated). Any other outcome is a ``PrStepError``. A PR just created
+    whose answer holds another body gets ``body`` again (``_body_warning``); one found open
+    keeps its body."""
     env = push_env(environ)
     argv = pr_create_command(
         github=target.github,
@@ -234,10 +262,76 @@ def open_or_find_pr(
             raise PrStepError(f"gh api POST pulls failed: {error_tail(created.stderr)}")
         return OpenedPr(url=existing, found=True)
     answer = _api_answer(created.stdout)
-    url = _html_url(answer) if isinstance(answer, dict) else None
+    pull = answer if isinstance(answer, dict) else {}
+    url = _html_url(pull)
     if url is None:
         raise PrStepError("gh printed no PR url")
-    return OpenedPr(url=url, found=False)
+    warning = _body_warning(
+        child, url=url, body=body, held=pull.get("body"), env=env, timeout=timeout, cwd=cwd
+    )
+    return OpenedPr(url=url, found=False, warning=warning)
+
+
+def _body_warning(
+    child: ChildCall,
+    *,
+    url: str,
+    body: str,
+    held: object,
+    env: dict[str, str],
+    timeout: float,
+    cwd: Path | None,
+) -> str | None:
+    """What the user must know about the body of the PR just created at ``url``, else None.
+
+    A cloud session's create appends an attribution footer to the body. An edit with the same
+    text removes it where the environment lets it; through ``gh`` a cloud session can add one
+    again, and then the warning says so. ``held`` is the body in the create's answer: when it
+    is not ``body``, the body is set again and read back; an answer without a body is left
+    alone. The body GitHub holds at the end must carry no AI attribution. Nothing here raises:
+    the PR is open.
+    """
+    if not isinstance(held, str):
+        return None
+    if held != body:
+        reset = _reset_body(child, url=url, body=body, env=env, timeout=timeout, cwd=cwd)
+        if isinstance(reset, _BodyUnknown):
+            return reset.warning
+        held = reset
+    return BODY_ATTRIBUTED.format(url=url) if carries_ai_attribution(held) else None
+
+
+def _reset_body(
+    child: ChildCall, *, url: str, body: str, env: dict[str, str], timeout: float, cwd: Path | None
+) -> str | _BodyUnknown:
+    """Set the body of the PR at ``url`` to ``body`` again with one REST edit (``body`` on its
+    stdin); the body in the edit's answer, which is what GitHub holds now."""
+    path = pull_request_path(url)
+    if path is None:
+        return _BodyUnknown(BODY_NOT_RESET.format(url=url, why=NO_REST_PATH))
+    try:
+        edited = child(
+            pr_body_reset_command(path),
+            env=env,
+            timeout=timeout,
+            output_limit=GH_API_OUTPUT_LIMIT,
+            cwd=cwd,
+            stdin=body.encode(errors="surrogatepass"),
+        )
+    except PrStepError as error:
+        return _BodyUnknown(BODY_NOT_RESET.format(url=url, why=_one_line(error.reason)))
+    if edited.returncode != 0:
+        why = _one_line(error_tail(edited.stderr))
+        return _BodyUnknown(BODY_NOT_RESET.format(url=url, why=why))
+    answer = _api_answer(edited.stdout)
+    held = answer.get("body") if isinstance(answer, dict) else None
+    return held if isinstance(held, str) else _BodyUnknown(BODY_NOT_READ.format(url=url))
+
+
+def _one_line(text: str) -> str:
+    """``text`` with each run of blanks and line breaks as one space, shown as JSON when it
+    still holds an unprintable character."""
+    return shown_text(" ".join(text.split()))
 
 
 def _open_pr_url(
