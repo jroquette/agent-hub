@@ -2976,6 +2976,7 @@ def test_explains_sandbox_when_claude_rendered(demo_config: HubConfig) -> None:
         "`Broken pipe`",
         "`Operation not permitted`",
         "`./hub worktree`",
+        "unless `permissions.allow` lists",
         "no `cd … &&`, `;`, pipe, redirect, `$(…)` or `git -C`",
         "`./hub worktree --no-fetch <name>`",
         "never `make *` or `./hub *`",
