@@ -8,6 +8,7 @@ any other prompt, and on any error, it prints nothing and exits 0. Secret-shaped
 here from fragments, so no secret-shaped literal sits in the repo.
 """
 
+import ast
 import json
 import subprocess
 from collections.abc import Callable
@@ -169,3 +170,53 @@ def test_exits_zero_and_prints_nothing_when_stdin_is_not_json(
     stdin: bytes, run_prompt: Callable[..., subprocess.CompletedProcess[bytes]]
 ) -> None:
     assert_silent(run_prompt(stdin=stdin))
+
+
+# AC-38: the hook imports the guard's secret-name rule and the reader's secret shapes, and defines
+# one regex of its own, the NAME=value line; a copied pattern would drift from the guard's.
+GUARD_NAMES = {"_secret_tokens", "SECRET_TOKEN", "SECRET_CHUNK"}
+READER_NAMES = {"secret_shaped", "SECRET_SHAPES"}
+REGEX_CALLS = {"LazyPattern", "compile"}
+NAME_VALUE_PATTERN = r"^\s*(?:export\s+)?[A-Z][A-Z0-9_]*=\S"
+
+
+def names_used_from(module: ast.Module, source: str) -> set[str]:
+    """The names the module takes from ``source``: ``from source import x`` or ``source.x``."""
+    names: set[str] = set()
+    for node in ast.walk(module):
+        if isinstance(node, ast.ImportFrom) and node.module == source:
+            names |= {alias.name for alias in node.names}
+        elif (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == source
+        ):
+            names.add(node.attr)
+    return names
+
+
+def regex_strings(module: ast.Module) -> list[str]:
+    """Every string constant passed to ``LazyPattern(...)`` or ``re.compile(...)``."""
+    found: list[str] = []
+    for node in ast.walk(module):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+        if name in REGEX_CALLS:
+            found += [
+                child.value
+                for argument in [*node.args, *(keyword.value for keyword in node.keywords)]
+                for child in ast.walk(argument)
+                if isinstance(child, ast.Constant) and isinstance(child.value, str)
+            ]
+    return found
+
+
+def test_imports_guard_and_reader_patterns_when_rendered(hooks: Path) -> None:
+    path = hooks / "prompt_secret.py"
+    module = ast.parse(path.read_text(), filename=str(path), feature_version=(3, 9))
+
+    assert names_used_from(module, "guard") & GUARD_NAMES
+    assert names_used_from(module, "stdlib_reader") & READER_NAMES
+    assert regex_strings(module) == [NAME_VALUE_PATTERN]
