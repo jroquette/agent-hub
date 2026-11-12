@@ -115,6 +115,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/hooks/pre_compact.py",
     "plugin/hub-workflow/hooks/pre_tool_use.py",
     "plugin/hub-workflow/hooks/project_guard_runner.py",
+    "plugin/hub-workflow/hooks/prompt_secret.py",
     "plugin/hub-workflow/hooks/prompt_skills.py",
     "plugin/hub-workflow/hooks/readonly_gate.py",
     "plugin/hub-workflow/hooks/session_end.py",
@@ -2800,8 +2801,9 @@ def test_names_rendered_script_when_hooks_json_command_read(
     # The six base hooks, then the event sensor on ten events (AGH-200 E2): on PreToolUse the
     # base hook, pre_tool_use.py, sends the sensor's envelope itself (AGH-621).
     # AGH-141: the read-only gate on SubagentStart and SubagentStop, after the sensor.
+    # AGH-814: the prompt secret warning on UserPromptSubmit, before the sensor.
     # AGH-838: the prompt's skills on UserPromptSubmit, after the sensor.
-    assert (len(commands), len(hooks)) == (19, 11)
+    assert (len(commands), len(hooks)) == (20, 11)
     for command in commands:
         match = HOOK_COMMAND.fullmatch(command)
         assert match, command
@@ -3426,9 +3428,10 @@ def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubCon
 # dropped-direction bullet.
 # AGH-838: re-pinned when step 6 opened the hub's skills to the model and the brain line was
 # shortened to keep the file within 100 lines.
-DEMO_AGENTS_SHA256 = "a0bc3d64d8794113308d3e7cee7e746aca7d3d55a03fa2a37ea53379f18c052a"
+# AGH-814: re-pinned when rule 4 said agents never repeat a secret in text for people.
+DEMO_AGENTS_SHA256 = "82e4ec4b5346f4cfde2c88fa106a1cbd1a03165606a5916a462dcf76a66d8a4b"
 ALL_MODULES_SHA256 = {
-    "AGENTS.md": "30cdf163011fc8107dff5339d8d65c0974c0eab81faa44a93c24254d1c7879e6",
+    "AGENTS.md": "d61ef0b46309050a39984ad1c70bce16a2e431fccaae7242b263480d04c707d1",
     ".claude-plugin/marketplace.json": (
         "f7324911e70a0f3255274721636821a9b65a5716f04c5f6e3e470e74dc7b8ac7"
     ),
@@ -4547,8 +4550,13 @@ SETTINGS_HOOKS = {
     "Stop": [(None, "stop_gate.py", 180), (None, SENSOR, 5)],
     "PreCompact": [(None, "pre_compact.py", 20), (None, SENSOR, 5)],
     "SessionEnd": [(None, "session_end.py", 10), (None, SENSOR, 5)],
-    # AGH-838: the skills a prompt names, after the sensor.
-    "UserPromptSubmit": [(None, SENSOR, 5), (None, "prompt_skills.py", 5)],
+    # AGH-814: the prompt secret warning before the sensor; AGH-838: the skills a prompt names,
+    # after it.
+    "UserPromptSubmit": [
+        (None, "prompt_secret.py", 5),
+        (None, SENSOR, 5),
+        (None, "prompt_skills.py", 5),
+    ],
     "PostToolUseFailure": [("*", SENSOR, 5)],
     "Notification": [(None, SENSOR, 5)],
     "SubagentStart": [(None, SENSOR, 5), (None, GATE, 10)],

@@ -11,6 +11,14 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- A hub warns when a prompt looks like it holds a secret (a key, a token, a private key, a line such as
+  `AUTH_SECRET=...` or a block of env lines), and suggests a git-ignored env file instead, such as one in
+  `guard.readable_env_files`; it never blocks the prompt, and a prompt that only names a file gets no warning
+  (AGH-814). After `./hub sync`, `AGENTS.md` also keeps secrets out of replies, commits, PRs, tracker
+  comments and brain notes.
+
 ### Changed
 
 - A hub's commit hooks now check only what the commit stages, and run inside the Claude Code sandbox (AGH-835,
