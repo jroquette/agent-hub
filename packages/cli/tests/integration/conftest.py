@@ -1927,19 +1927,24 @@ elif mode in ("prose", "silent"):
     answer("I made the change and ran the tests.")
 """.replace("RUN_COST", repr(RUN_COST_USD)).replace("RUN_SUMMARY", repr(RUN_SUMMARY))
 )
-# The footer a cloud session's environment appends to the body of a PR it creates, built from
-# fragments so that this file holds no attribution line a reader could take for one.
-CLOUD_FOOTER = "\n\n---\n_Generated " + "by [Claude Code](https://claude.ai/code/session_0123)_"
+# A line of the ``gh`` fakes' source: ``FOOTER``, what a cloud session's environment appends to
+# the body of a PR it creates. Built from fragments there, so that neither this file nor a fake
+# holds an attribution line a reader could take for one.
+_FAKE_FOOTER = (
+    'FOOTER = "\\n\\n---\\n_Generated " + '
+    '"by [Claude Code](https://claude.ai/code/session_0123)_"\n'
+)
 # hub run's ``gh``: GitHub's REST API (``gh api``), as a cloud session's proxy lets through:
 # ``--method POST repos/<repo>/pulls`` (the body read from stdin, logged as ``stdin``) and
 # ``--method GET repos/<repo>/pulls`` (the branch's open PR). ``pr view <branch>`` answers a
 # workflow's own shell step (the sample pack's ``pr`` node), never hub run, which reads GitHub
-# through the REST API only; any other call exits 2. In the modes ``footer`` and
-# ``footer-stays`` the create answers as a cloud session's does: the PR's ``body`` is the one
-# read plus ``CLOUD_FOOTER``; ``--method PATCH repos/<repo>/pulls/<n>`` (the body read from
-# stdin) then answers the body it read, in ``footer-stays`` with the footer again.
+# through the REST API only; any other call exits 2.
+# In the modes ``footer`` and ``footer-stays`` the create answers as a cloud session's does: the
+# PR's ``body`` is the one read plus ``FOOTER``; ``--method PATCH repos/<repo>/pulls/<n>`` (the
+# body read from stdin) then answers the body it read, in ``footer-stays`` with the footer again.
 _RUN_FAKE_GH = (
     _FAKE_LOG
+    + _FAKE_FOOTER
     + """mode = os.environ.get("FAKE_GH_MODE", "url")
 argv = sys.argv[1:]
 body = sys.stdin.read() if "body=@-" in argv else None
@@ -1963,11 +1968,11 @@ if mode in ("fail", "exists"):
     print("gh: Validation Failed (HTTP 422)" if mode == "exists" else "gh: synthetic failure",
           file=sys.stderr)
     sys.exit(1)
-answer = {"number": 1} if mode == "no-url" else {"html_url": PR_URL, "number": 1}
 if mode in footers:
-    answer["body"] = body + FOOTER
-print(json.dumps(answer))
-""".replace("PR_URL", repr(RUN_PR_URL)).replace("FOOTER", repr(CLOUD_FOOTER))
+    print(json.dumps({"html_url": PR_URL, "number": 1, "body": body + FOOTER}))
+    sys.exit(0)
+print(json.dumps({"number": 1} if mode == "no-url" else {"html_url": PR_URL, "number": 1}))
+""".replace("PR_URL", repr(RUN_PR_URL))
 )
 _FAKE_MAKE = (
     _FAKE_LOG
@@ -2192,11 +2197,12 @@ def logged_git(run_workspace: RunWorkspace) -> RunWorkspace:
 # prints each PR as the REST API does (``html_url``, ``state`` in lower case, ``body``…) and
 # exits 2 on any other argv. ``FAKE_GH_FAIL`` (``<step>:<repo>,…``, steps ``create``, ``view``,
 # ``body``, ``edit``, repo as its dir) makes that call exit 1; step ``nourl`` makes the create
-# exit 0 without a PR url or opening a PR; step ``footer`` makes the create keep the body with
-# ``CLOUD_FOOTER`` after it, as a cloud session's create does (a ``PATCH`` with ``-F body=@-``
-# replaces it). Every call is logged as the run fakes log.
+# exit 0 without a PR url or opening a PR. Every call is logged as the run fakes log.
+# Step ``footer`` makes the create keep the body with ``FOOTER`` after it, as a cloud session's
+# create does; a ``PATCH`` with ``-F body=@-`` replaces it.
 _SHIP_FAKE_GH = (
     _FAKE_LOG
+    + _FAKE_FOOTER
     + """import re
 argv = sys.argv[1:]
 log("gh")
@@ -2284,9 +2290,10 @@ if method == "POST" and pulls and set(fields) - {"draft"} == {"title", "head", "
             print("gh: Validation Failed (HTTP 422)", file=sys.stderr)
             sys.exit(1)
     url = "https://github.com/" + repo + "/pull/" + str(101 + len(prs))
-    footer = FOOTER if ("footer", repo.rsplit("/", 1)[-1]) in FAILS else ""
+    if ("footer", repo.rsplit("/", 1)[-1]) in FAILS:
+        fields["body"] += FOOTER
     prs.append({"repo": repo, "head": head, "base": fields["base"], "title": fields["title"],
-                "url": url, "state": "OPEN", "body": fields["body"] + footer,
+                "url": url, "state": "OPEN", "body": fields["body"],
                 "draft": "draft" in fields})
     save(prs)
     show(prs[-1])
@@ -2312,7 +2319,7 @@ elif method == "PATCH" and one and list(fields) == ["body"]:
     show(pr)
 else:
     refuse()
-""".replace("FOOTER", repr(CLOUD_FOOTER))
+"""
 )
 
 
