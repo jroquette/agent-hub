@@ -107,8 +107,7 @@ hub.lock: this folder is already a hub; run hub sync
 ```
 
 Do not init again. If this is the folder you made in § Make the workspace and an empty hub folder (init ran there
-already), run `./hub sync`, then go on to § Verify the hub. It prints `up to date` when there is nothing to do;
-the first time in a git folder it also prints `git hooks: core.hooksPath set to .githooks` (the hub's commit hooks):
+already), run `./hub sync`, then go on to § Verify the hub. It prints `up to date` (then, once, `git hooks: core.hooksPath set to .githooks`):
 
 ```sh
 ./hub sync
