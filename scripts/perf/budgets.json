@@ -20,6 +20,7 @@
     {"kind": "hook", "path": "pre_tool_use (PreToolUse Bash)", "p95_ms": 80, "source": "ADR 0053"},
     {"kind": "hook", "path": "pre_tool_use (PreToolUse Read)", "p95_ms": 80, "source": "ADR 0053"},
     {"kind": "hook", "path": "pre_tool_use (PreToolUse Edit)", "p95_ms": 80, "source": "ADR 0053"},
+    {"kind": "hook", "path": "prompt_skills (UserPromptSubmit, two skills named)", "p95_ms": 80, "source": "ADR 0053"},
     {"kind": "route", "path": "/api/v1/sessions", "p95_ms": 150, "source": "AGH-601 proposed"},
     {"kind": "route", "path": "/api/v1/sessions?issue=AGH-7", "p95_ms": 150, "source": "AGH-601 proposed"},
     {"kind": "route", "path": "/api/v1/features", "p95_ms": 150, "source": "AGH-601 proposed"},

@@ -1,7 +1,6 @@
 ---
 name: kickoff
 description: Start-of-session routine for the hub workspace — show the brief, run the fast gates, and pick the next unfinished item. Use at the beginning of a session or after /clear. (Named kickoff because /resume is Claude Code's built-in conversation resume.)
-disable-model-invocation: true
 ---
 
 # /kickoff

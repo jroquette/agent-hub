@@ -155,6 +155,8 @@ GATE_ROWS = (
     ("SubagentStart", None, "readonly_gate.py", 10),
     ("SubagentStop", None, "readonly_gate.py", 30),
 )
+# AGH-838: the hook that names back the skills a prompt invokes, after the sensor's group.
+PROMPT_SKILLS_ROWS = (("UserPromptSubmit", None, "prompt_skills.py", 5),)
 
 
 def test_lists_base_hooks_then_sensor_when_settings_built(demo_config: HubConfig) -> None:
@@ -162,7 +164,12 @@ def test_lists_base_hooks_then_sensor_when_settings_built(demo_config: HubConfig
     assert isinstance(settings, dict)
 
     expected: dict[str, list[dict[str, object]]] = {}
-    for event, matcher, file, timeout in (*HOOK_ROWS, *SENSOR_ROWS, *GATE_ROWS):
+    for event, matcher, file, timeout in (
+        *HOOK_ROWS,
+        *SENSOR_ROWS,
+        *GATE_ROWS,
+        *PROMPT_SKILLS_ROWS,
+    ):
         group: dict[str, object] = {
             "hooks": [
                 {
@@ -315,7 +322,28 @@ def test_registers_readonly_gate_on_subagent_events_when_settings_built(
         "SubagentStart",
         "SubagentStop",
     ]
-    assert [hook.file for hook in HOOK_EVENTS[-2:]] == ["readonly_gate.py", "readonly_gate.py"]
+    assert [hook.file for hook in HOOK_EVENTS[-3:-1]] == ["readonly_gate.py", "readonly_gate.py"]
+
+
+def test_registers_prompt_skills_after_sensor_when_settings_built(demo_config: HubConfig) -> None:
+    # AGH-838: one group on UserPromptSubmit, after the sensor's, no matcher, 5 s; the last row,
+    # so the events keep the settings' order.
+    settings = managed_settings(demo_config)
+    assert isinstance(settings, dict)
+
+    for hooks in (settings["hooks"], base_hooks_block()):
+        assert isinstance(hooks, dict)
+        assert hook_files(hooks["UserPromptSubmit"]) == [
+            (None, "event_sensor.py", 5),
+            (None, "prompt_skills.py", 5),
+        ]
+        assert [
+            event
+            for event, groups in hooks.items()
+            if any(row[1] == "prompt_skills.py" for row in hook_files(groups))
+        ] == ["UserPromptSubmit"]
+        assert list(hooks) == list(SETTINGS_EVENTS)
+    assert HOOK_EVENTS[-1] == ("UserPromptSubmit", None, "prompt_skills.py", 5)
 
 
 def test_renders_additional_directories_when_repos_listed(

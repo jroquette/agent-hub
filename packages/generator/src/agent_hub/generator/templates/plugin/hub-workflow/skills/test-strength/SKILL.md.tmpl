@@ -1,7 +1,6 @@
 ---
 name: test-strength
 description: Measure whether the tests of a diff would catch a wrong result, by mutation testing only the lines the diff changed, then classify each surviving mutant as a test gap, an equivalent mutant or unresolved, and point out redundant tests. Read-only on the suite. Use before a PR, after a task's tests pass, or when tests pass but feel weak.
-disable-model-invocation: true
 argument-hint: "[PR | branch] (default: the current diff) [--budget <minutes>]"
 ---
 

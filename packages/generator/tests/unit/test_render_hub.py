@@ -115,6 +115,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/hooks/pre_compact.py",
     "plugin/hub-workflow/hooks/pre_tool_use.py",
     "plugin/hub-workflow/hooks/project_guard_runner.py",
+    "plugin/hub-workflow/hooks/prompt_skills.py",
     "plugin/hub-workflow/hooks/readonly_gate.py",
     "plugin/hub-workflow/hooks/session_end.py",
     "plugin/hub-workflow/hooks/session_start.py",
@@ -2390,38 +2391,65 @@ def test_names_transcript_script_when_recall_rendered(
     assert "`python3 scripts/recall_transcripts.py <term> [<term>…] [--any]`" in text
 
 
-# The hub's skill frontmatter, key by key; the skills without `disable-model-invocation` stay
-# model-invocable.
+# AGH-838 (ADR 0062): the skills the model may load by itself. Each one only reads, or writes what
+# the session keeps local (test files, a proposal in `brain/_inbox/`); each one's own gates hold.
+MODEL_INVOCABLE_SKILLS = frozenset(
+    {
+        "context-audit",
+        "create-plan",
+        "design-fit",
+        "kickoff",
+        "learn",
+        "overengineering-review",
+        "plain-language",
+        "premortem",
+        "property-based-testing",
+        "recall",
+        "research",
+        "summarize",
+        "test-strength",
+        "ux-review",
+    }
+)
+# AGH-838 (ADR 0062): the skills only a person starts (`disable-model-invocation: true`), each
+# because it acts outside the session: posts a review (`review`), replies on threads and pushes
+# (`deliver`), moves issues to Done (`handoff`), dispatches the tag (`release`), commits, pushes and
+# opens a PR (`feature`, `implement`, `fix`, `refactor`, `upgrade`, `adr`), or writes the tracker
+# (`triage`, `incident`, `retro`, `onboard`).
+USER_ONLY_SKILLS = frozenset(
+    {
+        "adr",
+        "deliver",
+        "feature",
+        "fix",
+        "handoff",
+        "implement",
+        "incident",
+        "onboard",
+        "refactor",
+        "release",
+        "retro",
+        "review",
+        "triage",
+        "upgrade",
+    }
+)
+# The hub's skill frontmatter, key by key; `disable-model-invocation` (always `true`) only on
+# the user-only skills.
 SKILL_FRONTMATTER_KEYS = {
-    "adr": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "context-audit": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "create-plan": ["name", "description", "argument-hint"],
-    "deliver": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "design-fit": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "feature": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "fix": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "handoff": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "implement": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "incident": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "kickoff": ["name", "description", "disable-model-invocation"],
-    "learn": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "onboard": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "overengineering-review": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "plain-language": ["name", "description"],
-    "premortem": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "property-based-testing": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "recall": ["name", "description", "argument-hint"],
-    "refactor": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "release": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "research": ["name", "description", "argument-hint"],
-    "retro": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "review": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "summarize": ["name", "description", "argument-hint"],
-    "test-strength": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "triage": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "upgrade": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "ux-review": ["name", "description", "disable-model-invocation", "argument-hint"],
+    name: [
+        "name",
+        "description",
+        *(["disable-model-invocation"] if name in USER_ONLY_SKILLS else []),
+        *([] if name in {"kickoff", "plain-language"} else ["argument-hint"]),
+    ]
+    for name in sorted(MODEL_INVOCABLE_SKILLS | USER_ONLY_SKILLS)
 }
+
+
+def test_splits_skills_into_model_invocable_and_user_only_when_listed() -> None:
+    assert MODEL_INVOCABLE_SKILLS.isdisjoint(USER_ONLY_SKILLS)
+    assert sorted(MODEL_INVOCABLE_SKILLS | USER_ONLY_SKILLS) == list(BASE_SKILLS)
 
 
 def test_keeps_frontmatter_when_skills_rendered(demo_render: dict[str, RenderedFile]) -> None:
@@ -2435,8 +2463,56 @@ def test_keeps_frontmatter_when_skills_rendered(demo_render: dict[str, RenderedF
         fields = dict(line.split(": ", 1) for line in lines)
         assert fields["name"] == name
         assert fields["description"].strip(), name
-        assert fields.get("disable-model-invocation", "true") == "true", name
+        assert len(fields["description"]) <= 1024, name
+        if name in USER_ONLY_SKILLS:
+            assert fields["disable-model-invocation"] == "true", name
+        else:
+            assert "disable-model-invocation" not in fields, name
         assert text.split("\n---\n", 1)[1].strip(), name
+
+
+# AGH-838: what a skill's text says it does outside the session: push, open or edit a PR, post on
+# one, dispatch a workflow, run one of the hub's workflows (which can open a PR) or write the
+# tracker. Each pattern names an act, never its negation ("no push", "never open a PR").
+OUTWARD_ACTS = (
+    r"\bgit push\b",
+    r"\bgh pr (?:create|review|comment|merge|edit)\b",
+    r"\bgh workflow run\b",
+    r"\bgh api [^`\n]*-X (?:POST|PATCH|PUT|DELETE)\b",
+    r"\b(?:create_pull_request|update_pull_request|merge_pull_request|pull_request_review_write"
+    r"|add_issue_comment|add_reply_to_pull_request_comment|save_issue|save_comment)\b",
+    r"\bhub (?:workflow )?run\b",
+    r"\bopens? (?:the|its|one|a)(?: hub| draft)? (?:PR|pull request)\b",
+    r"\bpush(?:es)? (?:the|its) (?:batch )?branch\b",
+    r"\bposts? (?:the|a|its) (?:review|PR link|reply)\b",
+    r"\bmoves? [^.\n]{0,40}\bto (?:Done|In Progress|In Review)\b",
+    r"\b(?:create|creates|file|files) (?:or reuse )?(?:one|a|the|its)[^.\n]{0,30}tracker issue\b",
+)
+# Model-invocable skills whose text names an outward act that waits on the user, and why.
+OWNER_GATED_ACTS = {
+    # `promote` runs the inbox workflow, which opens the hub PR only after the owner answers each
+    # group's gate.
+    "learn": {"hub workflow run", "opens one hub PR"},
+    # Step 5 routes the item the user accepts to its flow (`/feature` creates the tracker issue);
+    # kickoff itself never starts editing.
+    "kickoff": {"create the tracker issue"},
+}
+
+
+def outward_acts(text: str) -> set[str]:
+    return {found[0] for pattern in OUTWARD_ACTS for found in re.finditer(pattern, text)}
+
+
+def test_keeps_skills_user_only_when_their_text_acts_outside_session(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    acting = {name: outward_acts(skill_text(demo_render, name)) for name in BASE_SKILLS}
+
+    for name in MODEL_INVOCABLE_SKILLS:
+        assert acting[name] <= OWNER_GATED_ACTS.get(name, set()), name
+    # The patterns still see the flows they guard: a rewording that hides one fails here.
+    for name in ("deliver", "feature", "fix", "handoff", "implement", "release", "review"):
+        assert acting[name], name
 
 
 # AGH-48 AC-48.2 (D2): `/learn personal` writes the developer's own gitignored memory and never a
@@ -2724,7 +2800,8 @@ def test_names_rendered_script_when_hooks_json_command_read(
     # The six base hooks, then the event sensor on ten events (AGH-200 E2): on PreToolUse the
     # base hook, pre_tool_use.py, sends the sensor's envelope itself (AGH-621).
     # AGH-141: the read-only gate on SubagentStart and SubagentStop, after the sensor.
-    assert (len(commands), len(hooks)) == (18, 11)
+    # AGH-838: the prompt's skills on UserPromptSubmit, after the sensor.
+    assert (len(commands), len(hooks)) == (19, 11)
     for command in commands:
         match = HOOK_COMMAND.fullmatch(command)
         assert match, command
@@ -2977,6 +3054,21 @@ def test_imports_both_rule_files_when_claude_rendered(demo_config: HubConfig) ->
 
     assert lines[:2] == ["@AGENTS.md", "@AGENTS.project.md"]
     assert sum("`./agent` (`make agent`)" in line for line in lines) == 1
+
+
+# AGH-838 (ADR 0062): AGENTS.md lets the model use the hub's skills and keeps the outward flows
+# behind the user; CLAUDE.md says how a skill named anywhere in a message runs, for the sessions
+# that load the hub's instructions but not its hooks (multi-repo cloud sessions).
+def test_states_skill_rules_when_agents_and_claude_rendered(demo_config: HubConfig) -> None:
+    agents = text_of(demo_config, "AGENTS.md")
+    claude = " ".join(text_of(demo_config, "CLAUDE.md").split())
+
+    assert (
+        "6. Use the hub's skills and subagents as the work needs; a push, PR or tracker flow runs"
+        " only when the user names it." in agents
+    )
+    assert "A `/<skill>` the user writes anywhere in a message runs as if typed first" in claude
+    assert "Read its `SKILL.md` when the tool refuses it (a user-only skill)" in claude
 
 
 # AGH-134: the sandbox the settings turn on is explained where Claude Code reads it, and the
@@ -3332,9 +3424,11 @@ def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubCon
 # read and propose, and the double-wiring and superpowers bullets moved to CLAUDE.md.
 # AGH-815: re-pinned when Workflow item 5 became one line and Brain rules gained the
 # dropped-direction bullet.
-DEMO_AGENTS_SHA256 = "e198a14e352ccab704ccd6ddb3bd7d4023863545f336da1292ede936502b75d0"
+# AGH-838: re-pinned when step 6 opened the hub's skills to the model and the brain line was
+# shortened to keep the file within 100 lines.
+DEMO_AGENTS_SHA256 = "a0bc3d64d8794113308d3e7cee7e746aca7d3d55a03fa2a37ea53379f18c052a"
 ALL_MODULES_SHA256 = {
-    "AGENTS.md": "6e9a1b3f94a75b9979574e0ee851e11195a4631d3e0c58be356e9053b7eb0d4f",
+    "AGENTS.md": "30cdf163011fc8107dff5339d8d65c0974c0eab81faa44a93c24254d1c7879e6",
     ".claude-plugin/marketplace.json": (
         "f7324911e70a0f3255274721636821a9b65a5716f04c5f6e3e470e74dc7b8ac7"
     ),
@@ -4453,7 +4547,8 @@ SETTINGS_HOOKS = {
     "Stop": [(None, "stop_gate.py", 180), (None, SENSOR, 5)],
     "PreCompact": [(None, "pre_compact.py", 20), (None, SENSOR, 5)],
     "SessionEnd": [(None, "session_end.py", 10), (None, SENSOR, 5)],
-    "UserPromptSubmit": [(None, SENSOR, 5)],
+    # AGH-838: the skills a prompt names, after the sensor.
+    "UserPromptSubmit": [(None, SENSOR, 5), (None, "prompt_skills.py", 5)],
     "PostToolUseFailure": [("*", SENSOR, 5)],
     "Notification": [(None, SENSOR, 5)],
     "SubagentStart": [(None, SENSOR, 5), (None, GATE, 10)],

@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+"""UserPromptSubmit: a skill the user names anywhere in the message runs as if typed first.
+
+Claude Code expands `/<name>` only when it starts the message, and a skill with
+`disable-model-invocation: true` is missing from the model's skill listing, so a name in the middle
+of a message was plain text. This hook finds each `/<name>` and `/<plugin>:<name>` token in the
+prompt that names a skill of this hub, and adds context that tells the model the user invoked it:
+the Skill tool for a skill the model may load, the SKILL.md to read for a user-only one. The user
+named it, so the skill's own gates still hold and nothing else is opened.
+
+A token counts only when whitespace or the start of the prompt is before it, and the end of the
+prompt, whitespace or punctuation followed by one of those is after it: `/usr/bin/fix`, `a/fix`,
+`/fix.py`, a URL and a quoted `"/fix"` do not. The token at position 0 is the CLI's own command
+(it sees the same prompt and expands it), so it is skipped; with any character before it the CLI
+does not expand it, and it counts. Names are looked up as folders, never globbed: the hub's
+`.claude/skills/<name>/` (the hub at the folder three levels above this file), then the
+`skills/<name>/` of this plugin and of each `<hub>/plugin/<p>/`. Unknown names add nothing.
+Stdlib only, Python 3.9; any error prints one stderr line and exits 0 (run_hook: fail open).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from hubhooks import read_input, run_hook
+except Exception as error:  # a partial install: skip, never block the prompt
+    print(f"[hub {os.path.splitext(os.path.basename(sys.argv[0] or 'hook'))[0]}] skipped: {type(error).__name__}", file=sys.stderr)
+    sys.exit(0)
+
+HUB_FILE = "hub.json"
+SKILL_FILE = "SKILL.md"
+MANIFEST = Path(".claude-plugin") / "plugin.json"
+# A prompt is scanned up to this many characters, and at most this many skills are named back.
+SCAN_LIMIT = 100_000
+MAX_SKILLS = 10
+# The frontmatter is read up to this many bytes: the flag is in its first lines.
+FRONTMATTER_BYTES = 8192
+_PART = r"[A-Za-z0-9][A-Za-z0-9_-]*"
+TOKEN = re.compile(
+    rf"(?:(?<=\s)|^)/({_PART})(?::({_PART}))?(?=[.,;:!?)\]}}\"'»”’]*(?:\s|$))"
+)
+
+
+def read_prompt() -> str:
+    prompt = read_input().get("prompt")
+    return prompt[:SCAN_LIMIT] if isinstance(prompt, str) else ""
+
+
+def named_tokens(prompt: str) -> list[tuple[str | None, str]]:
+    """The (plugin or None, name) of each candidate token, in order, each once; not the token at
+    position 0, which the CLI expands itself."""
+    found: list[tuple[str | None, str]] = []
+    for match in TOKEN.finditer(prompt):
+        if match.start() == 0:
+            continue
+        token = (match[1], match[2]) if match[2] else (None, match[1])
+        if token not in found:
+            found.append(token)
+    return found
+
+
+def plugin_name(root: Path) -> str:
+    """The plugin's name from its manifest, else its folder's name."""
+    try:
+        name = json.loads((root / MANIFEST).read_text(encoding="utf-8")).get("name")
+    except (OSError, ValueError, AttributeError):
+        name = None
+    return name if isinstance(name, str) and name else root.name
+
+
+def plugin_roots() -> tuple[Path | None, list[Path]]:
+    """The hub that holds this file (or None, in Claude Code's plugin cache) and the plugin roots
+    to look in: this file's plugin first, then the hub's other plugins, by name."""
+    own = Path(__file__).resolve().parents[1]
+    hub = own.parents[1] if (own.parents[1] / HUB_FILE).is_file() else None
+    roots = [own]
+    if hub is not None:
+        try:
+            others = sorted(p for p in (hub / "plugin").iterdir() if p.is_dir() and p.resolve() != own)
+        except OSError:
+            others = []
+        roots.extend(others)
+    return hub, roots
+
+
+def is_user_only(skill_file: Path) -> bool:
+    try:
+        with open(skill_file, encoding="utf-8", errors="replace") as handle:
+            head = handle.read(FRONTMATTER_BYTES)
+    except OSError:
+        return False
+    lines = head.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return False
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        key, _, value = line.partition(":")
+        if key.strip() == "disable-model-invocation":
+            return value.strip().strip("\"'").lower() == "true"
+    return False
+
+
+def resolve(plugin: str | None, name: str, hub: Path | None, roots: list[Path]) -> tuple[str, Path] | None:
+    """(the name the Skill tool takes, the SKILL.md) of an existing skill, or None.
+
+    The session lists a skill by its bare name when the hub's `.claude/skills/` holds it and the
+    hooks run from the hub's settings; with CLAUDE_PLUGIN_ROOT set they run from the plugin, which
+    lists it as `<plugin>:<name>`."""
+    as_plugin = bool(os.environ.get("CLAUDE_PLUGIN_ROOT"))
+    linked = hub / ".claude" / "skills" / name / SKILL_FILE if hub is not None else None
+    linked_real = linked.resolve() if linked is not None and linked.is_file() else None
+    if plugin is None and linked is not None and linked_real is not None:
+        owner = next((r for r in roots if r.resolve() == linked_real.parents[2]), None)
+        if as_plugin and owner is not None:
+            return f"{plugin_name(owner)}:{name}", linked
+        return name, linked
+    for root in roots:
+        candidate = root / "skills" / name / SKILL_FILE
+        if not candidate.is_file():
+            continue
+        owner_name = plugin_name(root)
+        if plugin is not None and plugin != owner_name:
+            continue
+        if not as_plugin and linked_real == candidate.resolve():
+            return name, candidate
+        return f"{owner_name}:{name}", candidate
+    return None
+
+
+def context(prompt: str) -> str:
+    tokens = named_tokens(prompt)
+    if not tokens:
+        return ""
+    hub, roots = plugin_roots()
+    steps = []
+    for plugin, name in tokens:
+        found = resolve(plugin, name, hub, roots)
+        if found is None:
+            continue
+        label, skill_file = found
+        typed = f"/{plugin}:{name}" if plugin else f"/{name}"
+        if is_user_only(skill_file):
+            how = f"a user-only skill, which the Skill tool refuses: Read `{skill_file}` and follow it"
+        else:
+            how = f"load it with the Skill tool (skill `{label}`)"
+        steps.append(f"{len(steps) + 1}. `{typed}`: {how}.")
+        if len(steps) == MAX_SKILLS:
+            break
+    if not steps:
+        return ""
+    return "\n".join(
+        [
+            "[hub] The user invoked these skills by name in this message. Run each one, in this order, "
+            "as if the message had started with it; its own gates and approvals still hold:",
+            *steps,
+        ]
+    )
+
+
+def main() -> None:
+    text = context(read_prompt())
+    if text:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": text}}))
+
+
+if __name__ == "__main__":
+    run_hook(main)
