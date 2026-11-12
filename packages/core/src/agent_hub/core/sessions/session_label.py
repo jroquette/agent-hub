@@ -9,6 +9,7 @@ import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
+from types import MappingProxyType
 from typing import Final
 
 from agent_hub.core.events.event import EventType
@@ -34,6 +35,8 @@ ROUTINE_COMMANDS: Final = frozenset(
         "/exit",
     }
 )
+# A skill's former name reads as its new one, so sessions started with either get one label.
+RENAMED_COMMANDS: Final = MappingProxyType({"/fix": "/change"})
 SKILL_TOOL: Final = "Skill"
 # A title's origin: the user's own (``/rename``) wins over the one Claude Code wrote (ADR 0035).
 TITLE_ORIGINS: Final = ("custom", "ai")
@@ -69,14 +72,20 @@ def workflow_name(name: str) -> str:
     return f"/{bare.rpartition(':')[2]}"
 
 
+def _label_name(name: str) -> str:
+    """``name`` as a label shows it: a slash command, a renamed skill under its new name."""
+    shown = workflow_name(name)
+    return RENAMED_COMMANDS.get(shown, shown)
+
+
 def _workflow_of(stored: StoredEvent) -> str | None:
     event = stored.event
     if event.type == EventType.MESSAGE and event.payload.get("role") == "user":
         command = _text(event.payload.get("slash_command"))
-        return None if command is None else workflow_name(command)
+        return None if command is None else _label_name(command)
     if event.type == EventType.TOOL_CALL and event.payload.get("tool") == SKILL_TOOL:
         skill = _text(event.payload.get("skill"))
-        return None if skill is None else workflow_name(skill)
+        return None if skill is None else _label_name(skill)
     return None
 
 
