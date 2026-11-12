@@ -260,9 +260,10 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     ".claude/settings.json": (Kind.GENERIC, Ownership.MANAGED, None),
     ".claude/settings.project.json": (Kind.PROJECT_OWNED, Ownership.SEEDED, None),
     # Row "`hub.schema.json`, `AGENTS.md` and `CLAUDE.md` (base rules), `Makefile`, …,
-    # `.pre-commit-config.yaml`, `.github/workflows/ci.yml`": generic, managed.
+    # `.githooks/`, `.github/workflows/ci.yml`": generic, managed (ADR 0061).
+    ".githooks/commit-msg": (Kind.GENERIC, Ownership.MANAGED, None),
+    ".githooks/pre-commit": (Kind.GENERIC, Ownership.MANAGED, None),
     ".github/workflows/ci.yml": (Kind.GENERIC, Ownership.MANAGED, None),
-    ".pre-commit-config.yaml": (Kind.GENERIC, Ownership.MANAGED, None),
     # Row "`.mcp.json` (declares the `hub` stdio server, `./hub mcp`; built from code; …)":
     # generic, managed (AGH-392 D-mcp-json).
     ".mcp.json": (Kind.GENERIC, Ownership.MANAGED, None),
@@ -426,6 +427,8 @@ MODULE_EXECUTABLE_PATHS = frozenset({"scripts/cloud-setup.sh", "scripts/contract
 # Module scripts are listed apart.
 EXECUTABLE_PATHS = frozenset(
     {
+        ".githooks/commit-msg",
+        ".githooks/pre-commit",
         "agent",
         "hub",
         *(

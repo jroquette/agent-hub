@@ -1,0 +1,12 @@
+#!/bin/sh
+# The hub's commit-msg hook (ADR 0061), on when git's core.hooksPath is .githooks (hub sync and
+# hub setup set it): plugin/hub-workflow/hooks/commit_msg.py on the message file git passes, on
+# the system python3 (3.9+, stdlib only). It refuses AI attribution in the message and, when
+# hub.json names project.author_email, another author or committer (AGENTS.md rule 1). No
+# python3: exit 127, the commit refused. Managed by hub sync.
+case $0 in
+  */*) hooks_dir=${0%/*} ;;
+  *) hooks_dir=. ;;
+esac
+hub_dir=$(CDPATH= cd -P -- "$hooks_dir/.." && pwd -P) || exit 1
+exec python3 "$hub_dir/plugin/hub-workflow/hooks/commit_msg.py" "$1"

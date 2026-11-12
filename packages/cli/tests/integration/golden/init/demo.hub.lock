@@ -160,6 +160,16 @@
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/ux-review"
     },
+    ".githooks/commit-msg": {
+      "executable": true,
+      "ownership": "managed",
+      "sha256": "00115c2c3c622132607dbeda42e6768201a5d5277f32b592ea71b2a8f1cb7534"
+    },
+    ".githooks/pre-commit": {
+      "executable": true,
+      "ownership": "managed",
+      "sha256": "b6b176e256ba820aa28e433b0f92ba14a4bee21772c8986bd598eb86c76a601a"
+    },
     ".github/workflows/ci.yml": {
       "executable": false,
       "ownership": "managed",
@@ -173,15 +183,10 @@
       "ownership": "managed",
       "sha256": "45233b248bc5c5d46fdcbfce71f6c773375250402b569d3b585479e2b0cf07dc"
     },
-    ".pre-commit-config.yaml": {
-      "executable": false,
-      "ownership": "managed",
-      "sha256": "d623b0f030d6ebef13f572ac6e7c92e190a8cd82fc34cc601c4aac4ede7237fc"
-    },
     "AGENTS.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "ac0dda6d7bf1f9d8eab7536cd3364922874f36b6545218d5a5d4e686a9873bb1"
+      "sha256": "b94de983e38f121db286b75940096ed0502e2bbb82baa5f093dec7af4fa8aaed"
     },
     "AGENTS.project.md": {
       "ownership": "seeded"
@@ -341,7 +346,7 @@
     "plugin/hub-workflow/hooks/commit_msg.py": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "2905eb30b0e2fdab0c34fe58c1e0bc1f94f9a0f30100cf60040c1730d357afc0"
+      "sha256": "1d8f288418e2fe181ebdea7ce8105c19ad351a449c8877e89050126e731fe510"
     },
     "plugin/hub-workflow/hooks/event_sensor.py": {
       "executable": true,

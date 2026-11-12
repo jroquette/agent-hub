@@ -112,6 +112,26 @@ doctor snapshot passes no probe, and neither does `hub setup`'s doctor item.
 `hub doctor --only features.tracker`. `--json` prints one object with a `findings` list (the finding fields above)
 and the totals (keys `errors`, `warnings`, `infos` with integer counts), for scripts and the Layer 2 control plane.
 
+### At commit time: `--staged`
+
+`hub doctor --staged` is the check a commit runs: the hub's `.githooks/pre-commit` calls it through `./hub`
+([ADR 0061](../adr/0061-hub-git-hooks-check-the-staged-commit.md)). It reads git's index, never the working tree
+(`GIT_INDEX_FILE` as git sets it, so `git commit <paths>` is checked on what it commits), and checks only what the
+commit stages:
+
+- each staged regular file's hygiene, rule `files.hygiene` (error): no trailing whitespace (first line and count),
+  exactly one newline at the end, valid JSON without a repeated key for `*.json`, one valid YAML document for `*.yaml`
+  and `*.yml`. A binary or non-UTF-8 file gets none; a link is never read. It reports and never rewrites;
+- `features.tracker` on each `brain/features/<name>/` with a staged path (added, changed or deleted), on that
+  folder's index files only;
+- the config rules only when `hub.json` is staged. The config is always the index's `hub.json`; when it cannot be
+  used and is not staged, the feature checks are skipped with a note on stderr, and CI reports it.
+
+No lock, repo, remote or release tag is read, and `hub.local.json` is not checked. `--staged` takes no `--only` or
+`--fix` (exit 2); `--json` works. Exit 1 when a finding is an error, or when git cannot read the index. The whole
+`hub doctor` runs in CI (`make check`) on the merged state: hub-wide rules such as `lock.drift`, `links.dead` or every
+feature stay there.
+
 ### Exit codes
 
 0 when no finding has severity `error`; 1 when at least one does; 2 on a usage error, an unknown rule id in `--only`,

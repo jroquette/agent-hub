@@ -1,9 +1,9 @@
 """The rendered commit-msg hook (AGH-699 C-8): AGENTS.md rule 1 at git's own commit step.
 
-``.pre-commit-config.yaml`` installs the ``commit-msg`` hook type and runs the local hook
-``commit-msg`` at that stage only: pre-commit runs its ``entry`` from the hub root with the message
-file as the one argument. Each case installs that entry as ``.git/hooks/commit-msg`` of a git
-repository in a rendered demo hub (what ``pre-commit install`` sets up), then commits with real
+The rendered ``.githooks/commit-msg`` (ADR 0061) runs ``plugin/hub-workflow/hooks/commit_msg.py`` on
+the message file git passes. Each case makes a rendered demo hub a git repository whose
+``core.hooksPath`` is ``.githooks`` (what ``hub sync`` sets), without the pre-commit hook (its own
+tests are in the CLI's ``test_commit_hooks.py``), then commits with real
 git, ``python3`` being ``hook_python`` first on ``PATH``. The hook refuses an AI co-author
 trailer, a "Generated with Claude" line and the robot emoji (the guard's ``AI_ATTRIBUTION``), and,
 when ``hub.json`` names ``project.author_email``, an author or committer with another email.
@@ -11,8 +11,6 @@ when ``hub.json`` names ``project.author_email``, an author or committer with an
 
 import json
 import os
-import re
-import shlex
 import shutil
 import subprocess
 from collections.abc import Callable, Mapping
@@ -37,15 +35,6 @@ ATTRIBUTION_REASON = "commit-msg: the message carries AI attribution"
 TRAILER = "Co-Authored-" + "By: Claude <" + FOREIGN_EMAIL + ">"
 FOOTER = "Generated " + "with [Claude Code](https://claude.com/claude-code)"
 ROBOT = "\U0001f916"
-
-
-def hook_entry(pre_commit: str) -> str:
-    """The ``entry:`` of the hook whose ``- id:`` is ``HOOK_ID``, as written."""
-    block = re.search(rf"^( +)- id: {HOOK_ID}\n((?:\1  .*\n)+)", pre_commit, re.MULTILINE)
-    assert block is not None, pre_commit
-    entries = re.findall(r"^ +entry: (.*)$", block.group(2), re.MULTILINE)
-    assert len(entries) == 1, block.group(0)
-    return str(entries[0])
 
 
 def real_git() -> str:
@@ -94,8 +83,8 @@ def hub_repo(
     demo_config: HubConfig,
     hook_python: str,
 ) -> Callable[[dict[str, Any]], HubRepo]:
-    """Render the demo hub with ``document`` as its ``hub.json``, ``git init`` it and install
-    the rendered ``commit-msg`` entry as git's commit-msg hook, as pre-commit runs it."""
+    """Render the demo hub with ``document`` as its ``hub.json``, ``git init`` it and turn on its
+    rendered ``.githooks/commit-msg`` alone, through ``core.hooksPath``."""
 
     def build(document: dict[str, Any]) -> HubRepo:
         hub = rendered_hub(demo_config)
@@ -116,12 +105,10 @@ def hub_repo(
             ("config", "user.email", AUTHOR_EMAIL),
             ("config", "maintenance.auto", "false"),
             ("config", "gc.auto", "0"),
+            ("config", "core.hooksPath", ".githooks"),
         ):
             assert run_git(hub, env, *arguments).returncode == 0
-        command = shlex.split(hook_entry(text_of(demo_config, ".pre-commit-config.yaml")))
-        hook = hub / ".git" / "hooks" / "commit-msg"
-        hook.write_text(f'#!/bin/sh\nexec {shlex.join(command)} "$1"\n', encoding="utf-8")
-        hook.chmod(0o755)
+        (hub / ".githooks" / "pre-commit").unlink()
         return HubRepo(hub, env)
 
     return build
@@ -132,13 +119,14 @@ def text_of(config: HubConfig, path: str) -> str:
     return next(file for file in rendered.files if file.path == path).content.decode("utf-8")
 
 
-def test_runs_rendered_hook_file_when_entry_read(demo_config: HubConfig) -> None:
-    entry = shlex.split(hook_entry(text_of(demo_config, ".pre-commit-config.yaml")))
+def test_runs_rendered_hook_file_when_hook_read(demo_config: HubConfig) -> None:
+    hook = text_of(demo_config, ".githooks/commit-msg")
 
     paths = {file.path for file in render_hub(demo_config).files}
 
-    assert entry == ["python3", "plugin/hub-workflow/hooks/commit_msg.py"]
-    assert entry[1] in paths
+    script = "plugin/hub-workflow/hooks/commit_msg.py"
+    assert hook.splitlines()[-1] == f'exec python3 "$hub_dir/{script}" "$1"'
+    assert script in paths
 
 
 @pytest.mark.parametrize(
