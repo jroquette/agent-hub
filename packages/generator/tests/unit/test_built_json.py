@@ -467,6 +467,13 @@ def test_denies_push_to_each_protected_branch_when_default_branch_not_main(
         "Bash(git push origin HEAD:trunk*)",
         "Bash(terraform *)",
         "Bash(aws *)",
+        "Bash(git diff *--output*)",
+        "Bash(git log *--output*)",
+        "Bash(git show *--output*)",
+        "Bash(gh api -X GET * -X*)",
+        "Bash(gh api -X GET * --method*)",
+        "Bash(gh api -X GET -X*)",
+        "Bash(gh api -X GET --method*)",
         "Bash(security *)",
         "Bash(ssh *)",
         "Bash(sh)",
@@ -521,6 +528,9 @@ def test_denies_push_to_repo_branch_when_repo_sets_default_branch() -> None:
         "Bash(git push * develop)",
         "Bash(git push * main)",
         "Bash(git push * master)",
+        # These two denies hold ` * ` too and follow the pushes in deny order.
+        "Bash(gh api -X GET * -X*)",
+        "Bash(gh api -X GET * --method*)",
     ]
 
 

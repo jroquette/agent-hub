@@ -4333,7 +4333,56 @@ SETTINGS_KEYS = [
     "sandbox",
 ]
 SETTINGS_SCHEMA = "https://json.schemastore.org/claude-code-settings.json"
-SETTINGS_ALLOW = ["Bash(git status *)", "Bash(git diff *)", "Bash(git log *)", "Bash(git show *)"]
+# The rules that run with no prompt, first in `allow`: the `git` and `gh` read commands, then the
+# read tools of the Linear and GitHub MCP servers, one rule per tool by its full name.
+SETTINGS_READ_COMMANDS = [
+    "Bash(git status *)",
+    "Bash(git diff *)",
+    "Bash(git log *)",
+    "Bash(git show *)",
+    "Bash(gh pr view *)",
+    "Bash(gh pr checks *)",
+    "Bash(gh pr diff *)",
+    "Bash(gh run view *)",
+    "Bash(gh run list *)",
+    "Bash(gh api -X GET *)",
+]
+SETTINGS_READ_TOOLS = [
+    *(
+        f"{server}__{tool}"
+        for server in ("mcp__Linear", "mcp__claude_ai_Linear")
+        for tool in (
+            "get_issue",
+            "list_issues",
+            "list_comments",
+            "list_issue_statuses",
+            "list_issue_labels",
+            "get_team",
+            "list_teams",
+            "get_user",
+            "get_project",
+            "list_projects",
+        )
+    ),
+    *(
+        f"mcp__github__{tool}"
+        for tool in (
+            "pull_request_read",
+            "list_pull_requests",
+            "search_pull_requests",
+            "issue_read",
+            "list_issues",
+            "search_issues",
+            "get_file_contents",
+            "list_commits",
+            "get_commit",
+            "get_me",
+        )
+    ),
+]
+SETTINGS_ALLOW = [*SETTINGS_READ_COMMANDS, *SETTINGS_READ_TOOLS]
+# A rule for one MCP tool: a known server, then the tool's name in lowercase words.
+SETTINGS_MCP_TOOL = re.compile(r"mcp__(?:Linear|claude_ai_Linear|github)__[a-z]+(?:_[a-z]+)*")
 # AGH-114: what `/onboard propose` runs headless with no prompt, from its skill text. The hash
 # pipe's two right-hand sides, the doctor baseline, the per-repo checkout and default-branch reads
 # (`git -C ../<dir>`, exact), and the proposal file with its dated archive names.
@@ -4375,6 +4424,14 @@ def settings_deny(config_name: str) -> list[str]:
         *pushes,
         "Bash(terraform *)",
         "Bash(aws *)",
+        # The writing forms of the read commands `allow` lists: an output file, a second method.
+        "Bash(git diff *--output*)",
+        "Bash(git log *--output*)",
+        "Bash(git show *--output*)",
+        "Bash(gh api -X GET * -X*)",
+        "Bash(gh api -X GET * --method*)",
+        "Bash(gh api -X GET -X*)",
+        "Bash(gh api -X GET --method*)",
         "Bash(security *)",
         "Bash(ssh *)",
         "Bash(sh)",
@@ -4528,15 +4585,24 @@ def test_allows_only_onboard_propose_when_settings_rendered(
 
     allow = strict_json(rendered[".claude/settings.json"].content)["permissions"]["allow"]
 
-    # AGH-114: a headless `/onboard propose` writes its proposal and hashes hub.json with no
-    # prompt; each allow is one of the skill's exact read-only forms, the base git reads before.
+    # The read-only list comes first; then the rules a headless `/onboard propose` needs to write
+    # its proposal and hash hub.json with no prompt, each one of the skill's exact forms.
     assert allow == [*SETTINGS_ALLOW, *onboard_propose_allow(config_name)]
-    # Nothing broader: no bare tool and no new Bash wildcard (the onboard commands match
-    # exactly), and the one file rule is the proposal's (Claude Code checks writes against
-    # `Edit(path)` rules only; a `Write(path)` rule is never consulted).
-    assert all(rule.endswith(")") and "(" in rule for rule in allow), allow
-    assert [rule for rule in allow if "*" in rule] == [*SETTINGS_ALLOW, ONBOARD_PROPOSAL_EDIT]
-    assert [rule for rule in allow if not rule.startswith("Bash(")] == [ONBOARD_PROPOSAL_EDIT]
+    # Nothing broader: a rule that is not `Tool(...)` is one MCP tool's exact name, the only Bash
+    # wildcards are the read commands (the onboard commands match exactly), and the one file rule
+    # is the proposal's (Claude Code checks writes against `Edit(path)` rules only; a
+    # `Write(path)` rule is never consulted).
+    assert all(
+        (rule.endswith(")") and "(" in rule) or SETTINGS_MCP_TOOL.fullmatch(rule) for rule in allow
+    ), allow
+    assert [rule for rule in allow if "*" in rule] == [
+        *SETTINGS_READ_COMMANDS,
+        ONBOARD_PROPOSAL_EDIT,
+    ]
+    assert [rule for rule in allow if not rule.startswith("Bash(")] == [
+        *SETTINGS_READ_TOOLS,
+        ONBOARD_PROPOSAL_EDIT,
+    ]
 
 
 @pytest.mark.parametrize("config_name", CONFIG_NAMES)
