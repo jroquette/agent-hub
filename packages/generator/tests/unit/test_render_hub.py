@@ -115,6 +115,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/hooks/pre_compact.py",
     "plugin/hub-workflow/hooks/pre_tool_use.py",
     "plugin/hub-workflow/hooks/project_guard_runner.py",
+    "plugin/hub-workflow/hooks/prompt_secret.py",
     "plugin/hub-workflow/hooks/readonly_gate.py",
     "plugin/hub-workflow/hooks/session_end.py",
     "plugin/hub-workflow/hooks/session_start.py",
@@ -2708,7 +2709,8 @@ def test_names_rendered_script_when_hooks_json_command_read(
     # The six base hooks, then the event sensor on ten events (AGH-200 E2): on PreToolUse the
     # base hook, pre_tool_use.py, sends the sensor's envelope itself (AGH-621).
     # AGH-141: the read-only gate on SubagentStart and SubagentStop, after the sensor.
-    assert (len(commands), len(hooks)) == (18, 11)
+    # AGH-814: the prompt secret warning on UserPromptSubmit, before the sensor.
+    assert (len(commands), len(hooks)) == (19, 11)
     for command in commands:
         match = HOOK_COMMAND.fullmatch(command)
         assert match, command
@@ -4451,7 +4453,7 @@ SETTINGS_HOOKS = {
     "Stop": [(None, "stop_gate.py", 180), (None, SENSOR, 5)],
     "PreCompact": [(None, "pre_compact.py", 20), (None, SENSOR, 5)],
     "SessionEnd": [(None, "session_end.py", 10), (None, SENSOR, 5)],
-    "UserPromptSubmit": [(None, SENSOR, 5)],
+    "UserPromptSubmit": [(None, "prompt_secret.py", 5), (None, SENSOR, 5)],
     "PostToolUseFailure": [("*", SENSOR, 5)],
     "Notification": [(None, SENSOR, 5)],
     "SubagentStart": [(None, SENSOR, 5), (None, GATE, 10)],
