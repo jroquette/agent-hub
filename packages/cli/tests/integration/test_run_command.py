@@ -1121,7 +1121,7 @@ class TestLiveSuccess:
                 "footer-stays",
                 [
                     f"hub run: warning: the body of {PR_URL} still carries AI attribution;"
-                    " edit it by hand"
+                    " set it again through the session's GitHub tools, or edit it by hand"
                 ],
             ),
         ],

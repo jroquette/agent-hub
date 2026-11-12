@@ -64,8 +64,13 @@ RESET = ("gh", "api", "--method", "PATCH")
 RESET_ARGV = (*RESET, "repos/acme/demo-api/pulls/7", "-F", "body=@-")
 # Built from fragments, so this file holds no attribution line a reader could take for one.
 FOOTER = "\n\n---\n_Generated " + "by [Claude Code](https://claude.ai/code/session_0123)_"
+# The footer a cloud session answers an edit through ``gh`` with: a generic one, built the same way.
+EDIT_FOOTER = "\n\n\n---\n_Generated " + "by [Claude Code](https://claude.ai/code)_"
 CHECK_FOOTER = "check it for an attribution footer"
-STILL_ATTRIBUTED = f"the body of {PR_URL} still carries AI attribution; edit it by hand"
+STILL_ATTRIBUTED = (
+    f"the body of {PR_URL} still carries AI attribution;"
+    " set it again through the session's GitHub tools, or edit it by hand"
+)
 
 
 @dataclass(frozen=True)
@@ -403,8 +408,9 @@ def test_makes_one_call_when_created_body_is_the_one_sent() -> None:
     assert opened.warning is None
 
 
-def test_warns_when_body_still_carries_attribution_after_reset() -> None:
-    child = FakeChild({CREATE: pull("DEM-7" + FOOTER), RESET: pull("DEM-7" + FOOTER)})
+@pytest.mark.parametrize("footer", [FOOTER, EDIT_FOOTER], ids=["session", "generic"])
+def test_warns_when_body_still_carries_attribution_after_reset(footer: str) -> None:
+    child = FakeChild({CREATE: pull("DEM-7" + FOOTER), RESET: pull("DEM-7" + footer)})
 
     opened = open_pr(child)
 
@@ -445,6 +451,17 @@ def test_warns_when_body_cannot_be_set_again() -> None:
     assert opened.warning.endswith("x gh: Not Found (HTTP 404)")
     assert len(opened.warning) <= len(lead) + 500
     assert opened.warning.isprintable()
+
+
+def test_shows_control_characters_escaped_when_failed_reset_prints_them() -> None:
+    refused = ChildResult(1, b"", b"\x1b[31mboom\x1b[0m\n")
+    child = FakeChild({CREATE: pull("DEM-7" + FOOTER), RESET: refused})
+
+    opened = open_pr(child)
+
+    assert opened.warning == (
+        f'the body of {PR_URL} could not be set again; {CHECK_FOOTER}: "\\u001b[31mboom\\u001b[0m"'
+    )
 
 
 def test_warns_when_reset_cannot_run() -> None:

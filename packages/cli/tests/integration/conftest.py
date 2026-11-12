@@ -1927,12 +1927,14 @@ elif mode in ("prose", "silent"):
     answer("I made the change and ran the tests.")
 """.replace("RUN_COST", repr(RUN_COST_USD)).replace("RUN_SUMMARY", repr(RUN_SUMMARY))
 )
-# A line of the ``gh`` fakes' source: ``FOOTER``, what a cloud session's environment appends to
-# the body of a PR it creates. Built from fragments there, so that neither this file nor a fake
-# holds an attribution line a reader could take for one.
+# Lines of the ``gh`` fakes' source: ``FOOTER``, what a cloud session's environment appends to
+# the body of a PR it creates, and ``EDIT_FOOTER``, the generic one it appends when the body is
+# edited through ``gh``. Built from fragments there, so that neither this file nor a fake holds
+# an attribution line a reader could take for one.
 _FAKE_FOOTER = (
     'FOOTER = "\\n\\n---\\n_Generated " + '
     '"by [Claude Code](https://claude.ai/code/session_0123)_"\n'
+    'EDIT_FOOTER = "\\n\\n\\n---\\n_Generated " + "by [Claude Code](https://claude.ai/code)_"\n'
 )
 # hub run's ``gh``: GitHub's REST API (``gh api``), as a cloud session's proxy lets through:
 # ``--method POST repos/<repo>/pulls`` (the body read from stdin, logged as ``stdin``) and
@@ -1941,7 +1943,8 @@ _FAKE_FOOTER = (
 # through the REST API only; any other call exits 2.
 # In the modes ``footer`` and ``footer-stays`` the create answers as a cloud session's does: the
 # PR's ``body`` is the one read plus ``FOOTER``; ``--method PATCH repos/<repo>/pulls/<n>`` (the
-# body read from stdin) then answers the body it read, in ``footer-stays`` with the footer again.
+# body read from stdin) then answers the body it read, in ``footer-stays`` with ``EDIT_FOOTER``
+# after it, as a cloud session answers an edit through ``gh``.
 _RUN_FAKE_GH = (
     _FAKE_LOG
     + _FAKE_FOOTER
@@ -1958,7 +1961,7 @@ if argv[:3] == ["api", "--method", "GET"]:
     print(json.dumps([{"html_url": PR_URL, "state": "open"}] if mode == "exists" else []))
     sys.exit(0)
 if argv[:3] == ["api", "--method", "PATCH"] and mode in footers and body is not None:
-    held = body + (FOOTER if mode == "footer-stays" else "")
+    held = body + (EDIT_FOOTER if mode == "footer-stays" else "")
     print(json.dumps({"html_url": PR_URL, "number": 1, "body": held}))
     sys.exit(0)
 if argv[:3] != ["api", "--method", "POST"]:

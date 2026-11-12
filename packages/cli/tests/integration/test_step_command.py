@@ -387,7 +387,7 @@ class TestPr:
         ]
         assert [line for line in result.stderr.splitlines() if "warning" in line] == [
             f"hub step pr: warning: the body of {PR_URL} still carries AI attribution;"
-            " edit it by hand"
+            " set it again through the session's GitHub tools, or edit it by hand"
         ]
 
 
