@@ -186,7 +186,7 @@
     "AGENTS.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "b436c2522dff5d07d15a99e56cf23626fcea8e8a189be08c8f9b48f9d40577c4"
+      "sha256": "b94de983e38f121db286b75940096ed0502e2bbb82baa5f093dec7af4fa8aaed"
     },
     "AGENTS.project.md": {
       "ownership": "seeded"
@@ -466,7 +466,7 @@
     "plugin/hub-workflow/skills/handoff/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "56bc2e339949da6452aec3cee5a78de7c01dba93382d3680a0e6b4aa615b4aa4"
+      "sha256": "fc57a2a6cf64ef69dd64e7f6f28fe383b9c53e04ea801107decc55a6dececbbc"
     },
     "plugin/hub-workflow/skills/implement/SKILL.md": {
       "executable": false,
