@@ -43,7 +43,7 @@
     ".claude/settings.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "e17881d8d3fb4edd70374dd4b5ab07609766521d3ec87b6722d0c1accafe6567"
+      "sha256": "b2141f93a8a787de58156fee6d8f7ff7ad1a1cca48ec406cadbcc8fcc565c8af"
     },
     ".claude/settings.project.json": {
       "ownership": "seeded"
@@ -186,7 +186,7 @@
     "AGENTS.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "fe3cda3381f34b338a103b2ef944cb0da3962e1a375e8c6122974809a87b7208"
+      "sha256": "572a36a2ba16eec6cac2f9242fdbc3b42a78108e19df52a6405c9fe81d0bdec7"
     },
     "AGENTS.project.md": {
       "ownership": "seeded"
@@ -361,7 +361,7 @@
     "plugin/hub-workflow/hooks/hooks.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "fb73bce050bb96a6d2e781b29f54eb8a85401ce525cbb09d1e814933d34311aa"
+      "sha256": "7b9c882589cd9e82c9f744bd1d1148549caf512d9da28119650e6b4fb8f2db70"
     },
     "plugin/hub-workflow/hooks/hubhooks.py": {
       "executable": false,
@@ -388,6 +388,11 @@
       "ownership": "managed",
       "sha256": "76c7b2d46d3054123b17dab78b3a76deed60a2c69d5ae81699f48816914c849c"
     },
+    "plugin/hub-workflow/hooks/prompt_secret.py": {
+      "executable": true,
+      "ownership": "managed",
+      "sha256": "3993c503b5e848815455b99eaa735db85be7f45a671ae19d8d1dac33edde59c3"
+    },
     "plugin/hub-workflow/hooks/prompt_skills.py": {
       "executable": true,
       "ownership": "managed",
@@ -411,7 +416,7 @@
     "plugin/hub-workflow/hooks/stdlib_reader.py": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "a5a1156e1f8b89df448c592071ecee33bbfd58ae7b950aff5edc873f67a0a83d"
+      "sha256": "0c6d1a5a1c167ad036c33863d2c4dabe58c4702a84a567def09ac187ecc8edb8"
     },
     "plugin/hub-workflow/hooks/stop_gate.py": {
       "executable": true,

@@ -3429,9 +3429,9 @@ def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubCon
 # AGH-838: re-pinned when step 6 opened the hub's skills to the model and the brain line was
 # shortened to keep the file within 100 lines.
 # AGH-814: re-pinned when rule 4 said agents never repeat a secret in text for people.
-DEMO_AGENTS_SHA256 = "a0bc3d64d8794113308d3e7cee7e746aca7d3d55a03fa2a37ea53379f18c052a"
+DEMO_AGENTS_SHA256 = "82e4ec4b5346f4cfde2c88fa106a1cbd1a03165606a5916a462dcf76a66d8a4b"
 ALL_MODULES_SHA256 = {
-    "AGENTS.md": "30cdf163011fc8107dff5339d8d65c0974c0eab81faa44a93c24254d1c7879e6",
+    "AGENTS.md": "d61ef0b46309050a39984ad1c70bce16a2e431fccaae7242b263480d04c707d1",
     ".claude-plugin/marketplace.json": (
         "f7324911e70a0f3255274721636821a9b65a5716f04c5f6e3e470e74dc7b8ac7"
     ),
