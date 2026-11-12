@@ -1795,6 +1795,22 @@ def test_declares_mutates_checkout_when_base_agents_rendered(
     assert "Send the check's output to a file under `$TMPDIR`, never into the checkout" in body
 
 
+# A rendered agent names no permission mode, so a subagent runs in the mode of the session that
+# starts it and never in a more permissive one.
+def test_sets_no_permission_mode_when_agents_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    paths = sorted(
+        path
+        for path in demo_render
+        if path.startswith(f"{AGENTS_FOLDER}/") and path.endswith(".md")
+    )
+
+    assert paths == [f"{AGENTS_FOLDER}/{name}.md" for name in BASE_AGENTS]
+    for path in paths:
+        lines = frontmatter_lines(demo_render[path].content.decode("utf-8"))
+        assert lines, path
+        assert "permissionMode" not in [line.split(":", 1)[0].strip() for line in lines], path
+
+
 # AC-4.19 (Q-15, plan design 7): the `hub` command and the make target that runs it through the
 # shim, where one exists; the tracker check has no target yet and stays bare.
 SKILL_COMMANDS = {
