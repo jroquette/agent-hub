@@ -194,7 +194,7 @@
     "CLAUDE.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "7740e3e8fdb5fd1fc015ff58df00c92ca408c57dd41bbd56987874d977601203"
+      "sha256": "70d87c7a30881428af1128de788ab47783604578ddbc3c1380188572fa1264b3"
     },
     "Makefile": {
       "executable": false,
@@ -431,7 +431,7 @@
     "plugin/hub-workflow/skills/adr/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "b0116e4ddf3f3797e58bf7fe94ee74a217cb6e25307359f29c8d96e5cba525c1"
+      "sha256": "afec52fe17403d88df0d191aa17126513788d3f09b468fe2139279e9d60a8324"
     },
     "plugin/hub-workflow/skills/context-audit/SKILL.md": {
       "executable": false,
@@ -456,22 +456,22 @@
     "plugin/hub-workflow/skills/feature/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "e1908fb7785f4bf22bfb912bc57d72b5628edd9cacd286840f3cb57a8b280c12"
+      "sha256": "da6647408961264f739189a0ae3501e0743f27b06a4a9b72e2498a3ddae4c9c9"
     },
     "plugin/hub-workflow/skills/fix/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "4756075d332d8f2f51ce187ef8b5555bf3e9a5e192025fdab783c89b99f41fc3"
+      "sha256": "8d2f3745a9f02dfdee2b431a6cd587d58a4219baf5b9aa806b966258e965e499"
     },
     "plugin/hub-workflow/skills/handoff/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "0644575c0b075a26b4ba415e2911e5e2dd071b88fdb3857f8310509e4a70b8dc"
+      "sha256": "5fc1e8f2588bc23a14dee18c201e3402290a886b0347ba69612f3ee9918bd025"
     },
     "plugin/hub-workflow/skills/implement/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "40643841151e227e578371083768d3e1d9b14fe4b98b51948226a61440d7ac89"
+      "sha256": "c3b23253c88a4add5708a4ded58d314d26d9447ab057b58d12363cab81ca5d40"
     },
     "plugin/hub-workflow/skills/incident/SKILL.md": {
       "executable": false,
@@ -486,12 +486,12 @@
     "plugin/hub-workflow/skills/learn/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "89d93592da8fb6d344418729a1205113920160e7b7f6182c1170f206ffdcbfa6"
+      "sha256": "cb88840870bc48f9d92154361dd62f33eb9d3a5ec3a5ba852478d57a6f9a5812"
     },
     "plugin/hub-workflow/skills/onboard/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "5fe52849305aa9b90df7f7ddbb8cab0740ed2e705b3e48d07568ff8add21a80f"
+      "sha256": "d50df95ac57b03878f2a0a6d3f1acf6d816ce82bcb112c621c940a37ecc6fbd9"
     },
     "plugin/hub-workflow/skills/onboard/reference.md": {
       "executable": false,
@@ -531,12 +531,12 @@
     "plugin/hub-workflow/skills/refactor/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "5e32d142df8da0888316b03e81daf0d5ba5a3085bf2e941b37fa37278c68cafa"
+      "sha256": "4e61d371eb89e78970b3f7548c2a1db354bda4ead2492b552081e131fa944af7"
     },
     "plugin/hub-workflow/skills/release/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "2f0d004fb9721a47d63118d18c74bbbb7ccb5f4a1ca54a27bac22f6883b6ebed"
+      "sha256": "30f473c390fbef17192a68314213b1ec8012b374892119ce12f02a49bd353396"
     },
     "plugin/hub-workflow/skills/research/SKILL.md": {
       "executable": false,
@@ -546,7 +546,7 @@
     "plugin/hub-workflow/skills/retro/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "c80a2e2a93126f76dbc67a4f4f578f6ea0e8659ba8c41543114ed801e19667b2"
+      "sha256": "1efe68e4c5f9baad379fe041cde531bb8c9107ccb37bac15088b5942e12a6508"
     },
     "plugin/hub-workflow/skills/review/SKILL.md": {
       "executable": false,
@@ -576,7 +576,7 @@
     "plugin/hub-workflow/skills/upgrade/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "f6c581f169bb9bbebd8b6dd0ac7f74ca3a3f038c363d756404d1a25170b6ad6e"
+      "sha256": "35d76587ca67893c51cfd5279ca4e0be2627922b8f3a634fe8fcbeb8fbf7a974"
     },
     "plugin/hub-workflow/skills/ux-review/SKILL.md": {
       "executable": false,
