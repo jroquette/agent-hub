@@ -13,6 +13,15 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
+- A hub's commit hooks now check only what the commit stages, and run inside the Claude Code sandbox (AGH-835,
+  ADR 0061). `hub sync` replaces `.pre-commit-config.yaml` with `.githooks/pre-commit` and `.githooks/commit-msg`, and
+  points the hub's `core.hooksPath` at them. The pre-commit hook runs the new `hub doctor --staged`: it reads git's
+  index, not the working tree, checks each staged file (trailing whitespace, end of file, JSON, YAML), each feature
+  folder with a staged file (`features.tracker`) and `hub.json` when it is staged. An edit the commit does not stage
+  never blocks it, and nothing is downloaded at commit time. CI still runs the whole `hub doctor` through
+  `make check`. When you bump `platform.version`: run `hub sync`, then check its `git hooks:` line. If it warns that
+  `core.hooksPath` holds another value, run `git config core.hooksPath .githooks` yourself. You no longer need
+  pre-commit for the hub; `pre-commit uninstall` removes its old hooks.
 - `hub web` opens the chat when you start a new feature, as every other start does, instead of the Discuss panel and
   a "Sent to Claude" card (AGH-804).
 - `hub web` reads a proposed learning whose note left `brain/_inbox/` (merged into another note or deleted by hand)

@@ -22,6 +22,12 @@ read is one note on stderr, never a finding. The findings go to stdout as lines 
 as one JSON object with ``--json``; the exit is 1 when one is an error, else 0. ``check_hub`` is
 the same check on a given root, for ``hub setup``, which probes no release tag.
 
+``--staged`` is the commit's check, run by the hub's ``.githooks/pre-commit`` (ADR 0061): it
+reads git's index, never the working tree, and checks only what the commit stages: the hygiene of
+each staged file, ``features.tracker`` on each feature folder with a staged path, and the config
+rules when ``hub.json`` is staged (``core.doctor.staged_check``). It takes no ``--only`` or
+``--fix``, reads no lock, repo or remote, and probes nothing. CI runs the whole ``hub doctor``.
+
 ``--fix`` first rewrites what can be fixed without a person, all at once: today every
 ``brain.leak`` (the brain note gets a pointer to the repo line in place of the copied text,
 ``brain_leak_fix``). It lists each file it wrote on stderr, then checks the hub again and
@@ -54,6 +60,7 @@ from agent_hub.cli.hub_root import local_home
 from agent_hub.cli.init_report import shown_path
 from agent_hub.cli.release_lookup import DOCTOR_PROBE_TIMEOUT, tag_commit
 from agent_hub.cli.run_children import SESSION_HIDDEN, without
+from agent_hub.cli.staged_index import IndexReadError, read_staged_index
 from agent_hub.core.doctor.brain_leak_fix import BrainEdit, brain_leak_edits
 from agent_hub.core.doctor.config_rules import config_state
 from agent_hub.core.doctor.finding import Finding
@@ -74,6 +81,7 @@ from agent_hub.core.doctor.snapshot import (
     ReleaseTagMissing,
     RemoteProbe,
 )
+from agent_hub.core.doctor.staged_check import check_staged
 from agent_hub.core.hub_config.doctor_rules import BRAIN_LEAK_RULE, RULE_IDS
 from agent_hub.core.hub_config.effective_identity import (
     IdentityValues,
@@ -82,14 +90,16 @@ from agent_hub.core.hub_config.effective_identity import (
 )
 from agent_hub.core.hub_config.local_config import LOCAL_FILE, LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
-from agent_hub.core.hub_config.problems import ConfigProblem
+from agent_hub.core.hub_config.problems import ROOT_PATH, ConfigProblem
 from agent_hub.core.hub_files.release_commit import LookupFailure
+from agent_hub.core.hub_files.tree_snapshot import FileEntry
 from agent_hub.generator.doctor_snapshot import (
     BranchPrefixReader,
     ReleaseProber,
     RemoteProber,
     build_doctor_snapshot,
 )
+from agent_hub.generator.staged_yaml import yaml_problem
 
 # A usage error, an unknown or unrunnable ``--only`` id, or a folder that is not a hub.
 NOT_A_HUB_EXIT: Final = 2
@@ -123,8 +133,20 @@ def doctor(
             "--fix", help="Fix every finding that needs no person (brain.leak), then check again."
         ),
     ] = False,
+    staged: Annotated[
+        bool,
+        typer.Option(
+            "--staged",
+            help="Check only what the commit stages, read from git's index (the pre-commit hook).",
+        ),
+    ] = False,
 ) -> None:
     """Check the hub's rules, links, dead references and instruction size."""
+    if staged:
+        if only or fix:
+            context.fail("--staged takes no --only or --fix")
+        _staged_or_exit(as_json=as_json)
+        return
     wanted = tuple(only or ())
     unknown = [rule_id for rule_id in wanted if rule_id not in RULE_IDS]
     if unknown:
@@ -138,14 +160,19 @@ def doctor(
         run = check_hub(root, only=wanted, release_prober=prober)
     if isinstance(run, UsageProblem):
         context.fail(run.message)
-    for note in run.notes:
+    _report(run.findings, notes=run.notes, as_json=as_json)
+
+
+def _report(findings: Sequence[Finding], *, notes: Sequence[str], as_json: bool) -> None:
+    """The notes on stderr, the findings on stdout; exit 1 when one is an error."""
+    for note in notes:
         typer.echo(note, err=True)
     if as_json:
-        typer.echo(report_json(run.findings), nl=False)
+        typer.echo(report_json(findings), nl=False)
     else:
-        for line in report_lines(run.findings):
+        for line in report_lines(findings):
             typer.echo(line)
-    if count_findings(run.findings).has_errors:
+    if count_findings(findings).has_errors:
         raise typer.Exit(FINDINGS_FAILED)
 
 
@@ -300,6 +327,31 @@ def _replace_with(path: str, data: bytes, *, mode: int) -> None:
         with contextlib.suppress(OSError):
             os.unlink(temporary)
         raise
+
+
+def _staged_or_exit(*, as_json: bool) -> None:
+    """``hub doctor --staged``: the commit's checks on git's index; exit 1 on an error."""
+    root = root_or_exit(None)
+    _hub_or_exit(root)
+    try:
+        index = read_staged_index(Path(root), environ=os.environ)
+    except IndexReadError as error:
+        typer.echo(f"hub doctor --staged: cannot read git's index: {error}", err=True)
+        raise typer.Exit(FINDINGS_FAILED) from None
+    running = version(DISTRIBUTION)
+    hub_json = index.entries.get(FILE_LABEL)
+    read = (
+        hub_json.content
+        if isinstance(hub_json, FileEntry) and hub_json.content is not None
+        else (ConfigProblem(ROOT_PATH, "hub.json is not a regular file in git's index"),)
+    )
+    run = check_staged(
+        index,
+        config=config_state(read, running_version=running),
+        running_version=running,
+        yaml_problem=yaml_problem,
+    )
+    _report(run.findings, notes=run.notes, as_json=as_json)
 
 
 def _hub_or_exit(root: str) -> None:
