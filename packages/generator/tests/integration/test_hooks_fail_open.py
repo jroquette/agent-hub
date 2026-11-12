@@ -1,5 +1,6 @@
-"""The nine rendered hook entry points fail open: whatever the input or the hub, they exit 0,
-print nothing or one JSON object, and never a traceback (AC-4.11, AGH-200 D6, AGH-621 AC-38).
+"""The ten rendered hook entry points fail open: whatever the input or the hub, they exit 0,
+print nothing or one JSON object, and never a traceback (AC-4.11, AGH-200 D6, AGH-621 AC-38,
+AGH-814).
 
 Each hook runs as Claude Code runs it: a file on ``hook_python`` with the input on stdin, in an
 environment built from scratch (``HOME`` and ``TMPDIR`` under ``tmp_path``, and the event server's
@@ -32,6 +33,7 @@ ENTRY_POINTS = (
     "event_sensor",
     "readonly_gate",
     "pre_tool_use",
+    "prompt_secret",
 )
 # Where Claude Code's plugin cache would hold the hooks: no hub.json three folders up.
 PLUGIN_CACHE = "home/.claude/plugins/cache/agent-hub/hub-workflow/0.1.0/hooks"
@@ -119,6 +121,8 @@ def valid_event(name: str, hub: Path) -> dict[str, Any]:
             "tool_input": {"command": "git push origin main"},
             "tool_use_id": "toolu_01",
         },
+        # A prompt the hook warns on, so its one JSON line is part of the run.
+        "prompt_secret": {"hook_event_name": "UserPromptSubmit", "prompt": "cat .env.production"},
     }
     return base | extra[name]
 
