@@ -21,6 +21,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   adds the `resolved_elsewhere` learning state.
 - Proposals of the same inbox note now count once in the Learnings quick views, the Learnings tab and the sidebar
   badge (AGH-804).
+- When the owner drops the direction a session was following, the session asks why once, files the answer with
+  `/learn` and hands off, leaving the ticket with its status and a comment on what was done and dropped (AGH-815).
+  The hub's `AGENTS.md` says so in one line, and its Workflow item 5 lost the sentence that repeated the Gotchas line
+  on redirecting output.
 
 ### Fixed
 
