@@ -150,7 +150,11 @@ class ShipCase(NamedTuple):
     [
         pytest.param(
             ShipCase(
-                "fix", at_step(7), at_step(7), "open the PR", "run step 5 Gates again before the push"
+                "fix",
+                at_step(7),
+                at_step(7),
+                "open the PR",
+                "run step 5 Gates again before the push",
             ),
             id="fix-ship",
         ),
@@ -208,21 +212,28 @@ def test_asks_owner_about_files_outside_scope_lists_when_upgrade_paused_at_publi
     assert OWNER_KEEPS in report
 
 
+class BodyCase(NamedTuple):
+    skill: str
+    pr_step_at: Locator
+    pr_body: str
+
+
 @pytest.mark.parametrize(
-    ("skill", "pr_step_at", "pr_body"),
+    "case",
     [
-        pytest.param("fix", at_step(7), "The PR body follows", id="fix"),
-        pytest.param("refactor", at_step(6), "The body holds", id="refactor"),
-        pytest.param("upgrade", at_by_hand("Ship"), "The PR body holds", id="upgrade"),
+        pytest.param(BodyCase("fix", at_step(7), "The PR body follows"), id="fix"),
+        pytest.param(BodyCase("refactor", at_step(6), "The body holds"), id="refactor"),
+        pytest.param(BodyCase("upgrade", at_by_hand("Ship"), "The PR body holds"), id="upgrade"),
     ],
 )
 def test_posts_scope_lists_on_tracker_not_pr_body_when_lists_written(
-    demo_skills: dict[str, str], skill: str, pr_step_at: Locator, pr_body: str
+    demo_skills: dict[str, str], case: BodyCase
 ) -> None:
+    skill = case.skill
     text = demo_skills[skill]
-    pr_step = pr_step_at(text).text
+    pr_step = case.pr_step_at(text).text
     # The PR-body text: from the PR body sentence to the end of its step or item.
-    body_text = pr_step[pr_step.index(pr_body) :]
+    body_text = pr_step[pr_step.index(case.pr_body) :]
     body_sentences = [
         sentence for sentence in re.split(r"(?<=[.;:])\s", pr_step) if "body" in sentence
     ]
