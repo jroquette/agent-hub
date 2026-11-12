@@ -3318,9 +3318,10 @@ def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubCon
 # AGH-578: re-pinned when line 3 named ./hub repo.
 # AGH-688: re-pinned when steps 2-3 and Brain rules named the hub MCP's search,
 # read and propose, and the double-wiring and superpowers bullets moved to CLAUDE.md.
-DEMO_AGENTS_SHA256 = "8f54186a0573bc7632cfeb5e5894070f8094a357a2d974d9d3e2ac1ba283ed78"
+# AGH-814: re-pinned when rule 4 said agents never repeat a secret in text for people.
+DEMO_AGENTS_SHA256 = "76ad20c028dde3b5a101817b39b3942e7871f2b1e61aaa9cb75bc309174efc6d"
 ALL_MODULES_SHA256 = {
-    "AGENTS.md": "2c6796fa940a1e40b2f8e8453ddbb85357ed13c6b0776ce2a8cf634fb37cf241",
+    "AGENTS.md": "29c3d7f53455bcdaa19946506832980ea91ac4247e558b600217008072a6160a",
     ".claude-plugin/marketplace.json": (
         "f7324911e70a0f3255274721636821a9b65a5716f04c5f6e3e470e74dc7b8ac7"
     ),
