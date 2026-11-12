@@ -455,7 +455,15 @@ def test_warns_when_reset_cannot_run() -> None:
             raise PrStepError("gh timed out after 17 s")
         return answers(argv, **options)
 
-    opened = open_pr(child)  # type: ignore[arg-type]
+    opened = open_or_find_pr(
+        child,
+        target=TARGET,
+        title="feat: add x",
+        body="DEM-7",
+        draft=False,
+        environ=CALLER_ENV,
+        timeout=17.0,
+    )
 
     assert (opened.url, opened.found) == (PR_URL, False)
     assert opened.warning == (
