@@ -11,6 +11,16 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- The built-in `release` pack has a second workflow, `release-pin` (AGH-821). Its four inputs are `issue`, `repo`,
+  `version` and `sha`, the version PR's merge commit. It checks that the `vX.Y.Z` tag on origin is annotated and on
+  that commit, then opens the hub PR that raises `platform.version` and runs `./hub sync`. It has no approval: your
+  decision is the merge of that PR. If the tag is missing, not annotated or on another commit, the run ends
+  `untagged` and opens no PR. Start it with `./hub workflow run release-pin --input issue=<issue> --input repo=<dir>
+  --input version=X.Y.Z --input sha=<merge commit> --live`. The `release` workflow and `/release` do not change in
+  this release.
+
 ### Changed
 
 - A hub's commit hooks now check only what the commit stages, and run inside the Claude Code sandbox (AGH-835,
