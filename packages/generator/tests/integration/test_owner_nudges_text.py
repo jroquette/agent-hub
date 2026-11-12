@@ -27,25 +27,9 @@ HANDOFF = "plugin/hub-workflow/skills/handoff/SKILL.md"
 DROPPED_LEAD = "**Dropped direction**"
 AGENTS_TRIGGER = "drops the direction"
 MAX_WIDTH = 120
-# The templates' placeholder names on 7f7acc45f, before the dropped-direction text: it adds none.
-AGENTS_PLACEHOLDERS = frozenset(
-    {
-        "branch_rule",
-        "commit_author",
-        "conventions_section",
-        "environments_section",
-        "module_files",
-        "module_seeded_files",
-        "prefix_note",
-        "project_name",
-        "protected_branches",
-        "repo_dirs",
-        "tracker_team_mention",
-        "worktree_base",
-    }
-)
-HANDOFF_PLACEHOLDERS: frozenset[str] = frozenset()
-PLACEHOLDER = re.compile(r"@@\{?(\w+)")
+STOP_CLAUSE = "stop: no further edit, commit or push"
+PR_LEFT = "An open PR on the dropped direction is left to the owner"
+PLACEHOLDER_MARK = "@@"
 ROUTING_LABELS = ("  - team fact:", "  - personal preference", "  - repo command")
 LEAK_DOCUMENTS = [
     pytest.param(a_two_team_document, id="two_teams"),
@@ -120,7 +104,7 @@ def test_asks_why_then_learns_and_hands_off_when_dropped_direction_handoff_rende
     missing = [
         phrase
         for phrase in (
-            "stop",
+            STOP_CLAUSE,
             "one line",
             '"Why?"',
             "`/learn`",
@@ -148,6 +132,8 @@ def test_hands_off_without_an_answer_when_dropped_direction_handoff_rendered(
             "what was dropped",
             "no reason given",
             "after one confirmation",
+            "out of In Progress",
+            "nobody on it",
         )
         if phrase not in paragraph
     ]
@@ -157,7 +143,7 @@ def test_hands_off_without_an_answer_when_dropped_direction_handoff_rendered(
 def test_never_merges_or_closes_when_dropped_direction_handoff_rendered(handoff: str) -> None:
     paragraph = dropped_paragraph(handoff)
 
-    assert "left to the owner" in paragraph
+    assert PR_LEFT in paragraph
     for phrase in ("merge it", "approve", "close the PR", "force-push", "delete the branch"):
         assert phrase not in paragraph, phrase
 
@@ -192,6 +178,12 @@ def test_names_no_project_value_when_dropped_direction_rendered(leak_config: Hub
         for value in values:
             token = rf"(?<![\w-]){re.escape(value)}(?![\w-])"
             assert re.search(token, text) is None, (value, text)
-    assert set(PLACEHOLDER.findall(template("AGENTS.md.tmpl"))) == AGENTS_PLACEHOLDERS
+    agents_lines = [
+        line for line in template("AGENTS.md.tmpl").splitlines() if AGENTS_TRIGGER in line
+    ]
     handoff_template = template("plugin/hub-workflow/skills/handoff/SKILL.md.tmpl")
-    assert set(PLACEHOLDER.findall(handoff_template)) == HANDOFF_PLACEHOLDERS
+    template_paragraphs = dropped_paragraphs(handoff_template)
+    assert len(agents_lines) == 1, f"one AGENTS.md.tmpl line containing {AGENTS_TRIGGER!r}"
+    assert len(template_paragraphs) == 1, f"one template paragraph starting {DROPPED_LEAD}"
+    for text in (*agents_lines, *template_paragraphs):
+        assert PLACEHOLDER_MARK not in text, text
