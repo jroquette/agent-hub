@@ -258,9 +258,15 @@ ENDPOINT_URL = LazyPattern(
 )
 ENDPOINT_URL_MAX_CHARS = 200
 # core/secret_shapes.py's shapes that fit an environment name or a blocked word (letters, digits
-# and -_. only): the private-key, credential-assignment and Fernet shapes need a space or "=".
-# The JWT shape is the old lint's, which matches what core's linear rewrite matches; the texts
-# it runs on are at most 64 characters.
+# and -_. only), then two for the text of a prompt (prompt_secret.py), which a name or a word,
+# with no space, "=" or ":", never matches: core's private-key header, and a credential
+# assignment of the reader's own (a name ending in SECRET, TOKEN, PASSWORD, PASSWD, API_KEY or
+# PRIVATE_KEY, "=" or ":", then 8 or more characters that are not a $VAR, ${VAR}, <placeholder>
+# or *** reference). The Fernet shape is not ported. The JWT shape is the old lint's, which
+# matches what core's linear rewrite matches but is quadratic in a run with no ".": a caller
+# bounds the text (names and words are at most 64 characters; prompt_secret.py scans windows).
+# No other shape nests a quantifier, and the assignment's name starts at a word boundary, so each
+# runs in linear time.
 SECRET_SHAPES = tuple(
     LazyPattern(pattern)
     for pattern in (
@@ -270,6 +276,9 @@ SECRET_SHAPES = tuple(
         r"\bsk-[A-Za-z0-9_-]{20,}",
         r"\bghp_[A-Za-z0-9]{30,}",
         r"\blin_api_[A-Za-z0-9]{20,}",
+        r"-{5}BEGIN [A-Z ]*PRIVATE KEY-{5}",
+        r"\b[A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY)[ \t]*[=:][ \t]*"
+        r"[\"']?(?![$<*])[^\s\"']{8}",
     )
 )
 
