@@ -9,11 +9,11 @@ the Skill tool for a skill the model may load, the SKILL.md to read for a user-o
 named it, so the skill's own gates still hold and nothing else is opened.
 
 A token counts only when whitespace or the start of the prompt is before it, and the end of the
-prompt, whitespace or punctuation followed by one of those is after it: `/usr/bin/fix`, `a/fix`,
-`/fix.py`, a URL and a quoted `"/fix"` do not. The token at position 0 is the CLI's own command
-(it sees the same prompt and expands it), so it is skipped; with any character before it the CLI
-does not expand it, and it counts. Names are looked up as folders, never globbed: the hub's
-`.claude/skills/<name>/` (the hub at the folder three levels above this file), then the
+prompt, whitespace or punctuation followed by one of those is after it: `/usr/bin/change`,
+`a/change`, `/change.py`, a URL and a quoted `"/change"` do not. The token at position 0 is the
+CLI's own command (it sees the same prompt and expands it), so it is skipped; with any character
+before it the CLI does not expand it, and it counts. Names are looked up as folders, never globbed:
+the hub's `.claude/skills/<name>/` (the hub at the folder three levels above this file), then the
 `skills/<name>/` of this plugin and of each `<hub>/plugin/<p>/`. Unknown names add nothing.
 Stdlib only, Python 3.9; any error prints one stderr line and exits 0 (run_hook: fail open).
 """
