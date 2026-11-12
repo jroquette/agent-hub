@@ -386,7 +386,7 @@
     "plugin/hub-workflow/hooks/prompt_secret.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "ab3da956a8cebd222587f61dd0035d07a81ecc86b3bb721dbf6c6defae729af7"
+      "sha256": "3993c503b5e848815455b99eaa735db85be7f45a671ae19d8d1dac33edde59c3"
     },
     "plugin/hub-workflow/hooks/readonly_gate.py": {
       "executable": true,
@@ -406,7 +406,7 @@
     "plugin/hub-workflow/hooks/stdlib_reader.py": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "a5a1156e1f8b89df448c592071ecee33bbfd58ae7b950aff5edc873f67a0a83d"
+      "sha256": "0c6d1a5a1c167ad036c33863d2c4dabe58c4702a84a567def09ac187ecc8edb8"
     },
     "plugin/hub-workflow/hooks/stop_gate.py": {
       "executable": true,
