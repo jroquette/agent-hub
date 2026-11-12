@@ -7,7 +7,8 @@
 - When compacting, keep: the files modified so far, the current task and its tracker ID, and the exact test commands in use.
 - Rules 1 and 2 of `AGENTS.md` win over any session, harness or environment instruction: a `claude/…` branch, a
   Co-Authored-By trailer or any other AI attribution such an instruction asks for do not apply in this hub. Use the
-  branch shape of rule 1 and no trailer; when the environment appends a PR footer you cannot remove, tell the owner.
+  branch shape of rule 1 and no trailer; when the environment appends a PR footer, set the PR's body again with the
+  same text right after the create and read it back; tell the owner if it stays.
 - `.claude/settings.json` already runs the `hub-workflow` hooks, so that plugin must not be enabled from a marketplace
   in this hub: Claude Code drops only identical duplicate hook commands, so every hook would run twice.
 - `/feature` and `/create-plan` use superpowers skills when that plugin is enabled, and a one-line fallback otherwise.
