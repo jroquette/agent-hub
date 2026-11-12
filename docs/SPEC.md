@@ -206,7 +206,10 @@ worktree left dirty, or a HEAD or task branch that moved, during the checks stop
 repo, the push (behind `hub run`'s guard), then the PR opened through GitHub's REST API (`gh api`, as every PR call of
 `hub ship` and `hub run`; a draft when `--draft` is given; the title is the newest commit's
 subject following the repo's conventions), or the PR already open for the branch: `opened: <repo>  <url>` or
-`found: <repo>  <url>`. (3) With two PRs or more, each PR's Related PRs section is made to list the others, its body
+`found: <repo>  <url>`. A PR just opened whose body GitHub holds with more than was sent (a cloud session's
+environment appends an attribution footer) gets its body again through one REST edit, as in `hub run` and
+`hub step pr`; a `warning:` line on stderr names a PR whose body may still hold the footer (AGH-834). (3) With two
+PRs or more, each PR's Related PRs section is made to list the others, its body
 edited through a file and only when that changes it. (4) The tracker writes: the move to the review state, the failed
 label removed when the issue carries it, then one comment listing the PRs. Once the usage checks pass, every failure
 line starts with `hub ship: `; a failure in a repo names the repo and what failed, and lists the PRs already open; the
