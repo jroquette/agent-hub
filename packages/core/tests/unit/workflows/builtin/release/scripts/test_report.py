@@ -43,6 +43,8 @@ RELEASED = {
     "pin-pr": PIN_PR,
     "version": "0.21.0",
 }
+# The call form of the release-pin workflow: the tag check's verdict and the pin PR, no approval.
+PINNED = {"verify": "true", "pin-pr": PIN_PR, "version": "0.21.0"}
 
 
 def report(capsys: pytest.CaptureFixture[str], given: dict[str, str]) -> dict[str, Any]:
@@ -105,3 +107,46 @@ def test_reads_values_starting_with_a_dash_when_given(capsys: pytest.CaptureFixt
     found = report(capsys, RELEASED | {"log": "-check.log"})
 
     assert found["outcome"] == "released"
+
+
+def test_reports_released_when_verify_ok_and_pin_pr_opened(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    found = report(capsys, PINNED)
+
+    assert found == {
+        "outcome": "released",
+        "version": "0.21.0",
+        "pr": "",
+        "pin_pr": PIN_PR,
+        "reason": f"v0.21.0 is tagged; the hub pin PR is open: {PIN_PR}",
+    }
+
+
+@pytest.mark.parametrize(
+    ("given", "outcome"),
+    [
+        ({"verify": "false", "pin-pr": ""}, "untagged"),
+        ({"verify": "", "pin-pr": ""}, "untagged"),
+        ({"pin-pr": ""}, "unpinned"),
+    ],
+)
+def test_reports_outcome_when_verify_run_ends_early(
+    capsys: pytest.CaptureFixture[str], *, given: dict[str, str], outcome: str
+) -> None:
+    found = report(capsys, PINNED | given)
+
+    assert found["outcome"] == outcome
+    assert found["reason"]
+    assert (found["pr"], found["pin_pr"]) == ("", "")
+
+
+def test_requires_release_options_when_verify_not_given() -> None:
+    # Without --verify the release form holds: each of its nine options is required.
+    given = {name: value for name, value in RELEASED.items() if name != "tagged"}
+    argv = [part for name, value in given.items() for part in (f"--{name}", value)]
+
+    with pytest.raises(SystemExit) as stopped:
+        load().main(argv)
+
+    assert stopped.value.code == 2
