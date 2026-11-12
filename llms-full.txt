@@ -344,6 +344,7 @@ this table, and a new hub's `README.md` ends with the same one. A flow's scripts
 | `issue-to-pr` (`issue-to-pr` pack) | One tracker issue to a PR, as hub run takes it. | `./hub run <issue>` | none | own prompts |
 | `post-merge-verify` (`post-merge-verify` pack) | The merged tickets' AC verifications, run again on the default branch; failures to the inbox. | `./hub workflow run post-merge-verify` | none | own prompts |
 | `release` (`release` pack) | Cut a platform release when the owner asks: the PRs merged since the last tag, the version bump, the check on the exact release commit and the notes with what hub sync rewrites, then, once the platform repo's release workflow has tagged it, the hub's pin bump, each PR behind its own approval. | `/release` | The owner approves the release PR.; The owner merges the release PR, /release dispatches the release workflow, then the owner answers.; The owner approves the hub PR that bumps the pin. | `/plain-language` |
+| `release-pin` (`release` pack) | After a platform release is tagged, check the tag on the version PR's merge commit and open the hub PR that bumps the pin. | `./hub workflow run release-pin` | none | own prompts |
 | `retro` (`retro` pack) | The week's run metrics, at most five evidence-backed changes, and issue drafts for the ones the owner keeps. | `/retro` | The owner keeps some of the changes (their numbers, or all), or none. | own prompts |
 | `review-incoming` (`review-incoming` pack) | Someone else's PR through the spec, quality and security lenses, drafted as one review posted only after the owner approves it. | `/review` | The owner edits the review file, then picks how it is posted, or rejects it. | `/plain-language`, `security-reviewer` agent |
 | `deliver` (`sdlc` pack) | One issue to a PR, implemented and reviewed in rounds until the check and both reviewers pass. | `./hub workflow run deliver` | none | own prompts |
@@ -737,8 +738,9 @@ the counts go to `brain/_inbox/flaky-<test slug>.md`; fetch first:
 `review-incoming` (12 nodes, started by
 `/review`: someone else's PR through the spec, quality and security lenses, the repo's check at the head (never for a
 fork) and one draft you edit; `/review` reads the PR and posts the draft only after you approve it) and
-`release` (`release`: the release PR, then the hub pin PR, each behind its own approval). A hub's own file
-overrides a built-in of the same name.
+`release` (`release`: the release PR, then the hub pin PR, each behind its own approval; `release-pin`: the tag
+checked on the version PR's merge commit, then the hub pin PR, with no approval). A hub's own file overrides a
+built-in of the same name.
 
 ```bash
 ./hub workflow list                          # the workflows that load; problems as <file>:<line>: <key>: <message>
