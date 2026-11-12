@@ -164,7 +164,12 @@ def test_lists_base_hooks_then_sensor_when_settings_built(demo_config: HubConfig
     assert isinstance(settings, dict)
 
     expected: dict[str, list[dict[str, object]]] = {}
-    for event, matcher, file, timeout in (*HOOK_ROWS, *SENSOR_ROWS, *GATE_ROWS, *PROMPT_SKILLS_ROWS):
+    for event, matcher, file, timeout in (
+        *HOOK_ROWS,
+        *SENSOR_ROWS,
+        *GATE_ROWS,
+        *PROMPT_SKILLS_ROWS,
+    ):
         group: dict[str, object] = {
             "hooks": [
                 {

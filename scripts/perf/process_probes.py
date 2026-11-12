@@ -57,7 +57,12 @@ _HOOKS = (
     ("pre_tool_use (PreToolUse Read)", "pre_tool_use", "PreToolUse", "Read"),
     ("pre_tool_use (PreToolUse Edit)", "pre_tool_use", "PreToolUse", "Edit"),
     # AGH-838: every prompt runs it; this one names a model-invocable and a user-only skill.
-    ("prompt_skills (UserPromptSubmit, two skills named)", "prompt_skills", "UserPromptSubmit", None),
+    (
+        "prompt_skills (UserPromptSubmit, two skills named)",
+        "prompt_skills",
+        "UserPromptSubmit",
+        None,
+    ),
 )
 HOOK_PATHS = tuple(path for path, _script, _event, _tool in _HOOKS)
 # The prompt the prompt_skills row sends: two skills named mid-message, so the hook looks both up.

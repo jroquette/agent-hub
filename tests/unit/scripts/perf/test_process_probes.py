@@ -52,7 +52,12 @@ HOOK_ROWS = (
     ("pre_tool_use (PreToolUse Read)", "pre_tool_use", "PreToolUse", "Read"),
     ("pre_tool_use (PreToolUse Edit)", "pre_tool_use", "PreToolUse", "Edit"),
     # AGH-838: the prompt's skills, on a prompt that names two of them.
-    ("prompt_skills (UserPromptSubmit, two skills named)", "prompt_skills", "UserPromptSubmit", None),
+    (
+        "prompt_skills (UserPromptSubmit, two skills named)",
+        "prompt_skills",
+        "UserPromptSubmit",
+        None,
+    ),
 )
 # The builders' default transcript lives under this made-up home; no probe input may name it.
 BUILDER_HOME = "/home/dev"
@@ -191,7 +196,9 @@ def test_feeds_an_edit_of_a_hub_file_when_post_edit_runs(tmp_path: Path) -> None
 def test_names_two_skills_mid_message_when_prompt_skills_runs(tmp_path: Path) -> None:
     hub, transcript, _hub_bin = _layout(tmp_path)
 
-    payload = _payload(_probe(hook_probes(hub, transcript), "prompt_skills (UserPromptSubmit, two skills named)"))
+    payload = _payload(
+        _probe(hook_probes(hub, transcript), "prompt_skills (UserPromptSubmit, two skills named)")
+    )
 
     assert payload["prompt"] == SKILLS_PROMPT
     assert not payload["prompt"].startswith("/")

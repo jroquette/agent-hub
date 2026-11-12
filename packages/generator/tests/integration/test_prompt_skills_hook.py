@@ -186,7 +186,7 @@ def test_names_project_plugin_skill_when_its_folder_exists(
         "see /usr/bin/fix and /tmp/review",
         "a/fix b/review",
         "https://example.com/fix and http://x/review",
-        'run "/fix" and \'/review\'',
+        "run \"/fix\" and '/review'",
         "the file /fix.py and /review.md",
         "quoted `/fix` and (/review)",
         "/unknown-skill and /nope:fix and /other-plugin:review",
