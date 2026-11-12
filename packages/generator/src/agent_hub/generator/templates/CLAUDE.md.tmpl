@@ -26,9 +26,10 @@ what it should not reach (production, cloud endpoints, your home folder). Keep i
   with `Broken pipe` or `Connection to UNKNOWN port`; an `Operation not permitted` is a write outside the workspace.
   Neither is an access problem: do not hand the work back for it.
 - `sandbox.excludedCommands` (`git fetch`/`push`/`pull`/`clone`/`ls-remote`, `gh`, `docker`, `./hub worktree`,
-  `make worktree`, `make worktree-remove`) run outside it, after a permission prompt, but only when the Bash call is
-  exactly that command: no `cd … &&`, `;`, pipe, redirect, `$(…)` or `git -C`. Set the cwd in a call of its own,
-  then run the bare command (`git push -u origin <branch>`, `gh pr create …`).
+  `make worktree`, `make worktree-remove`) run outside it, after a permission prompt unless `permissions.allow` lists
+  the command (the read-only `gh` calls), but only when the Bash call is exactly that command:
+  no `cd … &&`, `;`, pipe, redirect, `$(…)` or `git -C`. Set the cwd in a call of its own, then run the bare command
+  (`git push -u origin <branch>`, `gh pr create …`).
 - `hub worktree` that cannot fetch prints the way out: a bare `git fetch origin <branch>` in each repo, then
   `./hub worktree --no-fetch <name>`.
 - A project adds hosts or excluded commands in `.claude/settings.project.json`, never `make *` or `./hub *`;
