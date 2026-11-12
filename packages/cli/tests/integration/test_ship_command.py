@@ -141,6 +141,11 @@ def edit_argv(url: str, body_file: str) -> list[str]:
     return ["api", "--method", "PATCH", pull_path(url), "-F", f"body=@{body_file}"]
 
 
+def reset_argv(url: str) -> list[str]:
+    """The REST edit that sets the body of the PR at ``url`` again, read from stdin."""
+    return ["api", "--method", "PATCH", pull_path(url), "-F", "body=@-"]
+
+
 def is_link_call(argv: list[str]) -> bool:
     """A body read (``GET …/pulls/<n>``) or edit (``PATCH``) of the link phase."""
     one_pull = len(argv) > 3 and re.fullmatch(r"repos/.+/pulls/\d+", argv[3]) is not None
@@ -1299,6 +1304,56 @@ class TestShipPrs:
             result.stderr.splitlines()
         )
         assert ship_workspace.prs() == []
+
+    def test_sets_body_again_when_create_appends_footer(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        api = make_task_worktree("demo-api", "dem-7-x", ["feat(api): add x (DEM-7)"])
+        monkeypatch.setenv("FAKE_GH_FAIL", "footer:demo-api")
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        create = create_call(API_GITHUB, "jdoe/dem-7-x", "feat(api): add x (DEM-7)")
+        gh = [call for call in child_calls.calls if call.argv[0] == "gh"]
+        assert [(call.argv, call.stdin, call.cwd) for call in gh] == [
+            (create, SHIP_BODY.encode(), api),
+            (["gh", *reset_argv(API_PR)], SHIP_BODY.encode(), api),
+        ]
+        assert [call.output_limit for call in gh] == [1_048_576] * 2
+        assert [pr["body"] for pr in ship_workspace.prs()] == [SHIP_BODY]
+        assert [line for line in result.stderr.splitlines() if "warning" in line] == []
+        assert result.stdout.splitlines()[-1] == f"opened: demo-api  {API_PR}"
+
+    def test_warns_once_naming_pr_when_body_cannot_be_set_again(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        make_task_worktree("demo-api", "dem-7-x", ["feat(api): add x (DEM-7)"])
+        monkeypatch.setenv("FAKE_GH_FAIL", "footer:demo-api,edit:demo-api")
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        assert [line for line in result.stderr.splitlines() if "warning" in line] == [
+            f"hub ship: warning: the body of {API_PR} could not be set again;"
+            " check it for an attribution footer: gh (fake): synthetic edit failure"
+        ]
+        assert result.stdout.splitlines()[-1] == f"opened: demo-api  {API_PR}"
+        assert ("move_state", ISSUE, "In Review") in tracker.calls
 
 
 def pr_titles(ship_workspace: Workspace) -> list[str]:
