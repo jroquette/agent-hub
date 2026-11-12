@@ -374,6 +374,8 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
         f"{_BASE_PLUGIN}/hooks/project_guard_runner.py",
         f"{_BASE_PLUGIN}/hooks/project_guard_runner.py.tmpl",
     ),
+    # Names back to the model each skill the user wrote anywhere in a prompt (AGH-838).
+    _hook_entry_point("prompt_skills"),
     # Holds a read-only agent (`mutates_checkout: false`) that changed a checkout (AGH-141).
     _hook_entry_point("readonly_gate"),
     _hook_entry_point("session_end"),

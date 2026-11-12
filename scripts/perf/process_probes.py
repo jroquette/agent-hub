@@ -56,8 +56,17 @@ _HOOKS = (
     ("pre_tool_use (PreToolUse Bash)", "pre_tool_use", "PreToolUse", "Bash"),
     ("pre_tool_use (PreToolUse Read)", "pre_tool_use", "PreToolUse", "Read"),
     ("pre_tool_use (PreToolUse Edit)", "pre_tool_use", "PreToolUse", "Edit"),
+    # AGH-838: every prompt runs it; this one names a model-invocable and a user-only skill.
+    (
+        "prompt_skills (UserPromptSubmit, two skills named)",
+        "prompt_skills",
+        "UserPromptSubmit",
+        None,
+    ),
 )
 HOOK_PATHS = tuple(path for path, _script, _event, _tool in _HOOKS)
+# The prompt the prompt_skills row sends: two skills named mid-message, so the hook looks both up.
+SKILLS_PROMPT = "claude, vamos usar a /overengineering-review e depois o /deliver desse PR"
 HOOKS_DIR = ("plugin", "hub-workflow", "hooks")
 # The hub file post_edit is told was edited; ``hub init`` writes it.
 EDITED_FILE = ("brain", "index.md")
@@ -138,6 +147,8 @@ def _hook_input(
             "tool_input": {"file_path": edited, "old_string": "# ", "new_string": "# "},
             "tool_response": {"filePath": edited, "success": True},
         }
+    if script == "prompt_skills":
+        overrides["prompt"] = SKILLS_PROMPT
     if tool is not None:
         overrides |= _tool_call(tool, hub_dir)
     return a_hook_input(event, **overrides)

@@ -55,6 +55,7 @@ EXPECTED_ROWS = {
     ("hook", "pre_tool_use (PreToolUse Bash)"),
     ("hook", "pre_tool_use (PreToolUse Read)"),
     ("hook", "pre_tool_use (PreToolUse Edit)"),
+    ("hook", "prompt_skills (UserPromptSubmit, two skills named)"),
     ("route", "/api/v1/sessions"),
     ("route", "/api/v1/sessions?issue=AGH-7"),
     ("route", "/api/v1/features"),

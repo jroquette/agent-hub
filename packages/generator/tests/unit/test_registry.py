@@ -335,6 +335,8 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "plugin/hub-workflow/hooks/pre_compact.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/pre_tool_use.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/project_guard_runner.py": (Kind.GENERIC, Ownership.MANAGED, None),
+    # AGH-838: names back the skills a prompt invokes, wherever they are in it.
+    "plugin/hub-workflow/hooks/prompt_skills.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/readonly_gate.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/session_end.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/session_start.py": (Kind.GENERIC, Ownership.MANAGED, None),
@@ -439,6 +441,7 @@ EXECUTABLE_PATHS = frozenset(
                 "post_edit",
                 "pre_compact",
                 "pre_tool_use",
+                "prompt_skills",
                 "readonly_gate",
                 "session_end",
                 "session_start",
