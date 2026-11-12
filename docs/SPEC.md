@@ -1107,9 +1107,11 @@ The sessions and GitHub/Linear feed the collector, and the web app reads everyth
   session or the user editing the same checkout, or a main-session background command started before the agent
   ([design/hub-generator.md](design/hub-generator.md)).
 - **Secrets in a prompt** (AGH-814): a third stdlib Python 3.9 hook, `plugin/hub-workflow/hooks/prompt_secret.py`,
-  runs on UserPromptSubmit before the sensor. When a prompt names a secret file (the guard's rule), holds a
-  secret-shaped value (the stdlib reader's shapes) or holds two or more `NAME=value` lines, it prints one warning that
-  suggests a git-ignored env file, never quotes the secret, and never blocks; it fails open (silent, exit 0). Rule 4 of
+  runs on UserPromptSubmit before the sensor. When a prompt holds a secret-shaped value (the stdlib reader's shapes,
+  which the guard also uses: keys, tokens, a private key header, a `*_SECRET=`-style assignment of a literal) or two or
+  more `NAME=value` lines, it prints one warning that suggests a git-ignored env file (such as one in `hub.json`'s
+  `guard.readable_env_files`), never quotes the secret, and never blocks; it fails open (silent, exit 0). A prompt that
+  only names a file (`.env.local`, a key file) gets no warning. Rule 4 of
   the managed `AGENTS.md` also keeps secrets out of replies, commits, PRs, tracker comments and brain notes.
 - **Packaging ([ADR 0022](adr/0022-container-packaging.md)):** besides `uvx`/`uv tool install`, the control plane
   ships as a container image built from the repo (`Dockerfile`, `compose.yaml`): multi-stage (the web app built from

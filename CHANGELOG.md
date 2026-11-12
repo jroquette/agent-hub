@@ -13,8 +13,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
-- A hub warns when a prompt looks like it holds a secret, and suggests a git-ignored env file instead; it never blocks
-  the prompt (AGH-814). After `./hub sync`, `AGENTS.md` also keeps secrets out of replies, commits, PRs, tracker
+- A hub warns when a prompt looks like it holds a secret (a key, a token, a private key, a line such as
+  `AUTH_SECRET=...` or a block of env lines), and suggests a git-ignored env file instead, such as one in
+  `guard.readable_env_files`; it never blocks the prompt, and a prompt that only names a file gets no warning
+  (AGH-814). After `./hub sync`, `AGENTS.md` also keeps secrets out of replies, commits, PRs, tracker
   comments and brain notes.
 
 ### Changed

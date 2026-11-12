@@ -220,11 +220,14 @@ session or the user editing the same checkout, and a main-session background Bas
 by a subagent that never got SubagentStop, or a subagent killed mid-call, makes later read-only agents of the session
 report instead of block for up to 12 h. Proof: integration tests, characterization goldens `golden/readonly_gate`.
 The prompt secret hook `prompt_secret.py` (AGH-814) is a group on UserPromptSubmit before the sensor's (timeout 5 s). It
-scans the prompt's first MiB for a secret file's name (the guard's `_secret_tokens`), a secret's shape on a line
-(`stdlib_reader`'s `secret_shaped`) or two or more consecutive `NAME=value` lines (`export` allowed). On a match it
-prints one `systemMessage` that suggests a git-ignored env file and never quotes the prompt or the match; it never
-blocks. Any error prints nothing and exits 0; the guard is imported with stdout swapped, so its import-failure line never
-gets out. Proof: integration tests.
+scans the prompt's first MiB for a secret's shape on a line (`stdlib_reader`'s `secret_shaped`, the shared
+`SECRET_SHAPES`, which include a private key header and a secret-named variable assigned a literal of 8 or more
+characters, not a `$VAR`, `<placeholder>` or `***`) or two or more consecutive `NAME=value` lines (`export` allowed). A
+file's name is not a match: it imports nothing from the guard. Each `secret_shaped` call sees at most `SHAPE_WINDOW`
+(1024) characters of a line, in windows that overlap by `SHAPE_OVERLAP` (256), so a long line costs linear time even for
+the JWT shape. On a match it prints one `systemMessage` that suggests a git-ignored env file (`.env.local`, or one in
+`hub.json`'s `guard.readable_env_files`) and never quotes the prompt or the match; it never blocks. Any error, a
+missing `stdlib_reader.py` included, prints nothing and exits 0. Proof: integration tests.
 
 ### Commands
 

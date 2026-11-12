@@ -318,7 +318,9 @@ rewrites `hooks.json`, `.claude/settings.json` (the sensor joins eleven hook eve
 `hooks.json`, `.claude/settings.json` and the researcher, spec-reviewer and quality-reviewer (`mutates_checkout: false`,
 which any agent may add); one that changes a checkout is held at its stop once, or the change is reported. Prompt
 secrets (AGH-814): adds the hook `prompt_secret.py` and rewrites `hooks.json`, `.claude/settings.json` and `AGENTS.md`
-(rule 4); a prompt that looks like it holds a secret gets a warning, never a block.
+(rule 4), and the hooks' reader (`stdlib_reader.py`) gains two secret shapes, a private key header and a secret
+variable assigned a value; a prompt that looks like it holds a secret gets a warning, never a block, and a prompt that
+only names a file such as `.env.local` gets none.
 
 ---
 
