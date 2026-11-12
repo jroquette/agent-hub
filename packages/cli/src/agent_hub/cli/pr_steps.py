@@ -47,7 +47,10 @@ BODY_NOT_RESET: Final = (
 BODY_NOT_READ: Final = (
     "the body of {url} could not be read back; check it for an attribution footer"
 )
-BODY_ATTRIBUTED: Final = "the body of {url} still carries AI attribution; edit it by hand"
+BODY_ATTRIBUTED: Final = (
+    "the body of {url} still carries AI attribution;"
+    " set it again through the session's GitHub tools, or edit it by hand"
+)
 NO_REST_PATH: Final = "its url is not a github.com pull request"
 _URL_SCHEME: Final = "https://"
 
@@ -91,7 +94,7 @@ class PrTarget:
 class OpenedPr:
     """The branch's PR: its url, and whether it was already open (``found``) or just created.
     ``warning`` is one line for the user, without a command's name, when the body of a PR just
-    created may hold an attribution footer; else None."""
+    created holds an attribution footer, or may hold one; else None."""
 
     url: str
     found: bool
@@ -281,10 +284,12 @@ def _body_warning(
 ) -> str | None:
     """What the user must know about the body of the PR just created at ``url``, else None.
 
-    A cloud session's create appends an attribution footer to the body, and an edit with the
-    same text removes it. ``held`` is the body in the create's answer: when it is not ``body``,
-    the body is set again and read back; an answer without a body is left alone. The body
-    GitHub holds at the end must carry no AI attribution. Nothing here raises: the PR is open.
+    A cloud session's create appends an attribution footer to the body. An edit with the same
+    text removes it where the environment lets it; through ``gh`` a cloud session can add one
+    again, and then the warning says so. ``held`` is the body in the create's answer: when it
+    is not ``body``, the body is set again and read back; an answer without a body is left
+    alone. The body GitHub holds at the end must carry no AI attribution. Nothing here raises:
+    the PR is open.
     """
     if not isinstance(held, str):
         return None

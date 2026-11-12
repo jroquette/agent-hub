@@ -293,7 +293,8 @@ def pr_edit_command(path: str, body_file: Path) -> list[str]:
 def pr_body_reset_command(path: str) -> list[str]:
     """The edit that sets the body of the PR at the REST ``path`` again, read from stdin
     (``-F body=@-``) as the create read it. A cloud session's create appends an attribution
-    footer to the body; an edit with the same text removes it."""
+    footer to the body; an edit with the same text removes it where the environment lets it
+    (through ``gh`` a cloud session can add one again)."""
     return ["gh", "api", "--method", "PATCH", path, "-F", "body=@-"]
 
 
