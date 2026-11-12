@@ -867,6 +867,12 @@
     "workflows/release/fixtures/release-pin-declined.yaml": {
       "ownership": "seeded"
     },
+    "workflows/release/fixtures/release-pin-pinned.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/fixtures/release-pin-tag-missing.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/release/fixtures/release-pin.yaml": {
       "ownership": "seeded"
     },
@@ -874,6 +880,9 @@
       "ownership": "seeded"
     },
     "workflows/release/prompts/notes.md": {
+      "ownership": "seeded"
+    },
+    "workflows/release/release-pin.yaml": {
       "ownership": "seeded"
     },
     "workflows/release/release.yaml": {
