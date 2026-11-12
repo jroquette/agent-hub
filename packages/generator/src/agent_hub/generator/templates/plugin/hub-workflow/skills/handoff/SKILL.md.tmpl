@@ -9,7 +9,7 @@ argument-hint: "[short title]"
 
 Adapted from humanlayer `create_handoff` (Apache-2.0, humanlayer Authors, commit 99abe67349).
 
-First settle the tracker, then write two things in the hub's `brain/` (the hub is the directory with `hub.json`; create a branch + PR in the hub if its checkout is on the default branch):
+First settle the tracker, then write two things in the hub's `brain/` (the hub is the directory with `hub.json`). If the hub's checkout is on the default branch, create a branch + PR in the hub. Right after the create, set the PR's body again with the same text, through the session's GitHub tools when it has them (in a cloud session an edit through `gh` gets a footer again), and read the PR back: a cloud session's create appends an attribution footer, and that edit removes it. If the body read back still carries AI attribution, tell the user once, naming the PR.
 
 1. **Tracker**: the issues in the `started` or `review` state (`hub.json` → `tracker.states`) whose linked PR merged and whose merge commit is green (the default branch's CI on it passed; read PRs and checks through the GitHub tools or `gh`): post the PR link on each, unless a comment already holds it, and move it to Done. List them for the user first and move them only after one confirmation. An issue whose PR is open, or whose merge commit is red or still running, stays where it is: name it under **Watch**.
 2. **`brain/now.md`** (≤ 60 lines, keep the frontmatter): Focus · In flight (branch, worktree, PR per repo) · Next (exact next step) · Watch (risks, red CI).
@@ -19,5 +19,7 @@ First settle the tracker, then write two things in the hub's `brain/` (the hub i
    - **Verification:** exact commands run and their result (pass/fail counts). No claims without evidence.
    - **Learnings:** non-obvious facts discovered (candidates for `/learn`, not rules yet).
    - **Next steps:** ordered, concrete.
+
+**Dropped direction**: when the owner drops the direction this session was following (the approach, the plan or the ticket itself), stop: no further edit, commit or push on it. Ask the owner one line: "Why?". With an answer, file it through `/learn` as a team or repo learning (`provenance: human`, sources: this ticket and the session's branch or PR), then run the three steps above. With no answer (the owner's next message does not give one, or declines), still run the three steps above, and record "no reason given". Either way, leave the ticket clear: post one comment that says what was done (branch, commits, PR) and what was dropped, with the reason or "no reason given"; keep its status when work on it goes on, or move it to the state the owner names, after one confirmation. When the ticket itself is dropped and the owner names no state, propose moving it out of In Progress (to the tracker's backlog or ready state) and move it after one confirmation; without one, keep its status and name it under **Watch** as "In Progress, nobody on it". An open PR on the dropped direction is left to the owner: name it in the comment and under **Watch**.
 
 Facts only; no secrets; link, don't copy. Do not restructure other brain notes. The tracker comments and both files are text for people: word them with the `plain-language` skill.

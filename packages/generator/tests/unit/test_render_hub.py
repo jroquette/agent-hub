@@ -4,7 +4,6 @@ import inspect
 import json
 import os
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -60,10 +59,11 @@ from agent_hub.generator.workflow_discovery import discover_workflows
 DESIGN_PATHS = (
     ".claude/settings.json",
     ".claude/settings.project.json",
+    ".githooks/commit-msg",
+    ".githooks/pre-commit",
     ".github/workflows/ci.yml",
     ".gitignore",
     ".mcp.json",
-    ".pre-commit-config.yaml",
     "AGENTS.md",
     "AGENTS.project.md",
     "CLAUDE.md",
@@ -116,6 +116,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/hooks/pre_tool_use.py",
     "plugin/hub-workflow/hooks/project_guard_runner.py",
     "plugin/hub-workflow/hooks/prompt_secret.py",
+    "plugin/hub-workflow/hooks/prompt_skills.py",
     "plugin/hub-workflow/hooks/readonly_gate.py",
     "plugin/hub-workflow/hooks/session_end.py",
     "plugin/hub-workflow/hooks/session_start.py",
@@ -1796,6 +1797,22 @@ def test_declares_mutates_checkout_when_base_agents_rendered(
     assert "Send the check's output to a file under `$TMPDIR`, never into the checkout" in body
 
 
+# A rendered agent names no permission mode, so a subagent runs in the mode of the session that
+# starts it and never in a more permissive one.
+def test_sets_no_permission_mode_when_agents_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    paths = sorted(
+        path
+        for path in demo_render
+        if path.startswith(f"{AGENTS_FOLDER}/") and path.endswith(".md")
+    )
+
+    assert paths == [f"{AGENTS_FOLDER}/{name}.md" for name in BASE_AGENTS]
+    for path in paths:
+        lines = frontmatter_lines(demo_render[path].content.decode("utf-8"))
+        assert lines, path
+        assert "permissionMode" not in [line.split(":", 1)[0].strip() for line in lines], path
+
+
 # AC-4.19 (Q-15, plan design 7): the `hub` command and the make target that runs it through the
 # shim, where one exists; the tracker check has no target yet and stays bare.
 SKILL_COMMANDS = {
@@ -2375,38 +2392,65 @@ def test_names_transcript_script_when_recall_rendered(
     assert "`python3 scripts/recall_transcripts.py <term> [<term>…] [--any]`" in text
 
 
-# The hub's skill frontmatter, key by key; the skills without `disable-model-invocation` stay
-# model-invocable.
+# AGH-838 (ADR 0062): the skills the model may load by itself. Each one only reads, or writes what
+# the session keeps local (test files, a proposal in `brain/_inbox/`); each one's own gates hold.
+MODEL_INVOCABLE_SKILLS = frozenset(
+    {
+        "context-audit",
+        "create-plan",
+        "design-fit",
+        "kickoff",
+        "learn",
+        "overengineering-review",
+        "plain-language",
+        "premortem",
+        "property-based-testing",
+        "recall",
+        "research",
+        "summarize",
+        "test-strength",
+        "ux-review",
+    }
+)
+# AGH-838 (ADR 0062): the skills only a person starts (`disable-model-invocation: true`), each
+# because it acts outside the session: posts a review (`review`), replies on threads and pushes
+# (`deliver`), moves issues to Done (`handoff`), dispatches the tag (`release`), commits, pushes and
+# opens a PR (`feature`, `implement`, `fix`, `refactor`, `upgrade`, `adr`), or writes the tracker
+# (`triage`, `incident`, `retro`, `onboard`).
+USER_ONLY_SKILLS = frozenset(
+    {
+        "adr",
+        "deliver",
+        "feature",
+        "fix",
+        "handoff",
+        "implement",
+        "incident",
+        "onboard",
+        "refactor",
+        "release",
+        "retro",
+        "review",
+        "triage",
+        "upgrade",
+    }
+)
+# The hub's skill frontmatter, key by key; `disable-model-invocation` (always `true`) only on
+# the user-only skills.
 SKILL_FRONTMATTER_KEYS = {
-    "adr": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "context-audit": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "create-plan": ["name", "description", "argument-hint"],
-    "deliver": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "design-fit": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "feature": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "fix": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "handoff": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "implement": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "incident": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "kickoff": ["name", "description", "disable-model-invocation"],
-    "learn": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "onboard": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "overengineering-review": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "plain-language": ["name", "description"],
-    "premortem": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "property-based-testing": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "recall": ["name", "description", "argument-hint"],
-    "refactor": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "release": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "research": ["name", "description", "argument-hint"],
-    "retro": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "review": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "summarize": ["name", "description", "argument-hint"],
-    "test-strength": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "triage": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "upgrade": ["name", "description", "disable-model-invocation", "argument-hint"],
-    "ux-review": ["name", "description", "disable-model-invocation", "argument-hint"],
+    name: [
+        "name",
+        "description",
+        *(["disable-model-invocation"] if name in USER_ONLY_SKILLS else []),
+        *([] if name in {"kickoff", "plain-language"} else ["argument-hint"]),
+    ]
+    for name in sorted(MODEL_INVOCABLE_SKILLS | USER_ONLY_SKILLS)
 }
+
+
+def test_splits_skills_into_model_invocable_and_user_only_when_listed() -> None:
+    assert MODEL_INVOCABLE_SKILLS.isdisjoint(USER_ONLY_SKILLS)
+    assert sorted(MODEL_INVOCABLE_SKILLS | USER_ONLY_SKILLS) == list(BASE_SKILLS)
 
 
 def test_keeps_frontmatter_when_skills_rendered(demo_render: dict[str, RenderedFile]) -> None:
@@ -2420,8 +2464,56 @@ def test_keeps_frontmatter_when_skills_rendered(demo_render: dict[str, RenderedF
         fields = dict(line.split(": ", 1) for line in lines)
         assert fields["name"] == name
         assert fields["description"].strip(), name
-        assert fields.get("disable-model-invocation", "true") == "true", name
+        assert len(fields["description"]) <= 1024, name
+        if name in USER_ONLY_SKILLS:
+            assert fields["disable-model-invocation"] == "true", name
+        else:
+            assert "disable-model-invocation" not in fields, name
         assert text.split("\n---\n", 1)[1].strip(), name
+
+
+# AGH-838: what a skill's text says it does outside the session: push, open or edit a PR, post on
+# one, dispatch a workflow, run one of the hub's workflows (which can open a PR) or write the
+# tracker. Each pattern names an act, never its negation ("no push", "never open a PR").
+OUTWARD_ACTS = (
+    r"\bgit push\b",
+    r"\bgh pr (?:create|review|comment|merge|edit)\b",
+    r"\bgh workflow run\b",
+    r"\bgh api [^`\n]*-X (?:POST|PATCH|PUT|DELETE)\b",
+    r"\b(?:create_pull_request|update_pull_request|merge_pull_request|pull_request_review_write"
+    r"|add_issue_comment|add_reply_to_pull_request_comment|save_issue|save_comment)\b",
+    r"\bhub (?:workflow )?run\b",
+    r"\bopens? (?:the|its|one|a)(?: hub| draft)? (?:PR|pull request)\b",
+    r"\bpush(?:es)? (?:the|its) (?:batch )?branch\b",
+    r"\bposts? (?:the|a|its) (?:review|PR link|reply)\b",
+    r"\bmoves? [^.\n]{0,40}\bto (?:Done|In Progress|In Review)\b",
+    r"\b(?:create|creates|file|files) (?:or reuse )?(?:one|a|the|its)[^.\n]{0,30}tracker issue\b",
+)
+# Model-invocable skills whose text names an outward act that waits on the user, and why.
+OWNER_GATED_ACTS = {
+    # `promote` runs the inbox workflow, which opens the hub PR only after the owner answers each
+    # group's gate.
+    "learn": {"hub workflow run", "opens one hub PR"},
+    # Step 5 routes the item the user accepts to its flow (`/feature` creates the tracker issue);
+    # kickoff itself never starts editing.
+    "kickoff": {"create the tracker issue"},
+}
+
+
+def outward_acts(text: str) -> set[str]:
+    return {found[0] for pattern in OUTWARD_ACTS for found in re.finditer(pattern, text)}
+
+
+def test_keeps_skills_user_only_when_their_text_acts_outside_session(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    acting = {name: outward_acts(skill_text(demo_render, name)) for name in BASE_SKILLS}
+
+    for name in MODEL_INVOCABLE_SKILLS:
+        assert acting[name] <= OWNER_GATED_ACTS.get(name, set()), name
+    # The patterns still see the flows they guard: a rewording that hides one fails here.
+    for name in ("deliver", "feature", "fix", "handoff", "implement", "release", "review"):
+        assert acting[name], name
 
 
 # AGH-48 AC-48.2 (D2): `/learn personal` writes the developer's own gitignored memory and never a
@@ -2710,7 +2802,8 @@ def test_names_rendered_script_when_hooks_json_command_read(
     # base hook, pre_tool_use.py, sends the sensor's envelope itself (AGH-621).
     # AGH-141: the read-only gate on SubagentStart and SubagentStop, after the sensor.
     # AGH-814: the prompt secret warning on UserPromptSubmit, before the sensor.
-    assert (len(commands), len(hooks)) == (19, 11)
+    # AGH-838: the prompt's skills on UserPromptSubmit, after the sensor.
+    assert (len(commands), len(hooks)) == (20, 11)
     for command in commands:
         match = HOOK_COMMAND.fullmatch(command)
         assert match, command
@@ -2965,6 +3058,21 @@ def test_imports_both_rule_files_when_claude_rendered(demo_config: HubConfig) ->
     assert sum("`./agent` (`make agent`)" in line for line in lines) == 1
 
 
+# AGH-838 (ADR 0062): AGENTS.md lets the model use the hub's skills and keeps the outward flows
+# behind the user; CLAUDE.md says how a skill named anywhere in a message runs, for the sessions
+# that load the hub's instructions but not its hooks (multi-repo cloud sessions).
+def test_states_skill_rules_when_agents_and_claude_rendered(demo_config: HubConfig) -> None:
+    agents = text_of(demo_config, "AGENTS.md")
+    claude = " ".join(text_of(demo_config, "CLAUDE.md").split())
+
+    assert (
+        "6. Use the hub's skills and subagents as the work needs; a push, PR or tracker flow runs"
+        " only when the user names it." in agents
+    )
+    assert "A `/<skill>` the user writes anywhere in a message runs as if typed first" in claude
+    assert "Read its `SKILL.md` when the tool refuses it (a user-only skill)" in claude
+
+
 # AGH-134: the sandbox the settings turn on is explained where Claude Code reads it, and the
 # bare-call rule is in AGENTS.md's Gotchas (the AGENTS.md line cap leaves room for one line).
 def test_explains_sandbox_when_claude_rendered(demo_config: HubConfig) -> None:
@@ -3004,8 +3112,6 @@ def test_tells_sandbox_from_access_when_readme_rendered(demo_config: HubConfig) 
     assert "(rule `sandbox.workflow`)" in readme
 
 
-# AC-3.19 (Q7, O4): the hygiene hooks of the pinned pre-commit-hooks release.
-HYGIENE_HOOKS = ("trailing-whitespace", "end-of-file-fixer", "check-json", "check-yaml")
 PLACEHOLDER = re.compile(r"@@(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)")
 # AGH-16 Q-11: an action is pinned by its 40-hex commit SHA, the release named in a comment.
 ACTION_PIN = r"@[0-9a-f]{40}  # v\d+\.\d+\.\d+"
@@ -3015,33 +3121,18 @@ PINNED_SETUP_UV = re.compile(
 PINNED_USES = re.compile(rf"^\s+-?\s*uses: [\w.-]+(?:/[\w.-]+)+{ACTION_PIN}$")
 
 
-# The hub-doctor hook's entry: the shim, run from the hub root (pre-commit's cwd).
-HUB_DOCTOR_ENTRY = "./hub doctor"
+# AGH-835 (ADR 0061): the hub's git hooks, on through `core.hooksPath = .githooks`.
+PRE_COMMIT_HOOK = ".githooks/pre-commit"
+COMMIT_MSG_HOOK = ".githooks/commit-msg"
+# The last line of each hook: the shim or the commit-msg check, found from the hook's own folder.
+PRE_COMMIT_EXEC = 'exec "$hub_dir/hub" doctor --staged'
+COMMIT_MSG_EXEC = 'exec python3 "$hub_dir/plugin/hub-workflow/hooks/commit_msg.py" "$1"'
 
 
-def pre_commit_hook(text: str, hook_id: str) -> str:
-    """The lines of the one hook whose ``- id:`` is ``hook_id``, as written."""
-    blocks = re.findall(rf"^( +)- id: {re.escape(hook_id)}\n((?:\1  .*\n)*)", text, re.MULTILINE)
-    assert len(blocks) == 1, text
-    return str(blocks[0][1])
-
-
-def pre_commit_entry(text: str, hook_id: str = "hub-doctor") -> str:
-    """The value of the ``entry:`` key of the hook ``hook_id``, as written."""
-    hook = pre_commit_hook(text, hook_id)
-    entries = [line.strip() for line in hook.splitlines() if line.strip().startswith("entry:")]
-    assert len(entries) == 1, entries
-    return entries[0].removeprefix("entry:").strip()
-
-
-def run_pre_commit_entry(
-    config: HubConfig, root: Path, env: Mapping[str, str]
-) -> subprocess.CompletedProcess[str]:
-    """Run the hub-doctor entry as pre-commit runs a ``language: system`` hook: split, no shell."""
-    command = shlex.split(pre_commit_entry(text_of(config, ".pre-commit-config.yaml")))
-    assert command == ["./hub", "doctor"]
-    return subprocess.run(  # noqa: S603 - the rendered shim by absolute path, no shell
-        [str(root / "hub"), *command[1:]],
+def run_pre_commit_hook(root: Path, env: Mapping[str, str]) -> subprocess.CompletedProcess[str]:
+    """Run the rendered pre-commit hook as git runs it: by path, from the hub root, no argument."""
+    return subprocess.run(  # noqa: S603 - the rendered hook by absolute path, no shell
+        [str(root / PRE_COMMIT_HOOK)],
         capture_output=True,
         text=True,
         check=False,
@@ -3144,6 +3235,23 @@ class TestCiWorkflow:
         # Q-10: the same job, the golden step right before make check, after the credential.
         assert steps[-2:] == [golden, make_check]
         assert steps.index(ci_step(ci, CREDENTIAL_STEP)) < steps.index(golden)
+
+    # AGH-835 AC-4 (ADR 0061): the commit checks only what it stages; CI's `make check` runs the
+    # whole-hub doctor (every rule, every feature) and fails on any error anywhere.
+    @pytest.mark.parametrize("config_name", ["demo", "variant"])
+    def test_runs_whole_hub_doctor_when_ci_make_check_runs(
+        self, config_name: str, request: pytest.FixtureRequest
+    ) -> None:
+        config = request.getfixturevalue(f"{config_name}_config")
+        ci = text_of(config, ".github/workflows/ci.yml")
+        makefile = text_of(config, "Makefile")
+
+        assert "run: make check\n" in ci_step(ci, MAKE_CHECK_STEP)
+        target = makefile.index("\ncheck:") + 1
+        recipe = makefile[target:].split("\n\n", 1)[0].splitlines()[1:]
+        assert recipe[0] == "\t@$(HUB) doctor"
+        assert "--staged" not in ci + makefile
+        assert "--only" not in "\n".join(recipe)
 
     @pytest.mark.parametrize("config_name", ["demo", "variant"])
     def test_names_secret_only_by_expression_when_ci_rendered(
@@ -3316,10 +3424,14 @@ def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubCon
 # AGH-578: re-pinned when line 3 named ./hub repo.
 # AGH-688: re-pinned when steps 2-3 and Brain rules named the hub MCP's search,
 # read and propose, and the double-wiring and superpowers bullets moved to CLAUDE.md.
+# AGH-815: re-pinned when Workflow item 5 became one line and Brain rules gained the
+# dropped-direction bullet.
+# AGH-838: re-pinned when step 6 opened the hub's skills to the model and the brain line was
+# shortened to keep the file within 100 lines.
 # AGH-814: re-pinned when rule 4 said agents never repeat a secret in text for people.
-DEMO_AGENTS_SHA256 = "76ad20c028dde3b5a101817b39b3942e7871f2b1e61aaa9cb75bc309174efc6d"
+DEMO_AGENTS_SHA256 = "a0bc3d64d8794113308d3e7cee7e746aca7d3d55a03fa2a37ea53379f18c052a"
 ALL_MODULES_SHA256 = {
-    "AGENTS.md": "29c3d7f53455bcdaa19946506832980ea91ac4247e558b600217008072a6160a",
+    "AGENTS.md": "30cdf163011fc8107dff5339d8d65c0974c0eab81faa44a93c24254d1c7879e6",
     ".claude-plugin/marketplace.json": (
         "f7324911e70a0f3255274721636821a9b65a5716f04c5f6e3e470e74dc7b8ac7"
     ),
@@ -3986,53 +4098,39 @@ def test_keeps_worktree_step_within_width_when_hubs_rendered(
         assert step.count(f"`{name}`") == 1, name
 
 
-def test_pins_hygiene_hooks_when_pre_commit_rendered(demo_config: HubConfig) -> None:
-    pre_commit = text_of(demo_config, ".pre-commit-config.yaml")
-
-    assert "  - repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: v6.0.0\n" in (
-        pre_commit
-    )
-    assert re.findall(r"^\s+rev: (.*)$", pre_commit, re.MULTILINE) == ["v6.0.0"]
-    hook_ids = re.findall(r"^\s+- id: (.*)$", pre_commit, re.MULTILINE)
-    assert hook_ids == [*HYGIENE_HOOKS, "hub-doctor", "commit-msg"]
-    assert pre_commit.count("- repo: local\n") == 1
-
-
-# AGH-699 C-8: `pre-commit install` installs both hook types; every hook runs at the pre-commit
-# stage only but the commit-msg one, which runs at that stage only, on the hub's rendered file.
-def test_installs_commit_msg_hook_when_pre_commit_rendered(
+# AGH-835 (ADR 0061): no `.pre-commit-config.yaml`; two executable hooks, each one exec of what
+# already ships in the hub, with no URL (nothing is cloned or downloaded at commit time).
+def test_renders_git_hooks_when_hub_rendered(
     demo_config: HubConfig, variant_config: HubConfig
 ) -> None:
     for config in (demo_config, variant_config):
-        pre_commit = text_of(config, ".pre-commit-config.yaml")
-        commit_msg = pre_commit_hook(pre_commit, "commit-msg")
+        files = {file.path: file for file in render_hub(config).files}
 
-        assert "\ndefault_install_hook_types: [pre-commit, commit-msg]\n" in pre_commit
-        assert "\ndefault_stages: [pre-commit]\n" in pre_commit
-        assert re.findall(r"^\s+stages: (.*)$", pre_commit, re.MULTILINE) == ["[commit-msg]"]
-        assert "        stages: [commit-msg]\n" in commit_msg
-        assert "        language: system\n" in commit_msg
-        assert pre_commit_entry(pre_commit, "commit-msg") == (
-            "python3 plugin/hub-workflow/hooks/commit_msg.py"
-        )
-        assert "always_run" not in commit_msg
+        assert ".pre-commit-config.yaml" not in files
+        for path, last in ((PRE_COMMIT_HOOK, PRE_COMMIT_EXEC), (COMMIT_MSG_HOOK, COMMIT_MSG_EXEC)):
+            text = files[path].content.decode("utf-8")
+            assert files[path].executable, path
+            assert text.startswith("#!/bin/sh\n"), path
+            assert text.splitlines()[-1] == last, path
+            assert "://" not in text, path
+            assert "pre-commit run" not in text, path
+            assert "PLACEHOLDER" not in text and "@@" not in text, path
 
 
-def test_runs_hub_doctor_through_shim_when_pre_commit_entry_run(
+def test_runs_staged_doctor_through_shim_when_pre_commit_hook_run(
     variant_config: HubConfig,
     rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
-    assert pre_commit_entry(text_of(variant_config, ".pre-commit-config.yaml")) == HUB_DOCTOR_ENTRY
 
-    completed = run_pre_commit_entry(variant_config, root, run_env(fake_uv_bin))
+    completed = run_pre_commit_hook(root, run_env(fake_uv_bin))
 
     assert completed.returncode == 0, completed.stderr
     source = pinned_source(RUN_VERSION)
     assert logged_calls(fake_uv_bin) == [
         f"uvx --from {source} hub --version",
-        f"uvx --from {source} hub doctor",
+        f"uvx --from {source} hub doctor --staged",
     ]
 
 
@@ -4040,7 +4138,7 @@ def test_names_no_config_lint_when_ci_files_rendered(
     demo_config: HubConfig, variant_config: HubConfig
 ) -> None:
     for config in (demo_config, variant_config):
-        for path in (".github/workflows/ci.yml", ".pre-commit-config.yaml"):
+        for path in (".github/workflows/ci.yml", PRE_COMMIT_HOOK, COMMIT_MSG_HOOK):
             assert "agent_config_lint" not in text_of(config, path)
 
 
@@ -4050,7 +4148,7 @@ def test_quotes_placeholders_when_yaml_template_read() -> None:
         name: text for name, text in template_texts() if name.endswith((".yml.tmpl", ".yaml.tmpl"))
     }
 
-    assert set(yaml_texts) == {"github/workflows/ci.yml.tmpl", "pre-commit-config.yaml.tmpl"}
+    assert set(yaml_texts) == {"github/workflows/ci.yml.tmpl"}
     found = dict.fromkeys(yaml_texts, 0)
     for name, text in yaml_texts.items():
         for line in text.splitlines():
@@ -4059,9 +4157,7 @@ def test_quotes_placeholders_when_yaml_template_read() -> None:
                 before, after = line[: match.start()], line[match.end() :]
                 assert before.count('"') % 2 == 1, f"{name}: {line!r}"
                 assert '"' in after, f"{name}: {line!r}"
-    # The pre-commit entry is ./hub doctor: the pinned source lives in the shim (AGH-15).
     assert found["github/workflows/ci.yml.tmpl"] > 0
-    assert found["pre-commit-config.yaml.tmpl"] == 0
 
 
 def test_quotes_values_when_variant_yaml_rendered() -> None:
@@ -4112,9 +4208,9 @@ def test_rejects_name_when_target_given_shell_syntax(
 
 
 # Shim failures (docs/design/hub-generator.md § Commands), for the Makefile shim (run through the
-# brain-brief target) and the pre-commit hub-doctor entry.
+# brain-brief target) and the git pre-commit hook (ADR 0061).
 SHIM_RUNNERS = ("make", "pre-commit")
-SHIM_CALL = {"make": "hub brief", "pre-commit": "hub doctor"}
+SHIM_CALL = {"make": "hub brief", "pre-commit": "hub doctor --staged"}
 # The fake uv tools' exit codes (conftest.fake_uv_bin): the resolve call, then any other call.
 FAKE_UVX_RESOLVE_RC = "FAKE_UVX_RESOLVE_RC"
 FAKE_UVX_RC = "FAKE_UVX_RC"
@@ -4140,10 +4236,10 @@ def run_shim(
     fake_uv_bin: Path,
     env_overrides: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run the Makefile shim (``make brain-brief``) or the pre-commit hub-doctor entry."""
+    """Run the Makefile shim (``make brain-brief``) or the git pre-commit hook."""
     if runner == "make":
         return run_make(root, fake_uv_bin, "brain-brief", env_overrides=env_overrides)
-    return run_pre_commit_entry(config, root, run_env(fake_uv_bin, env_overrides))
+    return run_pre_commit_hook(root, run_env(fake_uv_bin, env_overrides))
 
 
 def assert_shim_exit(runner: str, completed: subprocess.CompletedProcess[str], code: int) -> None:
@@ -4314,8 +4410,8 @@ def test_writes_utf8_lf_final_newline_when_text_rendered(
         assert not text.endswith("\n\n"), file.path
 
 
-# The rendered hub's pre-commit runs `trailing-whitespace` and `end-of-file-fixer`: a managed file
-# they would rewrite on the hub's first commit drifts from what `hub sync` renders.
+# The rendered hub's pre-commit hook refuses trailing whitespace and a bad file end (ADR 0061): a
+# managed file it refused would block the hub's first commit.
 @pytest.mark.parametrize("config_name", CONFIG_NAMES)
 def test_passes_whitespace_hooks_when_config_rendered(
     config_name: str, request: pytest.FixtureRequest
@@ -4454,7 +4550,13 @@ SETTINGS_HOOKS = {
     "Stop": [(None, "stop_gate.py", 180), (None, SENSOR, 5)],
     "PreCompact": [(None, "pre_compact.py", 20), (None, SENSOR, 5)],
     "SessionEnd": [(None, "session_end.py", 10), (None, SENSOR, 5)],
-    "UserPromptSubmit": [(None, "prompt_secret.py", 5), (None, SENSOR, 5)],
+    # AGH-814: the prompt secret warning before the sensor; AGH-838: the skills a prompt names,
+    # after it.
+    "UserPromptSubmit": [
+        (None, "prompt_secret.py", 5),
+        (None, SENSOR, 5),
+        (None, "prompt_skills.py", 5),
+    ],
     "PostToolUseFailure": [("*", SENSOR, 5)],
     "Notification": [(None, SENSOR, 5)],
     "SubagentStart": [(None, SENSOR, 5), (None, GATE, 10)],
@@ -5639,6 +5741,8 @@ RENDERING_MODULES = frozenset(
         "scenario_examples.py",
         # Pure: a scenario document to its canonical YAML text; the api writes it.
         "scenario_yaml.py",
+        # Pure: whether a staged file's text is one YAML document (ADR 0061).
+        "staged_yaml.py",
     }
 )
 

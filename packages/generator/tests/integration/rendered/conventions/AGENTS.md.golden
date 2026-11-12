@@ -12,10 +12,9 @@ is a hub bug: log it in `brain/_inbox/`.
 - `hub.json`: the project config, checked against `hub.schema.json`. `hub.lock` records what `hub sync` last wrote.
 - `Makefile`: workspace entry points (`make help`). They run the `hub` release pinned in `hub.json` →
   `platform.version`. Project targets go in `Makefile.project`.
-- `brain/`: curated, versioned project memory. Start at `brain/index.md`; `brain/now.md` is the current focus. Read on
-  demand, never in bulk.
+- `brain/`: curated, versioned project memory, read on demand. Start at `brain/index.md`; `brain/now.md` is the focus.
 - `hub sync` rewrites these managed files: `AGENTS.md`, `CLAUDE.md`, `Makefile`, `hub`, `agent`,
-  `hub.schema.json`, `.claude/settings.json`, `.mcp.json`, `.github/workflows/ci.yml`, `.pre-commit-config.yaml`,
+  `hub.schema.json`, `.claude/settings.json`, `.mcp.json`, `.github/workflows/ci.yml`, `.githooks/`,
   `plugin/hub-workflow/`, `scripts/mine_transcripts.py`, `scripts/recall_transcripts.py`, `scripts/retro_metrics.py`,
   and each selected module's files (`mk/<id>.mk`, `scripts/cloud-setup.sh`).
   Change them only through `hub.json` or their seeded sibling (`AGENTS.project.md`, `Makefile.project`,
@@ -42,8 +41,8 @@ is a hub bug: log it in `brain/_inbox/`.
    `HUB_WORKTREE_NAME`, `HUB_WORKTREE_BRANCH`, `HUB_REPO_DIR` and `HUB_HUB_DIR` (the repo's and the hub's main
    checkouts), `HUB_WORKTREE_SLOT` and `HUB_PORT_OFFSET` (slot × 100, to add to the repo's ports; two tasks
    can share a slot).
-5. The repo's gates (`hub.json` → `repos[].check_fast` while working, `repos[].check` before the PR) pass before any
-   PR. Redirect the output to a file and check `$?`.
+5. The repo's gates (`hub.json` → `repos[].check_fast` while working, `repos[].check` before the PR) pass before any PR.
+6. Use the hub's skills and subagents as the work needs; a push, PR or tracker flow runs only when the user names it.
 
 ## Conventions
 
@@ -81,6 +80,7 @@ session follow them. `{ISSUE}` is the issue id, `{issue_lower}` the same in lowe
   - team fact: `brain/`, through a note in `brain/_inbox/` and a hub PR (e.g. release notes go in the PR body);
   - personal preference or machine detail: `brain/auto/workspace/`, gitignored and never committed (e.g. be terse);
   - repo command or convention: `<repo>/AGENTS.md`, in that repo's PR (e.g. its tests need `docker compose up` first).
+- When the owner drops the direction you follow: stop, ask one line "why?", then follow `/handoff`'s Dropped direction.
 
 ## Gotchas
 

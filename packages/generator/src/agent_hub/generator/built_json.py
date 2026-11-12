@@ -109,10 +109,13 @@ _SENSOR_EVENTS: Final = (
 # sensor's (E-4), so the events keep the sensor's order. Its own budgets are 5 s and 15 s.
 _GATE_FILE: Final = "readonly_gate.py"
 _GATE_EVENTS: Final = (("SubagentStart", 10), ("SubagentStop", 30))
+# AGH-838: a skill the user names anywhere in a prompt runs; its group follows the sensor's, so
+# the events keep their order.
+_PROMPT_SKILLS: Final = HookEvent("UserPromptSubmit", None, "prompt_skills.py", 5)
 
 # Spec AC-4.7 (Q-5): the base plugin's seven hooks, with this hub's timeouts, then the sensor's
-# ten (AGH-200), then the read-only gate's two (AGH-141); `hooks.json` wires the same groups
-# for a plugin install.
+# ten (AGH-200), then the read-only gate's two (AGH-141), then the prompt's skills (AGH-838);
+# `hooks.json` wires the same groups for a plugin install.
 HOOK_EVENTS: Final = (
     HookEvent("SessionStart", "startup|resume|clear|compact", "session_start.py", 20),
     # Every tool call: the hook hands the calls its `GUARDED_TOOLS` matches to the guard, then runs
@@ -129,6 +132,7 @@ HOOK_EVENTS: Final = (
         for event, matcher in _SENSOR_EVENTS
     ),
     *(HookEvent(event, None, _GATE_FILE, timeout) for event, timeout in _GATE_EVENTS),
+    _PROMPT_SKILLS,
 )
 
 
@@ -215,7 +219,8 @@ def _denied_pushes(config: HubConfig) -> list[str]:
 def base_hooks_block() -> dict[str, JsonValue]:
     """The ``hooks`` value of the managed settings: one group per ``HOOK_EVENTS`` row, under its
     event; events in first-seen order, an event's groups in row order (the base hook, then the
-    sensor, then the read-only gate on SubagentStart and SubagentStop).
+    sensor, then the read-only gate on SubagentStart and SubagentStop, then the prompt's skills on
+    UserPromptSubmit).
 
     hub doctor's ``settings.weakening`` rule checks ``settings.json`` against it without a render
     (spec Q-14). Each call builds a new value.

@@ -34,6 +34,7 @@ ENTRY_POINTS = (
     "readonly_gate",
     "pre_tool_use",
     "prompt_secret",
+    "prompt_skills",
 )
 # Where Claude Code's plugin cache would hold the hooks: no hub.json three folders up.
 PLUGIN_CACHE = "home/.claude/plugins/cache/agent-hub/hub-workflow/0.1.0/hooks"
@@ -125,6 +126,10 @@ def valid_event(name: str, hub: Path) -> dict[str, Any]:
         "prompt_secret": {
             "hook_event_name": "UserPromptSubmit",
             "prompt": "deploy with " + "AKIA" + "ABCDEFGHIJKLMNOP",
+        },
+        "prompt_skills": {
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "claude, vamos usar a /overengineering-review e depois /deliver",
         },
     }
     return base | extra[name]

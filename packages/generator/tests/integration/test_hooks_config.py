@@ -1346,7 +1346,8 @@ def test_wires_readonly_gate_in_both_files_when_hub_rendered(hub: Path) -> None:
 
 
 # AGH-814 (T1): the prompt secret warning's group comes before the sensor's on UserPromptSubmit,
-# in the plugin's `hooks.json` and in the managed settings, and its file is an entry point.
+# in the plugin's `hooks.json` and in the managed settings, and its file is an entry point. The
+# prompt's skills group (AGH-838) follows the sensor's.
 def test_wires_prompt_secret_before_sensor_in_both_files_when_hub_rendered(hub: Path) -> None:
     hook = hub / HOOKS / "prompt_secret.py"
 
@@ -1356,9 +1357,11 @@ def test_wires_prompt_secret_before_sensor_in_both_files_when_hub_rendered(hub: 
     for path, sensor_command in SENSOR_COMMANDS.items():
         hooks = json.loads((hub / path).read_text(encoding="utf-8"))["hooks"]
         hook_command = sensor_command.replace("event_sensor.py", "prompt_secret.py")
+        skills_command = sensor_command.replace("event_sensor.py", "prompt_skills.py")
         assert hooks["UserPromptSubmit"] == [
             {"hooks": [{"type": "command", "command": hook_command, "timeout": 5}]},
             {"hooks": [{"type": "command", "command": sensor_command, "timeout": 5}]},
+            {"hooks": [{"type": "command", "command": skills_command, "timeout": 5}]},
         ], path
 
 

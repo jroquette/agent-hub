@@ -21,6 +21,15 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
+- A hub's commit hooks now check only what the commit stages, and run inside the Claude Code sandbox (AGH-835,
+  ADR 0061). `hub sync` replaces `.pre-commit-config.yaml` with `.githooks/pre-commit` and `.githooks/commit-msg`, and
+  points the hub's `core.hooksPath` at them. The pre-commit hook runs the new `hub doctor --staged`: it reads git's
+  index, not the working tree, checks each staged file (trailing whitespace, end of file, JSON, YAML), each feature
+  folder with a staged file (`features.tracker`) and `hub.json` when it is staged. An edit the commit does not stage
+  never blocks it, and nothing is downloaded at commit time. CI still runs the whole `hub doctor` through
+  `make check`. When you bump `platform.version`: run `hub sync`, then check its `git hooks:` line. If it warns that
+  `core.hooksPath` holds another value, run `git config core.hooksPath .githooks` yourself. You no longer need
+  pre-commit for the hub; `pre-commit uninstall` removes its old hooks.
 - `hub web` opens the chat when you start a new feature, as every other start does, instead of the Discuss panel and
   a "Sent to Claude" card (AGH-804).
 - `hub web` reads a proposed learning whose note left `brain/_inbox/` (merged into another note or deleted by hand)
@@ -29,6 +38,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   adds the `resolved_elsewhere` learning state.
 - Proposals of the same inbox note now count once in the Learnings quick views, the Learnings tab and the sidebar
   badge (AGH-804).
+- When the owner drops the direction a session was following, the session asks why once, files the answer with
+  `/learn` and hands off, leaving the ticket with its status and a comment on what was done and dropped (AGH-815).
+  The hub's `AGENTS.md` says so in one line, and its Workflow item 5 lost the sentence that repeated the Gotchas line
+  on redirecting output.
+- `/fix`, `/refactor` and `/upgrade` show an in-scope and an out-of-scope list with their first plan, post them on
+  the tracker issue, and before the PR remove or ask about each changed file outside the in-scope list (AGH-813).
 
 ### Fixed
 
@@ -38,6 +53,14 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   in Settings, instead of "Linear is not connected for hub web" (AGH-816, ADR 0060). It reads through GraphQL
   whenever a key is there; the transport still says only how the hub's agents reach Linear. The not-connected notice
   now points to Settings.
+- A Claude Code cloud session adds an attribution footer to the body of each pull request it opens (AGH-834). That
+  footer made the hub CI's authorship step fail the PR. The skills that open a PR now set its body again with the
+  same text through the session's GitHub tools, right after they open it. That edit removes the footer. They then
+  read the PR back; if the footer stays, the skill tells you once and names the PR. `hub step pr`, `hub ship` and
+  `hub run` set the body again through `gh`. In today's cloud sessions an edit through `gh` gets a footer again, so
+  they print one warning that names the PR. After that warning, `/learn promote`, `/release` and `/upgrade` set the
+  body again through the session's GitHub tools. Outside a cloud session nothing changes. The skill texts arrive
+  with `hub sync` after you bump `platform.version`.
 
 ## [0.35.1] - 2026-11-10
 
