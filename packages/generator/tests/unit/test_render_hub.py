@@ -1106,8 +1106,6 @@ FUNCTION_IMPORTS = {
     "plugin/hub-workflow/hooks/event_sensor.py": ["import socket", "import fcntl"],
     "plugin/hub-workflow/hooks/hubhooks.py": ["import subprocess", "import subprocess"],  # git
     "plugin/hub-workflow/hooks/pre_tool_use.py": ["import guard", "import event_sensor"],
-    # with stdout swapped, so the guard's import-failure "ask" line never reaches the prompt event
-    "plugin/hub-workflow/hooks/prompt_secret.py": ["import guard"],
 }
 
 

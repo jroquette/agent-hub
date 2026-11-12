@@ -122,7 +122,10 @@ def valid_event(name: str, hub: Path) -> dict[str, Any]:
             "tool_use_id": "toolu_01",
         },
         # A prompt the hook warns on, so its one JSON line is part of the run.
-        "prompt_secret": {"hook_event_name": "UserPromptSubmit", "prompt": "cat .env.production"},
+        "prompt_secret": {
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "deploy with " + "AKIA" + "ABCDEFGHIJKLMNOP",
+        },
     }
     return base | extra[name]
 
