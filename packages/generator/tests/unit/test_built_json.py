@@ -114,6 +114,8 @@ HOOK_ROWS = (
     ("Stop", None, "stop_gate.py", 180),
     ("PreCompact", None, "pre_compact.py", 20),
     ("SessionEnd", None, "session_end.py", 10),
+    # AGH-814: the prompt secret hook's group comes before the sensor's on UserPromptSubmit.
+    ("UserPromptSubmit", None, "prompt_secret.py", 5),
 )
 # AGH-200 D6 and E2: the events the hook sensor has a group of its own on, in the order the managed
 # settings list them; the tool events match every tool (``*``). Ten since AGH-621: on PreToolUse

@@ -110,7 +110,7 @@ _SENSOR_EVENTS: Final = (
 _GATE_FILE: Final = "readonly_gate.py"
 _GATE_EVENTS: Final = (("SubagentStart", 10), ("SubagentStop", 30))
 
-# Spec AC-4.7 (Q-5): the base plugin's six hooks, with this hub's timeouts, then the sensor's
+# Spec AC-4.7 (Q-5): the base plugin's seven hooks, with this hub's timeouts, then the sensor's
 # ten (AGH-200), then the read-only gate's two (AGH-141); `hooks.json` wires the same groups
 # for a plugin install.
 HOOK_EVENTS: Final = (
@@ -122,6 +122,8 @@ HOOK_EVENTS: Final = (
     HookEvent("Stop", None, "stop_gate.py", 180),
     HookEvent("PreCompact", None, "pre_compact.py", 20),
     HookEvent("SessionEnd", None, "session_end.py", 10),
+    # AGH-814: before the sensor's group on UserPromptSubmit, as on Stop, PreCompact and SessionEnd.
+    HookEvent("UserPromptSubmit", None, "prompt_secret.py", 5),
     *(
         HookEvent(event, matcher, _SENSOR_FILE, _SENSOR_TIMEOUT)
         for event, matcher in _SENSOR_EVENTS
