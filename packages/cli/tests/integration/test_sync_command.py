@@ -1189,7 +1189,7 @@ AGENT_OUTPUT_TEMPLATES = (
     "plugin/hub-workflow/agents/quality-reviewer.md",
     "plugin/hub-workflow/agents/spec-reviewer.md",
     "plugin/hub-workflow/skills/feature/SKILL.md",
-    "plugin/hub-workflow/skills/fix/SKILL.md",
+    "plugin/hub-workflow/skills/change/SKILL.md",
     "plugin/hub-workflow/skills/refactor/SKILL.md",
     "plugin/hub-workflow/skills/review/SKILL.md",
 )
@@ -1233,6 +1233,50 @@ def test_rewrites_agent_outputs_templates_when_hub_synced_from_older_release(
     assert "`./hub validate-output review <file>`" in texts[AGENT_OUTPUT_TEMPLATES[3]]
     for skill in AGENT_OUTPUT_TEMPLATES[4:]:
         assert "should-fix" not in texts[skill].lower(), skill
+    assert (demo_hub / "hub.lock").read_bytes() == (demo_hub_template / "hub.lock").read_bytes()
+    again = run_sync(demo_hub)
+    assert (again.exit_code, again.stdout, again.stderr) == (0, "up to date\n", "")
+    checked = run_sync(demo_hub, "--check")
+    assert (checked.exit_code, checked.stdout, checked.stderr) == (0, "up to date\n", "")
+
+
+# The short path under its former name, which stays as an alias, and under its new one.
+FIX_SKILL = "plugin/hub-workflow/skills/fix/SKILL.md"
+CHANGE_SKILL = "plugin/hub-workflow/skills/change/SKILL.md"
+CHANGE_LINK = ".claude/skills/change"
+
+
+def test_creates_change_and_rewrites_fix_when_hub_synced_from_older_release(
+    demo_hub: Path, demo_hub_template: Path, run_sync: SyncRunner
+) -> None:
+    assert (demo_hub / CHANGE_SKILL).is_file()
+    # A hub from the release before the rename: `fix` holds the flow and there is no `change`.
+    lock: dict[str, Any] = json.loads((demo_hub / "hub.lock").read_bytes())
+    (demo_hub / FIX_SKILL).write_bytes(OLDER_RENDER)
+    lock["files"][FIX_SKILL]["sha256"] = hashlib.sha256(OLDER_RENDER).hexdigest()
+    (demo_hub / CHANGE_LINK).unlink()
+    shutil.rmtree(demo_hub / os.path.dirname(CHANGE_SKILL))
+    for path in (CHANGE_LINK, CHANGE_SKILL):
+        del lock["files"][path]
+    (demo_hub / "hub.lock").write_bytes(dump_json(lock))
+
+    result = run_sync(demo_hub)
+
+    # The alias keeps the old path, so nothing is deleted and nothing conflicts.
+    changed = [
+        f"created {CHANGE_LINK}",
+        f"created {CHANGE_SKILL}",
+        f"updated {FIX_SKILL}",
+        "updated hub.lock",
+    ]
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        0,
+        "".join(f"{line}\n" for line in changed),
+        "",
+    )
+    for path in (FIX_SKILL, CHANGE_SKILL):
+        assert (demo_hub / path).read_bytes() == (demo_hub_template / path).read_bytes(), path
+    assert os.readlink(demo_hub / CHANGE_LINK) == "../../plugin/hub-workflow/skills/change"
     assert (demo_hub / "hub.lock").read_bytes() == (demo_hub_template / "hub.lock").read_bytes()
     again = run_sync(demo_hub)
     assert (again.exit_code, again.stdout, again.stderr) == (0, "up to date\n", "")
