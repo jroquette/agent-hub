@@ -13,6 +13,7 @@ from typing import Any, NamedTuple
 
 import pytest
 
+from agent_hub.core.doctor.instruction_rules import DEFAULT_MAX_LINES
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing.builders import (
     a_conventions_document,
@@ -23,7 +24,7 @@ from agent_hub.generator.render_hub import render_hub
 
 SKILLS = ("fix", "refactor", "upgrade")
 # The nested instruction-file line limit of the doctor's `instructions.size` rule.
-NESTED_MAX_LINES = 80
+NESTED_MAX_LINES = DEFAULT_MAX_LINES["*/*"]
 
 IN_SCOPE_LIST = "an in-scope list"
 OUT_OF_SCOPE_LIST = "an out-of-scope list"
@@ -31,6 +32,8 @@ OUTSIDE_SCOPE = "outside the in-scope list"
 REMOVE_OR_ASK = "either remove its change or ask the owner, with one reason per file"
 CHANGED_FILES = "`git diff --name-only"
 ON_TRACKER = "in a tracker comment on the issue, not in the PR body"
+OWNER_KEEPS = "a file the owner keeps joins the in-scope list in the tracker comment"
+RERUN_BEFORE_PUSH = "again before the push"
 
 # A numbered step line, at the start of a line (indented bullets inside a step do not match).
 STEP_LINE = re.compile(r"^\d+\. ", re.MULTILINE)
@@ -139,20 +142,41 @@ class ShipCase(NamedTuple):
     check_at: Locator
     pr_at: Locator
     opens_pr: str
+    reruns: str
 
 
 @pytest.mark.parametrize(
     "case",
     [
-        pytest.param(ShipCase("fix", at_step(7), at_step(7), "open the PR"), id="fix-ship"),
-        pytest.param(ShipCase("refactor", at_step(5), at_step(6), "open its PR"), id="refactor-pr"),
         pytest.param(
-            ShipCase("upgrade", at_by_hand("Ship"), at_by_hand("Ship"), "open the PR"),
+            ShipCase(
+                "fix", at_step(7), at_step(7), "open the PR", "run step 5 Gates again before the push"
+            ),
+            id="fix-ship",
+        ),
+        pytest.param(
+            ShipCase(
+                "refactor",
+                at_step(5),
+                at_step(6),
+                "open its PR",
+                "run the step 4 gates again before the push",
+            ),
+            id="refactor-pr",
+        ),
+        pytest.param(
+            ShipCase(
+                "upgrade",
+                at_by_hand("Ship"),
+                at_by_hand("Ship"),
+                "open the PR",
+                "run Verify again before the push",
+            ),
             id="upgrade-by-hand-ship",
         ),
     ],
 )
-def test_checks_files_outside_scope_when_pr_about_to_open(
+def test_checks_files_outside_scope_lists_when_pr_about_to_open(
     demo_skills: dict[str, str], case: ShipCase
 ) -> None:
     text = demo_skills[case.skill]
@@ -165,9 +189,14 @@ def test_checks_files_outside_scope_when_pr_about_to_open(
     assert REMOVE_OR_ASK in check.text
     assert opens_pr in pr.text
     assert check.start + check.text.index(REMOVE_OR_ASK) < pr.start + pr.text.index(opens_pr)
+    assert OWNER_KEEPS in check.text
+    assert RERUN_BEFORE_PUSH in check.text
+    assert case.reruns in check.text
+    assert check.text.index(REMOVE_OR_ASK) < check.text.index(case.reruns)
+    assert check.start + check.text.index(case.reruns) < pr.start + pr.text.index(opens_pr)
 
 
-def test_asks_owner_about_files_outside_scope_when_upgrade_paused_at_publish(
+def test_asks_owner_about_files_outside_scope_lists_when_upgrade_paused_at_publish(
     demo_skills: dict[str, str],
 ) -> None:
     report = _step(demo_skills["upgrade"], 4).text
@@ -176,25 +205,33 @@ def test_asks_owner_about_files_outside_scope_when_upgrade_paused_at_publish(
     assert OUTSIDE_SCOPE in report
     assert "ask the owner about each one, with one reason per file" in report
     assert "Never edit the run's branch" in report
+    assert OWNER_KEEPS in report
 
 
 @pytest.mark.parametrize(
-    ("skill", "pr_body"),
+    ("skill", "pr_step_at", "pr_body"),
     [
-        pytest.param("fix", "The PR body follows", id="fix"),
-        pytest.param("refactor", "The body holds", id="refactor"),
-        pytest.param("upgrade", "The PR body holds", id="upgrade"),
+        pytest.param("fix", at_step(7), "The PR body follows", id="fix"),
+        pytest.param("refactor", at_step(6), "The body holds", id="refactor"),
+        pytest.param("upgrade", at_by_hand("Ship"), "The PR body holds", id="upgrade"),
     ],
 )
 def test_posts_scope_lists_on_tracker_not_pr_body_when_lists_written(
-    demo_skills: dict[str, str], skill: str, pr_body: str
+    demo_skills: dict[str, str], skill: str, pr_step_at: Locator, pr_body: str
 ) -> None:
     text = demo_skills[skill]
-    body_start = text.index(pr_body)
-    body_sentence = text[body_start : text.index("\n", body_start)]
+    pr_step = pr_step_at(text).text
+    # The PR-body text: from the PR body sentence to the end of its step or item.
+    body_text = pr_step[pr_step.index(pr_body) :]
+    body_sentences = [
+        sentence for sentence in re.split(r"(?<=[.;:])\s", pr_step) if "body" in sentence
+    ]
 
     assert ON_TRACKER in FIRST_PLAN[skill](text).text
-    assert "scope list" not in body_sentence
+    assert "scope list" not in body_text
+    assert body_sentences
+    for sentence in body_sentences:
+        assert "scope list" not in sentence, sentence
 
 
 @pytest.mark.parametrize(
