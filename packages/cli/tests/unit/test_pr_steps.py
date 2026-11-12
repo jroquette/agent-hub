@@ -2,6 +2,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -58,6 +59,13 @@ VIEW_ARGV = (
 )
 CREATED = ChildResult(0, json.dumps({"html_url": PR_URL, "number": 7}).encode(), b"")
 CREATE_GAVE_UP = "gh api POST pulls failed: a pull request for branch already exists\n"
+# The edit that sets a created PR's body again, read from stdin as the create's was.
+RESET = ("gh", "api", "--method", "PATCH")
+RESET_ARGV = (*RESET, "repos/acme/demo-api/pulls/7", "-F", "body=@-")
+# Built from fragments, so this file holds no attribution line a reader could take for one.
+FOOTER = "\n\n---\n_Generated " + "by [Claude Code](https://claude.ai/code/session_0123)_"
+CHECK_FOOTER = "check it for an attribution footer"
+STILL_ATTRIBUTED = f"the body of {PR_URL} still carries AI attribution; edit it by hand"
 
 
 @dataclass(frozen=True)
@@ -362,6 +370,160 @@ def test_adds_draft_when_draft_asked() -> None:
     assert open_pr(child, draft=False) == OpenedPr(url=PR_URL, found=False)
     assert child.argvs() == [(*CREATE_ARGV, "-F", "draft=true"), CREATE_ARGV]
     assert "GH_TOKEN" in child.names(0)
+
+
+def pull(body: object) -> ChildResult:
+    """A REST answer's PR whose ``body`` is ``body``, as the create and the edit print it."""
+    answer = {"html_url": PR_URL, "number": 7, "body": body}
+    return ChildResult(0, json.dumps(answer).encode(), b"")
+
+
+def test_sets_body_again_when_created_body_differs() -> None:
+    child = FakeChild({CREATE: pull("DEM-7" + FOOTER), RESET: pull("DEM-7")})
+
+    opened = open_pr(child)
+
+    assert child.argvs() == [CREATE_ARGV, RESET_ARGV]
+    create, reset = child.calls
+    assert reset.stdin == create.stdin == b"DEM-7"
+    assert reset.env == create.env
+    assert "GH_TOKEN" in child.names(1)
+    assert "LINEAR_API_KEY" not in child.names(1)
+    assert (reset.timeout, reset.output_limit) == (17.0, pr_steps.GH_API_OUTPUT_LIMIT)
+    assert opened == OpenedPr(url=PR_URL, found=False)
+    assert opened.warning is None
+
+
+def test_makes_one_call_when_created_body_is_the_one_sent() -> None:
+    child = FakeChild({CREATE: pull("DEM-7")})
+
+    opened = open_pr(child)
+
+    assert child.argvs() == [CREATE_ARGV]
+    assert opened.warning is None
+
+
+def test_warns_when_body_still_carries_attribution_after_reset() -> None:
+    child = FakeChild({CREATE: pull("DEM-7" + FOOTER), RESET: pull("DEM-7" + FOOTER)})
+
+    opened = open_pr(child)
+
+    assert child.argvs() == [CREATE_ARGV, RESET_ARGV]
+    assert (opened.url, opened.found) == (PR_URL, False)
+    assert opened.warning == STILL_ATTRIBUTED
+
+
+def test_warns_in_one_call_when_sent_body_carries_attribution() -> None:
+    body = "DEM-7" + FOOTER
+    child = FakeChild({CREATE: pull(body)})
+
+    opened = open_or_find_pr(
+        child,
+        target=TARGET,
+        title="feat: add x",
+        body=body,
+        draft=False,
+        environ=CALLER_ENV,
+        timeout=17.0,
+    )
+
+    assert child.argvs() == [CREATE_ARGV]
+    assert opened.warning == STILL_ATTRIBUTED
+
+
+def test_warns_when_body_cannot_be_set_again() -> None:
+    refused = ChildResult(1, b"", b"x" * 600 + b" gh: Not Found\n(HTTP 404)\n")
+    child = FakeChild({CREATE: pull("DEM-7" + FOOTER), RESET: refused})
+
+    opened = open_pr(child)
+
+    assert child.argvs() == [CREATE_ARGV, RESET_ARGV]
+    assert (opened.url, opened.found) == (PR_URL, False)
+    lead = f"the body of {PR_URL} could not be set again; {CHECK_FOOTER}: "
+    assert opened.warning is not None
+    assert opened.warning.startswith(lead + "xxx")
+    assert opened.warning.endswith("x gh: Not Found (HTTP 404)")
+    assert len(opened.warning) <= len(lead) + 500
+    assert opened.warning.isprintable()
+
+
+def test_warns_when_reset_cannot_run() -> None:
+    answers = FakeChild({CREATE: pull("DEM-7" + FOOTER)})
+
+    def child(argv: Sequence[str], **options: Any) -> ChildResult:
+        if tuple(argv[:4]) == RESET:
+            raise PrStepError("gh timed out after 17 s")
+        return answers(argv, **options)
+
+    opened = open_pr(child)  # type: ignore[arg-type]
+
+    assert (opened.url, opened.found) == (PR_URL, False)
+    assert opened.warning == (
+        f"the body of {PR_URL} could not be set again; {CHECK_FOOTER}: gh timed out after 17 s"
+    )
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        b"not json",
+        b"[]",
+        json.dumps({"html_url": PR_URL}).encode(),
+        json.dumps({"html_url": PR_URL, "body": None}).encode(),
+        b"{" + b" " * pr_steps.GH_API_OUTPUT_LIMIT + b'"body": "DEM-7"}',
+    ],
+    ids=["not-json", "not-object", "no-body", "null-body", "too-long"],
+)
+def test_warns_when_reset_answer_cannot_be_read(stdout: bytes) -> None:
+    child = FakeChild({CREATE: pull("DEM-7" + FOOTER), RESET: ChildResult(0, stdout, b"")})
+
+    opened = open_pr(child)
+
+    assert child.argvs() == [CREATE_ARGV, RESET_ARGV]
+    assert (opened.url, opened.found) == (PR_URL, False)
+    assert opened.warning == f"the body of {PR_URL} could not be read back; {CHECK_FOOTER}"
+
+
+def test_warns_in_one_call_when_created_url_has_no_rest_path() -> None:
+    url = "https://github.example.com/acme/demo-api/pull/7"
+    created = {"html_url": url, "number": 7, "body": "DEM-7" + FOOTER}
+    child = FakeChild({CREATE: ChildResult(0, json.dumps(created).encode(), b"")})
+
+    opened = open_pr(child)
+
+    assert child.argvs() == [CREATE_ARGV]
+    assert (opened.url, opened.found) == (url, False)
+    assert opened.warning == (
+        f"the body of {url} could not be set again; {CHECK_FOOTER}:"
+        " its url is not a github.com pull request"
+    )
+
+
+def test_leaves_body_alone_when_pr_already_open() -> None:
+    child = FakeChild({CREATE: CREATE_FAILED, VIEW: viewed("open"), RESET: pull("DEM-7")})
+
+    opened = open_pr(child)
+
+    assert [argv[:4] for argv in child.argvs()] == [CREATE, VIEW]
+    assert (opened.url, opened.found) == (PR_URL, True)
+    assert opened.warning is None
+
+
+def test_sets_body_again_from_given_folder_when_cwd_passed() -> None:
+    child = FakeChild({CREATE: pull("DEM-7" + FOOTER), RESET: pull("DEM-7")})
+
+    open_or_find_pr(
+        child,
+        target=TARGET,
+        title="feat: add x",
+        body="DEM-7",
+        draft=False,
+        environ=CALLER_ENV,
+        timeout=17.0,
+        cwd=Path("/w/demo-api"),
+    )
+
+    assert [call.cwd for call in child.calls] == [Path("/w/demo-api")] * 2
 
 
 def test_reports_unmatched_line_when_subject_off_pattern() -> None:

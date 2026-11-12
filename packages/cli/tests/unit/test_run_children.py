@@ -138,6 +138,14 @@ def test_reads_and_edits_pr_body_through_rest_api_when_url_given() -> None:
     ]
 
 
+def test_reads_body_from_stdin_when_body_reset_command_built() -> None:
+    path = "repos/acme/demo-web/pulls/12"
+
+    assert children.pr_body_reset_command(path) == [
+        *("gh", "api", "--method", "PATCH", path, "-F", "body=@-"),
+    ]
+
+
 @pytest.mark.parametrize(
     "url",
     [

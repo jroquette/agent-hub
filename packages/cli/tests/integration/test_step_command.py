@@ -28,6 +28,8 @@ SUBJECT = "feat(api): synthetic change (DEM-1)"
 KEY_VARIABLE = "LINEAR_API_KEY"
 GH_TOKEN_VALUE = "gh" + "o_" + "y" * 36
 IDENTITY = ("-c", "user.name=Jane Doe", "-c", "user.email=jane@example.com")
+# The edit that sets a created PR's body again.
+RESET = ("api", "--method", "PATCH")
 
 
 @pytest.fixture(autouse=True)
@@ -332,6 +334,61 @@ class TestPr:
         assert result.stderr.splitlines()[-1].startswith(
             "hub step pr: gh api POST pulls failed: gh: synthetic failure"
         )
+
+    def test_sets_body_again_when_create_appends_footer(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        target = target_of(run_command, workspace)
+        commit(workspace, SUBJECT)
+        monkeypatch.setenv("FAKE_GH_MODE", "footer")
+
+        result = step(run_command, workspace, "pr", *PR_ISSUE, *target, "--summary", "Adds it.")
+
+        assert output_of(result) == {
+            "url": PR_URL,
+            "found": False,
+            "summary": "Adds it.",
+            "title_unmatched": None,
+        }
+        calls = run_workspace.calls("gh")
+        assert [call["argv"][:3] for call in calls] == [
+            ["api", "--method", "POST"],
+            ["api", "--method", "PATCH"],
+        ]
+        create, reset = calls
+        assert reset["argv"] == [*RESET, "repos/acme/demo-api/pulls/99", "-F", "body=@-"]
+        assert reset["stdin"] == create["stdin"] == "DEM-1\n\nAdds it."
+        assert reset["cwd"] == str(worktree_of(workspace))
+        assert "GH_TOKEN" in reset["env"]
+        assert KEY_VARIABLE not in reset["env"]
+        assert "warning" not in result.stderr
+
+    def test_warns_once_naming_pr_when_footer_stays(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        target = target_of(run_command, workspace)
+        commit(workspace, SUBJECT)
+        monkeypatch.setenv("FAKE_GH_MODE", "footer-stays")
+
+        result = step(run_command, workspace, "pr", *PR_ISSUE, *target, "--summary", "Adds it.")
+
+        assert output_of(result)["url"] == PR_URL
+        assert [call["argv"][:3] for call in run_workspace.calls("gh")] == [
+            ["api", "--method", "POST"],
+            ["api", "--method", "PATCH"],
+        ]
+        assert [line for line in result.stderr.splitlines() if "warning" in line] == [
+            f"hub step pr: warning: the body of {PR_URL} still carries AI attribution;"
+            " edit it by hand"
+        ]
 
 
 class TestReport:
