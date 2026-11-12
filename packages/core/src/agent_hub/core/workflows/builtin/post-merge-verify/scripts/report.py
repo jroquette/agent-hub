@@ -9,8 +9,8 @@
 the hub, reads ``verify.py``'s JSON on stdin; ``--explain`` is the explain step's reply (blank when
 it was skipped), ``--today`` stands in for today's UTC date in tests, and the run's id comes from
 ``AGENT_HUB_RUN_ID``. Each failure is written with its feature, AC, command, status and exit code,
-the output's tail, the suspected merge and the evidence explain gave, and a draft ``/fix`` line; a
-verification that cannot run after the merge, one not run (budget), a record that could not be
+the output's tail, the suspected merge and the evidence explain gave, and a draft ``/change`` line;
+a verification that cannot run after the merge, one not run (budget), a record that could not be
 read and the ACs left out by the selection cap are listed apart. Commands and outputs go in fences
 longer than any backtick run inside them, with control characters dropped.
 
@@ -116,9 +116,7 @@ def failure_block(failure: dict[str, object], suspect: dict[str, object] | None,
     parts.extend(suspect_lines(suspect))
     merge = line(suspect.get("merge")) if suspect else ""
     blame = f"; suspect {merge[:7]}" if merge else ""
-    parts.append(
-        f"Draft: /fix (or /change) {feature} {ac}: its verification {how} at {sha7}{blame}."
-    )
+    parts.append(f"Draft: /change {feature} {ac}: its verification {how} at {sha7}{blame}.")
     return "\n".join(parts)
 
 

@@ -1,6 +1,6 @@
 # An incident with no known reproduction: git evidence, a recall of past incidents,
 # at most five ranked hypotheses each with a read-only check, the checks run, a mitigation the
-# owner picks behind a gate, a hand-off draft for /fix (or /change) and a blameless postmortem
+# owner picks behind a gate, a hand-off draft for /change and a blameless postmortem
 # draft, both in brain/_inbox/. The outcome is the postmortem's status: draft when a hypothesis
 # was confirmed, open when none was.
 #
@@ -11,7 +11,7 @@
 # - No environment: the pack reads no system. evidence, check and mitigation are effect read,
 #   handoff and note write the hub; a run started with --env <production> is refused by policy.
 # - Nothing is applied: the pack records the chosen mitigation; applying it is the owner's step
-#   through /fix (or /change). The run pauses at mitigate before mitigation or handoff runs.
+#   through /change. The run pauses at mitigate before mitigation or handoff runs.
 # - The checks are agent-written, so check.py runs each one as an argv list on an allow-list
 #   (git read subcommands, grep, test, ls, cat, head, tail, wc), never through a shell, with
 #   paths inside the repo, in a detached worktree under $TMPDIR at the evidence's head, with an
@@ -242,7 +242,7 @@ nodes:
     when: "$check.output.mitigations > 0"
     message: >-
       A hypothesis is confirmed and proposes a mitigation. $check.output.menu The run records the
-      mitigation you pick and applies nothing: you apply it through /fix (or /change). Record
+      mitigation you pick and applies nothing: you apply it through /change. Record
       with the text H<n>, or your own mitigation (blank: the top-ranked one); or none.
     decisions:
       - {id: record, label: Record a mitigation}
@@ -275,7 +275,7 @@ nodes:
 
   - id: handoff
     type: script
-    description: The hand-off draft for /fix (or /change) in brain/_inbox/ - the symptom, the reproduction, every hypothesis and the chosen mitigation.
+    description: The hand-off draft for /change in brain/_inbox/ - the symptom, the reproduction, every hypothesis and the chosen mitigation.
     depends_on: [check, mitigate, mitigation]
     trigger_rule: none_failed_min_one_success
     runtime: python

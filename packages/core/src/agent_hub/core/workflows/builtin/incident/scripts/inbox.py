@@ -5,10 +5,10 @@
 """Write an incident run's drafts in the hub's inbox for the owner; print where, as JSON.
 
 ``inbox.py handoff --hypotheses <JSON> --check <JSON> [--mitigation <JSON>] [--decision <id>]
-[--today YYYY-MM-DD]`` with the report on stdin writes the hand-off draft for /fix (or /change),
+[--today YYYY-MM-DD]`` with the report on stdin writes the hand-off draft for /change,
 ``brain/_inbox/incident-YYYY-MM-DD-<run>-handoff.md``: the symptom, the reproduction (each
 confirmed check and its output's tail), every hypothesis with its status, the chosen mitigation
-(or none chosen) and a draft for /fix. It prints ``{path, confirmed, mitigation}``.
+(or none chosen) and a draft for /change. It prints ``{path, confirmed, mitigation}``.
 
 ``inbox.py postmortem --confirmed <n> --handoff <hand-off path> [--today YYYY-MM-DD]`` with the
 postmortem agent's reply on stdin writes the blameless postmortem,
@@ -41,8 +41,7 @@ INBOX = Path("brain", "_inbox")
 # Not datetime.UTC: the hub's copy also imports on Python 3.9.
 UTC = timezone.utc  # noqa: UP017
 OWNER_APPLIES = (
-    "The pack records the chosen mitigation; applying it is the owner's step through /fix"
-    " (or /change)."
+    "The pack records the chosen mitigation; applying it is the owner's step through /change."
 )
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 BACKTICKS = re.compile(r"`+")
@@ -97,7 +96,7 @@ def reproduction(hypotheses: list[dict[str, Any]], check: dict[str, Any]) -> lis
         ]
     if not lines:
         lines = [
-            "No hypothesis was confirmed: there is no reproduction yet. /fix starts by writing a"
+            "No hypothesis was confirmed: there is no reproduction yet. /change starts by writing a"
             " RED test for the most likely hypothesis below.",
             "",
         ]
@@ -153,7 +152,7 @@ def render_handoff(
     run: str,
     today: str,
 ) -> str:
-    """The hand-off draft for /fix (or /change), Markdown with front matter."""
+    """The hand-off draft for /change, Markdown with front matter."""
     listed = [h for h in hypotheses.get("hypotheses", []) if isinstance(h, dict)]
     confirmed = int(check.get("confirmed", 0) or 0)
     task = (
@@ -189,7 +188,7 @@ def render_handoff(
             "## Chosen mitigation",
             "",
             *chosen(mitigation, decision),
-            "## Draft for /fix (or /change)",
+            "## Draft for /change",
             "",
             f"- {task}",
             f"- Confirmed hypotheses: {confirmed}; each one and its check is listed above.",

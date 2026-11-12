@@ -27,7 +27,7 @@ Steps:
    `--no-index` (nor an abbreviation of one), and `tail -f`, `-F` or `--follow`. Examples:
    `["git", "grep", "-q", "retry_without_token", "--", "app/payment.py"]`,
    `["test", "-f", "app/checkout.toml"]`. A hypothesis that only running code can confirm keeps
-   the closest read-only check and says so in its statement: /fix writes its RED test.
+   the closest read-only check and says so in its statement: /change writes its RED test.
 4. Propose a mitigation only with its undo (a revert, a config flag, disabling a job), else
    null. This run applies nothing: the owner picks one at the gate, after the checks.
 

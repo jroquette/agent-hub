@@ -9,7 +9,7 @@ For each issue, one draft:
 - `action`: `draft` for the issue's sections. `supersede` only for an issue whose `possible duplicates` line names another issue that already covers it: `superseded_by` names that issue and `context` says why. Otherwise `superseded_by` is empty.
 - `context`: what exists and why it changes, each claim with a `path:line`, at most 4000 characters.
 - `acceptance_criteria`: Given/When/Then, each starting with its AC id (`AC-1`, `AC-2`…), each checkable by a test or a command; at most 10.
-- `size`: `fix` within `/fix`'s limits, else `bounded`, `spike` or `architectural`, as the skill's step 3 sizes it. `guarded`: true when the change touches a path under `hub.json` → `guard.ask_before_edit`.
+- `size`: `fix` within `/change`'s limits, else `bounded`, `spike` or `architectural`, as the skill's step 3 sizes it. `guarded`: true when the change touches a path under `hub.json` → `guard.ask_before_edit`.
 - `repos` (dirs from `hub.json` → `repos`), `blocked_by` and `blocks` (issue ids).
 - `verification`: a command that runs from a repo root after the merge and proves the ACs.
 - `open_questions`: what the code, the brain and the issue do not answer. None is a valid answer; a guess is not.
