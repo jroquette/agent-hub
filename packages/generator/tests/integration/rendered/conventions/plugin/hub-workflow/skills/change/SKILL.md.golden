@@ -1,16 +1,16 @@
 ---
-name: fix
-description: Short path for a bug or a small bounded task in one repo. Reproduces it with a failing test committed as RED, makes the smallest fix, runs the repo's gates, gets one quality-reviewer pass and opens the PR; no spec, plan or evaluator.
+name: change
+description: Use when the change is small: a bug, a tweak, docs, config or a small refactor in one repo, with at most 5 changed non-test files, no new contract and no guarded path. Writes a failing test committed as RED, makes the smallest change, runs the repo's gates, gets one quality-reviewer pass and opens the PR; no spec, plan or evaluator.
 disable-model-invocation: true
 argument-hint: "<tracker issue id>"
 ---
 
-# /fix <issue>
+# /change <issue>
 
 Paths below are relative to the hub (the directory with `hub.json`); repos are its siblings, listed in `hub.json` → `repos`, each with its own `AGENTS.md`: read the one for the repo you change.
 No spec, no plan gate and no `brain/features/<slug>/` folder: the PR body and the tracker hold the record.
 
-1. **Read the ticket** (if it cannot be read, say so and stop) and size it against `/fix`'s limits: one repo, at most 5 changed non-test files, no new contract, no path under `guard.ask_before_edit`.
+1. **Read the ticket** (if it cannot be read, say so and stop) and size it against `/change`'s limits: one repo, at most 5 changed non-test files, no new contract, no path under `guard.ask_before_edit`.
    **Stop and switch to `/feature`** when the change needs a new contract (a schema, migration, API or config key), touches a path under `hub.json` → `guard.ask_before_edit`, spans more than one repo, or changes more than 5 non-test files.
    Tests do not count: a test is a path under a `tests/` or `test/` folder (golden fixtures included) or one the repo's `AGENTS.md` names as a test. A trigger found after the RED commit works the same: the RED commit stays on the branch and `/feature` continues from its step 2 on the same worktree, reusing the existing issue (skip its step 5: no `/implement`, the work is built in its step 6 on this worktree, with no new workspace; its step 4 only adds issues for new work).
    **Scope lists**: once sized, show a short plan with an in-scope list (each file or path pattern this ticket changes, and why) and an out-of-scope list (nearby work it leaves alone). Post both lists in a tracker comment on the issue, not in the PR body. No plan gate: go on to step 2.
