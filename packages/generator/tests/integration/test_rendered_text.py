@@ -56,7 +56,7 @@ CASES = (
         a_conventions_document,
         (
             "AGENTS.md",
-            "plugin/hub-workflow/skills/fix/SKILL.md",
+            "plugin/hub-workflow/skills/change/SKILL.md",
             "plugin/hub-workflow/skills/kickoff/SKILL.md",
         ),
     ),

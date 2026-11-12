@@ -32,7 +32,7 @@ SPEC_REVIEWER = f"{AGENTS}/spec-reviewer.md"
 QUALITY_REVIEWER = f"{AGENTS}/quality-reviewer.md"
 REVIEWERS = {"spec": SPEC_REVIEWER, "quality": QUALITY_REVIEWER}
 FEATURE = "plugin/hub-workflow/skills/feature/SKILL.md"
-FIX = "plugin/hub-workflow/skills/fix/SKILL.md"
+CHANGE = "plugin/hub-workflow/skills/change/SKILL.md"
 REFACTOR = "plugin/hub-workflow/skills/refactor/SKILL.md"
 REVIEW = "plugin/hub-workflow/skills/review/SKILL.md"
 
@@ -91,7 +91,7 @@ def texts_of(document: dict[str, object]) -> dict[str, str]:
         FEATURE,
         SPEC_REVIEWER,
         QUALITY_REVIEWER,
-        FIX,
+        CHANGE,
         REFACTOR,
         REVIEW,
     ):
@@ -232,10 +232,10 @@ def test_ends_with_one_json_block_when_review_json_inputs_given(texts: dict[str,
     assert "`/feature` also gives the `ticket`, `task`, `round` and `commit`" in spec
 
 
-def test_reads_unified_vocabulary_when_fix_refactor_review_rendered(
+def test_reads_unified_vocabulary_when_change_refactor_review_rendered(
     texts: dict[str, str],
 ) -> None:
-    fix = step(texts[FIX], 6)
+    fix = step(texts[CHANGE], 6)
     refactor = step(texts[REFACTOR], 5)
     review = step(texts[REVIEW], 5)
 
@@ -245,7 +245,7 @@ def test_reads_unified_vocabulary_when_fix_refactor_review_rendered(
     assert "`blocking` findings: fix them and re-run both gates; no second pass." in refactor
     assert "severity (blocking / minor)" in review
     assert "minor findings go only when no blocking one is left" in review
-    for path in (FIX, REFACTOR, REVIEW):
+    for path in (CHANGE, REFACTOR, REVIEW):
         assert old_words(texts[path]) == [], path
 
 

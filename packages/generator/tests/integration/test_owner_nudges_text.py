@@ -10,11 +10,12 @@ rules" line, since the owner drops a direction outside any skill. Phrases are ch
 render; the two-team and conventions renders check that no project value reaches the new text,
 which adds no ``@@{…}`` placeholder.
 
-The scope tests (AGH-813, AC-33 to AC-35): ``/fix``, ``/refactor`` and ``/upgrade`` show an in-scope
-and an out-of-scope list with their first plan, post both on the tracker issue (not in the PR body),
-and before the PR remove or ask about each changed file outside the in-scope list. The upgrade
-workflow's branch belongs to the run, so at its ``publish`` gate the session only asks the owner.
-The same phrases hold in the three skills; each step is sliced by its number or its bold name.
+The scope tests (AGH-813, AC-33 to AC-35): ``/change``, ``/refactor`` and ``/upgrade`` show an
+in-scope and an out-of-scope list with their first plan, post both on the tracker issue (not in the
+PR body), and before the PR remove or ask about each changed file outside the in-scope list. The
+upgrade workflow's branch belongs to the run, so at its ``publish`` gate the session only asks the
+owner. The same phrases hold in the three skills; each step is sliced by its number or its bold
+name.
 """
 
 import re
@@ -200,9 +201,9 @@ def test_names_no_project_value_when_dropped_direction_rendered(leak_config: Hub
         assert PLACEHOLDER_MARK not in text, text
 
 
-# The scope lists of /fix, /refactor and /upgrade (AGH-813).
+# The scope lists of /change, /refactor and /upgrade (AGH-813).
 
-SKILLS = ("fix", "refactor", "upgrade")
+SKILLS = ("change", "refactor", "upgrade")
 # The nested instruction-file line limit of the doctor's `instructions.size` rule.
 NESTED_MAX_LINES = DEFAULT_MAX_LINES["*/*"]
 
@@ -279,7 +280,7 @@ def at_by_hand(name: str) -> Locator:
 
 
 # The step that shows each skill's first plan.
-FIRST_PLAN = {"fix": at_step(1), "refactor": at_step(1), "upgrade": at_step(2)}
+FIRST_PLAN = {"change": at_step(1), "refactor": at_step(1), "upgrade": at_step(2)}
 
 
 class PlanCase(NamedTuple):
@@ -293,7 +294,9 @@ class PlanCase(NamedTuple):
 @pytest.mark.parametrize(
     "case",
     [
-        pytest.param(PlanCase("fix", after="size it against `/fix`'s limits"), id="fix-size"),
+        pytest.param(
+            PlanCase("change", after="size it against `/change`'s limits"), id="change-size"
+        ),
         pytest.param(
             PlanCase("refactor", elsewhere=((at_step(3), "the step 1 scope lists"),)),
             id="refactor-scope",
@@ -330,13 +333,13 @@ class ShipCase(NamedTuple):
     [
         pytest.param(
             ShipCase(
-                "fix",
+                "change",
                 at_step(7),
                 at_step(7),
                 "open the PR",
                 "run step 5 Gates again before the push",
             ),
-            id="fix-ship",
+            id="change-ship",
         ),
         pytest.param(
             ShipCase(
@@ -401,7 +404,7 @@ class BodyCase(NamedTuple):
 @pytest.mark.parametrize(
     "case",
     [
-        pytest.param(BodyCase("fix", at_step(7), "The PR body follows"), id="fix"),
+        pytest.param(BodyCase("change", at_step(7), "The PR body follows"), id="change"),
         pytest.param(BodyCase("refactor", at_step(6), "The body holds"), id="refactor"),
         pytest.param(BodyCase("upgrade", at_by_hand("Ship"), "The PR body holds"), id="upgrade"),
     ],

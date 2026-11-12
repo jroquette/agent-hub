@@ -170,16 +170,16 @@ def test_names_project_plugin_skill_when_its_folder_exists(run: Run, hub: Path) 
 @pytest.mark.parametrize(
     "prompt",
     [
-        "/fix",  # the CLI's own leading command
-        "/fix the bug",
-        "see /usr/bin/fix and /tmp/review",
-        "a/fix b/review",
-        "https://example.com/fix and http://x/review",
-        "run \"/fix\" and '/review'",
-        "the file /fix.py and /review.md",
-        "quoted `/fix` and (/review)",
-        "/unknown-skill and /nope:fix and /other-plugin:review",
-        "/hub-workflow:/fix and //fix",
+        "/change",  # the CLI's own leading command
+        "/change the bug",
+        "see /usr/bin/change and /tmp/review",
+        "a/change b/review",
+        "https://example.com/change and http://x/review",
+        "run \"/change\" and '/review'",
+        "the file /change.py and /review.md",
+        "quoted `/change` and (/review)",
+        "/unknown-skill and /nope:change and /other-plugin:review",
+        "/hub-workflow:/change and //change",
         "no slash at all",
         "",
     ],

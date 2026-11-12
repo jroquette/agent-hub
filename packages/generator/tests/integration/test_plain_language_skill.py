@@ -196,7 +196,7 @@ PR_BODY_PHRASES = (
 PR_BODY_STEPS = [
     ("implement", "10. **PR**"),
     ("feature", "**Finish**"),
-    ("fix", "The PR body follows"),
+    ("change", "The PR body follows"),
 ]
 FEATURES_URL = "https://github.com/acme/demo-hub/blob/main/brain/features"
 
@@ -225,7 +225,7 @@ def test_points_pr_step_to_pr_body_rule_when_skills_rendered(
 
     assert len(lines) == 1, lines
     assert "`plain-language` skill's PR bodies rules" in lines[0]
-    assert skill == "fix" or f"`{FEATURES_URL}/<slug>/`" in lines[0]
+    assert skill == "change" or f"`{FEATURES_URL}/<slug>/`" in lines[0]
 
 
 def test_lands_records_on_hub_before_build_when_feature_rendered(demo_config: HubConfig) -> None:

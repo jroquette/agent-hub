@@ -394,7 +394,7 @@ def test_offers_setup_checklist_when_onboard_rendered(steps: dict[int, str]) -> 
         "`hub.local.json`",
     ):
         assert item in hand_over, item
-    assert "one small first issue per repo for `/fix`" in hand_over
+    assert "one small first issue per repo for `/change`" in hand_over
     assert "only after the user agrees" in hand_over
     assert "`brain/now.md`" in hand_over
 

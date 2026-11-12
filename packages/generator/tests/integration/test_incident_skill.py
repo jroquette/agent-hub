@@ -2,7 +2,7 @@
 
 What a text can prove of the skill's acceptance criteria: each step is there with its type, the
 incident log keeps every hypothesis's status, investigation stays read-only, mitigation waits on
-the user, a reproduction hands off to ``/fix`` and the postmortem is blameless with its sections.
+the user, a reproduction hands off to ``/change`` and the postmortem is blameless with its sections.
 Since AGH-483 the skill starts the built-in ``incident`` workflow with the inputs it declares (the
 report through a file), leaves its gate to the owner, keeps a one-line fallback for when the run
 or hub web is not there, and its records are drafts in ``brain/_inbox/``; the tracker update
@@ -105,7 +105,7 @@ def test_waits_for_user_gate_when_mitigating(skill: str) -> None:
 def test_hands_off_with_reproduction_when_one_exists(skill: str) -> None:
     text = _step(skill, 5)
 
-    assert "`/fix`" in text
+    assert "`/change`" in text
     assert "`/feature`" in text
     assert "linked from the tracker issue" in text
 

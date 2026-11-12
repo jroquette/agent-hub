@@ -188,7 +188,7 @@ def test_matches_run_by_name_when_dispatched_run_watched(release_text: str) -> N
 def test_opens_version_pr_not_restart_when_versions_mismatch(release_text: str) -> None:
     paragraph = step_paragraphs(release_text)[3]
 
-    assert "`/fix`" not in paragraph
+    assert "`/change`" not in paragraph
     assert "restarts at step 1" not in paragraph
 
 
