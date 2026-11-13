@@ -770,7 +770,7 @@ def a_real_shaped_session(number: int, now: datetime) -> Session:
             issue=issue,
             title=f"Export the {issue} report as CSV",
             branch=f"jdoe/{issue.lower()}-export-report",
-            workflows=("/feature", "/create-plan", "/fix"),
+            workflows=("/feature", "/create-plan", "/change"),
         ),
         actors=(
             Actor(kind="main"),

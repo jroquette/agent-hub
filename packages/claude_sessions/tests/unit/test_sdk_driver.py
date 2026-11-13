@@ -102,13 +102,13 @@ async def test_queries_plain_text_when_no_image(tmp_path: Path) -> None:
 
 async def test_queries_exact_names_when_text_uses_short_ones(tmp_path: Path) -> None:
     info = {
-        "commands": [{"name": "hub-workflow:fix"}],
+        "commands": [{"name": "hub-workflow:change"}],
         "agents": [{"name": "hub-workflow:researcher"}],
     }
 
-    sent = await _sent(tmp_path, "/fix then ask /agent-researcher", (), info=info)
+    sent = await _sent(tmp_path, "/change then ask /agent-researcher", (), info=info)
 
-    assert sent == ["/hub-workflow:fix then ask @agent-hub-workflow:researcher"]
+    assert sent == ["/hub-workflow:change then ask @agent-hub-workflow:researcher"]
 
 
 async def test_asks_cli_to_stop_task_when_stop_task_called(tmp_path: Path) -> None:

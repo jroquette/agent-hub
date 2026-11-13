@@ -34,7 +34,7 @@ ATTRIBUTION_LINES = {
     "co-author": CO_AUTHOR + " " + "Claude" + " <noreply@example.com>",
     "co-author-vendor": CO_AUTHOR + " Someone <bot@" + "anthropic" + ".com>",
     "generated": "\N{ROBOT FACE} Generated " + "with [Claude" + " Code](https://example.com)",
-    "branch": "pushed to " + "claude" + "/fix-login",
+    "branch": "pushed to " + "claude" + "/change-login",
 }
 URL = "https://github.com/acme/demo-api/pull/99"
 

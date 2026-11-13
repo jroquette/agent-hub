@@ -3,7 +3,7 @@ import pytest
 from agent_hub.claude_sessions.invocations import SessionNames, cli_prompt
 
 NAMES = SessionNames(
-    commands=frozenset({"compact", "fix", "hub-workflow:feature", "a:review", "b:review"}),
+    commands=frozenset({"compact", "change", "hub-workflow:feature", "a:review", "b:review"}),
     agents=frozenset({"Explore", "hub-workflow:researcher"}),
 )
 
@@ -12,7 +12,7 @@ NAMES = SessionNames(
     ("text", "expected"),
     [
         ("/feature add a menu", "/hub-workflow:feature add a menu"),
-        ("/fix the bug", "/fix the bug"),
+        ("/change the bug", "/change the bug"),
         ("/review it", "/review it"),
         ("/unknown", "/unknown"),
         ("/hub-workflow:feature", "/hub-workflow:feature"),
@@ -32,15 +32,15 @@ def test_makes_short_names_exact_when_session_knows_them(text: str, expected: st
 
 def test_reads_names_when_server_info_lists_them() -> None:
     info = {
-        "commands": [{"name": "fix"}, {"description": "no name"}, "x"],
+        "commands": [{"name": "change"}, {"description": "no name"}, "x"],
         "agents": [{"name": "researcher"}],
     }
 
     assert SessionNames.from_server_info(info) == SessionNames(
-        commands=frozenset({"fix", "x"}), agents=frozenset({"researcher"})
+        commands=frozenset({"change", "x"}), agents=frozenset({"researcher"})
     )
 
 
 def test_knows_no_name_when_server_info_missing_or_malformed() -> None:
     assert SessionNames.from_server_info(None) == SessionNames()
-    assert SessionNames.from_server_info({"commands": "fix", "agents": 3}) == SessionNames()
+    assert SessionNames.from_server_info({"commands": "change", "agents": 3}) == SessionNames()

@@ -1048,7 +1048,7 @@ PORTED_COMMANDS = (
     "python -c 'import requests; requests.get(\"https://eu.payments.example.net/charge\")'",
     # GuardBash.test_allows
     "git push -u origin me/dem-1-main-fix",
-    "git push origin me/fix-worktree-test-root",
+    "git push origin me/change-worktree-test-root",
     "git status --short",
     "make check-fast",
     "cat .env.example",

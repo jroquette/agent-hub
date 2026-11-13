@@ -111,20 +111,20 @@ def stored(hub: Path) -> list[tuple[str, dict[str, object]]]:
 
 
 def test_lists_actions_with_draft_when_list_runs(hub: Path, marker: Path) -> None:
-    write_action(hub, "fix-order", "destroy")
+    write_action(hub, "change-order", "destroy")
     (hub / "actions" / "demo" / "scripts" / "get-order.sh").write_text(SCRIPT + "\n")
 
     result = run_action_command(hub, marker, "list")
 
     assert (result.exit_code, result.stderr) == (0, ""), result.output
     assert result.stdout.splitlines() == [
-        "demo/fix-order  destroy  target (service), count (integer)  draft",
+        "demo/change-order  destroy  target (service), count (integer)  draft",
         "demo/get-order  read  target (service), count (integer)  draft",
         "demo/send-order  write  target (service), count (integer)",
     ]
     listed = json.loads(run_action_command(hub, marker, "list", "--json").stdout)
     assert [(item["action"], item["draft"]) for item in listed["actions"]] == [
-        ("demo/fix-order", True),
+        ("demo/change-order", True),
         ("demo/get-order", True),
         ("demo/send-order", False),
     ]

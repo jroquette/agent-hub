@@ -67,7 +67,7 @@ BELOW_MINIMUM = {
 CO_AUTHOR = "Co-" + "Authored-By:"
 TRAILER = CO_AUTHOR + " " + "Claude" + " <noreply@example.com>"
 GENERATED = "Generated " + "with [Claude" + " Code](https://example.com)"
-BRANCH = "git switch -c " + "claude" + "/fix-login"
+BRANCH = "git switch -c " + "claude" + "/change-login"
 ATTRIBUTIONS = {
     "AI co-author trailer": TRAILER,
     '"Generated with Claude Code"': GENERATED,
@@ -382,8 +382,8 @@ class TestAttribution:
             CO_AUTHOR + " Jane Doe <jane@example.com>",
             "anthrop" + "ic said: " + CO_AUTHOR + " Jane",
             "generated with care",
-            "clau" + "de/fix",
-            "myclau" + "de/fix-x",
+            "clau" + "de/change",
+            "myclau" + "de/change-x",
         ],
     )
     def test_ignores_line_when_not_attribution(

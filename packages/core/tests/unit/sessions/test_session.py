@@ -129,7 +129,7 @@ def test_serializes_label_when_session_has_issue() -> None:
     label = SessionLabel(
         issue="ACME-1511",
         workflow="/feature",
-        workflows=("/feature", "/fix", "/create-plan"),
+        workflows=("/feature", "/change", "/create-plan"),
         repo="demo-api",
         branch="roquettejh/acme-1511-fix-login",
         worktree="acme-1511-fix-login",
@@ -152,7 +152,7 @@ def test_serializes_label_when_session_has_issue() -> None:
     )
 
     assert document["label"]["issue"] == "ACME-1511"
-    assert document["label"]["workflows"] == ["/feature", "/fix", "/create-plan"]
+    assert document["label"]["workflows"] == ["/feature", "/change", "/create-plan"]
     assert document["label"]["derived"] is True
     assert document["actors"][0] == {
         "kind": "main",
