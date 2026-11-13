@@ -34,7 +34,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `/learn` and hands off, leaving the ticket with its status and a comment on what was done and dropped (AGH-815).
   The hub's `AGENTS.md` says so in one line, and its Workflow item 5 lost the sentence that repeated the Gotchas line
   on redirecting output.
-- `/fix`, `/refactor` and `/upgrade` show an in-scope and an out-of-scope list with their first plan, post them on
+- `/fix` is now `/change`, the short path for any small change in one repo: a bug, a tweak, docs, config or a small
+  refactor. Its limits, steps and gates are the same. `/fix` stays for this release as an alias that runs `/change`
+  and goes away in the next one. After `hub sync`, use `/change <issue>`. A project skill named `change` loses its
+  `.claude/skills/change` link to the base one: rename it before you sync. `hub web` shows sessions started with
+  `/fix` or `/change` as the kind Change, and Start ticket opens with `/change` (AGH-479).
+- `/change`, `/refactor` and `/upgrade` show an in-scope and an out-of-scope list with their first plan, post them on
   the tracker issue, and before the PR remove or ask about each changed file outside the in-scope list (AGH-813).
 
 ### Fixed
