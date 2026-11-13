@@ -54,8 +54,8 @@ STEPS = {
         "script",
         (
             "merge commit",
-            "`/fix`",
-            "reuse the `/fix` issue already linked to the PR",
+            "`/change`",
+            "reuse the `/change` issue already linked to the PR",
             "contract order",
             "`hub ship`",
             "dependents",

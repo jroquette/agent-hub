@@ -23,7 +23,7 @@ const REFRESH_MS = 10_000;
 
 const listOf = (raw: string | null): string[] => (raw ? raw.split(",").filter(Boolean) : []);
 
-/** Tickets list: every ticket the sessions worked on (/fix, /refactor, a feature's tickets, …), by ticket. */
+/** Tickets list: every ticket the sessions worked on (/change, /refactor, a feature's tickets, …), by ticket. */
 export function TicketsScreen() {
   const [scope] = useScope();
   const sessions = useApi(
@@ -80,7 +80,7 @@ export function TicketsScreen() {
               </span>
             ))}
             <DerivedLabel
-              how={`Grouped by tracker issue from the newest ${String(SESSIONS_READ)} sessions: the issue their first prompt (/fix ACME-12), branch or worktree names. A feature's ticket names its feature.`}
+              how={`Grouped by tracker issue from the newest ${String(SESSIONS_READ)} sessions: the issue their first prompt (/change ACME-12), branch or worktree names. A feature's ticket names its feature.`}
             >
               derived
             </DerivedLabel>
@@ -96,9 +96,9 @@ export function TicketsScreen() {
         />
       ) : sessions.isSuccess && all.length === 0 ? (
         <div className="ah-card">
-          <EmptyState icon="list-todo" title="No ticket work yet." command="/fix AGH-112">
+          <EmptyState icon="list-todo" title="No ticket work yet." command="/change AGH-112">
             A ticket shows here once a session works on it: start one with{" "}
-            <span className="ah-mono">/fix</span>, <span className="ah-mono">/refactor</span>,{" "}
+            <span className="ah-mono">/change</span>, <span className="ah-mono">/refactor</span>,{" "}
             <span className="ah-mono">/upgrade</span> or <span className="ah-mono">/incident</span>{" "}
             and the issue id, or on a branch named after the issue.
           </EmptyState>

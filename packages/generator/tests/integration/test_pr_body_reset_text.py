@@ -41,13 +41,13 @@ RESET_PHRASES = (
 # The words a step opens a PR with. "opened" is left out: it tells of a PR another skill opened.
 OPENS_PR = re.compile(r"`gh pr create\b|\bopens? (?:the|its) PR\b")
 # The skills whose steps open a PR in those words today: a scan that finds none of them is broken.
-EXPECTED_SKILLS = {"adr", "feature", "fix", "implement", "refactor", "release", "upgrade"}
+EXPECTED_SKILLS = {"adr", "feature", "change", "implement", "refactor", "release", "upgrade"}
 # Each line that opens a PR: its skill, and words only that line of the skill holds.
 OPENING_LINES = [
     ("adr", "**Ship**"),
     ("feature", "**Records PR**"),
     ("feature", "**Finish**"),
-    ("fix", "**Ship**"),
+    ("change", "**Ship**"),
     ("handoff", "create a branch + PR in the hub"),
     ("implement", "10. **PR**"),
     ("implement", "- Step 10:"),

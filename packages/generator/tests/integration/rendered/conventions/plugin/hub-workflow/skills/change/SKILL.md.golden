@@ -1,0 +1,28 @@
+---
+name: change
+description: Use when the change is small: a bug, a tweak, docs, config or a small refactor in one repo, with at most 5 changed non-test files, no new contract and no guarded path. Writes a failing test committed as RED, makes the smallest change, runs the repo's gates, gets one quality-reviewer pass and opens the PR; no spec, plan or evaluator.
+disable-model-invocation: true
+argument-hint: "<tracker issue id>"
+---
+
+# /change <issue>
+
+Paths below are relative to the hub (the directory with `hub.json`); repos are its siblings, listed in `hub.json` → `repos`, each with its own `AGENTS.md`: read the one for the repo you change.
+No spec, no plan gate and no `brain/features/<slug>/` folder: the PR body and the tracker hold the record.
+
+1. **Read the ticket** (if it cannot be read, say so and stop) and size it against `/change`'s limits: one repo, at most 5 changed non-test files, no new contract, no path under `guard.ask_before_edit`.
+   **Stop and switch to `/feature`** when the change needs a new contract (a schema, migration, API or config key), touches a path under `hub.json` → `guard.ask_before_edit`, spans more than one repo, or changes more than 5 non-test files.
+   Tests do not count: a test is a path under a `tests/` or `test/` folder (golden fixtures included) or one the repo's `AGENTS.md` names as a test. A trigger found after the RED commit works the same: the RED commit stays on the branch and `/feature` continues from its step 2 on the same worktree, reusing the existing issue (skip its step 5: no `/implement`, the work is built in its step 6 on this worktree, with no new workspace; its step 4 only adds issues for new work).
+   **Scope lists**: once sized, show a short plan with an in-scope list (each file or path pattern this ticket changes, and why) and an out-of-scope list (nearby work it leaves alone). Post both lists in a tracker comment on the issue, not in the PR body. No plan gate: go on to step 2.
+2. **Workspace**: `./hub worktree <team>-<n>-<desc> --only <repo>` (`make worktree NAME=… ONLY=…`), named by the tracker issue (an isolated worktree from a freshly fetched default branch), on branch `jdoe/{ISSUE}-{slug}` (or the repo's own, `hub.json` → `repos[].conventions`).
+3. **Reproduce, then RED**: reproduce the report, then write a test from the ticket's expected behaviour, run it and record that it fails for the reported reason (not an import or setup error); commit it as RED. The RED commit stays local: the branch is pushed only after GREEN.
+   Test first: if superpowers is enabled, use its `test-driven-development` for this step; otherwise follow the rule above yourself.
+   Nothing to reproduce (a docs or config task): still write a failing test when the change is checkable (a scan, a render, a config load); if nothing can be tested, say so in the step 8 comment and go to step 4; `check_fast`, `check` and the review still apply.
+4. **Fix**: the smallest change that turns the RED test green. Never weaken existing assertions or add skip markers.
+5. **Gates**: the repo's `check_fast`, then its `check` (both from `hub.json`), each with its output redirected to a file and `$?` checked; an empty one is a missing gate: say so in the step 8 comment. Both green is GREEN.
+6. **Review**: one **`quality-reviewer`** agent pass on the diff. On `FAIL` with `blocking` findings: fix them, re-run `check_fast` and `check`, and record the findings and the fixes in the step 8 comment; no second review pass. Minor findings without `blocking` ones: fix them or list them in that comment as follow-ups.
+7. **Ship**: commit; before the push, list every file the branch changes (`git diff --name-only origin/<default branch>...HEAD`) that is outside the in-scope list, and for each one either remove its change or ask the owner, with one reason per file (a file the owner keeps joins the in-scope list in the tracker comment); after any removal, run step 5 Gates again before the push. Then push the branch and open the PR, authored by the user: no AI co-author trailer, no "Generated with", no 🤖; commit and PR titles as the repo's `AGENTS.md` sets them. No push to the default branch, no force-push. Right after the create, set the PR's body again with the same text, through the session's GitHub tools when it has them (in a cloud session an edit through `gh` gets a footer again), and read the PR back: a cloud session's create appends an attribution footer, and that edit removes it. If the body read back still carries AI attribution, tell the user once, naming the PR.
+   The PR body follows the `plain-language` skill's PR bodies rules: the ticket and the fix summary for the user; no checks or before-merge section.
+8. **Tracker**: post one comment on the issue with the PR link, the RED command and the failing assertion line, the gates with their results, the `quality-reviewer` verdict with its findings and fixes, and what is left before merge; move the issue to In Review.
+
+Learnings go through `/learn`; `/handoff` if the fix spans sessions.

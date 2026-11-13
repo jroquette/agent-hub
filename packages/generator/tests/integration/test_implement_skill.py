@@ -6,7 +6,7 @@ prompt (``hub step prompt``) and output contract (``hub step output``), and the 
 ones a run writes (``hub step ticket-brief``, ``preflight``, ``change-request``, ``decide``,
 ``amend-plan``). It never starts ``hub workflow run``, ``claude -p`` or another session; the
 commands the sandbox cannot run (``hub worktree``, the push, ``gh``) are bare calls. A ticket in
-no feature is sent to ``issue-to-pr`` or ``/fix``; texts reach a command through a file. Checked
+no feature is sent to ``issue-to-pr`` or ``/change``; texts reach a command through a file. Checked
 on the demo hub's render; ``/feature``'s Build step is checked in ``test_feature_agents.py``.
 """
 
@@ -158,14 +158,14 @@ def test_runs_no_spec_research_plan_or_tickets_step_when_implement_rendered(text
     assert "you never commit in the hub" in text
 
 
-def test_names_issue_to_pr_and_fix_for_a_ticket_in_no_feature_when_implement_rendered(
+def test_names_issue_to_pr_and_change_for_a_ticket_in_no_feature_when_implement_rendered(
     text: str,
 ) -> None:
     stop = text[text.index("in no feature") :]
 
     assert "stop" in stop[:200]
     assert "`issue-to-pr`" in stop
-    assert "`/fix`" in stop
+    assert "`/change`" in stop
 
 
 def test_reports_the_delivery_as_the_workflow_shapes_it_when_implement_rendered(

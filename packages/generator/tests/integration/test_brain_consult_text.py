@@ -216,7 +216,7 @@ def test_kickoff_skill_searches_after_item_accepted_when_rendered(config: HubCon
         "Never search before the user accepts the item",
     ):
         assert phrase in search, phrase
-    assert "/fix" not in line
+    assert "/change" not in line
     assert "Never start editing during /kickoff" in text
 
 
@@ -231,7 +231,7 @@ def test_feature_skill_searches_after_sizing_when_rendered(config: HubConfig) ->
     assert lines[index].startswith("   ") and not lines[index].startswith("    ")
     for phrase in (*SEARCH_PHRASES, "before step 2's questions", "issue's title"):
         assert phrase in search, phrase
-    assert "/fix" not in lines[index]
+    assert "/change" not in lines[index]
 
 
 def test_implement_skill_searches_in_context_step_when_rendered(config: HubConfig) -> None:

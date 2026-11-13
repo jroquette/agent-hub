@@ -8,7 +8,7 @@ argument-hint: "[screen | path | PR | branch] (default: the current diff)"
 
 Paths below are relative to the hub (the directory with `hub.json`); repos are its siblings, listed in `hub.json` → `repos`, each with its own `AGENTS.md`: read the one for the repo under review.
 The yardstick is the repo's **approved design system**, not taste: the files its `AGENTS.md` names for it (the product principles, content and copy rules, visual foundations, iconography and any list of departures that wins over the screen specs; one spec per screen; the design tokens; the shared components). With none named, say so and review against the heuristics alone.
-It never edits, commits, pushes or posts: findings go to the user, fixes go through `/fix` or `/feature`, and a change to the design system itself goes through `/adr`.
+It never edits, commits, pushes or posts: findings go to the user, fixes go through `/change` or `/feature`, and a change to the design system itself goes through `/adr`.
 Step types: `script` (commands, no judgement), `agent` (reasoning in the session), `gate` (the user decides).
 
 1. `script` **Scope** the target, read-only:
@@ -31,7 +31,7 @@ Step types: `script` (commands, no judgement), `agent` (reasoning in the session
    - **improvement**: the concrete change, using what exists (the component, token, copy from the glossary, state from the spec), never a new pattern when one exists;
    - severity: `blocker` (breaks a product principle, WCAG 2.2 AA, or the screen's spec), `friction` (slows or confuses), or `polish`.
    Then, apart, **Proposals**: at most three improvements that go beyond the current spec (a better flow, a missing state, a clearer default), each tied to the screen's job and the heuristic behind it, marked `needs a spec change`. End with a one-line verdict: `ON SYSTEM`, `DRIFTING` or `OFF SYSTEM`.
-   Do not redesign screens, invent tokens, colors or components, or mix in bugs and code style; mention a bug found on the way in one line, for `/fix`.
-6. `gate` **The user picks** what to act on. Nothing is applied here. A finding inside the current task's own diff is the author's to fix before the PR; one in merged code becomes a tracker issue for `/fix` or `/feature`, created only after the user says so. A proposal that changes the design system or a screen's spec updates that spec in the same PR, and a new principle or a reversed decision goes through `/adr`. This skill posts nothing on a PR; to turn findings into review comments, use `/review`.
+   Do not redesign screens, invent tokens, colors or components, or mix in bugs and code style; mention a bug found on the way in one line, for `/change`.
+6. `gate` **The user picks** what to act on. Nothing is applied here. A finding inside the current task's own diff is the author's to fix before the PR; one in merged code becomes a tracker issue for `/change` or `/feature`, created only after the user says so. A proposal that changes the design system or a screen's spec updates that spec in the same PR, and a new principle or a reversed decision goes through `/adr`. This skill posts nothing on a PR; to turn findings into review comments, use `/review`.
 
 A finding that keeps coming back (the same checklist id in two reviews) goes to `/learn` as a proposal in `brain/_inbox/`, so plans and reviewers check for it earlier; the review itself writes nothing in `brain/` or in the design docs.

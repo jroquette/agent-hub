@@ -22,7 +22,11 @@ const fixing = aSession({
   status: "ended",
   outcome: "done",
   agent_session_id: AGENT_ID,
-  label: aSessionLabel({ issue: "AGH-112", workflows: ["/fix"], title: "Cap the tracker teams" }),
+  label: aSessionLabel({
+    issue: "AGH-112",
+    workflows: ["/change"],
+    title: "Cap the tracker teams",
+  }),
   pr: { number: 41, state: "open", url: "https://github.com/acme/app/pull/41" },
   cost_usd: "1.0000",
   last_activity_at: "2026-01-02T09:00:00Z",
@@ -97,8 +101,8 @@ describe("TicketDetailScreen", () => {
     expect(
       screen.getByText("Cap the tracker teams", { selector: ".td-title" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Fix")).toBeInTheDocument();
-    expect(screen.getByText("/triage → /fix")).toBeInTheDocument();
+    expect(screen.getByText("Change")).toBeInTheDocument();
+    expect(screen.getByText("/triage → /change")).toBeInTheDocument();
     expect(screen.getByText("2 sessions")).toBeInTheDocument();
     expect(screen.getByText("$1.25")).toBeInTheDocument();
     const read = view.requests.find((r) => new URL(r.url).pathname === "/api/v1/sessions");

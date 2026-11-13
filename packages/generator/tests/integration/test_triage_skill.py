@@ -303,9 +303,8 @@ TRIAGE_ROUTES = (
     "the `spike` flow",
     "the `incident` flow",
     "the `upgrade` flow",
-    "`/fix`",
+    "`/change`",
     "`/feature`",
-    "(or /change)",
 )
 
 

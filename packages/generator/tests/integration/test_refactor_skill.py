@@ -1,6 +1,6 @@
 """The ``/refactor`` workflow skill as the demo hub renders it.
 
-A behaviour-preserving change too big for ``/fix`` and too small for a spec: the text proves each
+A behaviour-preserving change too big for ``/change`` and too small for a spec: the text proves each
 step carries its type (SPEC "Defined directions" §1), the stop rules that send work to
 ``/feature``, the characterization-first and batch rules, and the authorship lines.
 """

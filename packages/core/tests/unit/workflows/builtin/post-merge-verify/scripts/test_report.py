@@ -150,7 +150,7 @@ def test_names_ac_command_exit_code_and_suspect_when_a_verification_failed(
     assert "Last passed: 2026-01-02." in text
     assert "Suspect: 9f8e7d6 Merge pull request #9 from acme/jdoe/dem-7-drop (regression)." in text
     assert "Evidence: The merge deletes kept.txt, which the verification tests." in text
-    assert "Draft: /fix (or /change) grp/DEM-7 AC-7.1:" in text
+    assert "Draft: /change grp/DEM-7 AC-7.1:" in text
     assert "suspect 9f8e7d6" in text
     assert "Cannot run after merge" not in text
 

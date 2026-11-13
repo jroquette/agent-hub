@@ -241,7 +241,7 @@ The PR bodies `hub run` and `hub step pr` write stay short: the issue, the featu
 tracker comment, not in the body. `hub run` and
 `issue-to-pr` know the issue, not a feature, so they link no record and ask the session for a summary that says what
 changed for the user and cites no AC, decision or plan step id. The skills that write a PR body (`/implement`,
-`/feature`, `/fix`) follow the `plain-language` skill's PR bodies rules: the ticket link and what the PR depends on,
+`/feature`, `/change`) follow the `plain-language` skill's PR bodies rules: the ticket link and what the PR depends on,
 what changed for the user, and links to the records that explain it; no placeholders, process notes, or "Checks" and
 "Before merge" sections (CI shows the checks; the commands run, owner steps and follow-ups go in a comment on the
 tracker issue); every cited AC, decision or plan step linked to its record in the hub. So the records land first: once its spec, plan and tickets are
@@ -678,9 +678,9 @@ Linear status ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md), records
   record before a later one with evidence reads "Not recorded". Feature detail shows them on each ticket's step bar and
   in its ticket panel.
 - **Tickets outside features (AGH-426).** The Tickets list (`/tickets`) groups the newest sessions by tracker issue
-  and shows the single-ticket work no feature plans (`/fix`, `/refactor`, `/upgrade`, `/incident`, `/triage`,
+  and shows the single-ticket work no feature plans (`/change`, `/refactor`, `/upgrade`, `/incident`, `/triage`,
   `/deliver`, `/review`, hub runs) by Needs you, In progress and Ended; Start ticket opens the New session dialog on
-  the hub folder with `/fix`. It is derived on the client from `GET /api/v1/sessions`, no new route
+  the hub folder with `/change`. It is derived on the client from `GET /api/v1/sessions`, no new route
   ([design/control-plane/specs/20-tickets.md](design/control-plane/specs/20-tickets.md)).
 - **Evals per delivery.** Each evaluation is its own file, `brain/features/<slug>/evals/<delivery>.md`, with its
   scope in frontmatter (tickets, ACs, PRs, commit); none is overwritten. For each AC the latest eval naming it

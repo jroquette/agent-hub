@@ -3,7 +3,7 @@
 # dependencies = []
 # ///
 """Record the mitigation the owner chose at the gate; print it as one JSON object. Nothing is
-applied: applying it is the owner's step through /fix (or /change).
+applied: applying it is the owner's step through /change.
 
 ``mitigation.py --check <check JSON> --text <owner's text> --approver <name>`` with the
 hypotheses reply (``{"hypotheses": [...]}``) on stdin. The choice, in this order: a hypothesis

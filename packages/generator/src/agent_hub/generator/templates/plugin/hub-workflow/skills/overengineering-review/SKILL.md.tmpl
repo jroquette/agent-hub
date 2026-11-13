@@ -8,7 +8,7 @@ argument-hint: "[PR | branch | path] (default: the current diff)"
 
 Paths below are relative to the hub (the directory with `hub.json`); repos are its siblings, listed in `hub.json` → `repos`, each with its own `AGENTS.md`: read the one for the repo under review.
 The yardstick is the **minimum-sufficient rule** at the top of the `/feature` skill: the smallest change that solves today's problem; a generic or shared module needs a named second consumer that exists now; constants, arguments, options and tests arrive with their first real user.
-This skill applies that rule alone and in depth, where `quality-reviewer` checks it as one bullet among many. It never edits, commits, pushes or posts: findings go to the user, and removals go through `/fix` or `/refactor`.
+This skill applies that rule alone and in depth, where `quality-reviewer` checks it as one bullet among many. It never edits, commits, pushes or posts: findings go to the user, and removals go through `/change` or `/refactor`.
 Step types: `script` (commands, no judgement), `agent` (reasoning in the session), `gate` (the user decides).
 
 1. `script` **Scope** the target, read-only:
@@ -29,7 +29,7 @@ Step types: `script` (commands, no judgement), `agent` (reasoning in the session
    - **smaller shape**: the concrete replacement (inline it, drop the parameter, hard-code the constant, delete the branch and the test), with the rough lines saved;
    - severity: `cut` (no consumer, safe to remove now) or `watch` (justified only by a plan that exists: name it, and when to revisit).
    End with a one-line verdict: `LEAN`, `SOME FAT` or `OVER-ENGINEERED`, and the total lines a full cut would remove.
-   Do not propose new abstractions, helpers or "a cleaner design": the fix for over-engineering is less code. Do not mix in bugs, style or naming; mention a bug found on the way in one line, for `/fix`.
-5. `gate` **The user picks** what to act on. Nothing is applied here. A cut inside the current task's own diff is the author's to make before the PR; a cut in merged code becomes a tracker issue for `/fix` (within its limits) or `/refactor`, created only after the user says so. This skill posts nothing on a PR; to turn findings into review comments, use `/review`.
+   Do not propose new abstractions, helpers or "a cleaner design": the fix for over-engineering is less code. Do not mix in bugs, style or naming; mention a bug found on the way in one line, for `/change`.
+5. `gate` **The user picks** what to act on. Nothing is applied here. A cut inside the current task's own diff is the author's to make before the PR; a cut in merged code becomes a tracker issue for `/change` (within its limits) or `/refactor`, created only after the user says so. This skill posts nothing on a PR; to turn findings into review comments, use `/review`.
 
 A pattern that keeps coming back (the same kind of finding in two reviews) goes to `/learn` as a proposal in `brain/_inbox/`, so plans and reviewers check for it earlier; the review itself writes nothing in `brain/`.

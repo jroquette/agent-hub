@@ -1,5 +1,5 @@
 """The incident pack's ``inbox.py`` (AGH-483), in process: the drafts a run leaves in
-``brain/_inbox/`` for the owner - the hand-off for /fix (or /change) and the blameless postmortem -
+``brain/_inbox/`` for the owner - the hand-off for /change and the blameless postmortem -
 with the untrusted text fenced, and never over an existing file.
 """
 
@@ -19,8 +19,7 @@ SCRIPT = Path(str(files("agent_hub.core").joinpath("workflows/builtin/incident/s
 # Named as its folder places it, so coverage of agent_hub.core measures it.
 MODULE = "agent_hub.core.workflows.builtin.incident.scripts.inbox"
 OWNER_APPLIES = (
-    "The pack records the chosen mitigation; applying it is the owner's step through /fix"
-    " (or /change)."
+    "The pack records the chosen mitigation; applying it is the owner's step through /change."
 )
 REPORT = "Checkout fails since Tuesday."
 TODAY = "2026-10-22"
@@ -109,7 +108,7 @@ def test_says_the_owner_applies_the_mitigation_when_handoff_rendered() -> None:
         "Reproduction",
         "Hypotheses",
         "Chosen mitigation",
-        "Draft for /fix (or /change)",
+        "Draft for /change",
     ):
         assert f"\n## {title}\n" in text, title
 

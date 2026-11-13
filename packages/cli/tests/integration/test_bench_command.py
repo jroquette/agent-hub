@@ -347,7 +347,7 @@ class TestBenchWorkspace:
                 {"argv_has": ["--never"], "stdout": "first rule\n"},
                 # The without rule first: the with value is a substring of its value.
                 {"env_has": workspace.otel("T1", "without"), "stdout": reply, "rc": 3},
-                {"env_has": workspace.otel("T1", "with"), "write": {"new/fix.txt": "fixed\n"}},
+                {"env_has": workspace.otel("T1", "with"), "write": {"new/change.txt": "fixed\n"}},
                 {"env_has": workspace.otel("T1", "with"), "stdout": "shadowed\n"},
             ]
         )
@@ -360,7 +360,7 @@ class TestBenchWorkspace:
         unmatched = run_tool("claude", "-p", "y", cwd=workspace.hub)
 
         assert (wrote.returncode, wrote.stdout) == (0, "")
-        assert (workspace.api / "new" / "fix.txt").read_text() == "fixed\n"
+        assert (workspace.api / "new" / "change.txt").read_text() == "fixed\n"
         assert (replied.returncode, json.loads(replied.stdout)) == (
             3,
             {"total_cost_usd": 0.5, "num_turns": 7, "subtype": "success"},

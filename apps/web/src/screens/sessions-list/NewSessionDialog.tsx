@@ -96,7 +96,7 @@ export interface NewSessionDialogProps {
   forkOf?: AgentSession | undefined;
   /** The dialog's title in place of "New session", such as "Start ticket". */
   title?: string | undefined;
-  /** The prompt the field opens with, such as `/fix ` for a ticket. */
+  /** The prompt the field opens with, such as `/change ` for a ticket. */
   initialPrompt?: string | undefined;
 }
 

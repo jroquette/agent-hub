@@ -24,7 +24,7 @@ const waiting = aSession({
   issue: null,
   status: "waiting",
   waiting_reason: "a permission prompt",
-  label: label("AGH-112", ["/kickoff", "/fix"], "Tracker team cap"),
+  label: label("AGH-112", ["/kickoff", "/change"], "Tracker team cap"),
   pr: { number: 41, state: "open", url: "https://github.com/acme/app/pull/41" },
   cost_usd: "1.0000",
 });
@@ -33,7 +33,7 @@ const earlier = aSession({
   issue: null,
   status: "ended",
   outcome: "done",
-  label: label("AGH-112", ["/fix"]),
+  label: label("AGH-112", ["/change"]),
   last_activity_at: "2026-01-01T09:00:00Z",
   cost_usd: "0.2500",
 });
@@ -44,7 +44,7 @@ const ended = aSession({
   outcome: "done",
   label: label("AGH-3", ["/review"]),
 });
-const planned = aSession({ id: "s-planned", status: "live", label: label("AGH-200", ["/fix"]) });
+const planned = aSession({ id: "s-planned", status: "live", label: label("AGH-200", ["/change"]) });
 const featurePath = aSession({ id: "s-feature", label: label("AGH-48", ["/feature"]) });
 
 const routes: ApiRoutes = {
@@ -91,9 +91,9 @@ describe("TicketsScreen", () => {
     expect(link).toHaveAttribute("href", "/tickets/agent-hub/AGH-112");
     const row = link.closest("li") as HTMLElement;
     expect(within(row).getByText("Tracker team cap")).toBeInTheDocument();
-    expect(within(row).getByText("Fix")).toBeInTheDocument();
+    expect(within(row).getByText("Change")).toBeInTheDocument();
     expect(
-      within(row).getByText("/fix · 2 sessions · PR #41 open · a permission prompt"),
+      within(row).getByText("/change · 2 sessions · PR #41 open · a permission prompt"),
     ).toBeInTheDocument();
     expect(within(row).getByText("$1.25")).toBeInTheDocument();
     const endedRow = screen.getByRole("link", { name: "AGH-3" }).closest("li") as HTMLElement;
@@ -159,7 +159,7 @@ describe("TicketsScreen", () => {
     });
 
     expect(await screen.findByText("No ticket work yet.")).toBeInTheDocument();
-    expect(screen.getByText("/fix AGH-112")).toBeInTheDocument();
+    expect(screen.getByText("/change AGH-112")).toBeInTheDocument();
   });
 
   it("shows the problem with Retry when the sessions cannot be read (AC-426.8)", async () => {

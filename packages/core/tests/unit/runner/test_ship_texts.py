@@ -49,7 +49,7 @@ def test_holds_issue_and_empty_section_when_body_built() -> None:
         "https://linear.app/a\nforged",
         URL_START + "x" * (URL_CAP + 1 - len(URL_START)),
         "https://linear.app/x/\N{ROBOT FACE}",
-        "https://linear.app/a/" + "claude" + "/fix-1",
+        "https://linear.app/a/" + "claude" + "/change-1",
         "https://linear.app/\u00e9t\u00e9",
     ],
 )
