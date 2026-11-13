@@ -11,6 +11,7 @@ from agent_hub.core.runner.session_prompt import (
     MAX_DESCRIPTION_CHARS,
     MAX_TITLE_CHARS,
     MAX_URL_CHARS,
+    PERMISSION_MODE,
     TRACKER_MCP_SERVERS,
     TRUNCATED,
     gate_tools,
@@ -298,6 +299,27 @@ def test_passes_settings_file_when_one_given() -> None:
 
 def test_names_both_linear_servers_when_tracker_servers_listed() -> None:
     assert TRACKER_MCP_SERVERS == ("mcp__Linear", "mcp__claude_ai_Linear")
+
+
+def test_never_runs_agent_nodes_more_permissive_when_argv_built() -> None:
+    argv = implementing_argv(
+        prompt="p",
+        max_turns=1,
+        budget=0.25,
+        model="m",
+        effort="low",
+        add_dirs=("/work/ws/hub",),
+        tools=("Read",),
+        denied_tools=("mcp__Linear",),
+        settings_file="/h/.agent-runs/session-settings/low.json",
+    )
+
+    # Literals, never the constant: a constant changed to a wider mode must fail here.
+    assert [arg for arg in argv if arg.startswith("--permission-mode")] == ["--permission-mode"]
+    assert argv[argv.index("--permission-mode") + 1] == "dontAsk"
+    for wider in ("bypassPermissions", "acceptEdits", "auto", "--dangerously-skip-permissions"):
+        assert wider not in argv
+    assert PERMISSION_MODE == "dontAsk"
 
 
 def test_omits_add_dir_when_no_folder_given() -> None:

@@ -974,3 +974,23 @@ def test_raises_when_create_issue_reply_names_other_issue(
     (argv,) = runner.argvs
     allowed, _denied_tools = _tool_flags(tuple(argv))
     assert allowed == ("mcp__Linear__save_issue",)
+
+
+def test_never_runs_tracker_calls_more_permissive_when_argv_built(hub_root: Path) -> None:
+    runner = _Scripted(
+        _reply({"issue": _issue_reply("DEM-1")}),
+        _reply({"id": "DEM-1"}),
+        _reply({"id": "DEM-1", "commented": True}),
+    )
+    client = _client(runner, hub_root)
+
+    client.get_issue("DEM-1")
+    client.comment("DEM-1", "A comment.")
+
+    # A read, then the read call and the write call of a write.
+    assert len(runner.argvs) == 3
+    for argv in runner.argvs:
+        assert [arg for arg in argv if arg.startswith("--permission-mode")] == ["--permission-mode"]
+        assert argv[argv.index("--permission-mode") + 1] == "dontAsk"
+        for wider in ("bypassPermissions", "acceptEdits", "auto", "--dangerously-skip-permissions"):
+            assert wider not in argv
