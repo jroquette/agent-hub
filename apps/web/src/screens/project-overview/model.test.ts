@@ -44,11 +44,11 @@ describe("recentTickets", () => {
     const sessions = [
       aSession({
         last_activity_at: hoursAgo(1),
-        label: aSessionLabel({ issue: "ACME-7", workflows: ["/fix"] }),
+        label: aSessionLabel({ issue: "ACME-7", workflows: ["/change"] }),
       }),
       aSession({
         last_activity_at: hoursAgo(2),
-        label: aSessionLabel({ issue: "ACME-8", workflows: ["/fix"] }),
+        label: aSessionLabel({ issue: "ACME-8", workflows: ["/change"] }),
       }),
     ];
     const runs = [

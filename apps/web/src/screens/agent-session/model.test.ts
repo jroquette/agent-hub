@@ -618,8 +618,8 @@ describe("reduceTranscript (init-commands)", () => {
 
   it("lists the subagents last, as /agent-name", () => {
     expect(
-      init({ slash_commands: ["compact"], skills: ["fix"], agents: ["research", 7, "Explore"] }),
-    ).toEqual(["/compact", "/fix", "/agent-research", "/agent-Explore"]);
+      init({ slash_commands: ["compact"], skills: ["change"], agents: ["research", 7, "Explore"] }),
+    ).toEqual(["/compact", "/change", "/agent-research", "/agent-Explore"]);
   });
 
   it("drops what is not a string, empty or over 100 characters", () => {

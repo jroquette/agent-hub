@@ -26,8 +26,9 @@ describe("sessionIdentity", () => {
 
   it("shows only what it has when the label has an issue or a workflow alone", () => {
     expect(
-      sessionIdentity(aSession({ label: aSessionLabel({ issue: null, workflow: "/fix" }) })).title,
-    ).toBe("/fix");
+      sessionIdentity(aSession({ label: aSessionLabel({ issue: null, workflow: "/change" }) }))
+        .title,
+    ).toBe("/change");
     expect(
       sessionIdentity(aSession({ label: aSessionLabel({ issue: "AGH-9", workflow: null }) })).title,
     ).toBe("AGH-9");

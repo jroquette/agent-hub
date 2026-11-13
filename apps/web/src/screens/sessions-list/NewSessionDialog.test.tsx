@@ -16,7 +16,7 @@ const WORKTREE = aWorkdir({
   kind: "worktree",
   label: "agh-7-collector",
   repo: "agent-hub",
-  skills: ["fix", "review"],
+  skills: ["change", "review"],
   workdir_id: "0123456789abcdef",
   worktree: "agh-7-collector",
 });
@@ -178,8 +178,8 @@ describe("NewSessionDialog (new-session)", () => {
 
     await userEvent.type(prompt, "the login bug");
     const skills = within(dialog).getByRole("group", { name: "Skills" });
-    await userEvent.click(within(skills).getByRole("button", { name: "/fix" }));
-    expect(prompt).toHaveValue("/fix the login bug");
+    await userEvent.click(within(skills).getByRole("button", { name: "/change" }));
+    expect(prompt).toHaveValue("/change the login bug");
     await userEvent.click(within(skills).getByRole("button", { name: "/review" }));
 
     expect(prompt).toHaveValue("/review the login bug");
@@ -292,7 +292,7 @@ describe("NewSessionDialog (new-session)", () => {
       within(menu)
         .getAllByRole("option")
         .map((o) => o.textContent),
-    ).toEqual([expect.stringContaining("/fix"), expect.stringContaining("/review")]);
+    ).toEqual([expect.stringContaining("/change"), expect.stringContaining("/review")]);
     await userEvent.keyboard("{Escape}");
     expect(within(dialog).queryByRole("listbox", { name: "Commands" })).toBeNull();
     expect(props.onCancel).not.toHaveBeenCalled();
@@ -787,7 +787,7 @@ describe("new-session helpers", () => {
     expect(workdirText(aWorkdir({ kind: "worktree", label: "w", repo: null }))).toBe(
       "w (worktree)",
     );
-    expect(withSkill("", "fix")).toBe("/fix ");
-    expect(withSkill("/feature do it", "fix")).toBe("/fix do it");
+    expect(withSkill("", "change")).toBe("/change ");
+    expect(withSkill("/feature do it", "change")).toBe("/change do it");
   });
 });

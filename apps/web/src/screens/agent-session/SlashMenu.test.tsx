@@ -61,14 +61,23 @@ describe("slashToken", () => {
 describe("slash options", () => {
   it("offers the hub's callable skills as /name and its agents as /agent-name", () => {
     const items = [
-      aCatalogItem({ kind: "skill", name: "fix", mode: "both", description: "Fix a bug" }),
+      aCatalogItem({
+        kind: "skill",
+        name: "change",
+        mode: "both",
+        description: "Make a small change",
+      }),
       aCatalogItem({ kind: "skill", name: "recall", mode: "model-only" }),
       aCatalogItem({ kind: "agent", name: "researcher", mode: null }),
       aCatalogItem({ kind: "hook", name: "guard", mode: null }),
     ];
 
     expect(hubOptions("demo", items).map((o) => [o.command, o.description, o.href])).toEqual([
-      ["/fix", "Fix a bug", `/projects/demo/skills/skill/${items[0]?.source ?? ""}/fix`],
+      [
+        "/change",
+        "Make a small change",
+        `/projects/demo/skills/skill/${items[0]?.source ?? ""}/change`,
+      ],
       [
         "/agent-researcher",
         items[2]?.description ?? null,
@@ -78,16 +87,16 @@ describe("slash options", () => {
   });
 
   it("lists the hub first, then the session's commands the hub does not offer", () => {
-    const hub = [option("/fix", true), option("/agent-researcher", true)];
+    const hub = [option("/change", true), option("/agent-researcher", true)];
     const session = [
       "/compact",
-      "/hub-workflow:fix",
+      "/hub-workflow:change",
       "/agent-hub-workflow:researcher",
       "/vercel:deploy",
     ];
 
     expect(slashOptions(hub, session).map((o) => [o.command, o.hub])).toEqual([
-      ["/fix", true],
+      ["/change", true],
       ["/agent-researcher", true],
       ["/compact", false],
       ["/vercel:deploy", false],
@@ -129,36 +138,41 @@ describe("SlashMenu (slash-menu)", () => {
   });
 
   it("labels what the hub brings", async () => {
-    const { box } = open({ commands: [option("/fix", true), option("/compact")] });
+    const { box } = open({ commands: [option("/change", true), option("/compact")] });
 
     await userEvent.type(box, "/");
 
-    expect(screen.getByRole("option", { name: "/fix, from the hub" })).toHaveTextContent("hub/fix");
+    expect(screen.getByRole("option", { name: "/change, from the hub" })).toHaveTextContent(
+      "hub/change",
+    );
     expect(screen.getByRole("option", { name: "/compact" })).not.toHaveTextContent("hub");
   });
 
   it("puts the menu's scroll in the tab order, keeping the composer's Tab for picking", async () => {
-    const { box, container } = open({ commands: [option("/fix", true), option("/compact")] });
+    const { box, container } = open({ commands: [option("/change", true), option("/compact")] });
     await userEvent.type(box, "/");
 
     // axe scrollable-region-focusable: the list scrolls once the hub's items fill it.
     expect(container.querySelector(".as-slash-list")).toHaveAttribute("tabindex", "0");
     await userEvent.keyboard("{Tab}");
-    expect(box).toHaveValue("/fix ");
+    expect(box).toHaveValue("/change ");
     expect(box).toHaveFocus();
   });
 
   it("opens a hub item's page in a new tab without picking it", async () => {
     const opened = vi.spyOn(window, "open").mockReturnValue(null);
-    const fix = { ...option("/fix", true), href: "/projects/demo/skills/skill/hub-workflow/fix" };
-    const { box, container } = open({ commands: [fix, option("/compact")] });
+    const change = {
+      ...option("/change", true),
+      href: "/projects/demo/skills/skill/hub-workflow/change",
+    };
+    const { box, container } = open({ commands: [change, option("/compact")] });
     await userEvent.type(box, "/");
 
     expect(container.querySelectorAll(".as-slash-open")).toHaveLength(1);
     const button = container.querySelector<HTMLElement>(".as-slash-open");
     if (!button) throw new Error("no open button");
     await userEvent.click(button);
-    expect(opened).toHaveBeenLastCalledWith(fix.href, "_blank", "noopener");
+    expect(opened).toHaveBeenLastCalledWith(change.href, "_blank", "noopener");
     expect(box).toHaveValue("/");
 
     await userEvent.keyboard("{Control>}{Enter}{/Control}");

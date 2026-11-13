@@ -1749,7 +1749,7 @@ describe("AgentSessionScreen (hub-slash-menu)", () => {
           items: [
             aLogRecord("init", {
               seq: 1,
-              body: { slash_commands: ["compact", "hub-workflow:fix"] },
+              body: { slash_commands: ["compact", "hub-workflow:change"] },
             }),
             aLogRecord("result", { seq: 2, body: { subtype: "success" } }),
           ],
@@ -1758,7 +1758,7 @@ describe("AgentSessionScreen (hub-slash-menu)", () => {
         "/api/v1/projects/agent-hub/skills": aSkillCatalog({
           project: "agent-hub",
           items: [
-            aCatalogItem({ name: "fix", description: "Fix a bug" }),
+            aCatalogItem({ name: "change", description: "Make a small change" }),
             aCatalogItem({ kind: "agent", name: "researcher", mode: null }),
           ],
         }),
@@ -1772,9 +1772,9 @@ describe("AgentSessionScreen (hub-slash-menu)", () => {
       "option",
     );
     expect(options.map((option) => option.querySelector(".as-slash-command")?.textContent)).toEqual(
-      ["/fix", "/agent-researcher", "/compact"],
+      ["/change", "/agent-researcher", "/compact"],
     );
-    expect(screen.getByRole("option", { name: "/fix, from the hub" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "/change, from the hub" })).toBeInTheDocument();
   });
 });
 

@@ -224,15 +224,15 @@ const routes: ApiRoutes = {
       label: aSessionLabel({
         issue: "ACME-7",
         title: "Fix the order export",
-        workflow: "/fix",
-        workflows: ["/fix"],
+        workflow: "/change",
+        workflows: ["/change"],
       }),
     }),
     aSession({
       id: anId(4),
       status: "live",
       last_activity_at: recent,
-      label: aSessionLabel({ issue: "AGH-112", workflow: "/fix", workflows: ["/fix"] }),
+      label: aSessionLabel({ issue: "AGH-112", workflow: "/change", workflows: ["/change"] }),
     }),
     aSession({
       id: anId(5),
@@ -308,8 +308,8 @@ const weekSessions = aPage([
     label: aSessionLabel({
       issue: "ACME-7",
       title: "Fix the order export",
-      workflow: "/fix",
-      workflows: ["/fix"],
+      workflow: "/change",
+      workflows: ["/change"],
     }),
   }),
 ]);
@@ -364,7 +364,7 @@ const acme99Session = aSession({
   status: "ended",
   outcome: "done",
   last_activity_at: recent,
-  label: aSessionLabel({ issue: "ACME-99", workflow: "/fix", workflows: ["/fix"] }),
+  label: aSessionLabel({ issue: "ACME-99", workflow: "/change", workflows: ["/change"] }),
 });
 
 /** From now on, holds each request to `path` until `release()`. `asked()` counts them, held or
@@ -989,7 +989,7 @@ describe("ProjectOverviewScreen", () => {
           status: "ended",
           outcome: "done",
           last_activity_at: recent,
-          label: aSessionLabel({ issue: "ACME-99", workflow: "/fix", workflows: ["/fix"] }),
+          label: aSessionLabel({ issue: "ACME-99", workflow: "/change", workflows: ["/change"] }),
         }),
       ]),
     });
@@ -1031,7 +1031,7 @@ describe("ProjectOverviewScreen", () => {
         status: "ended",
         outcome: "done",
         last_activity_at: recent,
-        label: aSessionLabel({ issue: "ACME-99", workflow: "/fix", workflows: ["/fix"] }),
+        label: aSessionLabel({ issue: "ACME-99", workflow: "/change", workflows: ["/change"] }),
       }),
     ]);
     const { calls, requests, stream } = renderWithApi(
@@ -1090,7 +1090,7 @@ describe("ProjectOverviewScreen", () => {
         status: "ended",
         outcome: "done",
         last_activity_at: recent,
-        label: aSessionLabel({ issue: "ACME-99", workflow: "/fix", workflows: ["/fix"] }),
+        label: aSessionLabel({ issue: "ACME-99", workflow: "/change", workflows: ["/change"] }),
       }),
     ]);
     const { stream } = renderWithApi(
@@ -1161,7 +1161,7 @@ describe("ProjectOverviewScreen", () => {
           status: "ended",
           outcome: "done",
           last_activity_at: recent,
-          label: aSessionLabel({ issue: "ACME-99", workflow: "/fix", workflows: ["/fix"] }),
+          label: aSessionLabel({ issue: "ACME-99", workflow: "/change", workflows: ["/change"] }),
         }),
         ...weekSessions.items,
       ]);
@@ -1227,7 +1227,7 @@ describe("ProjectOverviewScreen", () => {
             status: "ended",
             outcome: "done",
             last_activity_at: recent,
-            label: aSessionLabel({ issue: "ACME-99", workflow: "/fix", workflows: ["/fix"] }),
+            label: aSessionLabel({ issue: "ACME-99", workflow: "/change", workflows: ["/change"] }),
           }),
           ...weekSessions.items,
         ]);
@@ -1238,7 +1238,7 @@ describe("ProjectOverviewScreen", () => {
             status: "ended",
             outcome: "done",
             last_activity_at: recent,
-            label: aSessionLabel({ issue: "OTHER-5", workflow: "/fix", workflows: ["/fix"] }),
+            label: aSessionLabel({ issue: "OTHER-5", workflow: "/change", workflows: ["/change"] }),
           }),
         ]);
         let reads = 0;

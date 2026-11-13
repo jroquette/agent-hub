@@ -1,7 +1,7 @@
 """What a user message names as the CLI reads it: the composer's short names made exact.
 
 The composer offers a skill as ``/<name>`` and a subagent as ``/agent-<name>``, without the
-plugin prefix the CLI gives what a plugin brings (``hub-workflow:fix``). Before a message reaches
+plugin prefix the CLI gives what a plugin brings (``hub-workflow:change``). Before a message reaches
 the CLI:
 
 - a leading ``/<name>`` that is not a command of the session, but the suffix of exactly one
