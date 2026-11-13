@@ -2,6 +2,9 @@
 opens waits behind its own approval, no pack file creates or pushes a tag (ADR 0047: the platform
 repo's release workflow does), no node writes the tracker (ADR 0030), and the notes prompt
 fences the text it is given.
+
+``release-pin`` is the pack's second workflow: it checks the tag on the version PR's merge commit
+before it opens the hub pin PR, has no approval of its own, and writes no tracker either.
 """
 
 import json
@@ -41,15 +44,15 @@ TAG_COMMANDS = ("git tag", "gh workflow run", "gh release", "push origin v", "--
 TRACKER_WORDS = ("linear", "mcp__", "save_issue", "save_comment", "tracker tool")
 
 
-def document() -> Any:
+def document(name: str = "release") -> Any:
     found = discover_workflows(PACK, builtin_root=BUILTIN_WORKFLOWS)
-    (workflow,) = [item for item in found.workflows if item.name == "release"]
+    (workflow,) = [item for item in found.workflows if item.name == name]
     return parse_workflow(workflow.document)
 
 
-def nodes_of() -> dict[str, Any]:
+def nodes_of(name: str = "release") -> dict[str, Any]:
     nodes: dict[str, Any] = {}
-    for node in document().nodes:
+    for node in document(name).nodes:
         nodes[node.id] = node
         for body in getattr(node, "nodes", ()):
             nodes[f"{node.id}__{body.id}"] = body
@@ -199,6 +202,62 @@ def test_passes_every_fixture_without_warning_when_release_tested(
         assert f"workflows/release/fixtures/{fixture}.yaml: ok" in tested.stdout
     assert "warning" not in tested.stdout
     assert tested.stdout.endswith("7 fixtures: 7 passed, 0 failed\n")
+
+
+def test_validates_release_pin_when_pack_loaded(
+    demo_workspace: Workspace, run_command: CommandRunner
+) -> None:
+    validated = run_command(demo_workspace.hub, "workflow", "validate", "release-pin")
+
+    assert validated.exit_code == 0, validated.output
+    assert validated.stdout == "release-pin: valid (7 nodes in 7 layers)\n"
+
+
+def test_verifies_the_tag_before_the_pin_pr_when_release_pin_loaded() -> None:
+    nodes = nodes_of("release-pin")
+    loaded = document("release-pin")
+    gates = {name for name, node in nodes.items() if node.type in ("approval", "wait")}
+    pushes = {
+        name
+        for name, node in nodes.items()
+        if node.type == "shell" and list(node.command[:3]) == ["hub", "step", "pr"]
+    }
+    required = {name for name, spec in loaded.inputs.items() if spec.required}
+
+    # No gate of its own: the owner's decision is the merge of the pin PR.
+    assert gates == set()
+    assert pushes == {"pin_pr"}
+    assert "verify" in upstream(nodes, "pin_pr")
+    assert nodes["hub_branch"].when == "$verify.output.ok == true"
+    assert nodes["branch_config"].when == "$verify.output.ok == true"
+    assert nodes["verify"].script == "tagged.py"
+    assert list(nodes["verify"].args) == ["--version", "$INPUTS.version", "--sha", "$INPUTS.sha"]
+    assert required == {"issue", "repo", "version", "sha"}
+    assert loaded.revision == 1
+
+
+def test_writes_no_tracker_when_release_pin_loaded() -> None:
+    nodes = nodes_of("release-pin")
+    shells = sorted(" ".join(node.command[:3]) for node in nodes.values() if node.type == "shell")
+
+    assert shells == ["hub step config", "hub step pr", "hub step worktree"]
+    assert nodes["branch_config"].mutates_checkout is False
+    assert [name for name, node in nodes.items() if node.type == "agent"] == []
+
+
+PIN_FIXTURES = ("release-pin-pinned", "release-pin-tag-missing")
+
+
+def test_passes_release_pin_fixtures_when_tested(
+    demo_workspace: Workspace, run_command: CommandRunner
+) -> None:
+    tested = run_command(demo_workspace.hub, "workflow", "test", "release-pin")
+
+    assert tested.exit_code == 0, tested.output
+    for fixture in PIN_FIXTURES:
+        assert f"workflows/release/fixtures/{fixture}.yaml: ok" in tested.stdout
+    assert "warning" not in tested.stdout
+    assert tested.stdout.endswith("2 fixtures: 2 passed, 0 failed\n")
 
 
 def script(name: str, *args: str, cwd: Path) -> subprocess.CompletedProcess[str]:

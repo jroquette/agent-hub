@@ -43,7 +43,7 @@
     ".claude/settings.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "b2141f93a8a787de58156fee6d8f7ff7ad1a1cca48ec406cadbcc8fcc565c8af"
+      "sha256": "5a22d070e30c2cf54f8f7970a5838fbe75b03fa7d4abe2e8072a8494162bb97d"
     },
     ".claude/settings.project.json": {
       "ownership": "seeded"
@@ -198,7 +198,7 @@
     "CLAUDE.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "5fba94e3cf2dbe27e3defd0ad02281108edf432f73dd635fb048c831bc3970b3"
+      "sha256": "e395721f8f3e277555ea7fe4fb58915ee3915d7ac8db12fad081b4923fa1239b"
     },
     "Makefile": {
       "executable": false,
@@ -886,6 +886,12 @@
     "workflows/release/fixtures/release-pin-declined.yaml": {
       "ownership": "seeded"
     },
+    "workflows/release/fixtures/release-pin-pinned.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/fixtures/release-pin-tag-missing.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/release/fixtures/release-pin.yaml": {
       "ownership": "seeded"
     },
@@ -893,6 +899,9 @@
       "ownership": "seeded"
     },
     "workflows/release/prompts/notes.md": {
+      "ownership": "seeded"
+    },
+    "workflows/release/release-pin.yaml": {
       "ownership": "seeded"
     },
     "workflows/release/release.yaml": {

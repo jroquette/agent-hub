@@ -18,6 +18,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `guard.readable_env_files`; it never blocks the prompt, and a prompt that only names a file gets no warning
   (AGH-814). After `./hub sync`, `AGENTS.md` also keeps secrets out of replies, commits, PRs, tracker
   comments and brain notes.
+- The built-in `release` pack has a second workflow, `release-pin` (AGH-821). Its four inputs are `issue`, `repo`,
+  `version` and `sha`, the version PR's merge commit. It checks that the `vX.Y.Z` tag on origin is annotated and on
+  that commit, then opens the hub PR that raises `platform.version` and runs `./hub sync`. It has no approval: your
+  decision is the merge of that PR. If the tag is missing, not annotated or on another commit, the run ends
+  `untagged` and opens no PR. Start it with `./hub workflow run release-pin --input issue=<issue> --input repo=<dir>
+  --input version=X.Y.Z --input sha=<merge commit> --live`. The `release` workflow and `/release` do not change in
+  this release.
 
 ### Changed
 
@@ -49,6 +56,16 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `/fix` or `/change` as the kind Change, and Start ticket opens with `/change` (AGH-479).
 - `/change`, `/refactor` and `/upgrade` show an in-scope and an out-of-scope list with their first plan, post them on
   the tracker issue, and before the PR remove or ask about each changed file outside the in-scope list (AGH-813).
+- Read-only commands now run with no permission prompt in every hub. `hub sync` adds them to `permissions.allow` in
+  `.claude/settings.json`: `gh pr view`, `gh pr checks`, `gh pr diff`, `gh run view`, `gh run list` and
+  `gh api -X GET`, plus the read tools of the Linear and GitHub MCP servers, one rule per tool by its name. The four
+  `git` reads (`status`, `diff`, `log`, `show`) stay. New denies refuse `git diff`, `git log` and `git show` with
+  `--output`, and `gh api -X GET` with a second `-X` or `--method`. Every other `gh api` call keeps asking. A rule
+  matches the text of a command, so no rule catches three forms. They are a redirect after an allowed read
+  (`git status > f`), and a method flag bundled with another short flag (`-iX POST`) or in quotes (`'-X' POST`).
+  The guard and the sandbox stay the first barriers, but `gh` runs outside the sandbox. When you bump
+  `platform.version`, run `hub sync`. A GitHub MCP server with another name than `github` keeps asking until you add
+  its read tools to `.claude/settings.project.json` (AGH-809, AGH-819).
 
 ### Fixed
 

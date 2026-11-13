@@ -284,8 +284,9 @@ the counts go to `brain/_inbox/flaky-<test slug>.md`; fetch first:
 `review-incoming` (12 nodes, started by
 `/review`: someone else's PR through the spec, quality and security lenses, the repo's check at the head (never for a
 fork) and one draft you edit; `/review` reads the PR and posts the draft only after you approve it) and
-`release` (`release`: the release PR, then the hub pin PR, each behind its own approval). A hub's own file
-overrides a built-in of the same name.
+`release` (`release`: the release PR, then the hub pin PR, each behind its own approval; `release-pin`: the tag
+checked on the version PR's merge commit, then the hub pin PR, with no approval). A hub's own file overrides a
+built-in of the same name.
 
 ```bash
 ./hub workflow list                          # the workflows that load; problems as <file>:<line>: <key>: <message>

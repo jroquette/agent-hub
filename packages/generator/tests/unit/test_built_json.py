@@ -6,6 +6,12 @@ import re
 import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_files.writing_commands import (
+    WRITING_COMMANDS,
+    WRITING_TOOL_WORDS,
+    effective_allows,
+    matches,
+)
 from agent_hub.core.testing import builders
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.generator.built_json import (
@@ -492,6 +498,13 @@ def test_denies_push_to_each_protected_branch_when_default_branch_not_main(
         "Bash(git push origin HEAD:trunk*)",
         "Bash(terraform *)",
         "Bash(aws *)",
+        "Bash(git diff *--output*)",
+        "Bash(git log *--output*)",
+        "Bash(git show *--output*)",
+        "Bash(gh api -X GET * -X*)",
+        "Bash(gh api -X GET * --method*)",
+        "Bash(gh api -X GET -X*)",
+        "Bash(gh api -X GET --method*)",
         "Bash(security *)",
         "Bash(ssh *)",
         "Bash(sh)",
@@ -546,6 +559,9 @@ def test_denies_push_to_repo_branch_when_repo_sets_default_branch() -> None:
         "Bash(git push * develop)",
         "Bash(git push * main)",
         "Bash(git push * master)",
+        # These two denies hold ` * ` too and follow the pushes in deny order.
+        "Bash(gh api -X GET * -X*)",
+        "Bash(gh api -X GET * --method*)",
     ]
 
 
@@ -567,3 +583,145 @@ def test_keeps_sibling_sandbox_scalar_when_sibling_disables_sandbox(
     assert merged["sandbox"]["enabled"] is False
     assert merged["sandbox"]["allowUnsandboxedCommands"] is False
     assert merged["sandbox"]["network"]["allowedDomains"] == BASE_HOSTS
+
+
+# The rules that run with no prompt, written out here so that a change of the settings' own
+# constants cannot move the expectation with it.
+GIT_READS = [
+    "Bash(git status *)",
+    "Bash(git diff *)",
+    "Bash(git log *)",
+    "Bash(git show *)",
+]
+GH_READS = [
+    "Bash(gh pr view *)",
+    "Bash(gh pr checks *)",
+    "Bash(gh pr diff *)",
+    "Bash(gh run view *)",
+    "Bash(gh run list *)",
+    "Bash(gh api -X GET *)",
+]
+LINEAR_SERVERS = ("mcp__Linear", "mcp__claude_ai_Linear")
+LINEAR_READ_TOOLS = (
+    "get_issue",
+    "list_issues",
+    "list_comments",
+    "list_issue_statuses",
+    "list_issue_labels",
+    "get_team",
+    "list_teams",
+    "get_user",
+    "get_project",
+    "list_projects",
+)
+GITHUB_READ_TOOLS = (
+    "pull_request_read",
+    "list_pull_requests",
+    "search_pull_requests",
+    "issue_read",
+    "list_issues",
+    "search_issues",
+    "get_file_contents",
+    "list_commits",
+    "get_commit",
+    "get_me",
+)
+# One rule per tool, by its full name: each Linear server's tools, then GitHub's.
+MCP_READS = [
+    *(f"{server}__{tool}" for server in LINEAR_SERVERS for tool in LINEAR_READ_TOOLS),
+    *(f"mcp__github__{tool}" for tool in GITHUB_READ_TOOLS),
+]
+# A rule for one MCP tool: a known server, then the tool's name in lowercase words.
+MCP_TOOL_RULE = re.compile(r"mcp__(Linear|claude_ai_Linear|github)__([a-z]+(?:_[a-z]+)*)")
+# The writing commands an allow rule matches, each with the one deny that stops it.
+DENIED_WRITES = {
+    "git diff --output=f": ["Bash(git diff *--output*)"],
+    "git log --output=f": ["Bash(git log *--output*)"],
+    "git show --output=f": ["Bash(git show *--output*)"],
+    "gh api -X GET -X POST repos/o/r/issues -f title=t": ["Bash(gh api -X GET -X*)"],
+    "gh api -X GET --method DELETE repos/o/r/git/refs/heads/b": ["Bash(gh api -X GET --method*)"],
+    "gh api -X GET repos/o/r/issues -X POST -f title=t": ["Bash(gh api -X GET * -X*)"],
+    "gh api -X GET repos/o/r/issues --method=PATCH": ["Bash(gh api -X GET * --method*)"],
+}
+# The REST calls the skills fall back to when they open and edit a pull request.
+REST_PR_FALLBACKS = (
+    "gh api repos/o/r/pulls -f base=main -f head=b -f title=t",
+    "gh api -X PATCH repos/o/r/pulls/1 -F body=@f",
+)
+
+
+def permission_rules(config: HubConfig) -> tuple[list[str], list[str]]:
+    """The allow and the deny rules of the managed settings, as strings."""
+    settings = managed_settings(config)
+    assert isinstance(settings, dict)
+    permissions = settings["permissions"]
+    assert isinstance(permissions, dict)
+    allow, deny = permissions["allow"], permissions["deny"]
+    assert isinstance(allow, list)
+    assert isinstance(deny, list)
+    return [str(rule) for rule in allow], [str(rule) for rule in deny]
+
+
+def writing_words(tool: str) -> set[str]:
+    """The writing words among the tool name's ``_`` parts; ``pull_request`` reads as one noun."""
+    return set(tool.replace("pull_request", "pullrequest").split("_")) & set(WRITING_TOOL_WORDS)
+
+
+def test_lists_read_only_allow_when_settings_built(demo_config: HubConfig) -> None:
+    allow, _ = permission_rules(demo_config)
+
+    assert allow[:4] == GIT_READS
+    assert allow[4:10] == GH_READS
+    assert allow[10:40] == MCP_READS
+    assert len(MCP_READS) == 30
+    # The onboard rules follow; their own tests pin them.
+    assert allow[40] == "Bash(sha256sum)"
+
+
+@pytest.mark.parametrize("config_name", ["demo", "variant"])
+def test_has_no_writing_allow_when_settings_built(
+    config_name: str, request: pytest.FixtureRequest
+) -> None:
+    allow, deny = permission_rules(request.getfixturevalue(f"{config_name}_config"))
+
+    stopped: dict[str, list[str]] = {}
+    for command in WRITING_COMMANDS:
+        allowing = [rule for rule in allow if matches(rule, command)]
+        denying = [rule for rule in deny if matches(rule, command)]
+        assert not allowing or denying, f"{allowing[0]} pre-allows {command!r}"
+        assert not effective_allows(allow, deny, command)
+        if allowing:
+            stopped[command] = denying
+
+    # Each write deny is the only rule that stops one command, so none is there for nothing.
+    assert stopped == DENIED_WRITES
+
+
+def test_has_no_writing_allow_for_mcp_tools_when_settings_built(demo_config: HubConfig) -> None:
+    allow, _ = permission_rules(demo_config)
+
+    tools = [rule for rule in allow if rule.startswith("mcp__")]
+
+    # The count keeps the loop below from passing on no rule at all.
+    assert len(tools) == 30
+    for rule in tools:
+        # No `*` and no rule for a whole server: the rule names one tool.
+        named = MCP_TOOL_RULE.fullmatch(rule)
+        assert named, rule
+        assert not writing_words(named[2]), rule
+    assert writing_words("pull_request_review_write") == {"write"}
+    assert writing_words("merge_pull_request") == {"merge"}
+    assert writing_words("request_copilot_review") == {"request"}
+    assert writing_words("save_issue") == {"save"}
+    assert writing_words("pull_request_read") == set()
+
+
+def test_keeps_rest_pr_fallback_out_of_denies_when_settings_built(
+    variant_config: HubConfig,
+) -> None:
+    # A deny refuses and never asks, so a deny that matched these calls would stop the skills
+    # from opening and editing a pull request after the owner's OK.
+    _, deny = permission_rules(variant_config)
+
+    for command in REST_PR_FALLBACKS:
+        assert not [rule for rule in deny if matches(rule, command)], command
