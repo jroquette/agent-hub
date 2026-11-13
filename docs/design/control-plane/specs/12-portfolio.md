@@ -295,8 +295,8 @@ numbers, focus, Tickets the agents are working on, **Recent work** (AC-273.15), 
 ```
  Recent work   What the team worked on in the last 7 days · costs estimated from transcripts
 ┌ Features ────────────────────────── Open Features › ┐┌ Tickets ─────────────────────────── Open Tickets › ┐
-│ ◌ Hub config view                             $4.12 ││ ✋ ACME-7  Fix the order export   Fix       $0.84 │
-│   Build · 2/5 tickets · worked on 2 h ago           ││   /fix · 1 session · ended 18 min ago            │
+│ ◌ Hub config view                             $4.12 ││ ✋ ACME-7  Fix the order export   Change    $0.84 │
+│   Build · 2/5 tickets · worked on 2 h ago           ││   /change · 1 session · ended 18 min ago         │
 └─────────────────────────────────────────────────────┘└──────────────────────────────────────────────────┘
  How this project is set up   From hub.json and your hub.local.json             Open hub configuration ›
 ┌ Where the work comes from ─────────── See tracker › ┐┌ How work is named ─────────────── See naming › ┐

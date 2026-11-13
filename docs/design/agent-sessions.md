@@ -634,9 +634,9 @@ Tests: `FilesPanel.test.tsx` "FilesPanel (one repository at a time)" (AC-687.1.1
 - **AC-379.15** Given a workdir with the hub's plugins, when a session starts there or is reopened by a message, then
   the CLI is started with those plugins (`plugins: [{type: "local", path}]`); with none, no plugin is passed.
 - **AC-379.16** Given the session knows a command or agent only by its plugin name, when a message uses the short name
-  (`/fix`, `/agent-researcher`), then it reaches the CLI as `/hub-workflow:fix` and `@agent-hub-workflow:researcher`;
-  a name the session knows as is, an ambiguous or unknown name, and `/agent-` not at the start or after a space are
-  left as typed (an unknown `/agent-x` still becomes `@agent-x`).
+  (`/change`, `/agent-researcher`), then it reaches the CLI as `/hub-workflow:change` and
+  `@agent-hub-workflow:researcher`; a name the session knows as is, an ambiguous or unknown name, and `/agent-` not at
+  the start or after a space are left as typed (an unknown `/agent-x` still becomes `@agent-x`).
 - **AC-379.17** Given the CLI's `initialize` answer, when its names are read, then `commands` and `agents` are taken
   by `name` and anything missing or malformed is ignored.
 - **AC-379.18** Given a hub item in the open menu, when its open icon is clicked or Ctrl/Cmd+Enter is pressed on the
@@ -833,7 +833,7 @@ Prompt
 +----------------------------------------------------------------+
 Without a prompt the session waits for your first message. Ctrl+Enter or ⌘+Enter starts it.
 Ask before edits. Claude asks before each edit or command. Paste or drop images, PDFs and text files.
-Skills  [/fix] [/review]
+Skills  [/change] [/review]
                                           [Cancel] [↑ Start session]
 ```
 

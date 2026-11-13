@@ -1,7 +1,7 @@
 # Tickets
 
 As built (AGH-426). The Tickets list (`/tickets`, sidebar **Work** → Tickets) shows the single-ticket work the
-sessions did outside a feature: maintenance, fixes and small changes (`/fix`, `/refactor`, `/upgrade`, `/incident`,
+sessions did outside a feature: maintenance, fixes and small changes (`/change`, `/refactor`, `/upgrade`, `/incident`,
 `/triage`, `/deliver`, `/review`, hub runs), one row per tracker issue, and starts a new one with **Start ticket**.
 
 A feature's own tickets stay on the feature (the Tickets tab and the ticket panel, ADR 0043,
@@ -20,8 +20,8 @@ and a one-step way to start the next fix in the hub folder.
 Tickets  [+ Start ticket]                            2 need you · 1 in progress · 4 ended  derived
 [Find by issue, title, repo or skill]  [Kind ▾]  (3 of 7 tickets)
 Needs you · 2
-  ✋ AGH-112  Tracker team cap  Fix  agent-hub                                              $1.25
-     /fix · 2 sessions · PR #41 open · a permission prompt
+  ✋ AGH-112  Tracker team cap  Change  agent-hub                                           $1.25
+     /change · 2 sessions · PR #41 open · a permission prompt
 In progress · 1
   ▶ AGH-7  Upgrade  agent-hub                                                               $0.40
      /upgrade · 1 session · active 3m
@@ -64,7 +64,7 @@ the shared `FacetMenu`, `DerivedLabel`, `EmptyState`, `ProblemError` and `Skelet
   <ago>" under In progress and "ended <outcome> <ago>" under Ended; and the sessions' summed cost at the end. An ended
   row is muted.
 - **AC-426.6** Given a ticket's skills (routine commands such as `/kickoff`, `/handoff`, `/learn` left out), when its
-  kind is named, then it is the first of Fix, Refactor, Upgrade, Incident, Triage, Deliver, Review whose skill ran;
+  kind is named, then it is the first of Change, Refactor, Upgrade, Incident, Triage, Deliver, Review whose skill ran;
   else Hub run when a workflow run started one of its sessions; else Other.
 
 **Finding**
@@ -77,19 +77,19 @@ the shared `FacetMenu`, `DerivedLabel`, `EmptyState`, `ProblemError` and `Skelet
 **States**
 
 - **AC-426.8** Given no session worked on a ticket outside a feature, when the list opens, then it shows "No ticket
-  work yet." with how to start one (`/fix AGH-112`, a single-ticket skill and the issue id, or a branch named after the
-  issue); while the sessions load, each group shows skeleton rows; when they cannot be read, the problem shows with
-  Retry.
+  work yet." with how to start one (`/change AGH-112`, a single-ticket skill and the issue id, or a branch named after
+  the issue); while the sessions load, each group shows skeleton rows; when they cannot be read, the problem shows
+  with Retry.
 - **AC-426.9** Given the list open, when sessions change, then it rereads them every 10 s; each row is one keyboard
   stop: Enter or `o` opens it, `j` / `k` move between rows.
 
 **Start ticket**
 
 - **AC-426.10** Given a machine that can drive Claude sessions, when the owner clicks **Start ticket** in the header,
-  then the New session dialog opens titled "Start ticket", on the project's hub folder, with `/fix ` in the prompt and
-  a note on writing the issue after the skill; the dialog's skill buttons switch the skill (`/refactor`, `/upgrade`,
-  `/incident`, `/triage`, as the hub offers), and starting it creates the session there and opens its chat. Where
-  sessions cannot be driven, there is no Start ticket.
+  then the New session dialog opens titled "Start ticket", on the project's hub folder, with `/change ` in the prompt
+  and a note on writing the issue after the skill; the dialog's skill buttons switch the skill (`/refactor`,
+  `/upgrade`, `/incident`, `/triage`, as the hub offers), and starting it creates the session there and opens its chat.
+  Where sessions cannot be driven, there is no Start ticket.
 
 - **AC-521.8.7 Every ticket a session worked on** (AGH-521, wins over AC-426.3 on the list). Given sessions that
   worked on a feature's ticket, then the Tickets list keeps that ticket too, tagged Feature and linked to the ticket in

@@ -302,7 +302,7 @@ The diagnosis comment is agent-written: it carries `DerivedLabel` "Written by th
 | Commands, in order                                                             |
 |  1 git -C agent-hub fetch origin                                               |
 |  2 ./hub worktree agh-112-cap-tracker-teams --only agent-hub                   |
-|  3 claude -p "/fix AGH-112" (session in the worktree, agent: main)             |
+|  3 claude -p "/change AGH-112" (session in the worktree, agent: main)          |
 |  4 make check-fast            (gate, fast, on_fail -> step 3, max 2 attempts)  |
 |  5 make check                 (gate, full)                                     |
 |  6 git push -u origin roquettejh/agh-112-cap-tracker-teams                     |

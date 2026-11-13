@@ -71,8 +71,8 @@ merged since the last tag. Changelogs are not generated yet.
   - automation: `agent-ready` (an agent may pick it up), `agent-failed` (an agent run failed; the issue has the
     diagnosis), `needs-human` (set by `/triage`: an open question, a guarded path, or an architectural or spike size;
     never together with `agent-ready`).
-- **Size:** within `/fix`'s limits (one repo, at most 5 changed non-test files, no new contract, no guarded path), else
-  `spike`, `bounded` or `architectural` as `/feature` sizes them. No story points; cycle time is tracked instead.
+- **Size:** within `/change`'s limits (one repo, at most 5 changed non-test files, no new contract, no guarded path),
+  else `spike`, `bounded` or `architectural` as `/feature` sizes them. No story points; cycle time is tracked instead.
 
 ### Issue template
 
@@ -96,7 +96,7 @@ Links, constraints, open questions.
 An issue can be labeled `agent-ready` (or picked up) when:
 
 - its acceptance criteria are testable, written as Given/When/Then with AC ids;
-- its size is set (an `agent-ready` issue is within `/fix`'s limits or a bounded `/feature`);
+- its size is set (an `agent-ready` issue is within `/change`'s limits or a bounded `/feature`);
 - the repos it changes are named and the affected packages are tagged with area labels;
 - its dependencies are linked (blocked-by / related issues);
 - it has a verification command that runs from the repo root after the merge and proves the ACs;

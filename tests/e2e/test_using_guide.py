@@ -949,7 +949,7 @@ def test_exits_as_guide_lists_when_hub_state_varies(guide_run: GuideRun) -> None
     doctor_line, check_line = runnable("Verify the hub", Group.HUB)
     sync_line, adopt_line = runnable("When init refuses", Group.HUB)
     outside_doctor = doctor_line.replace("./hub", f"uvx --from '{UVX_SOURCE}' hub", 1)
-    skill = hub / "plugin/hub-workflow/skills/fix/SKILL.md"
+    skill = hub / "plugin/hub-workflow/skills/change/SKILL.md"
     codes: dict[str, set[int]] = {"doctor": set(), "check": set(), "adopt": set()}
 
     def record(name: str, line: str, cwd: Path = hub) -> None:
