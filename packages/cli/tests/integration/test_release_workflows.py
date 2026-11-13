@@ -84,7 +84,7 @@ def test_validates_release_when_pack_loaded(
     validated = run_command(demo_workspace.hub, "workflow", "validate", "release")
 
     assert validated.exit_code == 0, validated.output
-    assert validated.stdout == "release: valid (17 nodes in 17 layers)\n"
+    assert validated.stdout == "release: valid (11 nodes in 11 layers)\n"
 
 
 def test_puts_every_pr_behind_an_approval_when_release_loaded() -> None:
@@ -96,14 +96,41 @@ def test_puts_every_pr_behind_an_approval_when_release_loaded() -> None:
         if node.type == "shell" and list(node.command[:3]) == ["hub", "step", "pr"]
     }
 
-    assert pushes == {"pr", "pin_pr"}
-    assert approvals == {"go", "pin_go"}
+    assert pushes == {"pr"}
+    assert approvals == {"go"}
     assert "go" in upstream(nodes, "pr")
-    assert "pin_go" in upstream(nodes, "pin_pr")
-    assert "go" in upstream(nodes, "pin_go")
     assert nodes["pr"].when == "$go.output.decision == 'approve'"
-    assert nodes["hub_branch"].when == "$pin_go.output.decision == 'approve'"
     assert nodes["go"].when == "$check.output.passed == true"
+
+
+def test_ends_at_the_version_pr_when_release_loaded() -> None:
+    nodes = nodes_of()
+    report = nodes["report"]
+
+    # Nothing runs after the version PR but the report of the run's outcome.
+    assert {name for name in nodes if "pr" in upstream(nodes, name)} == {"report"}
+    assert list(report.depends_on) == ["since", "check", "go", "pr"]
+    assert list(report.args) == [
+        "--count",
+        "$since.output.count",
+        "--passed",
+        "$check.output.passed",
+        "--log",
+        "$check.output.log",
+        "--go",
+        "$go.output.decision",
+        "--pr",
+        "$pr.output.url",
+        "--version",
+        "$since.output.version",
+    ]
+    assert report.output_format["properties"]["outcome"]["enum"] == [
+        "nothing",
+        "blocked",
+        "declined",
+        "opened",
+    ]
+    assert document().revision == 2
 
 
 def test_creates_no_tag_when_release_pack_loaded() -> None:
@@ -123,16 +150,13 @@ def test_writes_no_tracker_when_release_loaded() -> None:
     shells = sorted(" ".join(node.command[:3]) for node in nodes.values() if node.type == "shell")
     prompt = (PACK / "prompts/notes.md").read_text(encoding="utf-8").lower()
 
-    # config and branch_config read hub.json for pin.py and hub_branch.py (AGH-480), read-only.
+    # config reads hub.json for pin.py (AGH-480), read-only.
     assert shells == [
         "hub step config",
-        "hub step config",
-        "hub step pr",
         "hub step pr",
         "hub step worktree",
     ]
-    for name in ("config", "branch_config"):
-        assert nodes[name].mutates_checkout is False, name
+    assert nodes["config"].mutates_checkout is False
     assert [word for word in TRACKER_WORDS if word in prompt] == []
     assert nodes["notes"].mutates_checkout is False
 
@@ -185,9 +209,6 @@ FIXTURES = (
     "release-declined",
     "release-minor",
     "release-nothing",
-    "release-pin",
-    "release-pin-declined",
-    "release-tag-missing",
 )
 
 
@@ -201,7 +222,7 @@ def test_passes_every_fixture_without_warning_when_release_tested(
         # The hub's seeded copy shadows the built-in.
         assert f"workflows/release/fixtures/{fixture}.yaml: ok" in tested.stdout
     assert "warning" not in tested.stdout
-    assert tested.stdout.endswith("7 fixtures: 7 passed, 0 failed\n")
+    assert tested.stdout.endswith("4 fixtures: 4 passed, 0 failed\n")
 
 
 def test_validates_release_pin_when_pack_loaded(
@@ -243,6 +264,18 @@ def test_writes_no_tracker_when_release_pin_loaded() -> None:
     assert shells == ["hub step config", "hub step pr", "hub step worktree"]
     assert nodes["branch_config"].mutates_checkout is False
     assert [name for name, node in nodes.items() if node.type == "agent"] == []
+
+
+def test_counts_one_owner_gate_when_release_packs_loaded() -> None:
+    gates = {
+        (workflow, name, node.type)
+        for workflow in ("release", "release-pin")
+        for name, node in nodes_of(workflow).items()
+        if node.type in ("approval", "wait")
+    }
+
+    # The owner decides once inside the two runs; the other decisions are the merges of the PRs.
+    assert gates == {("release", "go", "approval")}
 
 
 PIN_FIXTURES = ("release-pin-pinned", "release-pin-tag-missing")
