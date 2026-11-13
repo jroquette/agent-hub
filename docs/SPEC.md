@@ -1287,6 +1287,16 @@ Continuity between sessions comes from the brain and the summaries, not from rer
   can be debugged (breakpoints, Step, Continue, inspect) off production only (2026-10-23, AGH-507,
   [ADR 0049](adr/0049-scenario-blocks-and-run-control.md), accepted).
 
+**7. Sessions drive their own PRs and claim their tickets (2026-11-11, AGH-805, [ADR 0063](adr/0063-session-follows-its-own-pr.md), proposed).**
+
+- The session that opens a pull request follows it until it merges: every skill that opens one then runs
+  `/deliver`'s follow-up loop on it in the same session, without being asked. A cloud session is woken by the pull
+  request's activity events; a local session runs the read-only `./hub pr-watch` in the background and arms it
+  again after each exit. On every wake the session first re-reads the pull request through GitHub's REST API, then
+  acts: it fixes red CI in the pull request's code, merges the default branch in on a conflict, answers review
+  threads, and tells the owner once that the pull request is ready. The loop stops after 3 fix rounds or 24 hours.
+  A session never merges, approves or tags.
+
 **Open questions**
 
 - [ ] What is the retention period for the raw transcript? (For sessions `hub web` drives: 30 days after they end,
