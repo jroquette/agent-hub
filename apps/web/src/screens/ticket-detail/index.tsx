@@ -95,7 +95,7 @@ export function TicketDetailScreen() {
         <div className="ah-card">
           <EmptyState icon="list-todo" title={`No session worked on ${issue} yet.`}>
             A ticket shows here once a session names it: in its first prompt (
-            <span className="ah-mono">/fix {issue}</span>), its branch or its worktree.
+            <span className="ah-mono">/change {issue}</span>), its branch or its worktree.
           </EmptyState>
         </div>
       ) : (

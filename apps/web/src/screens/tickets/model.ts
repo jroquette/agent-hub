@@ -24,7 +24,7 @@ export const FEATURE_PATH: ReadonlySet<string> = new Set([
 /** The single-ticket skills, in the order the Kind filter lists them. */
 export const KINDS = [
   { id: "feature", label: "Feature", workflow: null },
-  { id: "fix", label: "Fix", workflow: "/fix" },
+  { id: "change", label: "Change", workflow: "/change" },
   { id: "refactor", label: "Refactor", workflow: "/refactor" },
   { id: "upgrade", label: "Upgrade", workflow: "/upgrade" },
   { id: "incident", label: "Incident", workflow: "/incident" },

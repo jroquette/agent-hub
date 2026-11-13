@@ -131,7 +131,7 @@ export const NAV: readonly NavGroup[] = [
         countNoun: () => "need you",
         tone: "waiting",
       },
-      // Single-ticket work (/fix, /refactor, /upgrade, …), grouped from the sessions by issue.
+      // Single-ticket work (/change, /refactor, /upgrade, …), grouped from the sessions by issue.
       { id: "tickets", label: "Tickets", to: "/tickets", icon: "list-todo" },
       // Always shown: a place to start work, not a log (AGH-350 AM-17, E-15); no `g` key.
       { id: "scenarios", label: "Scenarios", to: "/scenarios", icon: "clipboard-list" },
