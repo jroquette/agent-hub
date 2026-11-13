@@ -18,6 +18,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `guard.readable_env_files`; it never blocks the prompt, and a prompt that only names a file gets no warning
   (AGH-814). After `./hub sync`, `AGENTS.md` also keeps secrets out of replies, commits, PRs, tracker
   comments and brain notes.
+- The built-in `release` pack has a second workflow, `release-pin` (AGH-821). Its four inputs are `issue`, `repo`,
+  `version` and `sha`, the version PR's merge commit. It checks that the `vX.Y.Z` tag on origin is annotated and on
+  that commit, then opens the hub PR that raises `platform.version` and runs `./hub sync`. It has no approval: your
+  decision is the merge of that PR. If the tag is missing, not annotated or on another commit, the run ends
+  `untagged` and opens no PR. Start it with `./hub workflow run release-pin --input issue=<issue> --input repo=<dir>
+  --input version=X.Y.Z --input sha=<merge commit> --live`. The `release` workflow and `/release` do not change in
+  this release.
 
 ### Changed
 

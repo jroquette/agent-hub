@@ -1,0 +1,184 @@
+# The hub's pin bump, once a platform release is tagged: the release worktree of the platform
+# repo (hub step worktree), the tag checked on origin (tagged.py: annotated, on sha, the version
+# PR's merge commit), then the hub PR that sets platform.version, runs ./hub sync and keeps
+# brain/now.md's pin and last_verified current (hub_branch.py, pin.py apply; hub step config reads
+# the branch and the hub's facts from hub.json for them: no script reads its config from
+# hub.json). A tag that is missing, not annotated or on another commit ends the run untagged:
+# no hub branch is made and no PR opens.
+# The platform repo's release workflow alone makes the tag (ADR 0047): no node here makes, moves
+# or pushes one. There is no approval node: the owner's decision is the merge of the pin PR.
+# Started only by /release or ./hub workflow run release-pin, after the tag is verified (never
+# scheduled or event-started). No node reads or writes the tracker (ADR 0030).
+version: 1
+name: release-pin
+description: >-
+  After a platform release is tagged, check the tag on the version PR's merge commit and open
+  the hub PR that bumps the pin.
+revision: 1
+inputs:
+  issue:
+    required: true
+    description: The release's tracker issue, <team>-<n> (it names the worktrees and branches).
+  repo:
+    required: true
+    description: The platform repo, its dir in hub.json.
+  version:
+    required: true
+    description: The released version, X.Y.Z.
+  sha:
+    required: true
+    description: The version PR's merge commit (40 hex), the commit the tag must be on.
+returns: report
+outcome_field: outcome
+nodes:
+  - id: worktree
+    type: shell
+    description: Make (or keep) the release worktree from a fresh fetch; print the repo's target.
+    command: [hub, step, worktree, --issue, $INPUTS.issue, --repo, $INPUTS.repo]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        path: {type: string}
+        branch: {type: string}
+        base: {type: string}
+        hub: {type: string}
+        hub_name: {type: string}
+        check: {type: string}
+        prompt:
+          type: object
+          properties:
+            guard: {type: string}
+            gate_step: {type: string}
+            commit_shape: {type: string}
+          required: [guard, gate_step, commit_shape]
+        target: {type: object}
+      required: [path, branch, base, hub, hub_name, check, prompt, target]
+
+  - id: verify
+    type: script
+    description: The tag on origin - annotated, on the version PR's merge commit.
+    depends_on: [worktree]
+    runtime: python
+    script: tagged.py
+    args: [--version, $INPUTS.version, --sha, $INPUTS.sha]
+    cwd: $worktree.output.path
+    timeout: 5m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        ok: {type: boolean}
+        found: {type: boolean}
+        annotated: {type: boolean}
+        peeled: {type: string}
+        reason: {type: string}
+      required: [ok, found, annotated, peeled, reason]
+
+  - id: branch_config
+    type: shell
+    description: The pin's hub branch (the developer's prefix) and the hub's target from hub.json, read by the CLI (read-only).
+    depends_on: [verify]
+    when: "$verify.output.ok == true"
+    command: [hub, step, config, --branch, $INPUTS.issue, --slug, bump-platform]
+    effect: read
+    mutates_checkout: false
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        default_branch: {type: string}
+        branch_prefix: {type: [string, "null"]}
+        hub: {type: object}
+        repos: {type: array, items: {type: object}}
+        branch_name: {type: string}
+        branch: {type: string}
+      required: [default_branch, branch_prefix, hub, repos, branch_name, branch]
+
+  - id: hub_branch
+    type: script
+    description: The hub worktree and branch the pin is committed on (never the hub's default branch).
+    depends_on: [verify, branch_config]
+    when: "$verify.output.ok == true"
+    runtime: python
+    script: hub_branch.py
+    args: [--issue, $INPUTS.issue, --slug, bump-platform, --config, $branch_config.output]
+    timeout: 5m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        path: {type: string}
+        branch: {type: string}
+        base: {type: string}
+        target: {type: object}
+      required: [path, branch, base, target]
+
+  - id: pin
+    type: script
+    description: Set platform.version, run ./hub sync, check it is up to date, set brain/now.md's pin and last_verified, commit.
+    depends_on: [hub_branch]
+    runtime: python
+    script: pin.py
+    args: [apply, --worktree, $hub_branch.output.path, --version, $INPUTS.version, --issue, $INPUTS.issue]
+    timeout: 20m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        from: {type: string}
+        version: {type: string}
+        sha: {type: string}
+        count: {type: integer, minimum: 0}
+        files:
+          type: array
+          maxItems: 500
+          items:
+            type: object
+            properties:
+              verb: {type: string}
+              path: {type: string}
+            required: [verb, path]
+        summary: {type: string, maxLength: 32768}
+      required: [from, version, sha, count, files, summary]
+
+  - id: pin_pr
+    type: shell
+    description: Push the hub branch and open the pin PR; the owner merges it.
+    depends_on: [pin]
+    command: [hub, step, pr, --issue, $INPUTS.issue, --target, $hub_branch.output.target, --summary, $pin.output.summary]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        url: {type: string}
+        found: {type: boolean}
+        summary: {type: string}
+        title_unmatched: {type: [string, "null"]}
+      required: [url, found, summary, title_unmatched]
+
+  - id: report
+    type: script
+    description: The run's outcome, from what the steps printed (no tracker write).
+    depends_on: [verify, pin_pr]
+    trigger_rule: none_failed_min_one_success
+    runtime: python
+    script: report.py
+    args:
+      - --verify
+      - $verify.output.ok
+      - --pin-pr
+      - $pin_pr.output.url
+      - --version
+      - $INPUTS.version
+    timeout: 5m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        outcome: {type: string, enum: [untagged, unpinned, released]}
+        version: {type: string}
+        pr: {type: string}
+        pin_pr: {type: string}
+        reason: {type: string}
+      required: [outcome, version, pr, pin_pr, reason]

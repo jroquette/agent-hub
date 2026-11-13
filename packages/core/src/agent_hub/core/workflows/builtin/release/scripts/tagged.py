@@ -2,18 +2,22 @@
 # requires-python = ">=3.12"
 # dependencies = []
 # ///
-"""Say whether the release tag is on origin, annotated, on the release commit, as JSON.
+"""Say whether the release tag is on origin, annotated, on the commit that was tagged, as JSON.
 
 ``tagged.py --version X.Y.Z --sha <40 hex>`` runs in the platform repo's checkout (the node's
-cwd) after the owner says the platform repo's release workflow made the tag. It reads origin with
-``git ls-remote origin refs/tags/vX.Y.Z refs/tags/vX.Y.Z^{}`` (``LS_REMOTE_TIMEOUT``
+cwd). ``--sha`` is the commit that was tagged. The ``release`` workflow (revision 1) passes the
+release commit, the release PR's head, after the owner says the platform repo's release workflow
+made the tag. The ``release-pin`` workflow passes the version PR's merge commit. The script reads
+origin with ``git ls-remote origin refs/tags/vX.Y.Z refs/tags/vX.Y.Z^{}`` (``LS_REMOTE_TIMEOUT``
 seconds, at most ``MAX_READ`` bytes read); it writes no ref and creates no tag. Only an annotated
-tag has a peeled (``^{}``) entry, and that entry must be the release commit: a squash merge
-leaves that commit off the default branch, so the tag would be on another one.
+tag has a peeled (``^{}``) entry, and that entry must be ``--sha``. When ``--sha`` is the PR's
+head, a squash merge leaves that commit off the default branch, so the tag would be on another
+one.
 
 Prints ``{"ok", "found", "annotated", "peeled", "reason"}``; ``ok`` only when the peeled entry
-equals ``--sha``. A failed read (network, credentials) is ``ok: false`` with the reason, exit 0,
-so the run asks again. A malformed version or SHA exits 2.
+equals ``--sha``. A failed read (network, credentials) is ``ok: false`` with the reason, exit 0:
+``release`` asks again, and a ``release-pin`` run ends ``untagged``. A malformed version or SHA
+exits 2.
 """
 
 import argparse

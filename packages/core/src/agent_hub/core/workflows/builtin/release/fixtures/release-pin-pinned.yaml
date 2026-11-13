@@ -1,0 +1,36 @@
+# The tag is annotated and on the version PR's merge commit: the hub PR sets platform.version and
+# runs hub sync, with no approval, and the run ends released.
+workflow: release-pin
+inputs: {issue: DEM-9, repo: demo-api, version: 0.21.0, sha: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567}
+stubs:
+  worktree:
+    output:
+      path: /ws/demo-api/.claude/worktrees/dem-9
+      branch: jdoe/dem-9
+      base: origin/trunk
+      hub: /ws/hub
+      hub_name: hub
+      check: make check
+      prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
+      target: {path: /ws/demo-api/.claude/worktrees/dem-9, branch: jdoe/dem-9, base: origin/trunk}
+  verify: {output: {ok: true, found: true, annotated: true, peeled: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567, reason: v0.21.0 is an annotated tag}}
+  branch_config:
+    output: {default_branch: main, branch_prefix: jdoe/, author_name: null, author_email: null, ready_label: agent-ready, teams: [DEM], hub: {github: acme/demo-hub, default_branch: main, target: {github: acme/demo-hub, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}, repos: [{dir: demo-api, github: acme/demo-api, default_branch: main, check_fast: make check-fast, check: make check, target: {github: acme/demo-api, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}], branch_name: dem-9, branch: jdoe/dem-9}
+  hub_branch:
+    output:
+      path: /ws/hub/.claude/worktrees/dem-9-bump-platform
+      branch: jdoe/dem-9-bump-platform
+      base: "3333333333333333333333333333333333333333"
+      target: {path: /ws/hub/.claude/worktrees/dem-9-bump-platform, branch: jdoe/dem-9-bump-platform, base: "3333333333333333333333333333333333333333"}
+  pin:
+    output:
+      from: 0.20.1
+      version: 0.21.0
+      sha: "4444444444444444444444444444444444444444"
+      count: 2
+      files: [{verb: updated, path: .claude/settings.json}, {verb: created, path: workflows/release/release.yaml}]
+      summary: "Sets `platform.version` in hub.json from 0.20.1 to 0.21.0 (tag v0.21.0)."
+  pin_pr: {output: {url: "https://github.com/acme/demo-hub/pull/30", found: false, summary: pin, title_unmatched: null}}
+  report: {output: {outcome: released, version: 0.21.0, pr: "", pin_pr: "https://github.com/acme/demo-hub/pull/30", reason: the run's outcome}}
+expect: {status: done, outcome: released}
+reached: [worktree, verify, branch_config, hub_branch, pin, pin_pr, report]

@@ -5,7 +5,8 @@
 """Make the hub worktree the release run commits the pin in, and print its target, as JSON.
 
 ``hub_branch.py --issue <team>-<n> --slug <slug> --config <json>`` runs in the hub (the node's
-default cwd), after the owner's approval. ``--config`` is what ``hub step config --branch <issue>
+default cwd), after the owner's approval (``release``) or after the tag is verified
+(``release-pin``). ``--config`` is what ``hub step config --branch <issue>
 --slug <slug>`` printed (this script opens no ``hub.json``): the branch ``<branch_prefix><issue
 lower>-<slug>`` and its name, resolved by the CLI as ``hub run`` resolves the prefix
 (``hub.local.json`` first), and the hub's target skeleton (its GitHub name, default branch and
