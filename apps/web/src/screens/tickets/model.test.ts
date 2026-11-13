@@ -7,7 +7,11 @@ const fixSession = (id: string, overrides: Partial<Session> = {}): Session =>
   aSession({
     id,
     issue: null,
-    label: aSessionLabel({ issue: "AGH-7", workflow: "/fix", workflows: ["/kickoff", "/fix"] }),
+    label: aSessionLabel({
+      issue: "AGH-7",
+      workflow: "/change",
+      workflows: ["/kickoff", "/change"],
+    }),
     ...overrides,
   });
 
@@ -20,8 +24,8 @@ describe("ticketsOf", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       issue: "AGH-7",
-      kind: "fix",
-      workflows: ["/fix"],
+      kind: "change",
+      workflows: ["/change"],
       sessions: 2,
       group: "done",
     });
@@ -88,7 +92,7 @@ describe("ticketsOf", () => {
     const [row] = ticketsOf([fixSession("a")]);
     if (!row) throw new Error("no row");
     expect(matchesQuery(row, "agh-7")).toBe(true);
-    expect(matchesQuery(row, "/fix")).toBe(true);
+    expect(matchesQuery(row, "/change")).toBe(true);
     expect(matchesQuery(row, "nothing")).toBe(false);
   });
 
@@ -110,7 +114,7 @@ describe("ticketsOf", () => {
     expect(rows.map((row) => [row.project, row.issue, row.kind, row.workflows])).toEqual(
       expect.arrayContaining([
         ["agent-hub", "AGH-7", "refactor", ["/refactor"]],
-        ["demo-shop", "AGH-7", "fix", ["/fix"]],
+        ["demo-shop", "AGH-7", "change", ["/change"]],
       ]),
     );
   });

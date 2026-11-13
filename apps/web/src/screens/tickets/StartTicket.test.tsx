@@ -14,7 +14,11 @@ import {
 import { StartTicketControl } from "./StartTicket";
 
 const AGENT = "/api/v1/agent-sessions";
-const HUB = aWorkdir({ kind: "hub", skills: ["fix", "refactor"], workdir_id: "aaaaaaaaaaaaaaaa" });
+const HUB = aWorkdir({
+  kind: "hub",
+  skills: ["change", "refactor"],
+  workdir_id: "aaaaaaaaaaaaaaaa",
+});
 const REPO = aWorkdir({ kind: "repo", label: "agent-hub", workdir_id: "bbbbbbbbbbbbbbbb" });
 
 function mount(capabilities = aCapabilities()) {
@@ -39,7 +43,7 @@ describe("StartTicketControl", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Start ticket" }));
     const dialog = screen.getByRole("dialog", { name: "Start ticket" });
     const prompt = within(dialog).getByRole("textbox", { name: "Prompt" });
-    expect(prompt).toHaveValue("/fix ");
+    expect(prompt).toHaveValue("/change ");
     expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(
       HUB.workdir_id,
     );
