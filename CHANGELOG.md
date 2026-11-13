@@ -44,6 +44,16 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   on redirecting output.
 - `/fix`, `/refactor` and `/upgrade` show an in-scope and an out-of-scope list with their first plan, post them on
   the tracker issue, and before the PR remove or ask about each changed file outside the in-scope list (AGH-813).
+- Read-only commands now run with no permission prompt in every hub. `hub sync` adds them to `permissions.allow` in
+  `.claude/settings.json`: `gh pr view`, `gh pr checks`, `gh pr diff`, `gh run view`, `gh run list` and
+  `gh api -X GET`, plus the read tools of the Linear and GitHub MCP servers, one rule per tool by its name. The four
+  `git` reads (`status`, `diff`, `log`, `show`) stay. New denies refuse `git diff`, `git log` and `git show` with
+  `--output`, and `gh api -X GET` with a second `-X` or `--method`. Every other `gh api` call keeps asking. A rule
+  matches the text of a command, so no rule catches three forms. They are a redirect after an allowed read
+  (`git status > f`), and a method flag bundled with another short flag (`-iX POST`) or in quotes (`'-X' POST`).
+  The guard and the sandbox stay the first barriers, but `gh` runs outside the sandbox. When you bump
+  `platform.version`, run `hub sync`. A GitHub MCP server with another name than `github` keeps asking until you add
+  its read tools to `.claude/settings.project.json` (AGH-809, AGH-819).
 
 ### Fixed
 

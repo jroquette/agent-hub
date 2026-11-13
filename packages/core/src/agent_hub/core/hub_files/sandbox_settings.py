@@ -9,7 +9,8 @@ Claude Code matches an entry against the literal text of a Bash call: only a cal
 that simple command escapes (no ``cd … &&``, ``;``, pipe, redirect or ``git -C``). So ``hub
 worktree``, whose own ``git fetch`` would never match, is listed by its three spellings; a
 broader ``make *`` or ``./hub *`` is never listed (a Makefile may hold deploy targets). An
-excluded command still goes through Claude Code's permission prompt.
+excluded command still goes through Claude Code's permission prompt, unless a
+``permissions.allow`` rule matches it (the managed read-only ``gh`` rules).
 """
 
 from typing import Final

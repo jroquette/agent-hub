@@ -8,6 +8,7 @@ from typing import Final, NamedTuple
 
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.sandbox_settings import WORKFLOW_EXCLUDED_COMMANDS
+from agent_hub.core.runner.session_prompt import TRACKER_MCP_SERVERS
 from agent_hub.generator.json_form import JsonValue
 
 # The base plugin's folder, the same in every hub; the project plugin's is `plugin/<project>`.
@@ -25,6 +26,61 @@ _ALLOWED_COMMANDS: Final = (
     "Bash(git diff *)",
     "Bash(git log *)",
     "Bash(git show *)",
+)
+# The other reads that run without a prompt: the `gh` calls that only read, and the read tools of
+# the Linear and GitHub MCP servers, one rule per tool by its full name (never a whole server).
+_READ_ONLY_COMMANDS: Final = (
+    "Bash(gh pr view *)",
+    "Bash(gh pr checks *)",
+    "Bash(gh pr diff *)",
+    "Bash(gh run view *)",
+    "Bash(gh run list *)",
+    "Bash(gh api -X GET *)",
+)
+_LINEAR_READ_TOOLS: Final = (
+    "get_issue",
+    "list_issues",
+    "list_comments",
+    "list_issue_statuses",
+    "list_issue_labels",
+    "get_team",
+    "list_teams",
+    "get_user",
+    "get_project",
+    "list_projects",
+)
+_GITHUB_READ_TOOLS: Final = (
+    "pull_request_read",
+    "list_pull_requests",
+    "search_pull_requests",
+    "issue_read",
+    "list_issues",
+    "search_issues",
+    "get_file_contents",
+    "list_commits",
+    "get_commit",
+    "get_me",
+)
+_READ_ONLY_MCP_TOOLS: Final = (
+    *(f"{server}__{tool}" for server in TRACKER_MCP_SERVERS for tool in _LINEAR_READ_TOOLS),
+    *(f"mcp__github__{tool}" for tool in _GITHUB_READ_TOOLS),
+)
+# The writing forms of the allowed reads: an output file on a git read, a second method on
+# `gh api -X GET`. A deny refuses and never asks, so the `gh api` denies stay under the
+# `gh api -X GET` prefix: a global deny of `-f`, `-F`, `--input` or `--method` would refuse the
+# skills' REST calls that open and edit pull requests. `core.hub_files.writing_commands` holds the
+# model of these rules and the corpus of writing commands the test runs through them. Known
+# limits, which no rule catches: a redirect after an allowed read (`git status > f`), a method
+# flag bundled with another short flag (`-iX POST`) and a method flag in quotes (`'-X' POST`).
+# The guard and the sandbox stay the first barriers.
+_DENIED_WRITES: Final = (
+    "Bash(git diff *--output*)",
+    "Bash(git log *--output*)",
+    "Bash(git show *--output*)",
+    "Bash(gh api -X GET * -X*)",
+    "Bash(gh api -X GET * --method*)",
+    "Bash(gh api -X GET -X*)",
+    "Bash(gh api -X GET --method*)",
 )
 # AGH-114: a headless `/onboard propose` (the onboard skill's steps 1 to 4) runs with no one to
 # ask, so each read-only command it names gets an exact allow: the right-hand sides of
@@ -140,9 +196,11 @@ def managed_settings(config: HubConfig) -> JsonValue:
     """The managed ``.claude/settings.json``: the rules base every hub shares (spec D5).
 
     The schema, the authorship rule (empty attribution, no co-author line), the hooks block, the
-    read-only git allows and those a headless ``/onboard propose`` needs (AGH-114), the base
-    denies (secret reads, force pushes and pushes to a protected branch, infra tools (``terraform``,
-    ``aws``; left to the guard when ``hub.json`` sets ``guard.infra``), ``ssh``, a bare ``sh`` or
+    read-only allow list (the ``git`` and ``gh`` reads, then the read tools of the Linear and
+    GitHub MCP servers, each by name) and the allows a headless ``/onboard propose`` needs
+    (AGH-114), the base denies (secret reads, force pushes and pushes to a protected branch, infra
+    tools (``terraform``, ``aws``; left to the guard when ``hub.json`` sets ``guard.infra``), the
+    write denies (an allowed read with ``--output`` or a second method), ``ssh``, a bare ``sh`` or
     ``bash``), the repos as additional directories (``../<dir>``, in ``hub.json``
     order), the base sandbox (AGH-16 D2, E14) and the ``hub`` MCP server enabled
     (``enabledMcpjsonServers``; effective once the folder is trusted, ADR 0057). Project settings
@@ -158,6 +216,8 @@ def managed_settings(config: HubConfig) -> JsonValue:
         "permissions": {
             "allow": [
                 *_ALLOWED_COMMANDS,
+                *_READ_ONLY_COMMANDS,
+                *_READ_ONLY_MCP_TOOLS,
                 *_ONBOARD_PROPOSE_COMMANDS,
                 *_onboard_repo_reads(config),
                 _ONBOARD_PROPOSAL_EDIT,
@@ -167,6 +227,7 @@ def managed_settings(config: HubConfig) -> JsonValue:
                 *_DENIED_FORCE_PUSHES,
                 *_denied_pushes(config),
                 *_denied_infra_tools(config),
+                *_DENIED_WRITES,
                 *_DENIED_COMMANDS,
             ],
             "additionalDirectories": [f"../{repo.dir}" for repo in config.repos],
