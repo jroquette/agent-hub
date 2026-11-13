@@ -1113,6 +1113,13 @@ The sessions and GitHub/Linear feed the collector, and the web app reads everyth
   a block, when it cannot check), keeps to a 5 s budget at the start and 15 s at the stop, and cannot see another Claude
   session or the user editing the same checkout, or a main-session background command started before the agent
   ([design/hub-generator.md](design/hub-generator.md)).
+- **Secrets in a prompt** (AGH-814): a third stdlib Python 3.9 hook, `plugin/hub-workflow/hooks/prompt_secret.py`,
+  runs on UserPromptSubmit before the sensor. When a prompt holds a secret-shaped value (the stdlib reader's shapes,
+  which the guard also uses: keys, tokens, a private key header, a `*_SECRET=`-style assignment of a literal) or two or
+  more `NAME=value` lines, it prints one warning that suggests a git-ignored env file (such as one in `hub.json`'s
+  `guard.readable_env_files`), never quotes the secret, and never blocks; it fails open (silent, exit 0). A prompt that
+  only names a file (`.env.local`, a key file) gets no warning. Rule 4 of
+  the managed `AGENTS.md` also keeps secrets out of replies, commits, PRs, tracker comments and brain notes.
 - **Packaging ([ADR 0022](adr/0022-container-packaging.md)):** besides `uvx`/`uv tool install`, the control plane
   ships as a container image built from the repo (`Dockerfile`, `compose.yaml`): multi-stage (the web app built from
   its lockfile, the workspace installed from `uv.lock`), base images pinned by digest, a non-root user (uid 10001), a
@@ -1279,6 +1286,16 @@ Continuity between sessions comes from the brain and the summaries, not from rer
 - Scenarios are authored as ordered stages of blocks (`version: 2`), translated to the graph at load; a scenario run
   can be debugged (breakpoints, Step, Continue, inspect) off production only (2026-10-23, AGH-507,
   [ADR 0049](adr/0049-scenario-blocks-and-run-control.md), accepted).
+
+**7. Sessions drive their own PRs and claim their tickets (2026-11-11, AGH-805, [ADR 0063](adr/0063-session-follows-its-own-pr.md), proposed).**
+
+- The session that opens a pull request follows it until it merges: every skill that opens one then runs
+  `/deliver`'s follow-up loop on it in the same session, without being asked. A cloud session is woken by the pull
+  request's activity events; a local session runs the read-only `./hub pr-watch` in the background and arms it
+  again after each exit. On every wake the session first re-reads the pull request through GitHub's REST API, then
+  acts: it fixes red CI in the pull request's code, merges the default branch in on a conflict, answers review
+  threads, and tells the owner once that the pull request is ready. The loop stops after 3 fix rounds or 24 hours.
+  A session never merges, approves or tags.
 
 **Open questions**
 

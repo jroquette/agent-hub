@@ -54,7 +54,7 @@ is a hub bug: log it in `brain/_inbox/`.
 2. No push to `main`, no force-push, no production deploys. Everything lands through a PR the
    user merges.
 3. A change of scope or architecture updates the repo's spec in the same PR.
-4. No secrets or real transcripts in any repo, test or fixture.
+4. No secrets or real transcripts in any repo, test, fixture, reply, commit, PR, tracker comment or brain note.
 5. This hub is private. Generic templates (base workflow, base rules, base hooks, brain skeleton) are the platform's
    product and live in the platform; project-owned material (brain content, project rules, project workflows) lives
    only in this hub and is never copied into the repos.

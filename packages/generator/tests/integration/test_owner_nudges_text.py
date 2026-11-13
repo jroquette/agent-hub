@@ -16,6 +16,11 @@ PR body), and before the PR remove or ask about each changed file outside the in
 upgrade workflow's branch belongs to the run, so at its ``publish`` gate the session only asks the
 owner. The same phrases hold in the three skills; each step is sliced by its number or its bold
 name.
+
+The secret echo tests (AGH-814, AC-37): cross-repo rule 4 says a secret, including one a command's
+output printed, is never repeated in a reply, a commit, a PR, a tracker comment or a brain note.
+The line is generic: it adds no placeholder to the template. Checked on the demo, two-team and
+conventions renders.
 """
 
 import re
@@ -449,3 +454,59 @@ def test_scope_lists_add_no_placeholder_or_hub_value_when_hub_rendered(
         for value in values:
             assert re.search(rf"\b{re.escape(value)}\b", text) is None, (skill, value)
         assert len(text.splitlines()) <= NESTED_MAX_LINES, skill
+
+
+# AGH-814 (AC-37): rule 4 keeps a secret out of what agents write.
+# The template's placeholder names, as on origin/main before this text: the new text adds none.
+AGENTS_PLACEHOLDERS = frozenset(
+    {
+        "branch_rule",
+        "commit_author",
+        "conventions_section",
+        "environments_section",
+        "module_files",
+        "module_seeded_files",
+        "prefix_note",
+        "project_name",
+        "protected_branches",
+        "repo_dirs",
+        "tracker_team_mention",
+        "worktree_base",
+    }
+)
+PLACEHOLDER = re.compile(r"@@\{?(\w+)")
+# Rule 4 and its wrapped lines, up to rule 5.
+RULE_4 = re.compile(r"^4\. No secrets.*?(?=^5\. )", re.MULTILINE | re.DOTALL)
+SECRET_ECHO_PLACES = ("reply", "commit", "PR", "tracker comment", "brain note")
+SECRET_ECHO_DOCUMENTS = [
+    pytest.param(a_hub_document, id="demo"),
+    pytest.param(a_two_team_document, id="two_teams"),
+    pytest.param(a_conventions_document, id="conventions"),
+]
+
+
+@pytest.fixture(params=SECRET_ECHO_DOCUMENTS)
+def agents(request: pytest.FixtureRequest) -> str:
+    document: Callable[[], dict[str, Any]] = request.param
+    return rendered(HubConfig.model_validate(document()), AGENTS)
+
+
+def rule_4(agents: str) -> str:
+    match = RULE_4.search(agents)
+    assert match is not None
+    return flat(match.group(0))
+
+
+def test_secret_echo_rule_names_every_place_when_rendered(agents: str) -> None:
+    rule = rule_4(agents)
+
+    missing = [place for place in SECRET_ECHO_PLACES if not re.search(rf"\b{place}\b", rule)]
+    assert missing == []
+
+
+def test_secret_echo_rule_adds_no_placeholder_when_rendered(agents: str) -> None:
+    agents_template = template("AGENTS.md.tmpl")
+
+    assert "@@" not in rule_4(agents)
+    assert "brain note" in rule_4(agents)
+    assert set(PLACEHOLDER.findall(agents_template)) == AGENTS_PLACEHOLDERS
