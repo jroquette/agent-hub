@@ -1113,6 +1113,45 @@ class TestLiveSuccess:
             *("-f", f"title={COMMIT_SUBJECT}", "-f", "head=jdoe/dem-1", "-f", "base=master"),
         ]
 
+    @pytest.mark.parametrize(
+        ("mode", "warnings"),
+        [
+            ("footer", []),
+            (
+                "footer-stays",
+                [
+                    f"hub run: warning: the body of {PR_URL} still carries AI attribution;"
+                    " set it again through the session's GitHub tools, or edit it by hand"
+                ],
+            ),
+        ],
+        ids=["footer-removed", "footer-stays"],
+    )
+    def test_sets_body_again_when_create_appends_footer(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        mode: str,
+        warnings: list[str],
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("FAKE_GH_MODE", mode)
+
+        result = live(run_command, run_workspace.workspace)
+
+        assert result.exit_code == 0, result.output
+        calls = run_workspace.calls("gh")
+        assert [call["argv"][2:4] for call in calls] == [
+            ["POST", "repos/acme/demo-api/pulls"],
+            ["PATCH", "repos/acme/demo-api/pulls/99"],
+        ]
+        assert calls[1]["argv"][4:] == ["-F", "body=@-"]
+        assert calls[1]["stdin"] == calls[0]["stdin"]
+        assert [line for line in result.stderr.splitlines() if "warning" in line] == warnings
+
 
 @pytest.mark.usefixtures("with_key")
 class TestWorktreeStage:

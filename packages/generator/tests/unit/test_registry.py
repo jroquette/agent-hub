@@ -337,7 +337,10 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "plugin/hub-workflow/hooks/post_edit.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/pre_compact.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/pre_tool_use.py": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/hooks/prompt_secret.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/project_guard_runner.py": (Kind.GENERIC, Ownership.MANAGED, None),
+    # AGH-838: names back the skills a prompt invokes, wherever they are in it.
+    "plugin/hub-workflow/hooks/prompt_skills.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/readonly_gate.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/session_end.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/session_start.py": (Kind.GENERIC, Ownership.MANAGED, None),
@@ -424,9 +427,9 @@ MODULE_FILES: dict[str, tuple[Kind, Ownership, str | None]] = {
 MODULE_EXECUTABLE_PATHS = frozenset({"scripts/cloud-setup.sh", "scripts/contract-sync.sh"})
 
 # AC-4.3 (Q-3): the base entry points with a `#!` line are executable; every other base file is
-# not: the eight hooks `hooks.json` runs (AGH-200 adds the event sensor, AGH-141 the read-only
-# gate, AGH-621 pre_tool_use in the guard's place), guard.py (older settings still run it) and the
-# three scripts.
+# not: the nine hooks `hooks.json` runs (AGH-200 adds the event sensor, AGH-141 the read-only
+# gate, AGH-621 pre_tool_use in the guard's place, AGH-814 the prompt secret warning), guard.py
+# (older settings still run it) and the three scripts.
 # Module scripts are listed apart.
 EXECUTABLE_PATHS = frozenset(
     {
@@ -442,6 +445,8 @@ EXECUTABLE_PATHS = frozenset(
                 "post_edit",
                 "pre_compact",
                 "pre_tool_use",
+                "prompt_secret",
+                "prompt_skills",
                 "readonly_gate",
                 "session_end",
                 "session_start",

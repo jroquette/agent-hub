@@ -13,6 +13,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- A hub warns when a prompt looks like it holds a secret (a key, a token, a private key, a line such as
+  `AUTH_SECRET=...` or a block of env lines), and suggests a git-ignored env file instead, such as one in
+  `guard.readable_env_files`; it never blocks the prompt, and a prompt that only names a file gets no warning
+  (AGH-814). After `./hub sync`, `AGENTS.md` also keeps secrets out of replies, commits, PRs, tracker
+  comments and brain notes.
 - The built-in `release` pack has a second workflow, `release-pin` (AGH-821). Its four inputs are `issue`, `repo`,
   `version` and `sha`, the version PR's merge commit. It checks that the `vX.Y.Z` tag on origin is annotated and on
   that commit, then opens the hub PR that raises `platform.version` and runs `./hub sync`. It has no approval: your
@@ -44,6 +49,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `/learn` and hands off, leaving the ticket with its status and a comment on what was done and dropped (AGH-815).
   The hub's `AGENTS.md` says so in one line, and its Workflow item 5 lost the sentence that repeated the Gotchas line
   on redirecting output.
+- `/fix`, `/refactor` and `/upgrade` show an in-scope and an out-of-scope list with their first plan, post them on
+  the tracker issue, and before the PR remove or ask about each changed file outside the in-scope list (AGH-813).
 
 ### Fixed
 
@@ -53,6 +60,14 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   in Settings, instead of "Linear is not connected for hub web" (AGH-816, ADR 0060). It reads through GraphQL
   whenever a key is there; the transport still says only how the hub's agents reach Linear. The not-connected notice
   now points to Settings.
+- A Claude Code cloud session adds an attribution footer to the body of each pull request it opens (AGH-834). That
+  footer made the hub CI's authorship step fail the PR. The skills that open a PR now set its body again with the
+  same text through the session's GitHub tools, right after they open it. That edit removes the footer. They then
+  read the PR back; if the footer stays, the skill tells you once and names the PR. `hub step pr`, `hub ship` and
+  `hub run` set the body again through `gh`. In today's cloud sessions an edit through `gh` gets a footer again, so
+  they print one warning that names the PR. After that warning, `/learn promote`, `/release` and `/upgrade` set the
+  body again through the session's GitHub tools. Outside a cloud session nothing changes. The skill texts arrive
+  with `hub sync` after you bump `platform.version`.
 
 ## [0.35.1] - 2026-11-10
 
