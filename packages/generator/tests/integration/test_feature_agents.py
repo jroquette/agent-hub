@@ -235,13 +235,13 @@ def test_ends_with_one_json_block_when_review_json_inputs_given(texts: dict[str,
 def test_reads_unified_vocabulary_when_change_refactor_review_rendered(
     texts: dict[str, str],
 ) -> None:
-    fix = step(texts[CHANGE], 6)
+    change = step(texts[CHANGE], 6)
     refactor = step(texts[REFACTOR], 5)
     review = step(texts[REVIEW], 5)
 
-    assert "On `FAIL` with `blocking` findings: fix them" in fix
-    assert "Minor findings without `blocking` ones: fix them or list them" in fix
-    assert "as follow-ups" in fix
+    assert "On `FAIL` with `blocking` findings: fix them" in change
+    assert "Minor findings without `blocking` ones: fix them or list them" in change
+    assert "as follow-ups" in change
     assert "`blocking` findings: fix them and re-run both gates; no second pass." in refactor
     assert "severity (blocking / minor)" in review
     assert "minor findings go only when no blocking one is left" in review

@@ -123,7 +123,7 @@ def test_raises_conflict_when_allow_list_upgrade_also_changes_value() -> None:
 
 def test_raises_conflict_when_allow_list_upgrade_changes_added_key_value() -> None:
     stored = an_event(payload={"tool": "Skill", "skill": "feature"})
-    changed = an_event(source_id=stored.source_id, payload={"tool": "Skill", "skill": "fix"})
+    changed = an_event(source_id=stored.source_id, payload={"tool": "Skill", "skill": "change"})
 
     with pytest.raises(EventConflictError):
         plan_append([changed], stored_by_key(stored))

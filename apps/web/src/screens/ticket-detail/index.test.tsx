@@ -16,8 +16,8 @@ import { TicketDetailScreen } from "./index";
 
 const AGENT_ID = "11111111-2222-4333-8444-555555555555";
 
-const fixing = aSession({
-  id: "s-fix",
+const changing = aSession({
+  id: "s-change",
   issue: null,
   status: "ended",
   outcome: "done",
@@ -74,10 +74,10 @@ const changes = {
 };
 
 const routes: ApiRoutes = {
-  "/api/v1/sessions": aPage([fixing, triage]),
+  "/api/v1/sessions": aPage([changing, triage]),
   "/api/v1/features": aPage([]),
   [`/api/v1/agent-sessions/${AGENT_ID}/repo-changes`]: changes,
-  "/api/v1/sessions/s-fix/summary": aSessionSummary({
+  "/api/v1/sessions/s-change/summary": aSessionSummary({
     lines: [{ event_id: "e1", text: "Edited 1 file" }],
   }),
   "/api/v1/sessions/s-triage/summary": aSessionSummary({
@@ -114,7 +114,7 @@ describe("TicketDetailScreen", () => {
   it("shows the commits and files the sessions changed, with the pull request", async () => {
     open();
 
-    const section = await screen.findByRole("region", { name: /Changes of the session s-fix/ });
+    const section = await screen.findByRole("region", { name: /Changes of the session s-change/ });
     expect(await within(section).findByText("fix(tracker): cap the teams")).toBeInTheDocument();
     expect(within(section).getByText("src/teams.py")).toBeInTheDocument();
     expect(within(section).getByText("roquettejh/agh-112-team-cap")).toBeInTheDocument();

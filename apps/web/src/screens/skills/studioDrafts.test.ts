@@ -72,7 +72,7 @@ describe("studioDrafts edit drafts", () => {
     saveDraft("skill-aaa111", { project: "demo", kind: "skill" }, { target: TARGET });
 
     expect(openEditDraft("demo", TARGET)?.draftId).toBe("skill-aaa111");
-    expect(openEditDraft("demo", { ...TARGET, name: "fix" })).toBeNull();
+    expect(openEditDraft("demo", { ...TARGET, name: "change" })).toBeNull();
     expect(openEditDraft("other", TARGET)).toBeNull();
   });
 
