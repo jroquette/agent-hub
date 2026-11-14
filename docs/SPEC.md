@@ -1287,7 +1287,7 @@ Continuity between sessions comes from the brain and the summaries, not from rer
   can be debugged (breakpoints, Step, Continue, inspect) off production only (2026-10-23, AGH-507,
   [ADR 0049](adr/0049-scenario-blocks-and-run-control.md), accepted).
 
-**7. Sessions drive their own PRs and claim their tickets (2026-11-11, AGH-805, [ADR 0063](adr/0063-session-follows-its-own-pr.md), proposed).**
+**7. Sessions drive their own PRs and claim their tickets (2026-11-11, AGH-805, [ADR 0063](adr/0063-session-follows-its-own-pr.md), [ADR 0064](adr/0064-session-claims-its-ticket.md), proposed).**
 
 - The session that opens a pull request follows it until it merges: every skill that opens one then runs
   `/deliver`'s follow-up loop on it in the same session, without being asked. A cloud session is woken by the pull
@@ -1296,6 +1296,14 @@ Continuity between sessions comes from the brain and the summaries, not from rer
   acts: it fixes red CI in the pull request's code, merges the default branch in on a conflict, answers review
   threads, and tells the owner once that the pull request is ready. The loop stops after 3 fix rounds or 24 hours.
   A session never merges, approves or tags.
+- A session claims its ticket before any edit. The shared record is a tracker comment that starts with `In progress
+  in session`, `Took over from session` or `Released by session`; on a developer's machine `hub claim` also keeps a
+  claim file under `.agent-runs/claims/` with the Claude Code process id. A second session on a ticket with a live
+  claim stops before any edit and names the first. A claim is stale when its session ended, not when it was only
+  quiet: a cloud session that is archived, completed or failed, or idle for more than 24 hours while not waiting on
+  the owner; a local one whose recorded process no longer runs. A claim that cannot be checked counts as live. A
+  stale claim is taken over, and the takeover and the release are written on the ticket
+  ([ADR 0064](adr/0064-session-claims-its-ticket.md)).
 
 **Open questions**
 
